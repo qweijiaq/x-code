@@ -1440,7 +1440,15 @@ export function App(): React.JSX.Element {
     uiSmokeRan.current = true
 
     const run = async (): Promise<void> => {
-      const checks: Record<string, UiSmokeCheck> = {}
+      const reportProgress = (name: string): void => window.xcode.reportUiSmokeProgress(name)
+      const checks: Record<string, UiSmokeCheck> = new Proxy({} as Record<string, UiSmokeCheck>, {
+        set(target, property, value) {
+          const stored = Reflect.set(target, property, value)
+          reportProgress(`check:${String(property)}`)
+          return stored
+        },
+      })
+      reportProgress('start')
       try {
         for (const key of Object.keys(localStorage)) {
           if (key === 'xcode.lastSession' || key.startsWith('xcode.draft.')) localStorage.removeItem(key)
@@ -4265,7 +4273,10 @@ export function App(): React.JSX.Element {
       }
 
       const ok = Object.values(checks).every((check) => check.ok)
-      window.xcode.reportUiSmoke({ ok, checks })
+      reportProgress('finishing')
+      // `checks` is a Proxy used for progress tracking; structured clone cannot
+      // serialize it, so send a plain snapshot.
+      window.xcode.reportUiSmoke({ ok, checks: { ...checks } })
     }
 
     void run()

@@ -16,6 +16,9 @@ const bridge: XcodeBridge = {
   reportUiSmoke(result: UiSmokeResult): void {
     ipcRenderer.send('ui-smoke:result', result)
   },
+  reportUiSmokeProgress(name: string): void {
+    ipcRenderer.send('ui-smoke:progress', name)
+  },
   copyText(text: string): void {
     // Sandboxed preloads cannot access the clipboard module; the main
     // process owns it.

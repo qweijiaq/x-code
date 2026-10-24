@@ -1450,7 +1450,12 @@ function installIpc(): void {
 
   ipcMain.on('ui-smoke:result', (_event, result: unknown) => {
     if (!isUiSmoke) return
-    console.log(`UI_SMOKE_RESULT ${JSON.stringify(result)}`)
+    const durationMs = uiSmokeStartedAt ? Date.now() - uiSmokeStartedAt : 0
+    const payload =
+      result && typeof result === 'object'
+        ? { ...(result as Record<string, unknown>), durationMs }
+        : { ok: false, checks: {}, error: 'invalid ui smoke result', durationMs }
+    console.log(`UI_SMOKE_RESULT ${JSON.stringify(payload)}`)
     if (uiSmokeTimer) {
       clearTimeout(uiSmokeTimer)
       uiSmokeTimer = null
@@ -1458,17 +1463,42 @@ function installIpc(): void {
     const ok = Boolean(result && typeof result === 'object' && (result as { ok?: unknown }).ok === true)
     setTimeout(() => app.exit(ok ? 0 : 1), 50)
   })
+
+  ipcMain.on('ui-smoke:progress', (_event, name: unknown) => {
+    if (!isUiSmoke) return
+    uiSmokeLastProgress = typeof name === 'string' && name.trim() ? name.trim() : 'unknown'
+    armUiSmokeTimer()
+  })
 }
 
+const UI_SMOKE_TIMEOUT_MS = 180_000
 let uiSmokeTimer: NodeJS.Timeout | null = null
+let uiSmokeLastProgress = 'starting'
+let uiSmokeStartedAt = 0
+
+function armUiSmokeTimer(): void {
+  if (uiSmokeTimer) clearTimeout(uiSmokeTimer)
+  uiSmokeTimer = setTimeout(() => {
+    const elapsedMs = uiSmokeStartedAt ? Date.now() - uiSmokeStartedAt : UI_SMOKE_TIMEOUT_MS
+    console.log(
+      `UI_SMOKE_RESULT ${JSON.stringify({
+        ok: false,
+        checks: {},
+        error: 'ui smoke timeout',
+        lastProgress: uiSmokeLastProgress,
+        elapsedMs,
+      })}`,
+    )
+    app.exit(1)
+  }, UI_SMOKE_TIMEOUT_MS)
+}
 
 function startUiSmoke(): void {
   const query = process.env.X_CODE_UI_SMOKE_ONBOARD === '1' ? 'ui-smoke=1&onboard=1' : 'ui-smoke=1'
+  uiSmokeStartedAt = Date.now()
+  uiSmokeLastProgress = 'starting'
   createWindow(false, query)
-  uiSmokeTimer = setTimeout(() => {
-    console.log(`UI_SMOKE_RESULT ${JSON.stringify({ ok: false, checks: {}, error: 'ui smoke timeout' })}`)
-    app.exit(1)
-  }, 60_000)
+  armUiSmokeTimer()
 }
 
 const gotLock = isHeadlessSmoke ? true : app.requestSingleInstanceLock()

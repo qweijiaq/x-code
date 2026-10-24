@@ -1207,6 +1207,8 @@ export interface XcodeBridge {
   onEvent(listener: (event: RuntimeEvent) => void): () => void
   /** Used only by `--ui-smoke`: report renderer-side results and exit. */
   reportUiSmoke(result: UiSmokeResult): void
+  /** Keeps the smoke watchdog alive and records the last completed check. */
+  reportUiSmokeProgress(name: string): void
   /** Copies text through Electron's clipboard (file:// pages have no
    *  reliable navigator.clipboard permission). */
   copyText(text: string): void
