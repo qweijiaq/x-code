@@ -1706,6 +1706,106 @@ body::before {
   line-height: 1.6;
 }
 
+/* ── Unified inspector ───────────────────────────────────────────────── */
+
+.inspector {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  height: 100%;
+  min-width: 360px;
+  max-width: 70vw;
+  border-left: 1px solid var(--ink-20);
+  background: var(--paper);
+}
+
+.inspector-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 5;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.inspector-resizer:hover {
+  background: rgba(176, 58, 46, 0.12);
+}
+
+.inspector-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 10px 0 6px;
+  border-bottom: 1px solid var(--ink-20);
+  background: var(--paper-2);
+}
+
+.inspector-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.inspector-tab {
+  flex: none;
+  padding: 7px 11px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ink-45);
+  font-family: var(--sans);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.inspector-tab:hover {
+  color: var(--ink-70);
+}
+
+.inspector-tab.active {
+  border-bottom-color: var(--cinnabar);
+  color: var(--cinnabar);
+}
+
+.inspector-close {
+  flex: none;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.inspector-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.inspector-body > .document-drawer,
+.inspector-body > .git-drawer,
+.inspector-body > .checks-drawer,
+.inspector-body > .file-drawer,
+.inspector-body > .terminal-drawer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: auto;
+  height: auto;
+  border-left: 0;
+  box-shadow: none;
+  animation: none;
+}
+
+.inspector-body .drawer-scrim {
+  display: none;
+}
+
 /* ── Project / session sidebar ───────────────────────────────────────── */
 
 .app {

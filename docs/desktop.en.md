@@ -59,6 +59,14 @@ The Git branch menu can:
 Worktree windows have their own workspace path and `.x-code/sessions`; they do
 not overwrite the global recent-project entry.
 
+## Right-hand inspector
+
+Documents, Git, project checks, the terminal and the file browser share one
+right-hand inspector: switch with the tabs, drag its left edge to resize, and
+close it with `×` or `Esc` to give the chat the full width. These views no
+longer open as scrim-backed drawers, so you can read a document, diff or
+terminal while continuing the conversation.
+
 ## Composer
 
 - Markdown editing and preview, `@` file references, slash-command palette and

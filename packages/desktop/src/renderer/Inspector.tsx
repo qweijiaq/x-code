@@ -1,0 +1,102 @@
+import { useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
+export type InspectorTab = 'document' | 'git' | 'checks' | 'terminal' | 'file'
+
+const TABS: Array<{ id: InspectorTab; label: string }> = [
+  { id: 'document', label: '文档' },
+  { id: 'git', label: 'Git' },
+  { id: 'checks', label: '检查' },
+  { id: 'terminal', label: '终端' },
+  { id: 'file', label: '文件' },
+]
+
+const WIDTH_KEY = 'xcode.inspectorWidth'
+const MIN_WIDTH = 360
+const MAX_WIDTH = 900
+
+interface InspectorProps {
+  tab: InspectorTab
+  onTab(tab: InspectorTab): void
+  onClose(): void
+  children: React.ReactNode
+}
+
+export function Inspector({ tab, onTab, onClose, children }: InspectorProps): React.JSX.Element {
+  const { t } = useTranslation()
+  const [width, setWidth] = useState(() => {
+    try {
+      const stored = Number(localStorage.getItem(WIDTH_KEY))
+      if (Number.isFinite(stored) && stored >= MIN_WIDTH && stored <= MAX_WIDTH) return stored
+    } catch {
+      // Fall through to the default width.
+    }
+    return 560
+  })
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+
+  const startResize = (event: React.PointerEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    dragRef.current = { startX: event.clientX, startWidth: width }
+    const move = (moveEvent: PointerEvent): void => {
+      const drag = dragRef.current
+      if (!drag) return
+      const max = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, window.innerWidth - 360))
+      const next = Math.max(MIN_WIDTH, Math.min(max, drag.startWidth + (drag.startX - moveEvent.clientX)))
+      setWidth(next)
+    }
+    const stop = (): void => {
+      dragRef.current = null
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', stop)
+      setWidth((current) => {
+        try {
+          localStorage.setItem(WIDTH_KEY, String(Math.round(current)))
+        } catch {
+          // Width persistence is a convenience.
+        }
+        return current
+      })
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', stop)
+  }
+
+  return (
+    <aside className="inspector" data-testid="inspector" style={{ width }}>
+      <div
+        className="inspector-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t('调整侧栏宽度')}
+        onPointerDown={startResize}
+      />
+      <header className="inspector-head">
+        <div className="inspector-tabs" role="tablist">
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              className={`inspector-tab ${item.id === tab ? 'active' : ''}`}
+              data-testid={`inspector-tab-${item.id}`}
+              role="tab"
+              aria-selected={item.id === tab}
+              onClick={() => onTab(item.id)}
+            >
+              {t(item.label)}
+            </button>
+          ))}
+        </div>
+        <button
+          className="btn btn-quiet inspector-close"
+          data-testid="inspector-close"
+          title={t('关闭')}
+          aria-label={t('关闭')}
+          onClick={onClose}
+        >
+          ×
+        </button>
+      </header>
+      <div className="inspector-body">{children}</div>
+    </aside>
+  )
+}

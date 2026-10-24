@@ -48,6 +48,8 @@ import type { PaletteAction } from './CommandPalette.js'
 import { DocumentPanel } from './DocumentPanel.js'
 import { FilePanel } from './FilePanel.js'
 import { GitPanel } from './GitPanel.js'
+import { Inspector } from './Inspector.js'
+import type { InspectorTab } from './Inspector.js'
 import { CopyButton, MarkdownView } from './MarkdownView.js'
 import { Onboarding } from './Onboarding.js'
 import { RewindPanel } from './RewindPanel.js'
@@ -560,7 +562,13 @@ export function App(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<'starting' | 'ready' | 'offline'>('starting')
   const [report, setReport] = useState<string | null>(null)
-  const [terminalOpen, setTerminalOpen] = useState(() => new URLSearchParams(window.location.search).has('terminal'))
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab | null>(() =>
+    new URLSearchParams(window.location.search).has('terminal') ? 'terminal' : null,
+  )
+  const openInspector = (tab: InspectorTab): void => setInspectorTab(tab)
+  const closeInspector = (): void => setInspectorTab(null)
+  const toggleInspector = (tab: InspectorTab): void => setInspectorTab((current) => (current === tab ? null : tab))
+  const terminalOpen = inspectorTab === 'terminal'
   const [backgroundOpen, setBackgroundOpen] = useState(false)
   const [rewindOpen, setRewindOpen] = useState(false)
   const [onboardingDismissed, setOnboardingDismissed] = useState(false)
@@ -610,15 +618,12 @@ export function App(): React.JSX.Element {
   const [deletingSession, setDeletingSession] = useState<string | null>(null)
   const [salvageTarget, setSalvageTarget] = useState<SessionListItem | null>(null)
   const [salvageBusy, setSalvageBusy] = useState(false)
-  const [documentOpen, setDocumentOpen] = useState(false)
-  const [fileOpen, setFileOpen] = useState(false)
   const [documentView, setDocumentView] = useState<DocumentView | null>(null)
   const [documentLoading, setDocumentLoading] = useState(false)
   const [documentError, setDocumentError] = useState<string | null>(null)
   const [documentRecent, setDocumentRecent] = useState<DocumentRecentItem[]>([])
   const [documentLoadingMore, setDocumentLoadingMore] = useState(false)
   const [documentFocusPage, setDocumentFocusPage] = useState<number | null>(null)
-  const [gitOpen, setGitOpen] = useState(false)
   const [gitStatusView, setGitStatusView] = useState<GitStatusView | null>(null)
   const [gitLoading, setGitLoading] = useState(false)
   const [gitError, setGitError] = useState<string | null>(null)
@@ -626,7 +631,6 @@ export function App(): React.JSX.Element {
   const [gitDiffText, setGitDiffText] = useState<string | null>(null)
   const [gitDiffTruncated, setGitDiffTruncated] = useState(false)
   const [gitBusy, setGitBusy] = useState(false)
-  const [checksOpen, setChecksOpen] = useState(false)
   const [projectChecks, setProjectChecks] = useState<ProjectCheckView[]>([])
   const [checkResults, setCheckResults] = useState<ProjectCheckResultView[]>([])
   const [checkAuto, setCheckAuto] = useState(false)
@@ -963,7 +967,7 @@ export function App(): React.JSX.Element {
       const path = (event as CustomEvent<string>).detail
       if (typeof path === 'string' && path.trim()) {
         setFileInitialPath(path)
-        setFileOpen(true)
+        openInspector('file')
       }
     }
     window.addEventListener('xcode:open-file', onOpenFile)
@@ -1413,7 +1417,7 @@ export function App(): React.JSX.Element {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         if (settingsOpen) setSettingsOpen(false)
-        else if (terminalOpen) setTerminalOpen(false)
+        else if (terminalOpen) closeInspector()
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -2551,7 +2555,7 @@ export function App(): React.JSX.Element {
           ok: markdownPreview && csvPreview && pdfPageText,
           detail: `markdown=${markdownPreview} csv=${csvPreview} pdfPageText=${pdfPageText}`,
         }
-        setDocumentOpen(false)
+        closeInspector()
 
         let reviewApproved = false
         const offReview = window.xcode.onEvent((event) => {
@@ -2591,7 +2595,7 @@ export function App(): React.JSX.Element {
           ok: reviewApproved && reviewBar && hunksReady && reviewCleared,
           detail: `approved=${reviewApproved} bar=${reviewBar} hunks=${hunksReady} applied=${reviewCleared}`,
         }
-        setDocumentOpen(false)
+        closeInspector()
 
         let rememberedDocument = ''
         try {
@@ -2792,6 +2796,31 @@ export function App(): React.JSX.Element {
         checks.documentQuickAccess = {
           ok: documentButton && documentOpened && documentClosed,
           detail: `button=${documentButton} shortcut=${documentOpened} closed=${documentClosed}`,
+        }
+        document.querySelector<HTMLButtonElement>('[data-testid="document-button"]')?.click()
+        const inspectorMounted = await waitFor(() => document.querySelector('[data-testid="inspector"]') !== null, 3000)
+        const documentTabActive = document.querySelector('[data-testid="inspector-tab-document"].active') !== null
+        document.querySelector<HTMLButtonElement>('[data-testid="inspector-tab-git"]')?.click()
+        const gitInsideInspector = await waitFor(
+          () => document.querySelector('[data-testid="inspector"] [data-testid="git-drawer"]') !== null,
+          4000,
+        )
+        const documentTabGone =
+          document.querySelector('[data-testid="inspector"] [data-testid="document-drawer"]') === null
+        const terminalTabPresent = document.querySelector('[data-testid="inspector-tab-terminal"]') !== null
+        const inspectorResizer = document.querySelector('.inspector-resizer') !== null
+        document.querySelector<HTMLButtonElement>('[data-testid="inspector-close"]')?.click()
+        const inspectorClosed = await waitFor(() => document.querySelector('[data-testid="inspector"]') === null, 2000)
+        checks.inspector = {
+          ok:
+            inspectorMounted &&
+            documentTabActive &&
+            gitInsideInspector &&
+            documentTabGone &&
+            terminalTabPresent &&
+            inspectorResizer &&
+            inspectorClosed,
+          detail: `mounted=${inspectorMounted} docTab=${documentTabActive} git=${gitInsideInspector} exclusive=${documentTabGone} terminalTab=${terminalTabPresent} resizer=${inspectorResizer} closed=${inspectorClosed}`,
         }
         if (!writeAlways) {
           await window.xcode.request({
@@ -4360,7 +4389,6 @@ export function App(): React.JSX.Element {
 
   const openSidebar = async (): Promise<void> => {
     setModelMenuOpen(false)
-    setTerminalOpen(false)
     setSettingsOpen(false)
     setSidebarOpen(true)
     await Promise.all([refreshSessions(), refreshWorkspaces()])
@@ -4403,7 +4431,7 @@ export function App(): React.JSX.Element {
     setSessionQuery('')
     setRenaming(null)
     setDeletingSession(null)
-    setDocumentOpen(false)
+    closeInspector()
     await Promise.all([refreshSessions(), refreshWorkspaces()])
   }
 
@@ -4454,7 +4482,7 @@ export function App(): React.JSX.Element {
 
   const openDocument = async (filePath: string, page?: number): Promise<void> => {
     markUsage('document')
-    setDocumentOpen(true)
+    openInspector('document')
     setDocumentLoading(true)
     setDocumentError(null)
     const response = await window.xcode.request({
@@ -4521,7 +4549,7 @@ export function App(): React.JSX.Element {
     const cached = documentViewsRef.current[filePath]
     if (cached) {
       setDocumentView(cached)
-      setDocumentOpen(true)
+      openInspector('document')
       return
     }
     await openDocument(filePath)
@@ -4636,11 +4664,8 @@ export function App(): React.JSX.Element {
   }
 
   const openChecksPanel = async (): Promise<void> => {
-    setChecksOpen(true)
+    openInspector('checks')
     setSettingsOpen(false)
-    setTerminalOpen(false)
-    setDocumentOpen(false)
-    setGitOpen(false)
     await refreshChecks()
   }
 
@@ -4683,7 +4708,7 @@ export function App(): React.JSX.Element {
       )
       .join('\n\n')
     void submit(`${t('项目检查未通过，请修复以下问题：')}\n\n${detail}`)
-    setChecksOpen(false)
+    closeInspector()
   }
 
   const refreshGit = async (): Promise<void> => {
@@ -4703,10 +4728,8 @@ export function App(): React.JSX.Element {
   }
 
   const openGitPanel = async (): Promise<void> => {
-    setGitOpen(true)
+    openInspector('git')
     setSettingsOpen(false)
-    setTerminalOpen(false)
-    setDocumentOpen(false)
     await refreshGit()
   }
 
@@ -4754,7 +4777,7 @@ export function App(): React.JSX.Element {
   const openDocumentPanel = async (): Promise<void> => {
     markUsage('document')
     if (documentView) {
-      setDocumentOpen(true)
+      openInspector('document')
       void refreshDocumentList()
       return
     }
@@ -4766,7 +4789,7 @@ export function App(): React.JSX.Element {
     }
     // No previous document in this workspace: show the recent list inside the
     // panel instead of forcing a file dialog.
-    setDocumentOpen(true)
+    openInspector('document')
     await refreshDocumentList()
   }
 
@@ -4788,7 +4811,7 @@ export function App(): React.JSX.Element {
     setModelMenuOpen(false)
     setTaskModeMenuOpen(false)
     setToolsMenuOpen(false)
-    setTerminalOpen(false)
+    closeInspector()
     setSettingsTab(tab ?? null)
     setSettingsOpen(true)
     await refreshSettings()
@@ -5221,7 +5244,7 @@ export function App(): React.JSX.Element {
         if (imageLightbox) setImageLightbox(null)
         else if (salvageTarget) setSalvageTarget(null)
         else if (paletteOpen) setPaletteOpen(false)
-        else if (documentOpen) setDocumentOpen(false)
+        else if (inspectorTab) setInspectorTab(null)
         else if (branchOpen) {
           if (removeWorktree) {
             setRemoveWorktree(null)
@@ -5239,7 +5262,7 @@ export function App(): React.JSX.Element {
     imageLightbox,
     salvageTarget,
     paletteOpen,
-    documentOpen,
+    inspectorTab,
     branchOpen,
     removeWorktree,
     shortcutSheetOpen,
@@ -5827,13 +5850,13 @@ export function App(): React.JSX.Element {
       description: t('切换模型'),
       run: () => {
         setSettingsOpen(false)
-        setTerminalOpen(false)
+        closeInspector()
         setModelMenuOpen(true)
       },
     },
     { name: '/settings', description: t('打开设置'), run: () => void openSettings() },
     { name: '/doc', description: t('打开文档面板'), run: () => void openDocumentPanel() },
-    { name: '/files', description: t('打开文件浏览器与编辑器'), run: () => setFileOpen(true) },
+    { name: '/files', description: t('打开文件浏览器与编辑器'), run: () => openInspector('file') },
     { name: '/git', description: t('查看 Git 变更'), run: () => void openGitPanel() },
     { name: '/checks', description: t('运行项目检查'), run: () => void openChecksPanel() },
     { name: '/sessions', description: t('显示侧边栏'), run: () => void openSidebar() },
@@ -5844,7 +5867,7 @@ export function App(): React.JSX.Element {
       run: () => {
         setSettingsOpen(false)
         setModelMenuOpen(false)
-        setTerminalOpen((open) => !open)
+        toggleInspector('terminal')
       },
     },
     { name: '/diagnostics', description: t('运行诊断'), run: () => void runDiagnostics() },
@@ -5963,7 +5986,7 @@ export function App(): React.JSX.Element {
 
   const openFilesPanel = (path: string | null = null): void => {
     setFileInitialPath(path)
-    setFileOpen(true)
+    openInspector('file')
   }
 
   const paletteActions: PaletteAction[] = [
@@ -6095,7 +6118,7 @@ export function App(): React.JSX.Element {
       hint: 'PTY',
       run: () => {
         setSettingsOpen(false)
-        setTerminalOpen((open) => !open)
+        toggleInspector('terminal')
       },
     },
     { id: 'background', label: t('后台任务'), hint: t('查看与停止'), run: () => setBackgroundOpen(true) },
@@ -6556,7 +6579,6 @@ export function App(): React.JSX.Element {
             <button
               className="model-chip"
               onClick={() => {
-                setTerminalOpen(false)
                 setSettingsOpen(false)
                 setTaskModeMenuOpen(false)
                 setToolsMenuOpen(false)
@@ -6741,7 +6763,7 @@ export function App(): React.JSX.Element {
                 setSettingsOpen(false)
                 setTaskModeMenuOpen(false)
                 setToolsMenuOpen(false)
-                setTerminalOpen((open) => !open)
+                toggleInspector('terminal')
               }}
             >
               <TerminalIcon />
@@ -6778,7 +6800,7 @@ export function App(): React.JSX.Element {
                       data-testid="files-toggle"
                       onClick={() => {
                         setToolsMenuOpen(false)
-                        setFileOpen(true)
+                        openInspector('file')
                       }}
                     >
                       <span className="tools-item-label">{t('文件')}</span>
@@ -7570,26 +7592,103 @@ export function App(): React.JSX.Element {
         </footer>
       </div>
 
-      {terminalOpen ? (
-        <>
-          <div className="drawer-scrim" onClick={() => setTerminalOpen(false)} aria-hidden="true" />
-          <aside className="terminal-drawer" data-testid="terminal-shell" aria-label={t('终端')}>
-            <header className="drawer-head">
-              <span className="drawer-seal" aria-hidden="true">
-                端
-              </span>
-              <div className="drawer-titles">
-                <div className="drawer-title">{t('终端')}</div>
-                <div className="drawer-sub">PTY · runtime process</div>
-              </div>
-              <span className="spacer" />
-              <button className="btn btn-quiet" onClick={() => setTerminalOpen(false)}>
-                {t('关闭')}
-              </button>
-            </header>
-            <TerminalPanel />
-          </aside>
-        </>
+      {inspectorTab ? (
+        <Inspector tab={inspectorTab} onTab={openInspector} onClose={closeInspector}>
+          {inspectorTab === 'document' ? (
+            <DocumentPanel
+              view={documentView}
+              loading={documentLoading}
+              error={documentError}
+              onClose={closeInspector}
+              onReload={() => {
+                const current = documentView?.path
+                if (current) void openDocument(current)
+              }}
+              onAttach={(path) => {
+                setAttachments((current) => [...new Set([...current, path])])
+                closeInspector()
+              }}
+              onAsk={(prompt, path) => {
+                void submit(prompt, false, [path])
+                closeInspector()
+              }}
+              onSummarize={(path) => {
+                void submit(t('请总结这个文件的内容与结构。'), false, [path])
+                closeInspector()
+              }}
+              onOcrPage={ocrDocumentPage}
+              onLoadMore={loadMoreDocumentPages}
+              loadingMore={documentLoadingMore}
+              onForgetOcr={forgetDocumentOcr}
+              documents={documentRecent}
+              onSwitchDocument={switchDocument}
+              onPickDocument={pickDocumentToPreview}
+              onDiff={fetchDocumentDiff}
+              onApplyHunks={applyReviewedHunks}
+              onSaveBaseline={saveDocumentBaseline}
+              focusPage={documentFocusPage}
+            />
+          ) : null}
+          {inspectorTab === 'git' ? (
+            <GitPanel
+              status={gitStatusView}
+              loading={gitLoading}
+              error={gitError}
+              selected={gitSelected}
+              diff={gitDiffText}
+              diffTruncated={gitDiffTruncated}
+              busy={gitBusy}
+              onRefresh={() => void refreshGit()}
+              onSelect={(path, staged) => void selectGitFile(path, staged)}
+              onUndo={() => void undoGitTurn()}
+              onOpenEditor={(path, line) => openInEditor(path, line)}
+              onClose={closeInspector}
+            />
+          ) : null}
+          {inspectorTab === 'checks' ? (
+            <ChecksPanel
+              checks={projectChecks}
+              results={checkResults}
+              autoChecks={checkAuto}
+              loading={checksLoading}
+              error={checksError}
+              onRefresh={() => void refreshChecks()}
+              onRun={() => void runChecksNow()}
+              onToggleAuto={() => void toggleAutoChecks()}
+              onFix={fixFromChecks}
+              onClose={closeInspector}
+            />
+          ) : null}
+          {inspectorTab === 'file' ? (
+            <FilePanel
+              workspace={appState?.workspace ?? settings?.workspace ?? ''}
+              initialPath={fileInitialPath}
+              onOpenEditor={(path, line) => openInEditor(path, line)}
+              onClose={() => {
+                closeInspector()
+                setFileInitialPath(null)
+              }}
+            />
+          ) : null}
+          {inspectorTab === 'terminal' ? (
+            <aside className="terminal-drawer" data-testid="terminal-shell" aria-label={t('终端')}>
+              <header className="drawer-head">
+                <span className="drawer-seal" aria-hidden="true">
+                  端
+                </span>
+                <div className="drawer-titles">
+                  <div className="drawer-title">{t('终端')}</div>
+                  <div className="drawer-sub">PTY · runtime process</div>
+                </div>
+                <span className="spacer" />
+                <button className="btn btn-quiet" onClick={closeInspector}>
+                  {t('关闭')}
+                </button>
+              </header>
+              <TerminalPanel />
+            </aside>
+          ) : null}
+        </Inspector>
       ) : null}
 
       {approval ? (
@@ -7674,36 +7773,6 @@ export function App(): React.JSX.Element {
         </div>
       ) : null}
 
-      {checksOpen ? (
-        <ChecksPanel
-          checks={projectChecks}
-          results={checkResults}
-          autoChecks={checkAuto}
-          loading={checksLoading}
-          error={checksError}
-          onRefresh={() => void refreshChecks()}
-          onRun={() => void runChecksNow()}
-          onToggleAuto={() => void toggleAutoChecks()}
-          onFix={fixFromChecks}
-          onClose={() => setChecksOpen(false)}
-        />
-      ) : null}
-      {gitOpen ? (
-        <GitPanel
-          status={gitStatusView}
-          loading={gitLoading}
-          error={gitError}
-          selected={gitSelected}
-          diff={gitDiffText}
-          diffTruncated={gitDiffTruncated}
-          busy={gitBusy}
-          onRefresh={() => void refreshGit()}
-          onSelect={(path, staged) => void selectGitFile(path, staged)}
-          onUndo={() => void undoGitTurn()}
-          onOpenEditor={(path, line) => openInEditor(path, line)}
-          onClose={() => setGitOpen(false)}
-        />
-      ) : null}
       {settingsOpen && settings ? (
         <SettingsPanel
           settings={settings}
@@ -7718,52 +7787,6 @@ export function App(): React.JSX.Element {
           activeTab={settingsTab ?? undefined}
           onTabChange={setSettingsTab}
           onUsage={(key) => markUsage(key)}
-        />
-      ) : null}
-      {fileOpen ? (
-        <FilePanel
-          workspace={appState?.workspace ?? settings?.workspace ?? ''}
-          initialPath={fileInitialPath}
-          onOpenEditor={(path, line) => openInEditor(path, line)}
-          onClose={() => {
-            setFileOpen(false)
-            setFileInitialPath(null)
-          }}
-        />
-      ) : null}
-      {documentOpen ? (
-        <DocumentPanel
-          view={documentView}
-          loading={documentLoading}
-          error={documentError}
-          onClose={() => setDocumentOpen(false)}
-          onReload={() => {
-            const current = documentView?.path
-            if (current) void openDocument(current)
-          }}
-          onAttach={(path) => {
-            setAttachments((current) => [...new Set([...current, path])])
-            setDocumentOpen(false)
-          }}
-          onAsk={(prompt, path) => {
-            void submit(prompt, false, [path])
-            setDocumentOpen(false)
-          }}
-          onSummarize={(path) => {
-            void submit(t('请总结这个文件的内容与结构。'), false, [path])
-            setDocumentOpen(false)
-          }}
-          onOcrPage={ocrDocumentPage}
-          onLoadMore={loadMoreDocumentPages}
-          loadingMore={documentLoadingMore}
-          onForgetOcr={forgetDocumentOcr}
-          documents={documentRecent}
-          onSwitchDocument={switchDocument}
-          onPickDocument={pickDocumentToPreview}
-          onDiff={fetchDocumentDiff}
-          onApplyHunks={applyReviewedHunks}
-          onSaveBaseline={saveDocumentBaseline}
-          focusPage={documentFocusPage}
         />
       ) : null}
       {backgroundOpen ? <BackgroundPanel onClose={() => setBackgroundOpen(false)} /> : null}
