@@ -68,7 +68,16 @@ export interface UpdateCheckResult {
   latestVersion?: string
   url?: string
   notes?: string
+  /** File name of the installer matching this platform/arch, when listed. */
+  artifact?: string
   error?: string
+}
+
+export interface UpdateDownloadView {
+  version: string
+  filePath: string
+  fileName: string
+  bytes: number
 }
 
 export interface ProjectOverridesView {
@@ -893,6 +902,8 @@ export interface RequestMap {
     result: { deletedFiles: number; freedBytes: number; usage: StorageUsageView }
   }
   'app:check-update': { params: { feed: string }; result: UpdateCheckResult }
+  'app:download-update': { params: { feed: string }; result: UpdateDownloadView }
+  'app:open-update': { params: { filePath: string }; result: null }
   'settings:set-shell-sandbox': {
     params: { enabled?: boolean; allowNetwork?: boolean; extensions?: boolean }
     result: SettingsActionResult

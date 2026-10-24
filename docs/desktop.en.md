@@ -118,5 +118,8 @@ not overwrite the global recent-project entry.
 ## Updates
 
 Paste the HTTPS URL of `RELEASE.json` from a release directory into **Settings →
-Desktop updates** to check for a newer version. Automatic download-and-install
-is not enabled yet: it needs a signed app and a stable feed.
+Desktop updates** to check for a newer version. If the release lists an
+installer for this platform, the app can download it to a temp directory,
+verify its `sha256`, and open the installer for a manual install. Automatic
+download-and-install is not enabled yet: it needs a signed app and a stable
+feed.

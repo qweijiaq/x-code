@@ -63,9 +63,16 @@ Host `RELEASE.json` at an HTTPS URL and paste it into
 with the running app version and shows the result; `url` (if present) gets an
 "打开发布页" action.
 
-Automatic download-and-install is not enabled yet: it requires a signed app,
-a stable feed, and `electron-updater` wiring. The manual check is deliberately
-dependency-free and works with unsigned local builds.
+When the release lists an artifact for the current platform/arch, **下载更新**
+downloads it into the OS temp directory and verifies the `sha256` from
+`RELEASE.json` before offering **打开安装包** (which opens the dmg/exe/AppImage
+through the OS). Downloads are capped at 2 GB, must be HTTPS, and the renderer
+can only ask the main process to open paths that were downloaded and verified
+in this process.
+
+Automatic download-and-install is still not enabled: it requires a signed app,
+a stable feed, and `electron-updater` wiring. The manual check and verified
+download are dependency-free and work with unsigned local builds.
 
 ## CI
 

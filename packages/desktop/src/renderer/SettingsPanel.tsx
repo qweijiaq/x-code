@@ -21,6 +21,7 @@ import type {
   SkillImportResult,
   TestConnectionResult,
   UpdateCheckResult,
+  UpdateDownloadView,
   UserConfigFieldView,
   UserConfigValues,
 } from '../shared/protocol.js'
@@ -158,6 +159,7 @@ export function SettingsPanel({
   const [notice, setNotice] = useState<string | null>(null)
   const [updateFeedDraft, setUpdateFeedDraft] = useState(settings.updateFeed)
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
+  const [updateDownload, setUpdateDownload] = useState<UpdateDownloadView | null>(null)
   const [updateBusy, setUpdateBusy] = useState(false)
   const [installCommand, setInstallCommand] = useState('')
   const [skillCommand, setSkillCommand] = useState('')
@@ -641,6 +643,30 @@ export function SettingsPanel({
     }
   }
 
+  const downloadUpdate = async (): Promise<void> => {
+    setUpdateBusy(true)
+    setUpdateDownload(null)
+    setError(null)
+    setNotice(null)
+    try {
+      const response = await request('app:download-update', { feed: updateFeedDraft.trim() })
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      setUpdateDownload(response.result as UpdateDownloadView)
+      setNotice(t('安装包已下载并通过校验'))
+    } finally {
+      setUpdateBusy(false)
+    }
+  }
+
+  const openDownloadedUpdate = async (): Promise<void> => {
+    if (!updateDownload) return
+    const response = await request('app:open-update', { filePath: updateDownload.filePath })
+    if (!response.ok) setError(response.error.message)
+  }
+
   const renderTestResult = (provider: string): React.JSX.Element | null => {
     const result = testResults[provider]
     if (!result) return null
@@ -888,7 +914,9 @@ export function SettingsPanel({
             <div className="setting-main">
               <div className="setting-name">{t('桌面端更新')}</div>
               <div className="setting-desc">
-                {t('填写发布目录中 RELEASE.json 的 HTTPS 地址即可检查新版本。签名与公证后的安装包支持后续自动更新。')}
+                {t(
+                  '填写发布目录中 RELEASE.json 的 HTTPS 地址即可检查新版本；可下载匹配当前平台的安装包并校验 sha256，下载后手动安装。自动安装仍需要签名后的应用。',
+                )}
               </div>
               {updateResult ? (
                 <div className="settings-note">
@@ -906,6 +934,14 @@ export function SettingsPanel({
                   {updateResult.notes ? ` · ${updateResult.notes}` : ''}
                 </div>
               ) : null}
+              {updateDownload ? (
+                <div className="settings-note" data-testid="update-downloaded">
+                  {t('已下载 {{file}}（{{size}} MB），校验通过。', {
+                    file: updateDownload.fileName,
+                    size: (updateDownload.bytes / 1024 / 1024).toFixed(1),
+                  })}
+                </div>
+              ) : null}
             </div>
             <div className="update-controls">
               <input
@@ -918,6 +954,23 @@ export function SettingsPanel({
                 <button className="btn" disabled={updateBusy} onClick={() => void checkUpdate()}>
                   {updateBusy ? t('检查中…') : t('保存并检查')}
                 </button>
+                {updateResult?.latestVersion &&
+                newerVersion(updateResult.latestVersion, updateResult.currentVersion) &&
+                !updateDownload ? (
+                  <button
+                    className="btn solid"
+                    data-testid="update-download"
+                    disabled={updateBusy}
+                    onClick={() => void downloadUpdate()}
+                  >
+                    {updateBusy ? t('下载中…') : t('下载更新')}
+                  </button>
+                ) : null}
+                {updateDownload ? (
+                  <button className="btn solid" data-testid="update-open" onClick={() => void openDownloadedUpdate()}>
+                    {t('打开安装包')}
+                  </button>
+                ) : null}
                 {updateResult?.url?.startsWith('https://') ? (
                   <button
                     className="btn btn-quiet"

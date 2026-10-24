@@ -530,8 +530,8 @@ export const EN: Record<string, string> = {
   '在当前会话中查找…': 'Find in this conversation…',
   '在文本框中输入时，? 与单键快捷键不会触发；带修饰键的快捷键始终可用。':
     'Single-key shortcuts do not fire while typing in a text field; modifier shortcuts always work.',
-  '填写发布目录中 RELEASE.json 的 HTTPS 地址即可检查新版本。签名与公证后的安装包支持后续自动更新。':
-    'Paste the HTTPS URL of RELEASE.json from your release folder to check for updates. Signed and notarized builds can support automatic updates later.',
+  '填写发布目录中 RELEASE.json 的 HTTPS 地址即可检查新版本；可下载匹配当前平台的安装包并校验 sha256，下载后手动安装。自动安装仍需要签名后的应用。':
+    'Paste the HTTPS URL of RELEASE.json to check for updates. You can download the installer for this platform and verify its SHA-256, then install it manually; fully automatic install still requires a signed app.',
   复: 'Un',
   '密钥存储状态未知。': 'Secret storage status is unknown.',
   对话: 'Conversation',
@@ -921,6 +921,11 @@ export const EN: Record<string, string> = {
   '暂无持久化权限规则。': 'No persisted permission rules yet.',
   权限规则已保存: 'Permission rule saved',
   权限规则已删除: 'Permission rule removed',
+  下载更新: 'Download update',
+  '下载中…': 'Downloading…',
+  打开安装包: 'Open installer',
+  '已下载 {{file}}（{{size}} MB），校验通过。': 'Downloaded {{file}} ({{size}} MB); checksum verified.',
+  安装包已下载并通过校验: 'Installer downloaded and verified',
 }
 
 const storedLanguage = ((): Language => {

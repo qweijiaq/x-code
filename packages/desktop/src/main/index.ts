@@ -31,6 +31,7 @@ import type {
   RuntimeResponse,
   SmokeReport,
 } from '../shared/protocol.js'
+import { downloadUpdateArtifact, parseReleaseInfo, pickUpdateArtifact } from './update.js'
 
 const isSmoke = process.argv.includes('--smoke-test')
 const isUiSmoke = process.argv.includes('--ui-smoke')
@@ -188,6 +189,10 @@ interface RuntimeContext {
 /** Every window owns its own AgentHost runtime so sessions can run in
  *  parallel without sharing a turn/busy flag. */
 const runtimeContexts = new Map<number, RuntimeContext>()
+
+/** Installers downloaded and checksum-verified in this process; the renderer
+ *  may only ask the main process to open paths from this set. */
+const downloadedUpdateFiles = new Set<string>()
 
 function contextForWindow(window: BrowserWindow | null | undefined): RuntimeContext | null {
   if (!window || window.isDestroyed()) return null
@@ -1168,17 +1173,18 @@ function installIpc(): void {
           headers: { Accept: 'application/json' },
         })
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const data = (await response.json()) as { version?: unknown; url?: unknown; notes?: unknown }
-        if (typeof data.version !== 'string') throw new Error('更新源缺少 version 字段')
+        const release = parseReleaseInfo(await response.json())
+        const artifact = pickUpdateArtifact(release, process.platform, process.arch)
         return {
           id: request.id,
           ok: true,
           result: {
             configured: true,
             currentVersion,
-            latestVersion: data.version,
-            url: typeof data.url === 'string' ? data.url : '',
-            notes: typeof data.notes === 'string' ? data.notes : '',
+            latestVersion: release.version,
+            url: release.url ?? '',
+            notes: release.notes ?? '',
+            ...(artifact ? { artifact: artifact.file } : {}),
           },
         }
       } catch (error) {
@@ -1192,6 +1198,60 @@ function installIpc(): void {
           },
         }
       }
+    }
+    if (request?.method === 'app:download-update') {
+      const feed = (request.params as { feed?: string }).feed?.trim() ?? ''
+      try {
+        if (!feed.startsWith('https://')) throw new Error('更新源必须是 https URL')
+        const response = await fetch(feed, {
+          signal: AbortSignal.timeout(15_000),
+          headers: { Accept: 'application/json' },
+        })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const release = parseReleaseInfo(await response.json())
+        const download = await downloadUpdateArtifact({
+          feed,
+          release,
+          platform: process.platform,
+          arch: process.arch,
+          destDir: path.join(app.getPath('temp'), 'xcode-updates'),
+        })
+        downloadedUpdateFiles.add(path.resolve(download.filePath))
+        return {
+          id: request.id,
+          ok: true,
+          result: {
+            version: download.version,
+            filePath: download.filePath,
+            fileName: download.fileName,
+            bytes: download.bytes,
+          },
+        }
+      } catch (error) {
+        return {
+          id: request.id,
+          ok: false,
+          error: {
+            code: 'update-download',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        }
+      }
+    }
+    if (request?.method === 'app:open-update') {
+      const target = path.resolve((request.params as { filePath?: string }).filePath ?? '')
+      if (!downloadedUpdateFiles.has(target) || !fs.existsSync(target)) {
+        return {
+          id: request.id,
+          ok: false,
+          error: { code: 'invalid-path', message: '安装包不存在或未通过校验' },
+        }
+      }
+      const failure = await shell.openPath(target)
+      if (failure) {
+        return { id: request.id, ok: false, error: { code: 'open-update', message: failure } }
+      }
+      return { id: request.id, ok: true, result: null }
     }
     if (request?.method === 'app:reveal-path') {
       const raw = (request.params as { path?: string }).path ?? ''
