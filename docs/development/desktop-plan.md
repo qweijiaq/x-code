@@ -1,8 +1,15 @@
 # X-Code Desktop — Implementation Plan
 
-Status: Draft for Human Plan Review
-Owner: TBD
-Last updated: 2026-10-22
+Status: Implemented (original plan; kept for architecture rationale)
+Last updated: 2026-10-24
+
+> This is the original design document. Current behavior is documented in
+> [`desktop-ux.md`](./desktop-ux.md); release steps live in
+> [`desktop-release.md`](./desktop-release.md). The Phase 0–3 scope below is
+> complete, including multi-window runtimes, worktree windows, session
+> recovery, image attachments and permission-rule management. Still open:
+> signed automatic updates, and acceptance of the Windows/Linux installers on
+> real devices.
 
 ## 1. Goal
 

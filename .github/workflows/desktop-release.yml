@@ -65,7 +65,7 @@ jobs:
           if-no-files-found: error
 
   linux-check:
-    name: Linux build check
+    name: Linux build and package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -85,3 +85,56 @@ jobs:
 
       - name: Build
         run: pnpm --filter @x-code-cli/desktop build
+
+      - name: Package AppImage + deb
+        run: pnpm --filter @x-code-cli/desktop exec electron-builder --linux AppImage deb --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: x-code-desktop-linux-x64
+          path: |
+            packages/desktop/release/*.AppImage
+            packages/desktop/release/*.deb
+            packages/desktop/release/latest-linux.yml
+            packages/desktop/release/*.blockmap
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64 package
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @x-code-cli/desktop build
+
+      - name: Package NSIS installer
+        run: pnpm --filter @x-code-cli/desktop exec electron-builder --win nsis --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: x-code-desktop-windows-x64
+          path: |
+            packages/desktop/release/*.exe
+            packages/desktop/release/latest.yml
+            packages/desktop/release/*.blockmap
+          if-no-files-found: error

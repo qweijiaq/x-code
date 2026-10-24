@@ -1,8 +1,9 @@
 # Desktop release
 
-The desktop app ships as a macOS `.dmg` + `.zip` (arm64 locally). The release
-script also writes `SHA256SUMS` and `RELEASE.json`, which the app's
-**Settings → 桌面端更新** panel can read to check for a newer version.
+The desktop app ships as a macOS `.dmg` + `.zip` locally; CI also builds
+Windows NSIS and Linux AppImage/deb artifacts. The release script writes
+`SHA256SUMS` and `RELEASE.json`, which the app's **Settings → 桌面端更新**
+panel can read to check for a newer version.
 
 ## Local unsigned build
 
@@ -68,9 +69,19 @@ dependency-free and works with unsigned local builds.
 
 ## CI
 
-`.github/workflows/desktop-release.yml` builds and packages macOS arm64 on
-tags/manual dispatch, uploads the artifacts, and runs a Linux build/typecheck
-job. Signing secrets are optional; without them the CI artifacts are unsigned.
+`.github/workflows/desktop-release.yml` builds on tag pushes and manual
+dispatch:
+
+- **macOS arm64** — typecheck, build, UI smoke, then dmg + zip, signing and
+  notarization when the secrets are present.
+- **Linux x64** — typecheck, build, then AppImage + deb.
+- **Windows x64** — build, then an NSIS installer.
+
+All three jobs upload their artifacts. Signing secrets are optional; without
+them the artifacts are unsigned. The Windows and Linux jobs have **not been
+accepted on those platforms yet** — run the installers on real machines and
+record the result before calling them supported. Linux builds need
+`libfuse2` at runtime for the AppImage; the deb installs a desktop entry.
 
 ## Size
 

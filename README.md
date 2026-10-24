@@ -178,6 +178,22 @@ xc "Explain the overall architecture"           # Run with a prompt
 xc -m sonnet "Refactor the formatDate function" # Specify a model
 ```
 
+## Desktop App
+
+`packages/desktop` is an Electron app over the same runtime and `~/.x-code`
+data — sessions, memory, plugins, MCP, skills and hooks carry over unchanged.
+
+```bash
+pnpm dev:desktop            # build and launch the desktop app
+pnpm release:desktop --arch arm64   # macOS dmg + zip (unsigned by default)
+```
+
+It adds multi-window session tabs, branch **worktree windows**, image paste and
+screen capture, Markdown composing, per-model context limits, a document panel
+and library, Git/project-check panels, a sandboxed shell, persisted permission
+rules, themes and an English/Chinese UI. See the
+[desktop guide](./docs/desktop.en.md) for the full tour.
+
 ## Key Features
 
 ### Intelligent Development
@@ -304,6 +320,7 @@ This README is the entry view. Each feature has a focused doc under [`docs/`](./
 | [`docs/marketplace.en.md`](./docs/marketplace.en.md)           | Plugin marketplace           |
 | [`docs/hooks.en.md`](./docs/hooks.en.md)                       | Agent lifecycle hooks        |
 | [`docs/plugin-authoring.en.md`](./docs/plugin-authoring.en.md) | Plugin authoring guide       |
+| [`docs/desktop.en.md`](./docs/desktop.en.md)                   | Desktop app guide            |
 
 ## Troubleshooting
 

@@ -178,6 +178,20 @@ xc "解释项目的整体架构"                # 带提示词运行
 xc -m sonnet "重构 formatDate 函数"    # 指定模型
 ```
 
+## 桌面应用
+
+`packages/desktop` 是同一套 runtime、同一份 `~/.x-code` 数据的 Electron 界面：
+会话、记忆、插件、MCP、技能和 Hooks 与 CLI 完全共享。
+
+```bash
+pnpm dev:desktop                    # 构建并启动桌面端
+pnpm release:desktop --arch arm64   # macOS dmg + zip（默认未签名）
+```
+
+提供多窗口会话标签、分支 **worktree 窗口**、图片粘贴与区域截图、Markdown 输入、
+按模型的上下文上限、文档面板与文档库、Git/项目检查面板、沙箱 shell、持久化权限
+规则、主题与中英文界面。完整说明见[桌面端指南](./docs/desktop.md)。
+
 ## 核心功能
 
 ### 智能开发
@@ -304,6 +318,7 @@ README 是入门视图，每个功能的完整用法在 [`docs/`](./docs/) 下�
 | [`docs/marketplace.md`](./docs/marketplace.md)           | 插件市场订阅 / 自建                  |
 | [`docs/hooks.md`](./docs/hooks.md)                       | Agent 生命周期 Hook                  |
 | [`docs/plugin-authoring.md`](./docs/plugin-authoring.md) | 插件开发指南                         |
+| [`docs/desktop.md`](./docs/desktop.md)                   | 桌面端指南                           |
 
 ## 故障排查
 
