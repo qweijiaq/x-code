@@ -62,6 +62,12 @@ export interface TextReport {
   text: string
 }
 
+export interface DiagnosticsExportResult {
+  path: string
+  bytes: number
+  generatedAt: string
+}
+
 export interface UpdateCheckResult {
   configured: boolean
   currentVersion: string
@@ -812,6 +818,7 @@ export interface RequestMap {
   'files:write': { params: { path: string; content: string }; result: { path: string; size: number } }
   'files:create': { params: { path: string; content?: string }; result: { path: string; size: number } }
   'doctor:run': { params: Record<string, never>; result: TextReport }
+  'diagnostics:export': { params: Record<string, never>; result: DiagnosticsExportResult }
   'shell:list': { params: Record<string, never>; result: TextReport }
   'agents:list': { params: Record<string, never>; result: TextReport }
   'goal:get': { params: Record<string, never>; result: TextReport }

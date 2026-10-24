@@ -209,6 +209,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.doctorReport())
       }
+      case 'diagnostics:export': {
+        await ensureInitialized()
+        return ok(request.id, await host.exportDiagnostics())
+      }
       case 'shell:list': {
         await ensureInitialized()
         return ok(request.id, host.shellListReport())

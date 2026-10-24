@@ -8,6 +8,7 @@ import type {
   BranchListView,
   CompactResult,
   CustomCommandView,
+  DiagnosticsExportResult,
   DocumentDiffView,
   DocumentPageView,
   DocumentRecentItem,
@@ -2874,6 +2875,23 @@ export function App(): React.JSX.Element {
         checks.diagnostics = {
           ok: diagnostics.ok && (diagnostics.result as SmokeReport).ok === true,
           detail: diagnostics.ok ? 'diagnostics completed without exiting' : diagnostics.error.message,
+        }
+        const exported = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'diagnostics:export',
+          params: {},
+        })
+        const exportResult = exported.ok ? (exported.result as DiagnosticsExportResult) : null
+        checks.diagnosticsExport = {
+          ok: Boolean(
+            exportResult &&
+            exportResult.bytes > 100 &&
+            exportResult.path.includes('diagnostics') &&
+            exportResult.path.includes('x-code-diagnostics-'),
+          ),
+          detail: exported.ok
+            ? `${exportResult?.bytes ?? 0} bytes · ${exportResult?.path ?? ''}`
+            : exported.error.message,
         }
 
         checks.terminalDefault = {
@@ -6149,6 +6167,24 @@ export function App(): React.JSX.Element {
       label: t('运行诊断'),
       hint: t('环境 / 插件 / MCP'),
       run: () => runDiagnostics(),
+    },
+    {
+      id: 'export-diagnostics',
+      label: t('导出诊断包'),
+      hint: t('不含密钥的 JSON 快照'),
+      keywords: ['diagnostics', 'support', 'diagnose', '诊断', '日志', '支持'],
+      run: async () => {
+        const response = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'diagnostics:export',
+          params: {},
+        })
+        if (!response.ok) {
+          setReport(t('导出诊断失败：{{message}}', { message: response.error.message }))
+          return
+        }
+        setReport(t('诊断包已导出：{{path}}', { path: (response.result as DiagnosticsExportResult).path }))
+      },
     },
     { id: 'shortcuts', label: t('键盘快捷键'), hint: '?', run: () => setShortcutSheetOpen(true) },
   ]

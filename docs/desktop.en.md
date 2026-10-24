@@ -138,6 +138,9 @@ terminal while continuing the conversation.
   keyword and optional semantic search.
 - The storage panel reports session, attachment, library and voice-model usage
   and offers cleanup.
+- **Settings → Tools → Diagnostics and support** exports a JSON snapshot
+  (version, model, MCP status, tool/skill counts, sandbox settings) without
+  API keys, MCP env/headers or command contents.
 
 ## Skill marketplace
 

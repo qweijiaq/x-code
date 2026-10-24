@@ -993,6 +993,15 @@ export const EN: Record<string, string> = {
   截一张图: 'Take a screenshot',
   '用 {{key}} 搜索能力': 'Search capabilities with {{key}}',
   从技能市场安装技能: 'Install a skill from the marketplace',
+  诊断与支持: 'Diagnostics and support',
+  '导出运行环境、模型、MCP 状态、工具与技能数量的 JSON 快照；不包含 API Key、MCP env/header 或命令内容。':
+    'Export a JSON snapshot of the runtime, model, MCP status, and tool/skill counts. API keys, MCP env/headers and command contents are excluded.',
+  '导出中…': 'Exporting…',
+  导出诊断包: 'Export diagnostics',
+  打开所在文件夹: 'Show in folder',
+  '诊断包已导出：{{path}}': 'Diagnostics exported: {{path}}',
+  '导出诊断失败：{{message}}': 'Could not export diagnostics: {{message}}',
+  '不含密钥的 JSON 快照': 'Key-free JSON snapshot',
 }
 
 const storedLanguage = ((): Language => {

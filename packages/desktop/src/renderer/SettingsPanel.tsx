@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import type {
   AppState,
+  DiagnosticsExportResult,
   LibrarySearchView,
   LibraryStatsView,
   MarketplaceEntryView,
@@ -184,6 +185,7 @@ export function SettingsPanel({
   const [skillMarketQuery, setSkillMarketQuery] = useState('')
   const [skillMarketResults, setSkillMarketResults] = useState<SkillMarketListView | null>(null)
   const [skillMarketBusy, setSkillMarketBusy] = useState(false)
+  const [diagnosticsPath, setDiagnosticsPath] = useState<string | null>(null)
   const [market, setMarket] = useState<MarketplaceListView | null>(null)
   const [marketQuery, setMarketQuery] = useState('')
   const [marketName, setMarketName] = useState('')
@@ -268,6 +270,24 @@ export function SettingsPanel({
       'context-window',
     )
     if (result) setNotice(t('上下文上限已更新'))
+  }
+
+  const exportDiagnostics = async (): Promise<void> => {
+    setBusy('diagnostics')
+    setError(null)
+    setNotice(null)
+    try {
+      const response = await request('diagnostics:export', {})
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      const result = response.result as DiagnosticsExportResult
+      setDiagnosticsPath(result.path)
+      setNotice(t('诊断包已导出：{{path}}', { path: result.path }))
+    } finally {
+      setBusy(null)
+    }
   }
 
   const showPermissionRules = (response: RuntimeResponse): boolean => {
@@ -1896,6 +1916,34 @@ export function SettingsPanel({
                   >
                     {settings.browser.visualCheck ? t('已开启（点击关闭）') : t('开启')}
                   </button>
+                </div>
+              </div>
+              <div className="setting-row" data-testid="diagnostics-export">
+                <div className="setting-main">
+                  <div className="setting-name">{t('诊断与支持')}</div>
+                  <div className="setting-desc">
+                    {t(
+                      '导出运行环境、模型、MCP 状态、工具与技能数量的 JSON 快照；不包含 API Key、MCP env/header 或命令内容。',
+                    )}
+                  </div>
+                  {diagnosticsPath ? <div className="setting-meta">{diagnosticsPath}</div> : null}
+                </div>
+                <div className="setting-actions-col">
+                  <button className="btn" disabled={busy !== null} onClick={() => void exportDiagnostics()}>
+                    {busy === 'diagnostics' ? t('导出中…') : t('导出诊断包')}
+                  </button>
+                  {diagnosticsPath ? (
+                    <button
+                      className="btn btn-quiet"
+                      onClick={() =>
+                        void request('app:reveal-path', {
+                          path: diagnosticsPath,
+                        })
+                      }
+                    >
+                      {t('打开所在文件夹')}
+                    </button>
+                  ) : null}
                 </div>
               </div>
               <div className="setting-row">

@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -91,6 +92,7 @@ import type {
   BranchListView,
   CompactResult,
   CustomCommandView,
+  DiagnosticsExportResult,
   FileEditView,
   FileReadView,
   FileTreeEntryView,
@@ -2080,6 +2082,89 @@ export class AgentHost {
       `- 内置工具：${Object.keys(toolRegistry).length} 个`,
     )
     return { text: lines.join('\n') }
+  }
+
+  /** Export a redacted JSON snapshot for support. Provider keys, MCP env and
+   *  headers, and command strings are deliberately excluded. */
+  async exportDiagnostics(): Promise<DiagnosticsExportResult> {
+    const bootstrap = this.requireBootstrap()
+    const workspace = this.workspaceRoot()
+    const [mcp, sessions] = await Promise.all([this.mcp ? this.mcp.list() : [], listSessions(workspace)])
+    const desktopSettings = loadDesktopSettings()
+    const rules = visiblePermissionRules(readPersistedRules(workspace), workspace)
+    const version = (() => {
+      try {
+        return String((createRequire(import.meta.url)('../../package.json') as { version?: string }).version ?? '')
+      } catch {
+        return ''
+      }
+    })()
+    const snapshot = {
+      generatedAt: new Date().toISOString(),
+      app: { version, demo: this.demo },
+      system: {
+        platform: process.platform,
+        arch: process.arch,
+        node: process.versions.node,
+        electron: process.versions.electron ?? '',
+        chrome: process.versions.chrome ?? '',
+        memory: process.memoryUsage(),
+        uptimeSeconds: Math.round(process.uptime()),
+      },
+      workspace,
+      model: {
+        id: this.modelId,
+        contextWindow: getContextWindow(this.modelId),
+        contextWindowOverride: getModelContextWindowOverride(this.modelId),
+      },
+      state: {
+        taskMode: bootstrap.appState.taskMode,
+        permissionMode: bootstrap.appState.permissionMode,
+        thinking: bootstrap.appState.thinking,
+      },
+      providers: bootstrap.appState.providers.map((provider) => ({
+        name: provider.name,
+        envKey: provider.envKey,
+        available: provider.available,
+      })),
+      mcp: mcp.map((server) => ({
+        name: server.name,
+        scope: server.scope,
+        enabled: server.enabled,
+        status: server.status,
+      })),
+      counts: {
+        sessions: sessions.length,
+        plugins: bootstrap.pluginRegistry.listAll().length,
+        pluginErrors: bootstrap.pluginErrors.length,
+        skills: bootstrap.skillRegistry?.listAll().length ?? 0,
+        subAgents: bootstrap.subAgentRegistry?.list().length ?? 0,
+        tools: Object.keys(toolRegistry).length,
+        permissionRules: rules.length,
+      },
+      tools: {
+        profile: bootstrap.baseOptions.toolProfile ?? 'full',
+        disabled: [...this.disabledTools].sort(),
+        alwaysAllow: [...this.autoAllowedTools].sort(),
+      },
+      settings: {
+        alwaysAllowAll: this.alwaysAllowAll,
+        shellSandbox: {
+          enabled: desktopSettings.shellSandbox !== false,
+          allowNetwork: desktopSettings.shellSandboxNetwork === true,
+          extensions: desktopSettings.shellSandboxExtensions === true,
+        },
+        notifications: desktopSettings.notifications !== false,
+        contextWindowOverrides: desktopSettings.contextWindowOverrides ?? {},
+      },
+    }
+    const dir = path.join(userXcodeDir(), 'diagnostics')
+    await fs.promises.mkdir(dir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const file = path.join(dir, `x-code-diagnostics-${stamp}.json`)
+    const body = `${JSON.stringify(snapshot, null, 2)}\n`
+    await fs.promises.writeFile(file, body, 'utf-8')
+    return { path: file, bytes: Buffer.byteLength(body), generatedAt: snapshot.generatedAt }
   }
 
   shellListReport(): TextReport {
