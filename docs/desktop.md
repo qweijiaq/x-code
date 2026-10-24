@@ -107,9 +107,9 @@ worktree 窗口有独立的工作区路径和 `.x-code/sessions`，不会覆盖�
   `git`，受限网络无需额外配置。macOS 之外或自定义代理仍可通过
   `HTTPS_PROXY` / `HTTP_PROXY` 环境变量控制。
 - SkillsMP 一侧提供 **注册为 MCP 服务器**：把 `https://skillsmp.com/mcp` 写入
-  用户级 MCP 配置（`~/.x-code/config.json`），重启后 agent 可直接调用
-  `search_skills`、`get_skill`、`list_categories`。如果已有同名但配置不同的
-  `skillsmp` 服务器，市场不会覆盖，只提示冲突。
+  用户级 MCP 配置（`~/.x-code/config.json`）。注册会立即重载 MCP 并刷新提示缓存，
+  agent 可直接调用 `search_skills`、`get_skill`、`list_categories`，无需重启。
+  如果已有同名但配置不同的 `skillsmp` 服务器，市场不会覆盖，只提示冲突。
 
 第三方技能的内容会进入模型上下文，安装前请自行确认来源可信。市场只负责
 搜索与复制文件，不会执行技能中的脚本。

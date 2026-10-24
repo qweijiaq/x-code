@@ -134,10 +134,10 @@ from the next turn after the skill registry reloads.
   `git`; elsewhere set `HTTPS_PROXY` / `HTTP_PROXY`.
 - On the SkillsMP side, **Register as MCP server** writes
   `https://skillsmp.com/mcp` into the user MCP config
-  (`~/.x-code/config.json`), so the agent can call `search_skills`,
-  `get_skill` and `list_categories` directly after a restart. If a different
-  `skillsmp` entry already exists, the marketplace reports a conflict instead
-  of overwriting it.
+  (`~/.x-code/config.json`). Registration reloads MCP and invalidates the prompt
+  cache immediately, so the agent can call `search_skills`, `get_skill` and
+  `list_categories` without a restart. If a different `skillsmp` entry already
+  exists, the marketplace reports a conflict instead of overwriting it.
 
 Third-party skills become model context, so check that a source is trustworthy
 before installing. The marketplace only searches and copies files; it does not
