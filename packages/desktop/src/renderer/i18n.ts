@@ -954,6 +954,7 @@ export const EN: Record<string, string> = {
     'Registering https://skillsmp.com/mcp as a user-scope MCP server lets the agent call search_skills / get_skill / list_categories directly in a conversation.',
   '注册为 MCP 服务器': 'Register as MCP server',
   'SkillsMP 已注册为 MCP 服务器': 'SkillsMP registered as an MCP server',
+  关闭结果: 'Close result',
 }
 
 const storedLanguage = ((): Language => {

@@ -2265,6 +2265,13 @@ export function App(): React.JSX.Element {
             ok: usageSelected && usageReport,
             detail: `selected=${usageSelected} report=${usageReport}`,
           }
+          const reportCloseMounted = document.querySelector('[data-testid="report-close"]') !== null
+          document.querySelector<HTMLButtonElement>('[data-testid="report-close"]')?.click()
+          const reportClosed = await waitFor(() => document.querySelector('.report') === null, 2000)
+          checks.reportClose = {
+            ok: reportCloseMounted && reportClosed,
+            detail: `button=${reportCloseMounted} closed=${reportClosed}`,
+          }
         } else {
           checks.slashPalette = { ok: false, detail: 'composer missing' }
           checks.slashCommand = { ok: false, detail: 'composer missing' }
@@ -6810,9 +6817,20 @@ export function App(): React.JSX.Element {
         ) : null}
 
         {report ? (
-          <pre className="report" aria-label={t('诊断结果')}>
-            {report}
-          </pre>
+          <div className="report-shell">
+            <pre className="report" aria-label={t('诊断结果')}>
+              {report}
+            </pre>
+            <button
+              className="report-close"
+              data-testid="report-close"
+              aria-label={t('关闭结果')}
+              title={t('关闭结果')}
+              onClick={() => setReport(null)}
+            >
+              ×
+            </button>
+          </div>
         ) : null}
 
         <footer className="composer">

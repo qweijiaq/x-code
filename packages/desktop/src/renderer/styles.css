@@ -399,6 +399,37 @@ body::before {
   white-space: pre-wrap;
 }
 
+.report-shell {
+  position: relative;
+  margin: 0 var(--column) 14px;
+}
+
+.report-shell .report {
+  margin: 0;
+  padding-right: 46px;
+}
+
+.report-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--ink-20);
+  background: var(--paper);
+  color: var(--ink-60);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.report-close:hover {
+  color: var(--ink);
+  border-color: var(--ink-40);
+}
+
 /* ── Terminal drawer ─────────────────────────────────────────────────── */
 
 .drawer-scrim {
