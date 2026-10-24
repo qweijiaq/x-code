@@ -1,5 +1,9 @@
 # X-Code Desktop
 
+> The complete feature-by-feature guide, screenshots and troubleshooting steps
+> live in the [user manual](./desktop-manual.en.md). The **?** button in the
+> app's top bar opens the same manual.
+
 X-Code Desktop is the graphical front end for the same agent runtime: models,
 tools, sessions, memory, plugins, MCP servers, skills, and hooks all share
 `~/.x-code` (or `X_CODE_HOME`) with the CLI. The desktop app does not change

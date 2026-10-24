@@ -193,7 +193,8 @@ screen capture, Markdown composing, per-model context limits, a document panel
 and library, Git/project-check panels, a sandboxed shell, persisted permission
 rules, a **SkillHub / SkillsMP skill marketplace**, themes and an
 English/Chinese UI. See the [desktop guide](./docs/desktop.en.md) for the full
-tour.
+tour, or open **? → User manual** inside the app for the complete in-app
+[manual](./docs/desktop-manual.en.md).
 
 ## Key Features
 

@@ -48,6 +48,16 @@ export function SettingsIcon(): JSX.Element {
   )
 }
 
+export function HelpIcon(): JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9a2.5 2.5 0 1 1 3.6 2.3c-.8.4-1.1 1-1.1 1.7" />
+      <path d="M12 16.5h.01" />
+    </svg>
+  )
+}
+
 export function MoreIcon(): JSX.Element {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

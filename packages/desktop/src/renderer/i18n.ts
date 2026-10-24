@@ -1012,6 +1012,14 @@ export const EN: Record<string, string> = {
     'Backup exported to {{path}} ({{sessions}} sessions, {{skills}} skills)',
   '恢复完成：新增 {{imported}} 项，跳过 {{skipped}} 项（已存在的文件不会被覆盖）':
     'Restore complete: {{imported}} added, {{skipped}} skipped (existing files are never overwritten)',
+  用户手册: 'User manual',
+  功能与使用: 'Features and usage',
+  功能与使用说明: 'Features and usage guide',
+  搜索手册: 'Search the manual',
+  '共 {{count}} 章': '{{count}} chapters',
+  手册目录: 'Contents',
+  没有匹配的章节: 'No matching chapter',
+  打开用户手册: 'Open the user manual',
 }
 
 const storedLanguage = ((): Language => {

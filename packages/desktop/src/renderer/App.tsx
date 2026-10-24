@@ -58,6 +58,7 @@ import {
   CaptureIcon,
   ChevronIcon,
   DocumentIcon,
+  HelpIcon,
   MicIcon,
   MoreIcon,
   RegionIcon,
@@ -76,6 +77,7 @@ const SettingsPanel = lazy(() => import('./SettingsPanel.js').then((module) => (
 const FilePanel = lazy(() => import('./FilePanel.js').then((module) => ({ default: module.FilePanel })))
 const TerminalPanel = lazy(() => import('./TerminalPanel.js').then((module) => ({ default: module.TerminalPanel })))
 const Onboarding = lazy(() => import('./Onboarding.js').then((module) => ({ default: module.Onboarding })))
+const ManualPanel = lazy(() => import('./ManualPanel.js').then((module) => ({ default: module.ManualPanel })))
 
 const isUiSmoke = new URLSearchParams(window.location.search).has('ui-smoke')
 if (isUiSmoke) {
@@ -583,6 +585,7 @@ export function App(): React.JSX.Element {
     }
   })
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [manualOpen, setManualOpen] = useState(false)
   const [shortcutSheetOpen, setShortcutSheetOpen] = useState(false)
   const [branchOpen, setBranchOpen] = useState(false)
   const [branchView, setBranchView] = useState<BranchListView | null>(null)
@@ -3633,6 +3636,27 @@ export function App(): React.JSX.Element {
           detail: `palette=${paletteMounted} rows=${paletteRows} file=${paletteFileFound} closed=${paletteClosed} sheet=${shortcutMounted}/${shortcutClosed} find=${findMounted} count=${findCount} deepLink=${deepLink} switchOpen=${tabSwitchWhileOpen}`,
         }
 
+        document.querySelector<HTMLButtonElement>('[data-testid="manual-toggle"]')?.click()
+        const manualMounted = await waitFor(() => document.querySelector('[data-testid="manual-panel"]') !== null, 4000)
+        const manualChapters = document.querySelectorAll('[data-testid="manual-toc-item"]').length
+        Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="manual-toc-item"]'))
+          .find((item) => item.textContent?.trim() === '界面总览')
+          ?.click()
+        const manualImages = await waitFor(() => document.querySelectorAll('.manual-content img').length > 0, 3000)
+        const manualSearch = document.querySelector<HTMLInputElement>('[data-testid="manual-search"]')
+        if (manualSearch) setInputValue(manualSearch, '备份')
+        const manualFiltered = await waitFor(
+          () => document.querySelectorAll('[data-testid="manual-toc-item"]').length < manualChapters,
+          2000,
+        )
+        const manualContent = (document.querySelector('.manual-content')?.textContent ?? '').length > 100
+        document.querySelector<HTMLButtonElement>('.manual-head .btn-quiet')?.click()
+        const manualClosed = await waitFor(() => document.querySelector('[data-testid="manual-panel"]') === null, 2000)
+        checks.manual = {
+          ok: manualMounted && manualChapters > 5 && manualImages && manualFiltered && manualContent && manualClosed,
+          detail: `mounted=${manualMounted} chapters=${manualChapters} images=${manualImages} filtered=${manualFiltered} content=${manualContent} closed=${manualClosed}`,
+        }
+
         const continuityComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
         const userCountBefore = document.querySelectorAll('.message.user').length
         let continuityDetail = 'composer missing'
@@ -5930,6 +5954,7 @@ export function App(): React.JSX.Element {
       },
     },
     { name: '/diagnostics', description: t('运行诊断'), run: () => void runDiagnostics() },
+    { name: '/manual', description: t('打开用户手册'), run: () => setManualOpen(true) },
     { name: '/compact', description: t('压缩上下文'), run: () => void runCompact() },
     { name: '/context', description: t('查看上下文构成'), run: () => void requestTextReport('context:stats') },
     { name: '/usage', description: t('查看本会话用量'), run: () => void requestTextReport('usage:summary') },
@@ -6215,6 +6240,13 @@ export function App(): React.JSX.Element {
         setReport(t('诊断包已导出：{{path}}', { path: (response.result as DiagnosticsExportResult).path }))
       },
     },
+    {
+      id: 'manual',
+      label: t('用户手册'),
+      hint: t('功能与使用说明'),
+      keywords: ['manual', 'help', 'guide', '手册', '帮助', '说明'],
+      run: () => setManualOpen(true),
+    },
     { id: 'shortcuts', label: t('键盘快捷键'), hint: '?', run: () => setShortcutSheetOpen(true) },
   ]
 
@@ -6226,7 +6258,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     if (paletteCommands.length === 0) return
     slashPaletteRef.current?.querySelector<HTMLElement>('.slash-item.active')?.scrollIntoView({ block: 'nearest' })
-  }, [paletteIndex, input])
+  }, [paletteIndex, input, paletteCommands.length])
 
   const runSlashCommand = (command: SlashCommand): void => {
     setInput('')
@@ -6851,6 +6883,20 @@ export function App(): React.JSX.Element {
             </button>
             <button
               className="icon-btn"
+              data-testid="manual-toggle"
+              title={t('用户手册')}
+              aria-label={t('用户手册')}
+              onClick={() => {
+                setModelMenuOpen(false)
+                setTaskModeMenuOpen(false)
+                setToolsMenuOpen(false)
+                setManualOpen(true)
+              }}
+            >
+              <HelpIcon />
+            </button>
+            <button
+              className="icon-btn"
               data-testid="settings-toggle"
               title={t('设置')}
               aria-label={t('设置')}
@@ -6948,6 +6994,17 @@ export function App(): React.JSX.Element {
                       }}
                     >
                       <span className="tools-item-label">{t('诊断')}</span>
+                    </button>
+                    <button
+                      className="tools-item"
+                      data-testid="tools-manual"
+                      onClick={() => {
+                        setToolsMenuOpen(false)
+                        setManualOpen(true)
+                      }}
+                    >
+                      <span className="tools-item-label">{t('用户手册')}</span>
+                      <span className="tools-item-meta">{t('功能与使用')}</span>
                     </button>
                     <div className="tools-separator" />
                     <button className="tools-item" data-testid="theme-toggle" onClick={cycleTheme}>
@@ -7882,6 +7939,11 @@ export function App(): React.JSX.Element {
         </Suspense>
       ) : null}
       {backgroundOpen ? <BackgroundPanel onClose={() => setBackgroundOpen(false)} /> : null}
+      {manualOpen ? (
+        <Suspense fallback={null}>
+          <ManualPanel onClose={() => setManualOpen(false)} />
+        </Suspense>
+      ) : null}
       {rewindOpen ? (
         <RewindPanel
           onClose={() => setRewindOpen(false)}

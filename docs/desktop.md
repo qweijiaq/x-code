@@ -1,5 +1,8 @@
 # X-Code Desktop
 
+> 完整的分功能说明、截图和排障步骤见[用户手册](./desktop-manual.md)（应用内顶栏
+> **?** 也可直接打开）。
+
 X-Code Desktop 是同一个 agent runtime 的图形界面：模型、工具、会话、记忆、
 插件、MCP、技能、Hooks 与 CLI 完全共享 `~/.x-code`（或 `X_CODE_HOME`）。桌面端
 不改变 agent 语义，只是把终端里的交互变成窗口、表单和可点击的卡片。
