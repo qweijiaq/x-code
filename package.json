@@ -24,7 +24,8 @@
     "ci": "pnpm typecheck && pnpm lint:check && pnpm format:check && pnpm test",
     "release": "node scripts/release.mjs",
     "prepare": "husky",
-    "release:desktop": "node scripts/release-desktop.mjs"
+    "release:desktop": "node scripts/release-desktop.mjs",
+    "verify:desktop-release": "node scripts/verify-desktop-release.mjs"
   },
   "devDependencies": {
     "@clack/prompts": "^0.10.0",

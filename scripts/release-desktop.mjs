@@ -24,7 +24,13 @@ const args = process.argv.slice(2)
 const archIndex = args.indexOf('--arch')
 const arch = archIndex >= 0 ? args[archIndex + 1] : process.arch === 'arm64' ? 'arm64' : 'x64'
 const skipBuild = args.includes('--skip-build')
-const notarize = Boolean(process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID)
+const notarizeWithAppleId = Boolean(
+  process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID,
+)
+const notarizeWithApiKey = Boolean(
+  process.env.APPLE_API_KEY && process.env.APPLE_API_KEY_ID && process.env.APPLE_API_ISSUER,
+)
+const notarize = notarizeWithAppleId || notarizeWithApiKey
 const signing = Boolean(process.env.CSC_LINK || process.env.CSC_NAME)
 
 function run(command, commandArgs, options = {}) {
@@ -67,7 +73,7 @@ run('pnpm', builderArgs, {
   env: { CSC_IDENTITY_AUTO_DISCOVERY: signing ? 'true' : 'false' },
 })
 
-const artifactPattern = /^X-Code-.*\.(dmg|zip|blockmap)$|^latest-mac\.yml$/
+const artifactPattern = /^X-Code-.*\.(dmg|zip|blockmap)$/
 const files = fs.existsSync(releaseDir)
   ? fs
       .readdirSync(releaseDir)
@@ -88,6 +94,35 @@ const artifacts = files.map((file) => {
     size: data.length,
     sha256: createHash('sha256').update(data).digest('hex'),
   }
+})
+
+// electron-builder only writes latest-mac.yml when publishing; generate the
+// same feed shape itself so manual and automatic update checks can use it.
+const zipArtifact = artifacts.find((entry) => entry.file.endsWith('.zip') && !entry.file.endsWith('.blockmap'))
+if (!zipArtifact) {
+  console.error('No zip artifact found; latest-mac.yml cannot be generated.')
+  process.exit(1)
+}
+const zipPath = path.join(releaseDir, zipArtifact.file)
+const zipSha512 = createHash('sha512').update(fs.readFileSync(zipPath)).digest('base64')
+const releaseDate = new Date().toISOString()
+const feed = [
+  `version: ${pkg.version}`,
+  'files:',
+  `  - url: ${zipArtifact.file}`,
+  `    sha512: ${zipSha512}`,
+  `    size: ${zipArtifact.size}`,
+  `path: ${zipArtifact.file}`,
+  `sha512: ${zipSha512}`,
+  `releaseDate: '${releaseDate}'`,
+  '',
+].join('\n')
+fs.writeFileSync(path.join(releaseDir, 'latest-mac.yml'), feed)
+const feedData = fs.readFileSync(path.join(releaseDir, 'latest-mac.yml'))
+artifacts.push({
+  file: 'latest-mac.yml',
+  size: feedData.length,
+  sha256: createHash('sha256').update(feedData).digest('hex'),
 })
 
 const sums = artifacts.map((entry) => `${entry.sha256}  ${entry.file}`).join('\n') + '\n'

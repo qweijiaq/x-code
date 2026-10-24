@@ -48,13 +48,40 @@ Signing is automatic when the standard electron-builder variables are set:
 | `APPLE_ID`                    | Apple ID for notarization                 |
 | `APPLE_APP_SPECIFIC_PASSWORD` | app-specific password                     |
 | `APPLE_TEAM_ID`               | Apple developer team id                   |
+| `APPLE_API_KEY`               | App Store Connect API key (`.p8`)         |
+| `APPLE_API_KEY_ID`            | API key id                                |
+| `APPLE_API_ISSUER`            | API key issuer id                         |
 
-When all three Apple variables are present, `release-desktop.mjs` passes
+Use either the `APPLE_ID` trio or the `APPLE_API_KEY` trio. When all three
+variables of one trio are present, `release-desktop.mjs` passes
 `-c.mac.notarize=true`; otherwise the build is intentionally unsigned.
 
 The entitlements file is `packages/desktop/build/entitlements.mac.plist`
 (JIT + unsigned executable memory for V8, network client/server, user-selected
 files).
+
+## Verification
+
+```bash
+pnpm verify:desktop-release                    # unsigned local build
+pnpm verify:desktop-release -- --ui            # also run packaged UI smoke
+pnpm verify:desktop-release -- --require-signed # release gate: unsigned is a failure
+```
+
+The verifier checks package/`RELEASE.json` version and commit, a clean working
+tree, every artifact's size and SHA-256, `SHA256SUMS`, the generated
+`latest-mac.yml` (version, file, size, SHA-512), dmg/zip integrity, code
+signing, Gatekeeper, notarization ticket, and launches the packaged app with
+`--smoke-test` (add `--ui` for `--ui-smoke`). It prints
+`PASSED` / `FAILED` / `NOT EXECUTED` for each item. `--allow-dirty` permits
+uncommitted files during local testing; `--e2e` runs the real-LLM suite and
+therefore spends provider tokens.
+
+Unsigned builds report signing, Gatekeeper and notarization as
+`NOT EXECUTED`, with a final `Production signed/notarized release: NOT READY`.
+A production sign-off needs `--require-signed`, a completed notarization
+ticket, and a real-LLM E2E run. The Windows/Linux installers still require
+manual acceptance on those platforms.
 
 ## Update feed
 
@@ -71,16 +98,20 @@ can only ask the main process to open paths that were downloaded and verified
 in this process.
 
 Automatic download-and-install is still not enabled: it requires a signed app,
-a stable feed, and `electron-updater` wiring. The manual check and verified
-download are dependency-free and work with unsigned local builds.
+a stable feed, and `electron-updater` wiring. The release script now generates
+`latest-mac.yml` (zip URL, size, SHA-512) next to the artifacts so a future
+`electron-updater` feed can use the same directory. The manual check and
+verified download are dependency-free and work with unsigned local builds.
 
 ## CI
 
 `.github/workflows/desktop-release.yml` builds on tag pushes and manual
 dispatch:
 
-- **macOS arm64** — typecheck, build, UI smoke, then dmg + zip, signing and
-  notarization when the secrets are present.
+- **macOS arm64** — typecheck, build, UI smoke, dmg + zip, signing and
+  notarization when the secrets are present, then
+  `verify:desktop-release` (hashes, feed, package integrity and packaged-app
+  headless smoke).
 - **Linux x64** — typecheck, build, then AppImage + deb.
 - **Windows x64** — build, then an NSIS installer.
 
