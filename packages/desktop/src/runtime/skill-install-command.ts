@@ -5,6 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { importSkillIntoUserDir } from './skill-import.js'
+import { systemProxyEnv } from './system-proxy.js'
 
 const execFileAsync = promisify(execFile)
 const MAX_SKILLS = 20
@@ -190,7 +191,7 @@ async function cloneRepo(source: Extract<SkillSource, { kind: 'git' }>): Promise
     await execFileAsync('git', args, {
       timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo' },
+      env: { ...process.env, ...systemProxyEnv(), GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo' },
     })
     return dir
   } catch (error) {

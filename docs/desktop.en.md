@@ -117,6 +117,26 @@ not overwrite the global recent-project entry.
 - The storage panel reports session, attachment, library and voice-model usage
   and offers cleanup.
 
+## Skill marketplace
+
+**Settings → Skill marketplace** embeds two catalogs and installs the same way
+as the plugin marketplace: files land in `~/.x-code/skills/<name>` and apply
+from the next turn after the skill registry reloads.
+
+- **SkillHub** (China-first): search and download use `api.skillhub.cn` and
+  need no login. Installs download a zip, validate paths, file count, extracted
+  size and symlinks, require a `SKILL.md`, then copy it into the user skill
+  directory. Searches are cached for five minutes.
+- **SkillsMP**: a read-only community catalog (3M+ skills sourced from GitHub).
+  Anonymous search has a small hourly allowance; set `SKILLSMP_API_KEY` to use
+  an account allowance. Installs shallow-clone the `github.com` repository
+  linked by the result. On macOS the system proxy is detected and passed to
+  `git`; elsewhere set `HTTPS_PROXY` / `HTTP_PROXY`.
+
+Third-party skills become model context, so check that a source is trustworthy
+before installing. The marketplace only searches and copies files; it does not
+execute any script from a skill.
+
 ## Updates
 
 Paste the HTTPS URL of `RELEASE.json` from a release directory into **Settings →

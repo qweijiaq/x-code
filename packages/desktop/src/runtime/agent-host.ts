@@ -120,6 +120,8 @@ import type {
   SettingsActionResult,
   SettingsSnapshot,
   SkillImportResult,
+  SkillMarketListView,
+  SkillMarketProvider,
   SkillSettingsView,
   StorageUsageView,
   TestConnectionResult,
@@ -178,6 +180,8 @@ import {
 import { listSessionItems, loadSessionView, searchSessionItems, toSessionMessages, usageView } from './sessions.js'
 import { importSkillIntoUserDir } from './skill-import.js'
 import { installSkillsFromCommand, isPluginInstallCommand } from './skill-install-command.js'
+import type { CopiedSkill } from './skill-install-command.js'
+import { assertGitHubSkillUrl, installSkillHubSkill, searchSkillMarket } from './skill-market.js'
 import { DEFAULT_TASK_MODE, isTaskMode, taskModeInstruction } from './task-modes.js'
 import type { TaskMode } from './task-modes.js'
 
@@ -2435,6 +2439,42 @@ export class AgentHost {
     }
 
     const copied = await installSkillsFromCommand(command)
+    return this.finishSkillInstall(copied, before)
+  }
+
+  async searchSkillMarket(provider: SkillMarketProvider, query: string, limit = 20): Promise<SkillMarketListView> {
+    this.assertIdle()
+    const registry = this.requireBootstrap().skillRegistry
+    const installed = new Set((registry?.listAll() ?? []).map((skill) => skill.name.toLowerCase()))
+    return searchSkillMarket(provider, query, limit, installed)
+  }
+
+  async installSkillMarket(
+    provider: SkillMarketProvider,
+    id: string,
+    version?: string,
+    sourceUrl?: string,
+  ): Promise<SkillImportResult> {
+    this.assertIdle()
+    const before = new Set(
+      this.requireBootstrap()
+        .skillRegistry?.listAll()
+        .map((skill) => skill.name) ?? [],
+    )
+    let copied: CopiedSkill[]
+    if (provider === 'skillhub') {
+      copied = [await installSkillHubSkill(id, version)]
+    } else if (provider === 'skillsmp') {
+      if (!sourceUrl) throw new Error('缺少技能来源地址')
+      copied = await installSkillsFromCommand(assertGitHubSkillUrl(sourceUrl))
+    } else {
+      throw new Error('未知的技能市场')
+    }
+    return this.finishSkillInstall(copied, before)
+  }
+
+  private async finishSkillInstall(copied: CopiedSkill[], before: Set<string>): Promise<SkillImportResult> {
+    const bootstrap = this.requireBootstrap()
     const registry = bootstrap.skillRegistry
     if (registry) await reloadSkillRegistry(registry, { extraDirs: bootstrap.skillExtraDirs })
 

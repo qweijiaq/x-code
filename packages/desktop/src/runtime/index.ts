@@ -589,6 +589,25 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.installSkillCommand(request.params.command))
       }
+      case 'skill-market:search': {
+        await ensureInitialized()
+        return ok(
+          request.id,
+          await host.searchSkillMarket(request.params.provider, request.params.query, request.params.limit),
+        )
+      }
+      case 'skill-market:install': {
+        await ensureInitialized()
+        return ok(
+          request.id,
+          await host.installSkillMarket(
+            request.params.provider,
+            request.params.id,
+            request.params.version,
+            request.params.sourceUrl,
+          ),
+        )
+      }
       case 'plugins:import': {
         await ensureInitialized()
         return ok(request.id, await host.installPluginPath(request.params.path))

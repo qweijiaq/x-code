@@ -19,6 +19,9 @@ import type {
   SettingsActionResult,
   SettingsSnapshot,
   SkillImportResult,
+  SkillMarketEntryView,
+  SkillMarketListView,
+  SkillMarketProvider,
   TestConnectionResult,
   UpdateCheckResult,
   UpdateDownloadView,
@@ -38,6 +41,7 @@ type Tab =
   | 'api'
   | 'project'
   | 'skills'
+  | 'skillmarket'
   | 'commands'
   | 'hooks'
   | 'memory'
@@ -53,6 +57,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'api', label: '模型与密钥' },
   { id: 'project', label: '项目' },
   { id: 'skills', label: '技能' },
+  { id: 'skillmarket', label: '技能市场' },
   { id: 'commands', label: '命令' },
   { id: 'hooks', label: 'Hooks' },
   { id: 'memory', label: '记忆' },
@@ -163,6 +168,10 @@ export function SettingsPanel({
   const [updateBusy, setUpdateBusy] = useState(false)
   const [installCommand, setInstallCommand] = useState('')
   const [skillCommand, setSkillCommand] = useState('')
+  const [skillMarketProvider, setSkillMarketProvider] = useState<SkillMarketProvider>('skillhub')
+  const [skillMarketQuery, setSkillMarketQuery] = useState('')
+  const [skillMarketResults, setSkillMarketResults] = useState<SkillMarketListView | null>(null)
+  const [skillMarketBusy, setSkillMarketBusy] = useState(false)
   const [market, setMarket] = useState<MarketplaceListView | null>(null)
   const [marketQuery, setMarketQuery] = useState('')
   const [marketName, setMarketName] = useState('')
@@ -565,6 +574,66 @@ export function SettingsPanel({
       setNotice(t('已导入技能：{{names}}', { names: result.added.join(language === 'zh' ? '、' : ', ') }))
     }
     setSkillCommand('')
+  }
+
+  const searchSkillMarket = async (): Promise<void> => {
+    const query = skillMarketQuery.trim()
+    if (!query) {
+      setError(t('请输入搜索关键词'))
+      return
+    }
+    setSkillMarketBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const response = await request('skill-market:search', {
+        provider: skillMarketProvider,
+        query,
+        limit: 20,
+      })
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      setSkillMarketResults(response.result as SkillMarketListView)
+    } finally {
+      setSkillMarketBusy(false)
+    }
+  }
+
+  const installMarketSkill = async (entry: SkillMarketEntryView): Promise<void> => {
+    setSkillMarketBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const response = await request('skill-market:install', {
+        provider: entry.provider,
+        id: entry.id,
+        version: entry.version,
+        sourceUrl: entry.sourceUrl,
+      })
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      const result = response.result as SkillImportResult
+      onSettings(result.settings)
+      setSkillMarketResults((previous) =>
+        previous
+          ? {
+              ...previous,
+              entries: previous.entries.map((item) => (item.id === entry.id ? { ...item, installed: true } : item)),
+            }
+          : previous,
+      )
+      setNotice(
+        t('已从技能市场安装：{{names}}', {
+          names: result.added.join(language === 'zh' ? '、' : ', '),
+        }),
+      )
+    } finally {
+      setSkillMarketBusy(false)
+    }
   }
 
   const loadMarketplace = async (refresh: boolean): Promise<void> => {
@@ -1218,6 +1287,117 @@ export function SettingsPanel({
                 </div>
               ))}
             </>
+          ) : null}
+
+          {tab === 'skillmarket' ? (
+            <div data-testid="skill-market">
+              <div className="settings-section-title">{t('技能市场')}</div>
+              <p className="settings-note">
+                {t(
+                  '从 SkillHub 或 SkillsMP 搜索并安装 Agent Skills。技能写入 ~/.x-code/skills，下一轮对话生效；安装前请自行确认来源可信。',
+                )}
+              </p>
+              <div className="settings-actions">
+                <div className="segmented">
+                  <button
+                    className={`segment ${skillMarketProvider === 'skillhub' ? 'active' : ''}`}
+                    data-testid="skill-market-skillhub"
+                    onClick={() => {
+                      setSkillMarketProvider('skillhub')
+                      setSkillMarketResults(null)
+                    }}
+                  >
+                    SkillHub
+                  </button>
+                  <button
+                    className={`segment ${skillMarketProvider === 'skillsmp' ? 'active' : ''}`}
+                    data-testid="skill-market-skillsmp"
+                    onClick={() => {
+                      setSkillMarketProvider('skillsmp')
+                      setSkillMarketResults(null)
+                    }}
+                  >
+                    SkillsMP
+                  </button>
+                </div>
+                <input
+                  className="settings-input"
+                  data-testid="skill-market-query"
+                  placeholder={t('搜索技能，如 pdf、playwright')}
+                  value={skillMarketQuery}
+                  onChange={(event) => setSkillMarketQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      void searchSkillMarket()
+                    }
+                  }}
+                />
+                <button
+                  className="btn solid"
+                  data-testid="skill-market-search"
+                  disabled={skillMarketBusy || !skillMarketQuery.trim()}
+                  onClick={() => void searchSkillMarket()}
+                >
+                  {skillMarketBusy ? t('搜索中…') : t('搜索')}
+                </button>
+              </div>
+              <p className="settings-hint">
+                {skillMarketProvider === 'skillhub'
+                  ? t('SkillHub 为国内优先源，搜索和下载无需登录；安装包会校验 zip 结构后再写入用户技能目录。')
+                  : t(
+                      'SkillsMP 是只读社区目录，匿名搜索有每小时额度；设置 SKILLSMP_API_KEY 可使用账号额度。技能从结果指向的 GitHub 仓库安装。',
+                    )}
+              </p>
+              {skillMarketResults ? (
+                skillMarketResults.entries.length === 0 ? (
+                  <div className="settings-empty" data-testid="skill-market-empty">
+                    {t('没有匹配的技能')}
+                  </div>
+                ) : (
+                  <div data-testid="skill-market-results">
+                    {skillMarketResults.entries.map((entry) => (
+                      <div className="setting-row" key={entry.id} data-testid="skill-market-entry">
+                        <div className="setting-main">
+                          <div className="setting-name">
+                            {entry.name}
+                            <span className="settings-badge">
+                              {entry.provider === 'skillhub' ? 'SkillHub' : 'SkillsMP'}
+                            </span>
+                            {entry.version ? <span className="settings-badge">v{entry.version}</span> : null}
+                            {entry.installed ? <span className="settings-badge">{t('已安装')}</span> : null}
+                            {entry.requiresKey ? <span className="settings-badge">{t('需要 API Key')}</span> : null}
+                          </div>
+                          <div className="setting-desc">
+                            {language === 'zh' ? entry.descriptionZh || entry.description : entry.description}
+                          </div>
+                          <div className="setting-meta">
+                            {[entry.author, entry.category].filter(Boolean).join(' · ')}
+                            {entry.stars !== undefined ? ` · ★ ${entry.stars.toLocaleString()}` : ''}
+                            {entry.downloads !== undefined ? ` · ${entry.downloads.toLocaleString()} ${t('下载')}` : ''}
+                          </div>
+                        </div>
+                        <div className="setting-actions-col">
+                          {entry.homepage ? (
+                            <button className="btn btn-quiet" onClick={() => void openExternal(entry.homepage!)}>
+                              {t('查看来源')}
+                            </button>
+                          ) : null}
+                          <button
+                            className="btn solid"
+                            data-testid="skill-market-install"
+                            disabled={skillMarketBusy || entry.installed}
+                            onClick={() => void installMarketSkill(entry)}
+                          >
+                            {entry.installed ? t('已安装') : t('安装')}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : null}
+            </div>
           ) : null}
 
           {tab === 'project' ? (

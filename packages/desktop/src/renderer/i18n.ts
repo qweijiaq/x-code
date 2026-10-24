@@ -932,6 +932,21 @@ export const EN: Record<string, string> = {
   自动视觉检查: 'Automatic visual checks',
   '根代理在显著的界面改动后，可对 localhost 截取一次临时截图。与浏览器子代理独立开关。':
     'The root agent can take one temporary localhost screenshot after a significant visual change. Independent from the browser sub-agent.',
+  技能市场: 'Skill marketplace',
+  '从 SkillHub 或 SkillsMP 搜索并安装 Agent Skills。技能写入 ~/.x-code/skills，下一轮对话生效；安装前请自行确认来源可信。':
+    'Search and install Agent Skills from SkillHub or SkillsMP. Skills are written to ~/.x-code/skills and apply from the next turn; check that a source is trustworthy before installing.',
+  '搜索技能，如 pdf、playwright': 'Search skills, e.g. pdf or playwright',
+  '搜索中…': 'Searching…',
+  'SkillHub 为国内优先源，搜索和下载无需登录；安装包会校验 zip 结构后再写入用户技能目录。':
+    'SkillHub is the China-first catalog; searching and downloading need no login. The zip is validated before it is copied into your skill directory.',
+  'SkillsMP 是只读社区目录，匿名搜索有每小时额度；设置 SKILLSMP_API_KEY 可使用账号额度。技能从结果指向的 GitHub 仓库安装。':
+    'SkillsMP is a read-only community catalog with an hourly anonymous-search allowance; set SKILLSMP_API_KEY to use an account allowance. Skills install from the GitHub repository linked in each result.',
+  没有匹配的技能: 'No matching skills',
+  '需要 API Key': 'API key required',
+  下载: 'downloads',
+  查看来源: 'View source',
+  '已从技能市场安装：{{names}}': 'Installed from the skill marketplace: {{names}}',
+  请输入搜索关键词: 'Enter a search keyword',
 }
 
 const storedLanguage = ((): Language => {

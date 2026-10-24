@@ -190,7 +190,8 @@ pnpm release:desktop --arch arm64   # macOS dmg + zip（默认未签名）
 
 提供多窗口会话标签、分支 **worktree 窗口**、图片粘贴与区域截图、Markdown 输入、
 按模型的上下文上限、文档面板与文档库、Git/项目检查面板、沙箱 shell、持久化权限
-规则、主题与中英文界面。完整说明见[桌面端指南](./docs/desktop.md)。
+规则、**SkillHub / SkillsMP 技能市场**、主题与中英文界面。完整说明见
+[桌面端指南](./docs/desktop.md)。
 
 ## 核心功能
 

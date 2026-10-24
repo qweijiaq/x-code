@@ -1827,6 +1827,20 @@ export function App(): React.JSX.Element {
           ok: skillCommandMounted,
           detail: skillCommandMounted ? 'skill command field mounted' : 'skill command field missing',
         }
+        clickSettingsTab('技能市场')
+        const skillMarketMounted = await waitFor(
+          () => document.querySelector('[data-testid="skill-market-query"]') !== null,
+          2000,
+        )
+        const skillMarketProviders =
+          document.querySelector('[data-testid="skill-market-skillhub"]') !== null &&
+          document.querySelector('[data-testid="skill-market-skillsmp"]') !== null
+        const skillMarketSearchDisabled =
+          document.querySelector<HTMLButtonElement>('[data-testid="skill-market-search"]')?.disabled === true
+        checks.skillMarketTab = {
+          ok: skillMarketMounted && skillMarketProviders && skillMarketSearchDisabled,
+          detail: `tab=${skillMarketMounted} providers=${skillMarketProviders} emptyQueryDisabled=${skillMarketSearchDisabled}`,
+        }
         clickSettingsTab('插件市场')
         const marketMounted = await waitFor(() => document.querySelector('.market-form') !== null, 3000)
         checks.marketplaceTab = {

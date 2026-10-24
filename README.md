@@ -191,8 +191,9 @@ pnpm release:desktop --arch arm64   # macOS dmg + zip (unsigned by default)
 It adds multi-window session tabs, branch **worktree windows**, image paste and
 screen capture, Markdown composing, per-model context limits, a document panel
 and library, Git/project-check panels, a sandboxed shell, persisted permission
-rules, themes and an English/Chinese UI. See the
-[desktop guide](./docs/desktop.en.md) for the full tour.
+rules, a **SkillHub / SkillsMP skill marketplace**, themes and an
+English/Chinese UI. See the [desktop guide](./docs/desktop.en.md) for the full
+tour.
 
 ## Key Features
 

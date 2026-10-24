@@ -525,6 +525,34 @@ export interface SkillImportResult {
   plugin?: { pluginId: string; version: string }
 }
 
+export type SkillMarketProvider = 'skillhub' | 'skillsmp'
+
+export interface SkillMarketEntryView {
+  /** Provider-specific install id (`@namespace/slug` or SkillsMP skill id). */
+  id: string
+  provider: SkillMarketProvider
+  name: string
+  description: string
+  /** Chinese description when the catalog provides one. */
+  descriptionZh?: string
+  author?: string
+  version?: string
+  stars?: number
+  downloads?: number
+  category?: string
+  homepage?: string
+  /** GitHub source used by the SkillsMP installer. */
+  sourceUrl?: string
+  requiresKey?: boolean
+  installed: boolean
+}
+
+export interface SkillMarketListView {
+  provider: SkillMarketProvider
+  entries: SkillMarketEntryView[]
+  total?: number
+}
+
 export interface PluginInstallResult {
   pluginId: string
   version: string
@@ -922,6 +950,14 @@ export interface RequestMap {
   }
   'skills:import': { params: { path: string }; result: SkillImportResult }
   'skills:install-command': { params: { command: string }; result: SkillImportResult }
+  'skill-market:search': {
+    params: { provider: SkillMarketProvider; query: string; limit?: number }
+    result: SkillMarketListView
+  }
+  'skill-market:install': {
+    params: { provider: SkillMarketProvider; id: string; version?: string; sourceUrl?: string }
+    result: SkillImportResult
+  }
   'plugins:import': { params: { path: string }; result: PluginInstallResult }
   'plugins:install-command': {
     params: { command: string; userConfig?: UserConfigValues }
