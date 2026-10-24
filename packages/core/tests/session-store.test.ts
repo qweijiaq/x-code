@@ -112,6 +112,50 @@ describe('session-store: round-trip', () => {
     expect(loaded!.tokenUsage.totalTokens).toBe(120)
   })
 
+  it('round-trips image attachment parts without failing transcript integrity', async () => {
+    const state = createLoopState()
+    state.sessionId = '20260101-120000-001'
+    state.taskSlug = 'image-attachment'
+    state.messages = [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Inspect this image' },
+          {
+            type: 'file',
+            data: { type: 'data', data: 'aGVsbG8=' },
+            mediaType: 'image/png',
+            filename: 'shot.png',
+          },
+        ],
+      },
+      { role: 'assistant', content: 'It is an image.' },
+    ] as typeof state.messages
+
+    await appendHeader(state, 'openai:test', 'Inspect this image')
+    await flushPendingMessages(state)
+
+    const loaded = await loadSession(getSessionFilePath(state))
+    expect(loaded).not.toBeNull()
+    expect(loaded!.transcriptIntegrity).toBe('clean')
+    expect(loaded!.messages).toHaveLength(2)
+    expect(loaded!.messages[0]).toMatchObject({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Inspect this image' },
+        {
+          type: 'file',
+          data: { type: 'data', data: 'aGVsbG8=' },
+          mediaType: 'image/png',
+          filename: 'shot.png',
+        },
+      ],
+    })
+
+    const forked = await forkSession(captureSessionForkSnapshot(state), 'openai:test', { cwd: tempDir })
+    expect(forked.messageCount).toBe(2)
+  })
+
   it('falls back to exclusive creation when the filesystem does not support hard links', async () => {
     const source = createLoopState()
     const competitor = createLoopState()

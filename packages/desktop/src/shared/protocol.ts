@@ -561,10 +561,20 @@ export interface SessionSearchResult {
   mtime: number
 }
 
+export interface SessionAttachmentView {
+  name: string
+  mime?: string
+  /** Original local path, when the session retained it. */
+  path?: string
+  /** Present for raster images small enough to embed in the transcript. */
+  dataUrl?: string
+}
+
 export interface SessionMessage {
   id: string
   role: 'user' | 'assistant' | 'tool' | 'system' | 'error'
   text: string
+  attachmentViews?: SessionAttachmentView[]
   toolName?: string
   toolInput?: Record<string, unknown>
   toolStatus?: 'pending' | 'running' | 'completed' | 'denied' | 'error'

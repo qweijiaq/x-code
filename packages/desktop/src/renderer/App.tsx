@@ -23,6 +23,7 @@ import type {
   RewindResultView,
   RuntimeEvent,
   RuntimeRequest,
+  SessionAttachmentView,
   SessionListItem,
   SessionSearchResult,
   SettingsActionResult,
@@ -186,6 +187,7 @@ interface Entry {
   reverted?: boolean
   subagent?: SubAgentView
   attachments?: string[]
+  attachmentViews?: SessionAttachmentView[]
 }
 
 type TurnRenderItem =
@@ -2611,6 +2613,9 @@ export function App(): React.JSX.Element {
           detail: `menu=${themeMenu} themes=${themes.join('>')} en=${switchedToEnglish} zh=${switchedBack}`,
         }
 
+        document.querySelector<HTMLButtonElement>('.sidebar-sessions-section .sidebar-add')?.click()
+        await waitFor(() => document.querySelector('.sidebar-session-placeholder') !== null, 2_000)
+
         const pngBase64 =
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
         const pasted = await window.xcode.request({
@@ -2687,9 +2692,52 @@ export function App(): React.JSX.Element {
             ok: imageUserSent && messageImage,
             detail: `sent=${imageUserSent} image=${messageImage}`,
           }
+          await new Promise((resolve) => setTimeout(resolve, 300))
+          const activeImageId = document.querySelector('.tab-item.active')?.getAttribute('data-session-id') ?? ''
+          const imageSessionList = await window.xcode.request({
+            id: crypto.randomUUID(),
+            method: 'session:list',
+            params: {},
+          })
+          const imageItems = imageSessionList.ok ? (imageSessionList.result as SessionListItem[]) : []
+          const imageItem = imageItems.find((item) => item.sessionId === activeImageId)
+          let restoredImage = false
+          let cleanRestoredText = false
+          let restoreDetail = imageItem ? 'session missing' : 'active session missing'
+          if (imageItem) {
+            const loaded = await window.xcode.request({
+              id: crypto.randomUUID(),
+              method: 'session:load',
+              params: { filePath: imageItem.filePath },
+            })
+            if (loaded.ok) {
+              const view = loaded.result as LoadedSessionView
+              const restoredUser = view.messages.find(
+                (message) => message.role === 'user' && (message.attachmentViews?.length ?? 0) > 0,
+              )
+              restoredImage =
+                restoredUser?.attachmentViews?.some(
+                  (attachment) =>
+                    attachment.dataUrl?.startsWith('data:image/') === true ||
+                    (attachment.path ? isImageAttachment(attachment.path) : false),
+                ) ?? false
+              cleanRestoredText =
+                Boolean(restoredUser) &&
+                !(restoredUser?.text.includes('@"/') ?? false) &&
+                !(restoredUser?.text.includes('[Image ') ?? false)
+              restoreDetail = `views=${restoredUser?.attachmentViews?.length ?? 0} image=${restoredImage} clean=${cleanRestoredText}`
+            } else {
+              restoreDetail = loaded.error.message
+            }
+          }
+          checks.imageSessionRestore = {
+            ok: restoredImage && cleanRestoredText,
+            detail: restoreDetail,
+          }
         } else {
           checks.imageAttachmentUi = { ok: false, detail: 'composer missing' }
           checks.imageMessage = { ok: false, detail: 'composer missing' }
+          checks.imageSessionRestore = { ok: false, detail: 'composer missing' }
         }
 
         const background = await window.xcode.request({
@@ -6318,6 +6366,40 @@ export function App(): React.JSX.Element {
                         </span>
                       ),
                     )}
+                  </div>
+                ) : null}
+                {entry.attachmentViews?.length ? (
+                  <div className="message-attachments">
+                    {entry.attachmentViews.map((attachment, index) => {
+                      const dataUrl = attachment.dataUrl
+                      return dataUrl ? (
+                        <button
+                          key={`${attachment.name}-${index}`}
+                          type="button"
+                          className="message-attachment"
+                          title={attachment.name}
+                          onClick={() => setImageLightbox({ src: dataUrl, name: attachment.name })}
+                        >
+                          <img src={dataUrl} alt={attachment.name} loading="lazy" />
+                          <span>{attachment.name}</span>
+                        </button>
+                      ) : attachment.path && isImageAttachment(attachment.path) ? (
+                        <AttachmentImage
+                          key={`${attachment.name}-${index}`}
+                          file={attachment.path}
+                          variant="message"
+                          onOpen={(src, name) => setImageLightbox({ src, name })}
+                        />
+                      ) : (
+                        <span
+                          key={`${attachment.name}-${index}`}
+                          className="message-attachment-file"
+                          title={attachment.name}
+                        >
+                          {attachment.name}
+                        </span>
+                      )
+                    })}
                   </div>
                 ) : null}
                 {entry.text ? (

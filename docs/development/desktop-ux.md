@@ -118,7 +118,10 @@ in Settings → Hooks; user-level hooks always run.
   English because the code or tool output is English.
 - `Cmd+V` pastes screenshots, drag & drop adds files. Image attachments show a
   thumbnail in the composer and in the sent user message; click either thumbnail
-  to open a full-size preview. Non-image attachments show a file chip.
+  to open a full-size preview. Non-image attachments show a file chip. Reopening
+  a session restores image/file attachment cards from the stored model message
+  (or from the original path when the model used OCR); internal attachment tags,
+  paths, and OCR notes stay hidden.
 - The camera button offers **框选区域** (native macOS region selection; the app
   window stays visible so you can capture part of the project) and **整个屏幕**.
   macOS asks for Screen Recording permission the first time.

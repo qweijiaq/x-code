@@ -5,6 +5,7 @@ import type { LoadedSession, ModelMessage, TokenUsage } from '@x-code-cli/core'
 
 import type {
   LoadedSessionView,
+  SessionAttachmentView,
   SessionListItem,
   SessionMessage,
   SessionSearchResult,
@@ -14,10 +15,161 @@ import type {
 interface ContentPartLike {
   type?: string
   text?: string
+  mediaType?: string
+  filename?: string
+  data?: unknown
+  image?: unknown
   toolCallId?: string
   toolName?: string
   input?: unknown
   output?: unknown
+}
+
+const MAX_RESTORED_IMAGE_BASE64 = 8 * 1024 * 1024
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+}
+
+function decodeMediaAttribute(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
+
+function decodeRefPath(value: string): string {
+  return value.replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+}
+
+function basenameOf(filePath: string): string {
+  return filePath.split(/[\\/]/).pop() ?? filePath
+}
+
+function imageMimeFromPath(filePath: string): string | undefined {
+  const extension = filePath.split('.').pop()?.toLowerCase() ?? ''
+  return IMAGE_MIME_BY_EXTENSION[extension]
+}
+
+function mediaTagPath(text: string): string | undefined {
+  if (!text.trimStart().startsWith('<<')) return undefined
+  const match = /\bpath="([^"]*)"/.exec(text)
+  return match ? decodeMediaAttribute(match[1]!) : undefined
+}
+
+/** Attachment paths the desktop server appended to the prompt as `@"path"`. */
+function attachmentRefPaths(content: ModelMessage['content']): string[] {
+  const parts = Array.isArray(content) ? (content as ContentPartLike[]) : []
+  const paths = new Set<string>()
+  for (const raw of parts) {
+    if (raw?.type !== 'text' || typeof raw.text !== 'string') continue
+    for (const match of raw.text.matchAll(/\s*@"((?:[^"\\]|\\.)*)"/g)) {
+      if (match[1]) paths.add(decodeRefPath(match[1]))
+    }
+  }
+  return [...paths]
+}
+
+function base64FromPart(part: ContentPartLike): string | undefined {
+  const raw = part.type === 'image' ? part.image : part.data
+  if (typeof raw === 'string') return raw
+  if (raw && typeof raw === 'object') {
+    const nested = (raw as { data?: unknown }).data
+    if (typeof nested === 'string') return nested
+  }
+  return undefined
+}
+
+/** Human-visible user text from a model message. Media tags, extracted
+ *  attachment text, and model-only notes are dropped, while merged queued
+ *  prompts and their separators are preserved. */
+function displayUserText(content: ModelMessage['content'], attachmentPaths: Set<string>): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  const kept: string[] = []
+  for (const raw of content as ContentPartLike[]) {
+    if (raw?.type !== 'text' || typeof raw.text !== 'string') continue
+    const text = raw.text.trim()
+    if (!text) continue
+    if (text.startsWith('<plugin_context>')) continue
+    if (/^<<(file|image|audio|pdf|video|document)\b/i.test(text)) continue
+    if (text.startsWith('[Built-in local media processing succeeded.')) continue
+    if (text.startsWith('[Image compressed to fit model limits:')) continue
+    if (text.startsWith('[Note: the current model cannot natively see images.')) continue
+    if (text.startsWith('[Image ') || text.startsWith('[Failed to attach image ')) continue
+    const cleaned = raw.text.replace(/\s*@"((?:[^"\\]|\\.)*)"/g, (match, rawPath: string) =>
+      attachmentPaths.has(decodeRefPath(rawPath)) ? '' : match,
+    )
+    if (cleaned.trim()) kept.push(cleaned)
+  }
+  return kept.join('')
+}
+
+function attachmentViewsFromContent(content: ModelMessage['content'], refPaths: string[]): SessionAttachmentView[] {
+  if (!Array.isArray(content)) return []
+  const views = new Map<string, SessionAttachmentView>()
+  const keyFor = (view: SessionAttachmentView): string =>
+    view.path ? `path:${view.path}` : `name:${view.name}:${view.mime ?? ''}`
+  const add = (view: SessionAttachmentView): void => {
+    const key = keyFor(view)
+    const existing = views.get(key)
+    views.set(key, {
+      ...existing,
+      ...view,
+      ...(existing?.dataUrl && !view.dataUrl ? { dataUrl: existing.dataUrl } : {}),
+    })
+  }
+
+  for (const filePath of refPaths) {
+    if (!filePath) continue
+    const mime = imageMimeFromPath(filePath)
+    add({ name: basenameOf(filePath), path: filePath, ...(mime ? { mime } : {}) })
+  }
+
+  let pendingPath: string | undefined
+  let attachmentIndex = 0
+  for (const raw of content as ContentPartLike[]) {
+    if (raw?.type === 'text' && typeof raw.text === 'string') {
+      const tagged = mediaTagPath(raw.text)
+      if (tagged) {
+        pendingPath = tagged
+        const mime = imageMimeFromPath(tagged)
+        if (mime) add({ name: basenameOf(tagged), path: tagged, mime })
+      }
+      continue
+    }
+    if (raw?.type !== 'file' && raw?.type !== 'image') continue
+    attachmentIndex++
+    const mime = typeof raw.mediaType === 'string' ? raw.mediaType : undefined
+    const filename = typeof raw.filename === 'string' && raw.filename.trim() ? raw.filename.trim() : ''
+    const matchedRef = referencePathsForFilename(refPaths, filename)
+    const filePath = pendingPath ?? matchedRef
+    const name = filename || (filePath ? basenameOf(filePath) : '') || `attachment-${attachmentIndex}`
+    pendingPath = undefined
+    const data = base64FromPart(raw)
+    const dataUrl =
+      data && mime?.startsWith('image/') && data.length <= MAX_RESTORED_IMAGE_BASE64
+        ? `data:${mime};base64,${data}`
+        : undefined
+    add({
+      name,
+      ...(mime ? { mime } : {}),
+      ...(filePath ? { path: filePath } : {}),
+      ...(dataUrl ? { dataUrl } : {}),
+    })
+  }
+  return [...views.values()]
+}
+
+function referencePathsForFilename(refPaths: string[], filename: string): string | undefined {
+  if (!filename) return undefined
+  return refPaths.find((filePath) => basenameOf(filePath) === filename)
 }
 
 function readToolOutput(part: ContentPartLike): { output: string; isError: boolean } {
@@ -53,8 +205,17 @@ export function toSessionMessages(messages: ModelMessage[]): SessionMessage[] {
     const id = `hydrated-${counter}`
 
     if (message.role === 'user') {
-      const text = extractText(message.content)
-      if (text) out.push({ id, role: 'user', text })
+      const refPaths = attachmentRefPaths(message.content)
+      const text = displayUserText(message.content, new Set(refPaths))
+      const attachmentViews = attachmentViewsFromContent(message.content, refPaths)
+      if (text || attachmentViews.length > 0) {
+        out.push({
+          id,
+          role: 'user',
+          text,
+          ...(attachmentViews.length > 0 ? { attachmentViews } : {}),
+        })
+      }
       continue
     }
 
