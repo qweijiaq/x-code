@@ -1247,6 +1247,103 @@ const EMPTY_USAGE: TokenUsage = {
  *  Trailing tool_call / tool_result orphans are trimmed (the next API
  *  request would otherwise reject the message array) — see
  *  `sanitizeMessageTail` for the exact rule. */
+export interface SalvagedSession {
+  filePath: string
+  sessionId: string
+  messageCount: number
+}
+
+/** Best-effort recovery for a transcript whose integrity chain is broken.
+ *  Reads every parseable message, deduplicates by entry id, drops orphan
+ *  tool tails, and writes a brand-new clean session. The source file is never
+ *  modified. Only call this after an explicit user recovery action. */
+export async function salvageSession(filePath: string): Promise<SalvagedSession> {
+  if (!filePath.endsWith('.jsonl')) throw new Error('Not a session file')
+  let raw: string
+  try {
+    raw = await readFile(filePath, 'utf-8')
+  } catch {
+    throw new Error('Session file is unreadable')
+  }
+
+  let header: HeaderEntry | null = null
+  const byEntryId = new Map<
+    string,
+    { entryId: string; message: ModelMessage; provenance?: MessageProvenance; order: number }
+  >()
+  let order = 0
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    let entry: Entry
+    try {
+      entry = JSON.parse(line) as Entry
+    } catch {
+      continue
+    }
+    if (entry.t === 'meta' && entry.kind === 'header') {
+      header = entry
+      continue
+    }
+    if (entry.t !== 'msg' || !entry.entryId || !entry.message) continue
+    const role = (entry.message as { role?: unknown }).role
+    if (role !== 'user' && role !== 'assistant' && role !== 'tool' && role !== 'system') continue
+    const message = persistenceSafeMessage(entry.message)
+    const existing = byEntryId.get(entry.entryId)
+    if (existing) {
+      existing.message = message
+      if (isValidProvenance(entry.provenance)) existing.provenance = entry.provenance
+    } else {
+      byEntryId.set(entry.entryId, {
+        entryId: entry.entryId,
+        message,
+        provenance: isValidProvenance(entry.provenance) ? entry.provenance : undefined,
+        order: order++,
+      })
+    }
+  }
+  if (!header) throw new Error('Session file has no readable header')
+  if (typeof header.modelId !== 'string' || !header.modelId.trim()) {
+    throw new Error('Session header is incomplete')
+  }
+  const cwd = typeof header.cwd === 'string' && header.cwd ? header.cwd : process.cwd()
+  const headerSessionId = typeof header.sessionId === 'string' ? header.sessionId : 'unknown'
+  const firstPrompt = typeof header.firstPrompt === 'string' ? header.firstPrompt : ''
+
+  const tracked = [...byEntryId.values()]
+    .sort((left, right) => left.order - right.order)
+    .map((entry) =>
+      createTrackedMessage(
+        entry.message,
+        entry.provenance ?? { authority: 'user', derivedFromPeer: false },
+        createHash('sha256')
+          .update(`${headerSessionId}\u0000salvage\u0000${entry.entryId}\u0000${canonicalSecurityJson(entry.message)}`)
+          .digest('hex'),
+      ),
+    )
+  const sanitized = sanitizeTrackedMessageTail(tracked)
+  if (sanitized.length === 0) throw new Error('No recoverable messages were found')
+
+  const state = createLoopState('default', { projectCwd: cwd })
+  state.taskSlug = typeof header.taskSlug === 'string' ? header.taskSlug : ''
+  state.startedAt = typeof header.startedAt === 'string' ? header.startedAt : new Date().toISOString()
+  state.contextSecurity = { peerInfluenceActive: false }
+  setTrackedTranscript(state, sanitized)
+  state.executionAuthority = effectiveExecutionAuthority({ source: 'user', peerTainted: false }, state.contextSecurity)
+  state.transcriptIntegrity = 'clean'
+  state.transcriptRequiresSnapshot = true
+  state.persistedMessageCount = 0
+  state.committedTranscriptEpochId = undefined
+
+  await appendHeader(state, header.modelId, firstPrompt, cwd)
+  await flushPendingMessages(state)
+  const rescuedPath = getSessionFilePath(state)
+  const name = header.name?.trim()
+    ? `恢复：${header.name.trim()}`.slice(0, 200)
+    : `恢复：${firstPrompt.trim().slice(0, 60) || '会话'}`.slice(0, 200)
+  await renameSession(rescuedPath, name).catch(() => undefined)
+  return { filePath: rescuedPath, sessionId: state.sessionId, messageCount: sanitized.length }
+}
+
 export async function loadSession(filePath: string): Promise<LoadedSession | null> {
   let raw: string
   try {

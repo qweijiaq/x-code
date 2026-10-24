@@ -546,6 +546,8 @@ export function App(): React.JSX.Element {
   const [searchingSessions, setSearchingSessions] = useState(false)
   const [renaming, setRenaming] = useState<{ filePath: string; value: string } | null>(null)
   const [deletingSession, setDeletingSession] = useState<string | null>(null)
+  const [salvageTarget, setSalvageTarget] = useState<SessionListItem | null>(null)
+  const [salvageBusy, setSalvageBusy] = useState(false)
   const [documentOpen, setDocumentOpen] = useState(false)
   const [fileOpen, setFileOpen] = useState(false)
   const [documentView, setDocumentView] = useState<DocumentView | null>(null)
@@ -3803,6 +3805,77 @@ export function App(): React.JSX.Element {
         }
         checks.sessionMove = { ok: sessionMoveOk, detail: sessionMoveDetail }
 
+        const corruptSessionId = '20260101-000000-999'
+        const corruptTs = new Date().toISOString()
+        const corruptLines = [
+          {
+            t: 'meta',
+            kind: 'header',
+            cwd: workspace,
+            modelId: 'demo:mock',
+            startedAt: corruptTs,
+            firstPrompt: 'corrupt smoke',
+            taskSlug: 'corrupt-smoke',
+            sessionId: corruptSessionId,
+          },
+          {
+            t: 'meta',
+            kind: 'transcript-epoch-start',
+            epochId: 'lost-epoch',
+            parentEpochId: 'missing-parent',
+            mode: 'delta',
+            ts: corruptTs,
+          },
+          {
+            t: 'msg',
+            epochId: 'lost-epoch',
+            entryId: 'corrupt-1',
+            message: { role: 'user', content: 'salvaged question' },
+            ts: corruptTs,
+          },
+          {
+            t: 'msg',
+            epochId: 'lost-epoch',
+            entryId: 'corrupt-2',
+            message: { role: 'assistant', content: 'salvaged answer' },
+            ts: corruptTs,
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join('\n')
+        const corruptWrite = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'files:write',
+          params: { path: '.x-code/sessions/smoke-corrupt.jsonl', content: `${corruptLines}\n` },
+        })
+        document.querySelector<HTMLButtonElement>('.sidebar-sessions-section .sidebar-add')?.click()
+        const corruptRowReady = await waitFor(
+          () =>
+            Array.from(document.querySelectorAll('.sidebar-session-row')).some((row) =>
+              row.textContent?.includes('corrupt smoke'),
+            ),
+          4_000,
+        )
+        const corruptRow = Array.from(document.querySelectorAll('.sidebar-session-row')).find((row) =>
+          row.textContent?.includes('corrupt smoke'),
+        )
+        corruptRow?.querySelector<HTMLButtonElement>('.sidebar-session')?.click()
+        const salvageDialog = await waitFor(
+          () => document.querySelector('[data-testid="salvage-dialog"]') !== null,
+          4_000,
+        )
+        document.querySelector<HTMLButtonElement>('[data-testid="salvage-confirm"]')?.click()
+        const salvageRestored = await waitFor(
+          () =>
+            document.querySelector('[data-testid="salvage-dialog"]') === null &&
+            (document.body.textContent?.includes('salvaged question') ?? false),
+          6_000,
+        )
+        checks.sessionSalvage = {
+          ok: corruptWrite.ok && corruptRowReady && salvageDialog && salvageRestored,
+          detail: `write=${corruptWrite.ok} row=${corruptRowReady} dialog=${salvageDialog} restored=${salvageRestored}`,
+        }
+
         const editorProbe = await window.xcode.request({
           id: crypto.randomUUID(),
           method: 'app:open-in-editor',
@@ -4391,6 +4464,10 @@ export function App(): React.JSX.Element {
       params: { filePath: item.filePath },
     })
     if (!response.ok) {
+      if (response.error.message.includes('完整性')) {
+        setSalvageTarget(item)
+        return
+      }
       append({ role: 'error', text: t('恢复会话失败：{{message}}', { message: response.error.message }) })
       return
     }
@@ -4741,6 +4818,7 @@ export function App(): React.JSX.Element {
       }
       if (event.key === 'Escape') {
         if (imageLightbox) setImageLightbox(null)
+        else if (salvageTarget) setSalvageTarget(null)
         else if (paletteOpen) setPaletteOpen(false)
         else if (branchOpen) {
           if (removeWorktree) {
@@ -4757,6 +4835,7 @@ export function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
     imageLightbox,
+    salvageTarget,
     paletteOpen,
     branchOpen,
     removeWorktree,
@@ -4839,6 +4918,36 @@ export function App(): React.JSX.Element {
     setAttachments(lastUser.attachments ?? [])
     setEditArmed(true)
     textareaRef.current?.focus()
+  }
+
+  const recoverDamagedSession = async (): Promise<void> => {
+    const target = salvageTarget
+    if (!target || salvageBusy) return
+    setSalvageBusy(true)
+    try {
+      const response = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'session:salvage',
+        params: { filePath: target.filePath },
+      })
+      if (!response.ok) {
+        setReport(t('恢复会话失败：{{message}}', { message: response.error.message }))
+        return
+      }
+      const result = response.result as { messageCount: number; view: LoadedSessionView }
+      applySessionView(result.view)
+      setSalvageTarget(null)
+      setNotice(t('已恢复 {{count}} 条消息到新会话', { count: result.messageCount }))
+      await refreshSessions()
+    } catch (error) {
+      setReport(
+        t('恢复会话失败：{{message}}', {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    } finally {
+      setSalvageBusy(false)
+    }
   }
 
   const forkCurrentSession = async (): Promise<void> => {
@@ -7072,6 +7181,40 @@ export function App(): React.JSX.Element {
         onSession={(item) => void loadSession(item)}
         onClose={() => setPaletteOpen(false)}
       />
+      {salvageTarget ? (
+        <div className="modal-scrim" onClick={() => setSalvageTarget(null)}>
+          <div
+            className="shortcut-card"
+            data-testid="salvage-dialog"
+            role="dialog"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="shortcut-head">
+              <span className="drawer-seal" aria-hidden="true">
+                复
+              </span>
+              <div className="drawer-title">{t('会话恢复')}</div>
+              <span className="spacer" />
+              <button className="btn btn-quiet" disabled={salvageBusy} onClick={() => setSalvageTarget(null)}>
+                {t('取消')}
+              </button>
+            </div>
+            <p className="settings-note">
+              {t('该会话完整性校验失败，可能已损坏。可以尝试把能读取的消息恢复到一个新会话；原文件不会被修改。')}
+            </p>
+            <div className="branch-confirm-actions">
+              <button
+                className="btn"
+                data-testid="salvage-confirm"
+                disabled={salvageBusy}
+                onClick={() => void recoverDamagedSession()}
+              >
+                {salvageBusy ? t('正在恢复…') : t('尝试修复')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {imageLightbox ? (
         <div
           className="modal-scrim image-lightbox-scrim"

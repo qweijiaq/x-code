@@ -258,6 +258,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.loadSession(request.params.filePath))
       }
+      case 'session:salvage': {
+        await ensureInitialized()
+        return ok(request.id, await host.salvageSession(request.params.filePath))
+      }
       case 'session:new': {
         await ensureInitialized()
         return ok(request.id, host.newSession())

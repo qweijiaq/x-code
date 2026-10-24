@@ -782,6 +782,10 @@ export interface RequestMap {
   'models:discover': { params: Record<string, never>; result: AppState }
   'session:list': { params: Record<string, never>; result: SessionListItem[] }
   'session:load': { params: { filePath: string }; result: LoadedSessionView }
+  'session:salvage': {
+    params: { filePath: string }
+    result: { sessionId: string; filePath: string; messageCount: number; view: LoadedSessionView }
+  }
   'session:new': { params: Record<string, never>; result: { sessionId: string } }
   'session:rename': { params: { filePath: string; name: string }; result: { name: string } }
   'session:delete': { params: { filePath: string }; result: { deleted: boolean; resetActive: boolean } }

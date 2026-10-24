@@ -42,6 +42,7 @@ import {
   reloadSkillRegistry,
   renameSession as renameSessionFile,
   restoreCheckpoint,
+  salvageSession as salvageSessionFile,
   saveSession,
   saveUserConfig,
   scanWorkspaceFiles,
@@ -564,6 +565,38 @@ export class AgentHost {
     this.clearGitCheckpoints()
     if (modelChanged) this.send({ type: 'app:state', state: this.getState() })
     return loaded.view
+  }
+
+  /** Recover parseable messages from a damaged transcript into a new session.
+   *  The source file is left untouched; this is only invoked from the explicit
+   *  recovery dialog. */
+  async salvageSession(
+    filePath: string,
+  ): Promise<{ sessionId: string; filePath: string; messageCount: number; view: LoadedSessionView }> {
+    if (this.activeTurn) throw new Error('turn-busy')
+    const salvaged = await salvageSessionFile(filePath)
+    const loaded = await loadSessionView(salvaged.filePath)
+    if (!loaded) throw new Error('恢复会话写入后无法读取')
+    let modelChanged = false
+    if (loaded.view.modelId && loaded.view.modelId !== this.modelId) {
+      try {
+        this.applyModel(loaded.view.modelId, false)
+        modelChanged = true
+      } catch {
+        // Keep the current model when the saved one is no longer available.
+      }
+    }
+    this.cancelAllApprovals()
+    this.loopState = hydrateLoopState(loaded.loaded, 'default', this.requireBootstrap().workspace)
+    this.watchShellSessions(this.loopState)
+    this.clearGitCheckpoints()
+    if (modelChanged) this.send({ type: 'app:state', state: this.getState() })
+    return {
+      sessionId: loaded.view.sessionId,
+      filePath: loaded.view.filePath,
+      messageCount: salvaged.messageCount,
+      view: loaded.view,
+    }
   }
 
   newSession(): { sessionId: string } {

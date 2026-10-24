@@ -41,6 +41,9 @@
   passed in the URL.
 - A session file is owned by one window at a time. Opening it from another
   window is refused, so two runtimes never write the same transcript.
+- If a session fails its transcript integrity check, opening it offers
+  **尝试修复**. Readable messages are copied into a new **恢复：…** session with a
+  clean transcript; the damaged source file is left untouched.
 - Sidebar search also performs **full-text search across transcripts** and shows
   snippets from other sessions.
 

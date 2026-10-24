@@ -474,10 +474,12 @@ export {
   markBoundaryAndReflush,
   pickLatestSession,
   renameSession,
+  salvageSession,
 } from './agent/session-store.js'
 export type {
   ForkedSession,
   LoadedSession,
+  SalvagedSession,
   SessionForkOrigin,
   SessionForkSnapshot,
   SessionListEntry,

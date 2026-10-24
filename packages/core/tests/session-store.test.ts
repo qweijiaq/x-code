@@ -45,6 +45,7 @@ import {
   markBoundaryAndReflush,
   pickLatestSession,
   renameSession,
+  salvageSession,
 } from '../src/agent/session-store.js'
 import { accumulateUsage, normalizeLanguageModelUsage } from '../src/agent/usage.js'
 
@@ -898,6 +899,51 @@ describe('session-store: malformed input', () => {
     expect(loaded!.messages).toEqual([{ role: 'user', content: 'real' }])
     expect(loaded!.transcriptIntegrity).toBe('failed')
     expect(loaded!.contextSecurity).toMatchObject({ peerInfluenceActive: true, integrityFailure: true })
+  })
+})
+
+describe('session-store: salvageSession', () => {
+  it('recovers parseable messages into a new clean session and leaves the source untouched', async () => {
+    const dir = join(tempDir, '.x-code', 'sessions')
+    await fs.mkdir(dir, { recursive: true })
+    const filePath = join(dir, '20260101-120000-010.jsonl')
+    const ts = new Date().toISOString()
+    const header = {
+      t: 'meta',
+      kind: 'header',
+      cwd: tempDir,
+      modelId: 'openai:test',
+      startedAt: ts,
+      firstPrompt: 'hello',
+      taskSlug: 'broken',
+      sessionId: '20260101-120000-010',
+    }
+    const start = {
+      t: 'meta',
+      kind: 'transcript-epoch-start',
+      epochId: 'e1',
+      parentEpochId: 'missing',
+      mode: 'delta',
+      ts,
+    }
+    const user = { t: 'msg', epochId: 'e1', entryId: 'm1', message: { role: 'user', content: 'hello' }, ts }
+    const assistant = { t: 'msg', epochId: 'e1', entryId: 'm2', message: { role: 'assistant', content: 'hi' }, ts }
+    await writeFile(filePath, [header, start, user, assistant].map((entry) => JSON.stringify(entry)).join('\n') + '\n')
+
+    const failed = await loadSession(filePath)
+    expect(failed?.transcriptIntegrity).toBe('failed')
+
+    const salvaged = await salvageSession(filePath)
+    expect(salvaged.messageCount).toBe(2)
+    expect(salvaged.filePath).not.toBe(filePath)
+
+    const restored = await loadSession(salvaged.filePath)
+    expect(restored?.transcriptIntegrity).toBe('clean')
+    expect(restored?.messages).toEqual([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'hi' },
+    ])
+    expect((await loadSession(filePath))?.transcriptIntegrity).toBe('failed')
   })
 })
 

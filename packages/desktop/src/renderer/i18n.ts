@@ -882,6 +882,12 @@ export const EN: Record<string, string> = {
   '{{count}} 个失败': '{{count}} failed',
   上下文: 'Context',
   '上下文上限 {{tokens}} tokens': 'Context limit: {{tokens}} tokens',
+  会话恢复: 'Recover session',
+  '该会话完整性校验失败，可能已损坏。可以尝试把能读取的消息恢复到一个新会话；原文件不会被修改。':
+    'This session failed its integrity check and may be damaged. Try recovering readable messages into a new session; the original file is not modified.',
+  尝试修复: 'Try to recover',
+  '正在恢复…': 'Recovering…',
+  '已恢复 {{count}} 条消息到新会话': 'Recovered {{count}} message(s) into a new session',
 }
 
 const storedLanguage = ((): Language => {
