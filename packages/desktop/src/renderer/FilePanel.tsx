@@ -96,9 +96,17 @@ interface Props {
   initialPath?: string | null
   onOpenEditor?: (path: string, line?: number) => void
   onClose: () => void
+  /** Render inside the unified inspector instead of a fixed drawer. */
+  embedded?: boolean
 }
 
-export function FilePanel({ workspace, initialPath, onOpenEditor, onClose }: Props): React.JSX.Element {
+export function FilePanel({
+  workspace,
+  initialPath,
+  onOpenEditor,
+  onClose,
+  embedded = false,
+}: Props): React.JSX.Element {
   const { t } = useTranslation()
   const [children, setChildren] = useState<Record<string, FileTreeEntryView[]>>({})
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['.']))
@@ -303,8 +311,8 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onClose }: Pro
 
   return (
     <>
-      <div className="drawer-scrim" onClick={close} aria-hidden="true" />
-      <aside className="file-drawer" data-testid="file-drawer" aria-label={t('文件')}>
+      {!embedded ? <div className="drawer-scrim" onClick={close} aria-hidden="true" /> : null}
+      <aside className={`file-drawer${embedded ? ' embedded' : ''}`} data-testid="file-drawer" aria-label={t('文件')}>
         <header className="drawer-head">
           <span className="drawer-seal" aria-hidden="true">
             档

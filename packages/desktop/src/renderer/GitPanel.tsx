@@ -15,6 +15,8 @@ interface GitPanelProps {
   onUndo(): void
   onOpenEditor?(path: string, line?: number): void
   onClose(): void
+  /** Render inside the unified inspector instead of a fixed drawer. */
+  embedded?: boolean
 }
 
 function statusLabel(status: string, untracked: boolean, staged: boolean): string {
@@ -46,6 +48,7 @@ export function GitPanel({
   onUndo,
   onOpenEditor,
   onClose,
+  embedded = false,
 }: GitPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const firstChangedLine = (() => {
@@ -55,8 +58,8 @@ export function GitPanel({
 
   return (
     <>
-      <div className="drawer-scrim" onClick={onClose} aria-hidden="true" />
-      <aside className="git-drawer" data-testid="git-drawer" aria-label={t('变更')}>
+      {!embedded ? <div className="drawer-scrim" onClick={onClose} aria-hidden="true" /> : null}
+      <aside className={`git-drawer${embedded ? ' embedded' : ''}`} data-testid="git-drawer" aria-label={t('变更')}>
         <header className="drawer-head">
           <span className="drawer-seal" aria-hidden="true">
             变

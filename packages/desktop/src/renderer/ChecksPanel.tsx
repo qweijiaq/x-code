@@ -13,6 +13,8 @@ interface ChecksPanelProps {
   onToggleAuto(): void
   onFix(): void
   onClose(): void
+  /** Render inside the unified inspector instead of a fixed drawer. */
+  embedded?: boolean
 }
 
 const STATUS_LABEL: Record<ProjectCheckResultView['status'], string> = {
@@ -33,14 +35,19 @@ export function ChecksPanel({
   onToggleAuto,
   onFix,
   onClose,
+  embedded = false,
 }: ChecksPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const hasFailures = results.some((result) => result.status === 'failed' || result.status === 'timeout')
 
   return (
     <>
-      <div className="drawer-scrim" onClick={onClose} aria-hidden="true" />
-      <aside className="checks-drawer" data-testid="checks-drawer" aria-label={t('项目检查')}>
+      {!embedded ? <div className="drawer-scrim" onClick={onClose} aria-hidden="true" /> : null}
+      <aside
+        className={`checks-drawer${embedded ? ' embedded' : ''}`}
+        data-testid="checks-drawer"
+        aria-label={t('项目检查')}
+      >
         <header className="drawer-head">
           <span className="drawer-seal" aria-hidden="true">
             检

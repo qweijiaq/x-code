@@ -7643,6 +7643,7 @@ export function App(): React.JSX.Element {
               onApplyHunks={applyReviewedHunks}
               onSaveBaseline={saveDocumentBaseline}
               focusPage={documentFocusPage}
+              embedded
             />
           ) : null}
           {inspectorTab === 'git' ? (
@@ -7659,6 +7660,7 @@ export function App(): React.JSX.Element {
               onUndo={() => void undoGitTurn()}
               onOpenEditor={(path, line) => openInEditor(path, line)}
               onClose={closeInspector}
+              embedded
             />
           ) : null}
           {inspectorTab === 'checks' ? (
@@ -7673,6 +7675,7 @@ export function App(): React.JSX.Element {
               onToggleAuto={() => void toggleAutoChecks()}
               onFix={fixFromChecks}
               onClose={closeInspector}
+              embedded
             />
           ) : null}
           {inspectorTab === 'file' ? (
@@ -7684,10 +7687,11 @@ export function App(): React.JSX.Element {
                 closeInspector()
                 setFileInitialPath(null)
               }}
+              embedded
             />
           ) : null}
           {inspectorTab === 'terminal' ? (
-            <aside className="terminal-drawer" data-testid="terminal-shell" aria-label={t('终端')}>
+            <aside className="terminal-drawer embedded" data-testid="terminal-shell" aria-label={t('终端')}>
               <header className="drawer-head">
                 <span className="drawer-seal" aria-hidden="true">
                   端
