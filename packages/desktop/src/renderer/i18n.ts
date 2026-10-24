@@ -1002,6 +1002,16 @@ export const EN: Record<string, string> = {
   '诊断包已导出：{{path}}': 'Diagnostics exported: {{path}}',
   '导出诊断失败：{{message}}': 'Could not export diagnostics: {{message}}',
   '不含密钥的 JSON 快照': 'Key-free JSON snapshot',
+  备份与恢复: 'Backup and restore',
+  '备份会话、技能、命令、记忆和子代理；不包含密钥、插件、附件和日志。恢复只补充缺失文件，不会覆盖现有数据。':
+    'Back up sessions, skills, commands, memory and sub-agents. Secrets, plugins, attachments and logs are excluded. Restore only adds missing files and never overwrites existing data.',
+  导出备份: 'Export backup',
+  从备份恢复: 'Restore from backup',
+  '恢复中…': 'Restoring…',
+  '备份已导出到 {{path}}（会话 {{sessions}}、技能 {{skills}}）':
+    'Backup exported to {{path}} ({{sessions}} sessions, {{skills}} skills)',
+  '恢复完成：新增 {{imported}} 项，跳过 {{skipped}} 项（已存在的文件不会被覆盖）':
+    'Restore complete: {{imported}} added, {{skipped}} skipped (existing files are never overwritten)',
 }
 
 const storedLanguage = ((): Language => {

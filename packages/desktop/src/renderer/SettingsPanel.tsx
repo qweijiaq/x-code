@@ -122,6 +122,7 @@ interface SettingsPanelProps {
   activeTab?: string
   onTabChange?: (tab: string) => void
   onUsage?: (key: 'skill') => void
+  onSessionsChanged?: () => void
 }
 
 export function SettingsPanel({
@@ -137,6 +138,7 @@ export function SettingsPanel({
   activeTab,
   onTabChange,
   onUsage,
+  onSessionsChanged,
 }: SettingsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const language = i18n.language === 'en' ? 'en' : 'zh'
@@ -1487,7 +1489,7 @@ export function SettingsPanel({
           {tab === 'hooks' ? <HooksSettings onNotice={setNotice} /> : null}
           {tab === 'memory' ? <MemorySettings onNotice={setNotice} /> : null}
 
-          {tab === 'storage' ? <StorageSettings onNotice={setNotice} /> : null}
+          {tab === 'storage' ? <StorageSettings onNotice={setNotice} onSessionsChanged={onSessionsChanged} /> : null}
 
           {tab === 'mcp' ? (
             <>

@@ -89,6 +89,8 @@ import type {
   ApprovalKind,
   ApprovalRequestEvent,
   BackgroundShellView,
+  BackupExportView,
+  BackupImportView,
   BranchListView,
   CompactResult,
   CustomCommandView,
@@ -188,6 +190,7 @@ import type { CopiedSkill } from './skill-install-command.js'
 import { assertGitHubSkillUrl, installSkillHubSkill, searchSkillMarket } from './skill-market.js'
 import { DEFAULT_TASK_MODE, isTaskMode, taskModeInstruction } from './task-modes.js'
 import type { TaskMode } from './task-modes.js'
+import { exportUserBackup, importUserBackup } from './user-backup.js'
 
 interface ActiveTurn {
   id: string
@@ -2165,6 +2168,21 @@ export class AgentHost {
     const body = `${JSON.stringify(snapshot, null, 2)}\n`
     await fs.promises.writeFile(file, body, 'utf-8')
     return { path: file, bytes: Buffer.byteLength(body), generatedAt: snapshot.generatedAt }
+  }
+
+  async exportBackup(destination: string): Promise<BackupExportView> {
+    this.assertIdle()
+    const result = await exportUserBackup(userXcodeDir(), destination)
+    return { path: result.path, createdAt: result.manifest.createdAt, counts: result.manifest.counts }
+  }
+
+  async importBackup(source: string): Promise<BackupImportView> {
+    this.assertIdle()
+    const result = await importUserBackup(source, userXcodeDir())
+    if (result.imported.skills + result.imported.commands + result.imported.agents > 0) {
+      await this.reloadExtensions(this.modelId)
+    }
+    return { path: result.path, imported: result.imported, skipped: result.skipped }
   }
 
   shellListReport(): TextReport {

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
+  BackupExportView,
+  BackupImportView,
   RequestMap,
   RequestMethod,
   RuntimeRequest,
@@ -22,9 +24,10 @@ function formatBytes(bytes: number): string {
 
 interface Props {
   onNotice: (message: string | null) => void
+  onSessionsChanged?: () => void
 }
 
-export function StorageSettings({ onNotice }: Props): React.JSX.Element {
+export function StorageSettings({ onNotice, onSessionsChanged }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const [usage, setUsage] = useState<StorageUsageView | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -64,6 +67,65 @@ export function StorageSettings({ onNotice }: Props): React.JSX.Element {
           size: formatBytes(result.freedBytes),
         }),
       )
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const pickFolder = async (): Promise<string | null> => {
+    const response = await request('app:pick-path', { kind: 'folder' })
+    if (!response.ok) {
+      setError(response.error.message)
+      return null
+    }
+    return (response.result as { path: string | null }).path
+  }
+
+  const exportBackup = async (): Promise<void> => {
+    const destination = await pickFolder()
+    if (!destination) return
+    setBusy('backup-export')
+    setError(null)
+    onNotice(null)
+    try {
+      const response = await request('backup:export', { destination })
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      const result = response.result as BackupExportView
+      onNotice(
+        t('备份已导出到 {{path}}（会话 {{sessions}}、技能 {{skills}}）', {
+          path: result.path,
+          sessions: result.counts.sessions,
+          skills: result.counts.skills,
+        }),
+      )
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const importBackup = async (): Promise<void> => {
+    const source = await pickFolder()
+    if (!source) return
+    setBusy('backup-import')
+    setError(null)
+    onNotice(null)
+    try {
+      const response = await request('backup:import', { source })
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      const result = response.result as BackupImportView
+      onNotice(
+        t('恢复完成：新增 {{imported}} 项，跳过 {{skipped}} 项（已存在的文件不会被覆盖）', {
+          imported: Object.values(result.imported).reduce((sum, count) => sum + count, 0),
+          skipped: Object.values(result.skipped).reduce((sum, count) => sum + count, 0),
+        }),
+      )
+      onSessionsChanged?.()
     } finally {
       setBusy(null)
     }
@@ -129,6 +191,29 @@ export function StorageSettings({ onNotice }: Props): React.JSX.Element {
             </button>
           </div>
         ))}
+      </div>
+
+      <div className="settings-section-title">{t('备份与恢复')}</div>
+      <p className="settings-note">
+        {t('备份会话、技能、命令、记忆和子代理；不包含密钥、插件、附件和日志。恢复只补充缺失文件，不会覆盖现有数据。')}
+      </p>
+      <div className="settings-actions">
+        <button
+          className="btn solid"
+          data-testid="backup-export"
+          disabled={busy !== null}
+          onClick={() => void exportBackup()}
+        >
+          {busy === 'backup-export' ? t('导出中…') : t('导出备份')}
+        </button>
+        <button
+          className="btn"
+          data-testid="backup-import"
+          disabled={busy !== null}
+          onClick={() => void importBackup()}
+        >
+          {busy === 'backup-import' ? t('恢复中…') : t('从备份恢复')}
+        </button>
       </div>
 
       <div className="settings-section-title">{t('清理')}</div>

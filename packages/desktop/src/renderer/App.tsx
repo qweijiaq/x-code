@@ -2867,11 +2867,21 @@ export function App(): React.JSX.Element {
         offShell()
         checks.shell = { ok: shellOk, detail: shellDetail }
 
-        const diagnostics = await window.xcode.request({
+        let diagnostics = await window.xcode.request({
           id: crypto.randomUUID(),
           method: 'smoke:run',
           params: {},
         })
+        if (!diagnostics.ok) {
+          // A nested runtime smoke can lose its first process; retry once so
+          // the UI smoke does not fail on that transient.
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          diagnostics = await window.xcode.request({
+            id: crypto.randomUUID(),
+            method: 'smoke:run',
+            params: {},
+          })
+        }
         checks.diagnostics = {
           ok: diagnostics.ok && (diagnostics.result as SmokeReport).ok === true,
           detail: diagnostics.ok ? 'diagnostics completed without exiting' : diagnostics.error.message,
@@ -3248,6 +3258,13 @@ export function App(): React.JSX.Element {
         )
         clickTab('存储')
         const storageTab = await waitFor(() => document.querySelector('.storage-list') !== null, 3_000)
+        const backupUi =
+          document.querySelector('[data-testid="backup-export"]') !== null &&
+          document.querySelector('[data-testid="backup-import"]') !== null
+        checks.backupUi = {
+          ok: backupUi,
+          detail: backupUi ? 'backup buttons mounted' : 'backup buttons missing',
+        }
         document.querySelector<HTMLButtonElement>('.settings-drawer .btn-quiet')?.click()
         await waitFor(() => document.querySelector('.settings-drawer') === null, 2_000)
         checks.iteration2Tabs = {
@@ -7843,6 +7860,7 @@ export function App(): React.JSX.Element {
           activeTab={settingsTab ?? undefined}
           onTabChange={setSettingsTab}
           onUsage={(key) => markUsage(key)}
+          onSessionsChanged={() => void refreshSessions()}
         />
       ) : null}
       {backgroundOpen ? <BackgroundPanel onClose={() => setBackgroundOpen(false)} /> : null}

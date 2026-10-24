@@ -213,6 +213,14 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.exportDiagnostics())
       }
+      case 'backup:export': {
+        await ensureInitialized()
+        return ok(request.id, await host.exportBackup(request.params.destination))
+      }
+      case 'backup:import': {
+        await ensureInitialized()
+        return ok(request.id, await host.importBackup(request.params.source))
+      }
       case 'shell:list': {
         await ensureInitialized()
         return ok(request.id, host.shellListReport())

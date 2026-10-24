@@ -68,6 +68,26 @@ export interface DiagnosticsExportResult {
   generatedAt: string
 }
 
+export interface BackupCountsView {
+  sessions: number
+  skills: number
+  commands: number
+  memory: number
+  agents: number
+}
+
+export interface BackupExportView {
+  path: string
+  createdAt: string
+  counts: BackupCountsView
+}
+
+export interface BackupImportView {
+  path: string
+  imported: BackupCountsView
+  skipped: BackupCountsView
+}
+
 export interface UpdateCheckResult {
   configured: boolean
   currentVersion: string
@@ -819,6 +839,8 @@ export interface RequestMap {
   'files:create': { params: { path: string; content?: string }; result: { path: string; size: number } }
   'doctor:run': { params: Record<string, never>; result: TextReport }
   'diagnostics:export': { params: Record<string, never>; result: DiagnosticsExportResult }
+  'backup:export': { params: { destination: string }; result: BackupExportView }
+  'backup:import': { params: { source: string }; result: BackupImportView }
   'shell:list': { params: Record<string, never>; result: TextReport }
   'agents:list': { params: Record<string, never>; result: TextReport }
   'goal:get': { params: Record<string, never>; result: TextReport }
