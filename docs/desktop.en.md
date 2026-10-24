@@ -35,6 +35,9 @@ when available, otherwise a `0600` plaintext file is used and the UI says so.
   `Cmd/Ctrl+Shift+N` a new window.
 - The sidebar searches, renames, pins, archives and exports sessions to
   Markdown / JSON / PDF.
+- The sidebar's **Getting started** card surfaces five frequent capabilities
+  (attach, screenshot, document panel, command palette, skill marketplace),
+  checks them off as you use them, and can be dismissed; its state stays local.
 - Window position, open tabs and per-window workspace are restored on launch.
 - Transcripts are JSONL. If an interrupted write leaves a chain that fails
   integrity checks, loading offers **salvage**: parseable messages move to a

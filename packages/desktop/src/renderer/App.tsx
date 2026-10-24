@@ -74,6 +74,16 @@ import type { ThemeSetting } from './theme.js'
 import { encodeWav } from './wav.js'
 
 const isUiSmoke = new URLSearchParams(window.location.search).has('ui-smoke')
+if (isUiSmoke) {
+  try {
+    // Smoke runs share Electron's localStorage with the real app; keep their
+    // checklist state under separate keys.
+    localStorage.removeItem('xcode.smoke.usage.v1')
+    localStorage.removeItem('xcode.smoke.usage.dismissed')
+  } catch {
+    // Smoke-only reset.
+  }
+}
 const forcedOnboarding = isUiSmoke && new URLSearchParams(window.location.search).has('onboard')
 const wantsSettings = new URLSearchParams(window.location.search).has('settings')
 const wantsSlashDemo = new URLSearchParams(window.location.search).has('slash')
@@ -463,6 +473,37 @@ function forgetLastDocument(workspace: string, filePath: string): void {
   }
 }
 
+type UsageKey = 'attach' | 'screenshot' | 'document' | 'palette' | 'skill'
+
+const USAGE_KEY = isUiSmoke ? 'xcode.smoke.usage.v1' : 'xcode.usage.v1'
+const USAGE_DISMISSED_KEY = isUiSmoke ? 'xcode.smoke.usage.dismissed' : 'xcode.usage.dismissed'
+
+function readUsage(): Record<UsageKey, boolean> {
+  const empty: Record<UsageKey, boolean> = {
+    attach: false,
+    screenshot: false,
+    document: false,
+    palette: false,
+    skill: false,
+  }
+  try {
+    const raw = localStorage.getItem(USAGE_KEY)
+    const parsed = raw ? (JSON.parse(raw) as Partial<Record<UsageKey, unknown>>) : {}
+    for (const key of Object.keys(empty) as UsageKey[]) empty[key] = parsed[key] === true
+  } catch {
+    // A corrupt usage record should not block the checklist.
+  }
+  return empty
+}
+
+function writeUsage(usage: Record<UsageKey, boolean>): void {
+  try {
+    localStorage.setItem(USAGE_KEY, JSON.stringify(usage))
+  } catch {
+    // Ignore quota errors.
+  }
+}
+
 function formatDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60)
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
@@ -523,6 +564,14 @@ export function App(): React.JSX.Element {
   const [backgroundOpen, setBackgroundOpen] = useState(false)
   const [rewindOpen, setRewindOpen] = useState(false)
   const [onboardingDismissed, setOnboardingDismissed] = useState(false)
+  const [usageProgress, setUsageProgress] = useState<Record<UsageKey, boolean>>(() => readUsage())
+  const [usageDismissed, setUsageDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(USAGE_DISMISSED_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [shortcutSheetOpen, setShortcutSheetOpen] = useState(false)
   const [branchOpen, setBranchOpen] = useState(false)
@@ -707,6 +756,19 @@ export function App(): React.JSX.Element {
     })
     if (response.ok) setWorkspaceInsights(response.result as WorkspaceInsightsView)
   }
+
+  const markUsage = (key: UsageKey): void => {
+    setUsageProgress((current) => {
+      if (current[key]) return current
+      const next = { ...current, [key]: true }
+      writeUsage(next)
+      return next
+    })
+  }
+
+  useEffect(() => {
+    if (paletteOpen) markUsage('palette')
+  }, [paletteOpen])
 
   const updateMention = (value: string, caret: number): void => {
     if (value.startsWith('/')) {
@@ -2362,6 +2424,12 @@ export function App(): React.JSX.Element {
         checks.sidebar = {
           ok: sidebarMounted,
           detail: sidebarMounted ? 'sidebar mounted with projects' : 'sidebar missing',
+        }
+        const usageChecklist = document.querySelector('[data-testid="usage-checklist"]') !== null
+        const usageItems = document.querySelectorAll('[data-testid^="usage-item-"]').length
+        checks.usageChecklist = {
+          ok: usageChecklist && usageItems === 5,
+          detail: `card=${usageChecklist} items=${usageItems}`,
         }
         const sidebarToggle = document.querySelector<HTMLButtonElement>('[data-testid="sidebar-toggle"]')
         sidebarToggle?.click()
@@ -4367,6 +4435,7 @@ export function App(): React.JSX.Element {
     const selected = result.paths ?? (result.path ? [result.path] : [])
     if (selected.length === 0) return
     setAttachments((current) => [...new Set([...current, ...selected])])
+    markUsage('attach')
   }
 
   const refreshDocumentList = async (): Promise<void> => {
@@ -4384,6 +4453,7 @@ export function App(): React.JSX.Element {
   }
 
   const openDocument = async (filePath: string, page?: number): Promise<void> => {
+    markUsage('document')
     setDocumentOpen(true)
     setDocumentLoading(true)
     setDocumentError(null)
@@ -4682,6 +4752,7 @@ export function App(): React.JSX.Element {
   }
 
   const openDocumentPanel = async (): Promise<void> => {
+    markUsage('document')
     if (documentView) {
       setDocumentOpen(true)
       void refreshDocumentList()
@@ -5404,6 +5475,7 @@ export function App(): React.JSX.Element {
         return
       }
       await attachImageData((response.result as { dataUrl: string }).dataUrl)
+      markUsage('screenshot')
     } catch (error) {
       setReport(
         t('截屏失败：{{message}}', {
@@ -5431,6 +5503,7 @@ export function App(): React.JSX.Element {
       const result = response.result as { dataUrl: string; cancelled: boolean }
       if (result.cancelled) return
       await attachImageData(result.dataUrl)
+      markUsage('screenshot')
     } catch (error) {
       setReport(
         t('区域截图失败：{{message}}', {
@@ -6095,6 +6168,7 @@ export function App(): React.JSX.Element {
     if (insights?.hasPackageJson) return t('这是一个 Node 项目；也可以直接描述你想做的事。')
     return t(TASK_MODE_TEMPLATE[taskMode].hint)
   })()
+  const usageDone = Object.values(usageProgress).filter(Boolean).length
   const activeModel = appState?.models.find((model) => model.id === appState?.activeModelId)
   const currentTitle = activeModel?.label ?? t('模型')
   const modelNeedle = modelQuery.trim().toLowerCase()
@@ -6262,6 +6336,59 @@ export function App(): React.JSX.Element {
               ))}
             </div>
           </div>
+          {!usageDismissed && usageDone < 5 ? (
+            <div className="sidebar-section usage-checklist" data-testid="usage-checklist">
+              <div className="sidebar-head">
+                <span className="sidebar-title">{t('上手清单')}</span>
+                <span className="usage-progress">
+                  {usageDone}/{5}
+                </span>
+                <button
+                  className="sidebar-add"
+                  data-testid="usage-dismiss"
+                  title={t('收起上手清单')}
+                  aria-label={t('收起上手清单')}
+                  onClick={() => {
+                    setUsageDismissed(true)
+                    try {
+                      localStorage.setItem(USAGE_DISMISSED_KEY, '1')
+                    } catch {
+                      // Ignore.
+                    }
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+              {(
+                [
+                  ['attach', t('附加一个文件或图片'), () => void pickDocument()],
+                  ['screenshot', t('截一张图'), () => setCaptureMenuOpen(true)],
+                  ['document', t('打开文档面板'), () => void openDocumentPanel()],
+                  [
+                    'palette',
+                    t('用 {{key}} 搜索能力', {
+                      key: window.xcode.platform === 'darwin' ? '⌘K' : 'Ctrl+K',
+                    }),
+                    () => setPaletteOpen(true),
+                  ],
+                  ['skill', t('从技能市场安装技能'), () => void openSettings('skillmarket')],
+                ] as Array<[UsageKey, string, () => void]>
+              ).map(([key, label, run]) => (
+                <button
+                  key={key}
+                  className={`usage-item ${usageProgress[key] ? 'done' : ''}`}
+                  data-testid={`usage-item-${key}`}
+                  onClick={run}
+                >
+                  <span className="usage-check" aria-hidden="true">
+                    {usageProgress[key] ? '✓' : '○'}
+                  </span>
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="sidebar-section sidebar-sessions-section">
             <div className="sidebar-head">
               <span className="sidebar-title">{t('会话')}</span>
@@ -7590,6 +7717,7 @@ export function App(): React.JSX.Element {
           onOpenDocument={(path, page) => void openDocument(path, page)}
           activeTab={settingsTab ?? undefined}
           onTabChange={setSettingsTab}
+          onUsage={(key) => markUsage(key)}
         />
       ) : null}
       {fileOpen ? (

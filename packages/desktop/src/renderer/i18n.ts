@@ -987,6 +987,12 @@ export const EN: Record<string, string> = {
   '资料、引用与不确定性优先': 'Sources, citations and uncertainty first',
   '文档、表格与导出优先': 'Documents, spreadsheets and exports first',
   '模式只调整回答侧重点，不限制可用工具。': 'Modes only adjust what the answer emphasizes; every tool stays available.',
+  上手清单: 'Getting started',
+  收起上手清单: 'Hide getting started',
+  附加一个文件或图片: 'Attach a file or image',
+  截一张图: 'Take a screenshot',
+  '用 {{key}} 搜索能力': 'Search capabilities with {{key}}',
+  从技能市场安装技能: 'Install a skill from the marketplace',
 }
 
 const storedLanguage = ((): Language => {

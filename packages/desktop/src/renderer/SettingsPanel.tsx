@@ -120,6 +120,7 @@ interface SettingsPanelProps {
   /** Tab requested from outside (command palette / shortcut). */
   activeTab?: string
   onTabChange?: (tab: string) => void
+  onUsage?: (key: 'skill') => void
 }
 
 export function SettingsPanel({
@@ -134,6 +135,7 @@ export function SettingsPanel({
   onOpenDocument,
   activeTab,
   onTabChange,
+  onUsage,
 }: SettingsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const language = i18n.language === 'en' ? 'en' : 'zh'
@@ -430,6 +432,7 @@ export function SettingsPanel({
     }
     const result = response.result as SkillImportResult
     onSettings(result.settings)
+    onUsage?.('skill')
     setNotice(t('已导入技能：{{names}}', { names: result.added.join(language === 'zh' ? '、' : ', ') }))
   }
 
@@ -581,6 +584,7 @@ export function SettingsPanel({
         }),
       )
     } else {
+      onUsage?.('skill')
       setNotice(t('已导入技能：{{names}}', { names: result.added.join(language === 'zh' ? '、' : ', ') }))
     }
     setSkillCommand('')
@@ -647,6 +651,7 @@ export function SettingsPanel({
       }
       const result = response.result as SkillImportResult
       onSettings(result.settings)
+      onUsage?.('skill')
       setSkillMarketResults((previous) =>
         previous
           ? {

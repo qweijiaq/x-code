@@ -3101,6 +3101,54 @@ body::before {
   line-height: 1.5;
 }
 
+/* ── Usage checklist ─────────────────────────────────────────────────── */
+
+.usage-checklist {
+  border-bottom: 1px solid var(--ink-20);
+}
+
+.usage-progress {
+  margin-left: auto;
+  color: var(--ink-45);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.usage-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 14px;
+  border: none;
+  background: transparent;
+  color: var(--ink-70);
+  font-family: var(--sans);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.usage-item:hover {
+  color: var(--cinnabar);
+}
+
+.usage-item.done {
+  color: var(--ink-45);
+  text-decoration: line-through;
+}
+
+.usage-check {
+  width: 12px;
+  color: var(--ink-45);
+  font-family: var(--mono);
+}
+
+.usage-item.done .usage-check {
+  color: var(--sky);
+  text-decoration: none;
+}
+
 .mode-item:hover,
 .mode-item.active {
   background: var(--paper-2);
