@@ -2904,6 +2904,15 @@ export function App(): React.JSX.Element {
             ? `${exportResult?.bytes ?? 0} bytes · ${exportResult?.path ?? ''}`
             : exported.error.message,
         }
+        const rendererError = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'renderer:error',
+          params: { message: 'ui smoke renderer error', stack: 'smoke' },
+        })
+        checks.rendererError = {
+          ok: rendererError.ok,
+          detail: rendererError.ok ? 'renderer error accepted' : rendererError.error.message,
+        }
 
         checks.terminalDefault = {
           ok: document.querySelector('[data-testid="terminal-shell"]') === null,

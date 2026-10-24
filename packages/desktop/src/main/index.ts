@@ -33,6 +33,20 @@ import type {
 } from '../shared/protocol.js'
 import { downloadUpdateArtifact, parseReleaseInfo, pickUpdateArtifact } from './update.js'
 
+/** Renderer and event-handler errors are appended here even without
+ *  DEBUG_STDOUT so a support report has a local trail. */
+function logDesktopError(kind: string, detail: string): void {
+  try {
+    const root = process.env.X_CODE_HOME?.trim() || path.join(os.homedir(), '.x-code')
+    const dir = path.join(root, 'logs')
+    fs.mkdirSync(dir, { recursive: true })
+    const line = `${new Date().toISOString()} [${kind}] ${detail.replace(/\s+$/, '')}\n`
+    fs.appendFileSync(path.join(dir, 'desktop-errors.log'), line, 'utf-8')
+  } catch {
+    // Logging must never break the app.
+  }
+}
+
 const isSmoke = process.argv.includes('--smoke-test')
 const isUiSmoke = process.argv.includes('--ui-smoke')
 const isHeadlessSmoke = isSmoke || isUiSmoke
@@ -936,6 +950,11 @@ function installIpc(): void {
   ipcMain.handle('runtime:request', async (event, request: RuntimeRequest) => {
     const senderWindow = windowForSender(event.sender)
     const context = contextForWindow(senderWindow)
+    if (request?.method === 'renderer:error') {
+      const params = request.params as { message?: string; stack?: string }
+      logDesktopError('renderer', `${params.message ?? 'Unknown error'}\n${params.stack ?? ''}`)
+      return { id: request.id, ok: true, result: null }
+    }
     if (request?.method === 'app:open-external') {
       const url = (request.params as { url?: string }).url ?? ''
       if (!url.startsWith('https://')) {

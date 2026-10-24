@@ -140,7 +140,9 @@ terminal while continuing the conversation.
   and offers cleanup.
 - **Settings → Tools → Diagnostics and support** exports a JSON snapshot
   (version, model, MCP status, tool/skill counts, sandbox settings) without
-  API keys, MCP env/headers or command contents.
+  API keys, MCP env/headers or command contents. A render failure shows a
+  recovery screen (reload, copy error, export diagnostics); errors are
+  appended to `~/.x-code/logs/desktop-errors.log`.
 
 ## Skill marketplace
 

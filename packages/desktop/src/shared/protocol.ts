@@ -839,6 +839,7 @@ export interface RequestMap {
   'files:create': { params: { path: string; content?: string }; result: { path: string; size: number } }
   'doctor:run': { params: Record<string, never>; result: TextReport }
   'diagnostics:export': { params: Record<string, never>; result: DiagnosticsExportResult }
+  'renderer:error': { params: { message: string; stack: string }; result: null }
   'backup:export': { params: { destination: string }; result: BackupExportView }
   'backup:import': { params: { source: string }; result: BackupImportView }
   'shell:list': { params: Record<string, never>; result: TextReport }
