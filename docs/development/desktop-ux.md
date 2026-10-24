@@ -52,6 +52,9 @@
 - The branch button next to **项目** (also "在新窗口打开分支" in the palette)
   lists the repository's local branches. Choose one to open it in its own
   window.
+- The branch picker can create a new branch from the current HEAD and open it in
+  a fresh worktree. Remote-tracking branches are listed with a **远端** badge;
+  choosing one creates/reuses the matching local branch before opening it.
 - A branch that is not checked out anywhere gets a new Git worktree in a sibling
   folder (`<repo>-<branch>`; `/` in branch names becomes `-`). An existing
   worktree is reused, and selecting a workspace that already has a window

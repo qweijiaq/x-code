@@ -107,6 +107,10 @@ if (isHeadlessSmoke) {
     execFileSync('git', ['commit', '-q', '-m', 'smoke fixtures'], { cwd: smokeWorkspace, env })
     execFileSync('git', ['branch', 'smoke-branch'], { cwd: smokeWorkspace, env })
     execFileSync('git', ['branch', 'smoke-remove'], { cwd: smokeWorkspace, env })
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/smoke-remote', 'HEAD'], {
+      cwd: smokeWorkspace,
+      env,
+    })
   } catch {
     // Git unavailable: the Git panel check reports the workspace as non-repo.
   }

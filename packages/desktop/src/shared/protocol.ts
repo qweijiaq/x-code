@@ -371,6 +371,10 @@ export interface BranchInfoView {
   worktreePath?: string
   /** A linked worktree that can be removed (never the main checkout). */
   removable?: boolean
+  /** Remote-tracking branch entry (name includes the remote, e.g. origin/main). */
+  remote?: boolean
+  /** Local branch name a remote entry creates/fast-forwards into. */
+  localName?: string
 }
 
 export interface BranchListView {
@@ -943,7 +947,8 @@ export interface RequestMap {
   'checks:set-auto': { params: { enabled: boolean }; result: { enabled: boolean } }
   'git:status': { params: Record<string, never>; result: GitStatusView }
   'git:branches': { params: Record<string, never>; result: BranchListView }
-  'worktree:open': { params: { branch: string }; result: WorktreeOpenResult }
+  'worktree:open': { params: { branch: string; remoteRef?: string }; result: WorktreeOpenResult }
+  'worktree:create': { params: { branch: string; from?: string; parentDir?: string }; result: WorktreeOpenResult }
   'worktree:remove': { params: { path: string; force?: boolean }; result: WorktreeRemoveResult }
   'worktree:prune': { params: Record<string, never>; result: { ok: boolean } }
   'git:diff': { params: { path: string; staged?: boolean }; result: { diff: string; truncated: boolean } }

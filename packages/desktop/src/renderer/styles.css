@@ -5679,6 +5679,46 @@ body::before,
   padding-right: 2px;
 }
 
+.branch-create {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.branch-create .settings-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.branch-create .btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+.branch-parent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.branch-parent .btn {
+  flex: none;
+  padding: 3px 8px;
+  font-size: 10px;
+}
+
+.branch-parent-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-35);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .branch-row {
   display: flex;
   flex-direction: column;

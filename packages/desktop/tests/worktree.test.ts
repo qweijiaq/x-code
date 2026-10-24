@@ -5,7 +5,13 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { gitBranches, openBranchWorktree, pruneWorktrees, removeBranchWorktree } from '../src/runtime/git.js'
+import {
+  createBranchWorktree,
+  gitBranches,
+  openBranchWorktree,
+  pruneWorktrees,
+  removeBranchWorktree,
+} from '../src/runtime/git.js'
 
 const GIT_ENV = {
   ...process.env,
@@ -90,6 +96,47 @@ describe('git worktrees', () => {
     const forced = await removeBranchWorktree(repo, opened.workspacePath, true)
     expect(forced.forced).toBe(true)
     expect(fs.existsSync(opened.workspacePath)).toBe(false)
+  })
+
+  it('creates a new branch from HEAD in its own worktree', async () => {
+    const created = await createBranchWorktree(repo, 'feature/new')
+    expect(created.created).toBe(true)
+    expect(fs.existsSync(path.join(created.workspacePath, 'README.md'))).toBe(true)
+    expect(
+      execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd: created.workspacePath,
+        env: GIT_ENV,
+        encoding: 'utf-8',
+      }).trim(),
+    ).toBe('feature/new')
+    expect((await gitBranches(repo)).branches.some((branch) => branch.name === 'feature/new')).toBe(true)
+  })
+
+  it('creates a new branch worktree under a chosen parent directory', async () => {
+    const parent = path.join(base, 'custom-parent')
+    fs.mkdirSync(parent)
+    const created = await createBranchWorktree(repo, 'feature/custom', undefined, parent)
+    expect(created.created).toBe(true)
+    expect(path.dirname(created.workspacePath)).toBe(parent)
+    expect(path.basename(created.workspacePath)).toBe('demo-feature-custom')
+  })
+
+  it('lists remote branches and creates a local tracking worktree', async () => {
+    const head = execFileSync('git', ['rev-parse', 'main'], { cwd: repo, env: GIT_ENV, encoding: 'utf-8' }).trim()
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/remote-feature', head], { cwd: repo, env: GIT_ENV })
+    const view = await gitBranches(repo)
+    const remote = view.branches.find((branch) => branch.name === 'origin/remote-feature')
+    expect(remote).toMatchObject({ remote: true, localName: 'remote-feature' })
+
+    const opened = await openBranchWorktree(repo, 'remote-feature', 'origin/remote-feature')
+    expect(opened.created).toBe(true)
+    expect(
+      execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd: opened.workspacePath,
+        env: GIT_ENV,
+        encoding: 'utf-8',
+      }).trim(),
+    ).toBe('remote-feature')
   })
 
   it('refuses to remove a locked worktree', async () => {

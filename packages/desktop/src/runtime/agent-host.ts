@@ -125,6 +125,7 @@ import { createDemoModel } from './demo-model.js'
 import { loadDesktopSettings, saveDesktopSettings } from './desktop-settings.js'
 import type { ProjectOverrides } from './desktop-settings.js'
 import {
+  createBranchWorktree,
   createTurnCheckpoint,
   gitBranches,
   gitFileDiff,
@@ -814,8 +815,12 @@ export class AgentHost {
     return gitBranches(this.requireBootstrap().workspace)
   }
 
-  async openWorktree(branch: string): Promise<WorktreeOpenResult> {
-    return openBranchWorktree(this.requireBootstrap().workspace, branch)
+  async openWorktree(branch: string, remoteRef?: string): Promise<WorktreeOpenResult> {
+    return openBranchWorktree(this.requireBootstrap().workspace, branch, remoteRef)
+  }
+
+  async createWorktree(branch: string, from?: string, parentDir?: string): Promise<WorktreeOpenResult> {
+    return createBranchWorktree(this.requireBootstrap().workspace, branch, from, parentDir)
   }
 
   async removeWorktree(

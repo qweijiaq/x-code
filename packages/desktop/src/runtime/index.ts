@@ -377,7 +377,14 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       }
       case 'worktree:open': {
         await ensureInitialized()
-        return ok(request.id, await host.openWorktree(request.params.branch))
+        return ok(request.id, await host.openWorktree(request.params.branch, request.params.remoteRef))
+      }
+      case 'worktree:create': {
+        await ensureInitialized()
+        return ok(
+          request.id,
+          await host.createWorktree(request.params.branch, request.params.from, request.params.parentDir),
+        )
       }
       case 'worktree:remove': {
         await ensureInitialized()

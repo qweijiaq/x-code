@@ -521,6 +521,9 @@ export function App(): React.JSX.Element {
   const [branchQuery, setBranchQuery] = useState('')
   const [branchBusy, setBranchBusy] = useState<string | null>(null)
   const [branchError, setBranchError] = useState<string | null>(null)
+  const [newBranchName, setNewBranchName] = useState('')
+  const [newBranchBusy, setNewBranchBusy] = useState(false)
+  const [newBranchParent, setNewBranchParent] = useState('')
   const [markdownToolsOpen, setMarkdownToolsOpen] = useState(false)
   const [markdownPreview, setMarkdownPreview] = useState(false)
   const [imageLightbox, setImageLightbox] = useState<{ src: string; name: string } | null>(null)
@@ -3670,9 +3673,35 @@ export function App(): React.JSX.Element {
             2000,
           )
           const prunePresent = document.querySelector('[data-testid="worktree-prune-button"]') !== null
+          const remoteRow =
+            document.querySelector('[data-testid="branch-row"][data-branch="origin/smoke-remote"]') !== null
+          const createForm = document.querySelector('[data-testid="branch-create"]') !== null
+          const parentPicker = document.querySelector('[data-testid="branch-parent-button"]') !== null
+          const newBranchInput = document.querySelector<HTMLInputElement>('[data-testid="branch-new-input"]')
+          const setNewBranchValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+          setNewBranchValue?.call(newBranchInput, 'smoke-ui-new')
+          newBranchInput?.dispatchEvent(new Event('input', { bubbles: true }))
+          const createEnabled = await waitFor(
+            () => document.querySelector<HTMLButtonElement>('[data-testid="branch-create-button"]')?.disabled === false,
+            2_000,
+          )
+          const beforeBranchCreateWindow = await windowCount()
+          document.querySelector<HTMLButtonElement>('[data-testid="branch-create-button"]')?.click()
+          const branchModalClosed = await waitFor(
+            () => document.querySelector('[data-testid="branch-picker"]') === null,
+            8_000,
+          )
+          const branchCreateWindow = await waitForWindowCount(beforeBranchCreateWindow, 8_000)
+          checks.branchCreateUi = {
+            ok: createEnabled && branchModalClosed && branchCreateWindow,
+            detail: `input=${createEnabled} closed=${branchModalClosed} window=${branchCreateWindow}`,
+          }
           document.querySelector<HTMLButtonElement>('.branch-card .shortcut-head .btn-quiet')?.click()
-          worktreeUiOk = removeReady && confirmReady && cancelled && prunePresent
-          worktreeUiDetail = `remove=${removeReady} confirm=${confirmReady} cancel=${cancelled} prune=${prunePresent}`
+          worktreeUiOk =
+            removeReady && confirmReady && cancelled && prunePresent && remoteRow && createForm && parentPicker
+          worktreeUiDetail = `remove=${removeReady} confirm=${confirmReady} cancel=${cancelled} prune=${prunePresent} remote=${remoteRow} create=${createForm} parent=${parentPicker}`
+        } else {
+          checks.branchCreateUi = { ok: false, detail: 'picker missing' }
         }
         checks.worktreeUi = { ok: worktreeUiOk, detail: worktreeUiDetail }
 
@@ -3727,6 +3756,26 @@ export function App(): React.JSX.Element {
           worktreeManageDetail = `removed=${removed.ok} pruned=${pruned.ok} branch=${Boolean(smokeRemoveBranch)} worktree=${smokeRemoveBranch?.worktreePath ?? 'none'}`
         }
         checks.worktreeManage = { ok: worktreeManageOk, detail: worktreeManageDetail }
+
+        const remoteOpen = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'worktree:open',
+          params: { branch: 'smoke-remote', remoteRef: 'origin/smoke-remote' },
+        })
+        let remoteDetail = remoteOpen.ok ? 'created' : remoteOpen.error.message
+        let remoteOk = false
+        if (remoteOpen.ok) {
+          const remotePath = (remoteOpen.result as { workspacePath: string }).workspacePath
+          remoteOk = (remoteOpen.result as { created: boolean }).created
+          const removed = await window.xcode.request({
+            id: crypto.randomUUID(),
+            method: 'worktree:remove',
+            params: { path: remotePath },
+          })
+          remoteOk = remoteOk && removed.ok
+          remoteDetail = `created=${remoteOk} removed=${removed.ok}`
+        }
+        checks.worktreeRemote = { ok: remoteOk, detail: remoteDetail }
 
         let sessionMoveOk = false
         let sessionMoveDetail = 'no session row'
@@ -4622,6 +4671,8 @@ export function App(): React.JSX.Element {
     setBranchView(null)
     setBranchQuery('')
     setBranchError(null)
+    setNewBranchName('')
+    setNewBranchParent('')
     setRemoveWorktree(null)
     setRemoveWorktreeError(null)
     await loadBranches()
@@ -4635,7 +4686,9 @@ export function App(): React.JSX.Element {
       const opened = await window.xcode.request({
         id: crypto.randomUUID(),
         method: 'worktree:open',
-        params: { branch: branch.name },
+        params: branch.remote
+          ? { branch: branch.localName ?? branch.name, remoteRef: branch.name }
+          : { branch: branch.name },
       })
       if (!opened.ok) {
         setBranchError(t('创建 worktree 失败：{{message}}', { message: opened.error.message }))
@@ -4668,6 +4721,61 @@ export function App(): React.JSX.Element {
       setBranchError(t('创建 worktree 失败：{{message}}', { message: String(error) }))
     } finally {
       setBranchBusy(null)
+    }
+  }
+
+  const chooseBranchParent = async (): Promise<void> => {
+    const response = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'app:pick-path',
+      params: { kind: 'folder' },
+    })
+    if (response.ok) {
+      const selected = (response.result as { path: string | null }).path
+      if (selected) setNewBranchParent(selected)
+    }
+  }
+
+  const createBranchInWindow = async (): Promise<void> => {
+    const branch = newBranchName.trim()
+    if (!branch || newBranchBusy || branchBusy) return
+    setNewBranchBusy(true)
+    setBranchError(null)
+    try {
+      const created = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'worktree:create',
+        params: { branch, ...(newBranchParent.trim() ? { parentDir: newBranchParent.trim() } : {}) },
+      })
+      if (!created.ok) {
+        setBranchError(t('创建分支失败：{{message}}', { message: created.error.message }))
+        return
+      }
+      const { workspacePath, created: createdBranch } = created.result as {
+        workspacePath: string
+        created: boolean
+      }
+      if (sameWorkspacePath(workspacePath, appState?.workspace)) {
+        setBranchError(t('该分支已在当前窗口打开。'))
+        return
+      }
+      const windowResult = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'app:new-window',
+        params: { workspacePath },
+      })
+      if (!windowResult.ok) {
+        setBranchError(t('打开新窗口失败：{{message}}', { message: windowResult.error.message }))
+        return
+      }
+      setBranchOpen(false)
+      setNewBranchName('')
+      setNewBranchParent('')
+      setNotice(t(createdBranch ? '已在新窗口打开新分支 {{branch}}' : '已在新窗口打开分支 {{branch}}', { branch }))
+    } catch (error) {
+      setBranchError(t('创建分支失败：{{message}}', { message: String(error) }))
+    } finally {
+      setNewBranchBusy(false)
     }
   }
 
@@ -7266,6 +7374,54 @@ export function App(): React.JSX.Element {
                 }
               }}
             />
+            <div className="branch-create" data-testid="branch-create">
+              <input
+                className="settings-input"
+                data-testid="branch-new-input"
+                placeholder={t('新建分支（从当前 HEAD 创建）')}
+                value={newBranchName}
+                onChange={(event) => setNewBranchName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void createBranchInWindow()
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn"
+                data-testid="branch-create-button"
+                disabled={!newBranchName.trim() || newBranchBusy || branchBusy !== null}
+                onClick={() => void createBranchInWindow()}
+              >
+                {newBranchBusy ? t('创建中…') : t('创建并打开')}
+              </button>
+            </div>
+            <div className="branch-parent">
+              <button
+                type="button"
+                className="btn btn-quiet"
+                data-testid="branch-parent-button"
+                disabled={newBranchBusy || branchBusy !== null}
+                onClick={() => void chooseBranchParent()}
+              >
+                {t('选择父目录')}
+              </button>
+              <span className="branch-parent-path" title={newBranchParent || undefined}>
+                {newBranchParent || t('默认：仓库旁边的目录')}
+              </span>
+              {newBranchParent ? (
+                <button
+                  type="button"
+                  className="attachment-remove"
+                  title={t('清除')}
+                  onClick={() => setNewBranchParent('')}
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
             {branchError ? <p className="branch-error">{branchError}</p> : null}
             <div className="branch-list">
               {branchView === null && !branchError ? <div className="menu-hint">{t('正在读取分支…')}</div> : null}
@@ -7284,14 +7440,15 @@ export function App(): React.JSX.Element {
                       className={`branch-row ${sameWindow ? 'active' : ''}`}
                       data-testid="branch-row"
                       data-branch={branch.name}
-                      disabled={sameWindow || branchBusy !== null || removeWorktree !== null}
-                      title={worktreePath ?? t('将新建 worktree')}
+                      disabled={sameWindow || branchBusy !== null || removeWorktree !== null || newBranchBusy}
+                      title={worktreePath ?? (branch.remote ? branch.name : t('将新建 worktree'))}
                       onClick={() => void openBranchInWindow(branch)}
                     >
                       <span className="branch-row-head">
                         <span className="branch-row-name">{branch.name}</span>
                         {branch.current ? <span className="branch-badge current">{t('当前分支')}</span> : null}
-                        {sameWindow ? (
+                        {branch.remote ? <span className="branch-badge muted">{t('远端')}</span> : null}
+                        {branch.remote ? null : sameWindow ? (
                           <span className="branch-badge current">{t('当前窗口')}</span>
                         ) : worktreePath ? (
                           <span className="branch-badge">{t('已有 worktree')}</span>
@@ -7302,7 +7459,7 @@ export function App(): React.JSX.Element {
                       </span>
                       {worktreePath ? <span className="branch-row-path">{worktreePath}</span> : null}
                     </button>
-                    {branch.removable && worktreePath ? (
+                    {branch.removable && worktreePath && !branch.remote ? (
                       <button
                         className="branch-remove"
                         data-testid="branch-remove"

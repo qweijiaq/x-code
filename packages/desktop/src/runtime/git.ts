@@ -10,7 +10,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import type { BranchListView, WorktreeOpenResult } from '../shared/protocol.js'
+import type { BranchInfoView, BranchListView, WorktreeOpenResult } from '../shared/protocol.js'
 
 const execFileAsync = promisify(execFile)
 const GIT_TIMEOUT_MS = 30_000
@@ -300,10 +300,11 @@ async function worktreeLocked(target: string): Promise<boolean> {
 export async function gitBranches(cwd: string): Promise<BranchListView> {
   const root = await gitRepoRoot(cwd)
   if (!root) return { isRepo: false, branches: [] }
-  const [branchResult, currentResult, worktrees] = await Promise.all([
+  const [branchResult, currentResult, worktrees, remoteResult] = await Promise.all([
     git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/']),
     git(root, ['rev-parse', '--abbrev-ref', 'HEAD']),
     listWorktrees(root),
+    git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes/']),
   ])
   const current = currentResult.code === 0 ? currentResult.stdout.trim() : ''
   const mainPath = worktrees[0]?.path ? await canonicalPath(worktrees[0].path) : undefined
@@ -320,7 +321,7 @@ export async function gitBranches(cwd: string): Promise<BranchListView> {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-  const branches = names
+  const branches: BranchInfoView[] = names
     .map((name) => {
       const worktree = byBranch.get(name)
       return {
@@ -330,22 +331,69 @@ export async function gitBranches(cwd: string): Promise<BranchListView> {
       }
     })
     .sort((left, right) => Number(right.current) - Number(left.current) || left.name.localeCompare(right.name))
+  const localNames = new Set(names)
+  const remoteNames = remoteResult.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((name) => name && !name.endsWith('/HEAD'))
+    .slice(0, 500)
+  const remoteBranches = remoteNames.flatMap((name) => {
+    const localName = name.split('/').slice(1).join('/')
+    if (!localName || localNames.has(localName)) return []
+    return [{ name, localName, current: false, remote: true }]
+  })
+  branches.push(...remoteBranches)
   return { isRepo: true, ...(current && current !== 'HEAD' ? { current } : {}), branches }
 }
 
+async function nextWorktreeDirectory(
+  worktrees: ParsedWorktree[],
+  root: string,
+  branch: string,
+  parentDir?: string,
+): Promise<string> {
+  const mainPath = worktrees[0]?.path ?? root
+  const parent = parentDir?.trim() ? path.resolve(parentDir.trim()) : path.dirname(mainPath)
+  if (parentDir?.trim()) {
+    const stats = await fs.stat(parent).catch(() => null)
+    if (!stats?.isDirectory()) throw new Error(`目录不存在：${parent}`)
+  }
+  const base = path.basename(mainPath)
+  const safe = branch.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+/, '') || 'branch'
+  let workspacePath = path.join(parent, `${base}-${safe}`)
+  let suffix = 2
+  while (await pathExists(workspacePath)) {
+    workspacePath = path.join(parent, `${base}-${safe}-${suffix++}`)
+  }
+  return workspacePath
+}
+
+function assertBranchName(branch: string): void {
+  if (!branch || branch.startsWith('-') || /\s/.test(branch)) throw new Error('分支名无效')
+}
+
 /** Return the worktree for `branch`, creating a sibling directory when the
- *  branch is not checked out anywhere yet. */
-export async function openBranchWorktree(cwd: string, branch: string): Promise<WorktreeOpenResult> {
+ *  branch is not checked out anywhere yet. A remoteRef creates a local
+ *  tracking branch when one does not exist. */
+export async function openBranchWorktree(cwd: string, branch: string, remoteRef?: string): Promise<WorktreeOpenResult> {
   const root = await gitRepoRoot(cwd)
   if (!root) throw new Error('当前工作区不是 Git 仓库')
   const target = branch.trim()
-  if (!target) throw new Error('分支名不能为空')
+  assertBranchName(target)
   const refs = await git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'])
   const branches = refs.stdout
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-  if (!branches.includes(target)) throw new Error(`分支不存在：${target}`)
+  const localExists = branches.includes(target)
+  const remote = remoteRef?.trim()
+  if (remote) {
+    assertBranchName(remote)
+    const verified = await git(root, ['rev-parse', '--verify', `${remote}^{commit}`])
+    if (verified.code !== 0) throw new Error(`远端分支不存在：${remote}`)
+  } else if (!localExists) {
+    throw new Error(`分支不存在：${target}`)
+  }
 
   // A manually deleted worktree directory leaves a stale record and would make
   // `git worktree add` fail with "already checked out".
@@ -356,18 +404,49 @@ export async function openBranchWorktree(cwd: string, branch: string): Promise<W
     return { branch: target, workspacePath: existing.path, created: false }
   }
 
-  const mainPath = worktrees[0]?.path ?? root
-  const parent = path.dirname(mainPath)
-  const base = path.basename(mainPath)
-  const safe = target.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+/, '') || 'branch'
-  let workspacePath = path.join(parent, `${base}-${safe}`)
-  let suffix = 2
-  while (await pathExists(workspacePath)) {
-    workspacePath = path.join(parent, `${base}-${safe}-${suffix++}`)
-  }
-  const added = await git(root, ['worktree', 'add', workspacePath, target])
+  const workspacePath = await nextWorktreeDirectory(worktrees, root, target)
+  const args = localExists
+    ? ['worktree', 'add', workspacePath, target]
+    : ['worktree', 'add', '-b', target, workspacePath, remote!]
+  const added = await git(root, args)
   if (added.code !== 0) {
     throw new Error(added.stderr.trim() || `git worktree add 失败：${target}`)
+  }
+  return { branch: target, workspacePath, created: true }
+}
+
+/** Create a new local branch from `from` (default HEAD), checked out in a new
+ *  sibling worktree. */
+export async function createBranchWorktree(
+  cwd: string,
+  branch: string,
+  from?: string,
+  parentDir?: string,
+): Promise<WorktreeOpenResult> {
+  const root = await gitRepoRoot(cwd)
+  if (!root) throw new Error('当前工作区不是 Git 仓库')
+  const target = branch.trim()
+  assertBranchName(target)
+  const valid = await git(root, ['check-ref-format', '--branch', target])
+  if (valid.code !== 0) throw new Error(`分支名无效：${target}`)
+  const refs = await git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'])
+  const branches = refs.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (branches.includes(target)) return openBranchWorktree(root, target)
+
+  const start = from?.trim() || 'HEAD'
+  assertBranchName(start)
+  const verified = await git(root, ['rev-parse', '--verify', `${start}^{commit}`])
+  if (verified.code !== 0) throw new Error(`起始分支不存在：${start}`)
+
+  await git(root, ['worktree', 'prune'])
+  const worktrees = await listWorktrees(root)
+  const workspacePath = await nextWorktreeDirectory(worktrees, root, target, parentDir)
+  const added = await git(root, ['worktree', 'add', '-b', target, workspacePath, start])
+  if (added.code !== 0) {
+    throw new Error(added.stderr.trim() || `创建分支失败：${target}`)
   }
   return { branch: target, workspacePath, created: true }
 }

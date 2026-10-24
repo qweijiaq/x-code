@@ -888,6 +888,14 @@ export const EN: Record<string, string> = {
   尝试修复: 'Try to recover',
   '正在恢复…': 'Recovering…',
   '已恢复 {{count}} 条消息到新会话': 'Recovered {{count}} message(s) into a new session',
+  '新建分支（从当前 HEAD 创建）': 'New branch (from current HEAD)',
+  创建并打开: 'Create and open',
+  '创建中…': 'Creating…',
+  '创建分支失败：{{message}}': 'Could not create the branch: {{message}}',
+  '已在新窗口打开新分支 {{branch}}': 'Opened new branch {{branch}} in a new window',
+  远端: 'Remote',
+  选择父目录: 'Choose parent folder',
+  '默认：仓库旁边的目录': 'Default: beside the repository',
 }
 
 const storedLanguage = ((): Language => {
