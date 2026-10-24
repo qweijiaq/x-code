@@ -70,7 +70,8 @@ terminal while continuing the conversation.
 ## Composer
 
 - Markdown editing and preview, `@` file references, slash-command palette and
-  the `Cmd+K` command palette. The palette matches synonyms too (screenshot,
+  the `Cmd+K` command palette. Typing `/` lists **every** command in a scrollable
+  list; arrow keys select and keep the active row visible. The palette matches synonyms too (screenshot,
   worktree, skill market, permission rules); the "All capabilities" link below
   the composer opens the same palette.
 - Paste or drop images, or capture a screen region from the capture menu. Images

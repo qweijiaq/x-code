@@ -2333,9 +2333,10 @@ export function App(): React.JSX.Element {
           setter?.call(composerTextarea, '/')
           composerTextarea.dispatchEvent(new Event('input', { bubbles: true }))
           const paletteMounted = await waitFor(() => document.querySelector('.slash-palette') !== null, 2000)
+          const slashCommandCount = document.querySelectorAll('[data-testid="slash-palette"] .slash-item').length
           checks.slashPalette = {
-            ok: paletteMounted,
-            detail: paletteMounted ? 'command palette mounted' : 'command palette missing',
+            ok: paletteMounted && slashCommandCount > 8,
+            detail: paletteMounted ? `${slashCommandCount} command(s) listed` : 'command palette missing',
           }
 
           setter?.call(composerTextarea, '/usage')
@@ -6143,9 +6144,13 @@ export function App(): React.JSX.Element {
 
   const slashQuery = input.startsWith('/') ? input.slice(1).toLowerCase() : null
   const paletteCommands =
-    slashQuery === null
-      ? []
-      : commandsWithHelp.filter((command) => command.name.slice(1).startsWith(slashQuery)).slice(0, 8)
+    slashQuery === null ? [] : commandsWithHelp.filter((command) => command.name.slice(1).startsWith(slashQuery))
+  const slashPaletteRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (paletteCommands.length === 0) return
+    slashPaletteRef.current?.querySelector<HTMLElement>('.slash-item.active')?.scrollIntoView({ block: 'nearest' })
+  }, [paletteIndex, input])
 
   const runSlashCommand = (command: SlashCommand): void => {
     setInput('')
@@ -7207,7 +7212,7 @@ export function App(): React.JSX.Element {
             </div>
           ) : null}
           {paletteCommands.length > 0 ? (
-            <div className="slash-palette">
+            <div className="slash-palette" data-testid="slash-palette" ref={slashPaletteRef}>
               {paletteCommands.map((command, index) => (
                 <button
                   key={command.name}
