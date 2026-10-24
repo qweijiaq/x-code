@@ -742,6 +742,10 @@ export interface RequestMap {
     }
   }
   'app:reveal-path': { params: { path: string }; result: { opened: boolean } }
+  'app:image-preview': {
+    params: { path: string }
+    result: { dataUrl: string; mime: string; name: string; size: number }
+  }
   'app:capture-screen': {
     params: Record<string, never>
     result: { dataUrl: string; width: number; height: number; name: string }

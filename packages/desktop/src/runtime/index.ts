@@ -632,6 +632,8 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         return fail(request.id, 'main-only', 'app:quit must be handled by the main process')
       case 'app:new-window':
         return fail(request.id, 'main-only', 'app:new-window must be handled by the main process')
+      case 'app:image-preview':
+        return fail(request.id, 'main-only', 'app:image-preview must be handled by the main process')
       case 'app:set-window-sessions':
         return fail(request.id, 'main-only', 'app:set-window-sessions must be handled by the main process')
       case 'app:window-info':

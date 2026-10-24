@@ -81,6 +81,76 @@ function formatContextTokens(count: number): string {
   return String(count)
 }
 
+const IMAGE_ATTACHMENT_RE = /\.(png|jpe?g|gif|webp|bmp)$/i
+const imagePreviewCache = new Map<string, string>()
+
+function isImageAttachment(filePath: string): boolean {
+  return IMAGE_ATTACHMENT_RE.test(filePath)
+}
+
+function attachmentName(filePath: string): string {
+  return filePath.split(/[\\/]/).pop() ?? filePath
+}
+
+function AttachmentImage({
+  file,
+  variant,
+  onOpen,
+}: {
+  file: string
+  variant: 'chip' | 'message'
+  onOpen: (src: string, name: string) => void
+}): React.JSX.Element {
+  const [src, setSrc] = useState<string | null>(() => imagePreviewCache.get(file) ?? null)
+  const [failed, setFailed] = useState(false)
+  const name = attachmentName(file)
+  useEffect(() => {
+    if (src || failed) return
+    let cancelled = false
+    void window.xcode
+      .request({
+        id: crypto.randomUUID(),
+        method: 'app:image-preview',
+        params: { path: file },
+      })
+      .then((response) => {
+        if (cancelled) return
+        if (!response.ok) {
+          setFailed(true)
+          return
+        }
+        const dataUrl = (response.result as { dataUrl: string }).dataUrl
+        imagePreviewCache.set(file, dataUrl)
+        setSrc(dataUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [file, src, failed])
+  if (failed) {
+    return <span className="attachment-image-fallback">{name}</span>
+  }
+  if (!src) {
+    return <span className={`attachment-image-loading ${variant}`} aria-label={name} />
+  }
+  if (variant === 'chip') {
+    return (
+      <button type="button" className="attachment-thumb-button" title={name} onClick={() => onOpen(src, name)}>
+        <img className="attachment-thumb" src={src} alt={name} loading="lazy" />
+      </button>
+    )
+  }
+  return (
+    <button type="button" className="message-attachment" title={name} onClick={() => onOpen(src, name)}>
+      <img src={src} alt={name} loading="lazy" />
+      <span>{name}</span>
+    </button>
+  )
+}
+
 function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const started = Date.now()
@@ -451,6 +521,7 @@ export function App(): React.JSX.Element {
   const [branchError, setBranchError] = useState<string | null>(null)
   const [markdownToolsOpen, setMarkdownToolsOpen] = useState(false)
   const [markdownPreview, setMarkdownPreview] = useState(false)
+  const [imageLightbox, setImageLightbox] = useState<{ src: string; name: string } | null>(null)
   const [removeWorktree, setRemoveWorktree] = useState<{ path: string; branch: string } | null>(null)
   const [removeWorktreeBusy, setRemoveWorktreeBusy] = useState(false)
   const [removeWorktreeError, setRemoveWorktreeError] = useState<string | null>(null)
@@ -2439,6 +2510,19 @@ export function App(): React.JSX.Element {
           ok: Boolean(document.querySelector('.composer .attach')),
           detail: document.querySelector('.composer .attach') ? 'document picker mounted' : 'document picker missing',
         }
+        const attachButtonElement = document.querySelector<HTMLButtonElement>('.composer .btn.attach')
+        const attachIcon = attachButtonElement?.querySelector('svg')
+        let attachCentered = false
+        let attachCenterDetail = 'button or icon missing'
+        if (attachButtonElement && attachIcon) {
+          const buttonRect = attachButtonElement.getBoundingClientRect()
+          const iconRect = attachIcon.getBoundingClientRect()
+          const dx = iconRect.left + iconRect.width / 2 - (buttonRect.left + buttonRect.width / 2)
+          const dy = iconRect.top + iconRect.height / 2 - (buttonRect.top + buttonRect.height / 2)
+          attachCentered = Math.abs(dx) < 1 && Math.abs(dy) < 1
+          attachCenterDetail = `dx=${dx.toFixed(1)} dy=${dy.toFixed(1)}`
+        }
+        checks.attachCentered = { ok: attachCentered, detail: attachCenterDetail }
         if (!writeAlways) {
           await window.xcode.request({
             id: crypto.randomUUID(),
@@ -2527,11 +2611,13 @@ export function App(): React.JSX.Element {
           detail: `menu=${themeMenu} themes=${themes.join('>')} en=${switchedToEnglish} zh=${switchedBack}`,
         }
 
+        const pngBase64 =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
         const pasted = await window.xcode.request({
           id: crypto.randomUUID(),
           method: 'app:save-pasted-image',
           params: {
-            data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+            data: pngBase64,
             mime: 'image/png',
           },
         })
@@ -2539,6 +2625,71 @@ export function App(): React.JSX.Element {
         checks.pasteImage = {
           ok: pasted.ok && pastedPath.endsWith('.png'),
           detail: pasted.ok ? pastedPath : pasted.error.message,
+        }
+        const imagePreview = pastedPath
+          ? await window.xcode.request({
+              id: crypto.randomUUID(),
+              method: 'app:image-preview',
+              params: { path: pastedPath },
+            })
+          : null
+        checks.imagePreview = {
+          ok:
+            imagePreview?.ok === true &&
+            (imagePreview.result as { dataUrl: string }).dataUrl.startsWith('data:image/png;base64,'),
+          detail:
+            imagePreview === null ? 'no pasted image' : imagePreview.ok ? 'data:image/png' : imagePreview.error.message,
+        }
+        const pasteComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+        if (pasteComposer) {
+          const bytes = Uint8Array.from(atob(pngBase64), (char) => char.charCodeAt(0))
+          const transfer = new DataTransfer()
+          transfer.items.add(new File([bytes], 'smoke-paste.png', { type: 'image/png' }))
+          pasteComposer.dispatchEvent(
+            new ClipboardEvent('paste', { clipboardData: transfer, bubbles: true, cancelable: true }),
+          )
+          const thumbReady = await waitFor(
+            () => document.querySelector('.attachment-chip .attachment-thumb') !== null,
+            4_000,
+          )
+          document.querySelector<HTMLButtonElement>('.attachment-chip .attachment-thumb-button')?.click()
+          const lightbox = await waitFor(
+            () => document.querySelector('[data-testid="image-lightbox"] img') !== null,
+            2_000,
+          )
+          document.querySelector<HTMLButtonElement>('.image-lightbox-card .btn-quiet')?.click()
+          const lightboxClosed = await waitFor(
+            () => document.querySelector('[data-testid="image-lightbox"]') === null,
+            2_000,
+          )
+          const userCountBeforeImage = document.querySelectorAll('.message.user').length
+          const pasteValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          pasteValue?.call(pasteComposer, 'image attachment smoke')
+          pasteComposer.dispatchEvent(new Event('input', { bubbles: true }))
+          pasteComposer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+          const imageUserSent = await waitFor(
+            () => document.querySelectorAll('.message.user').length > userCountBeforeImage,
+            4_000,
+          )
+          const messageImage = await waitFor(
+            () =>
+              document
+                .querySelector<HTMLImageElement>('.message.user .message-attachments img')
+                ?.src.startsWith('data:image/png') ?? false,
+            4_000,
+          )
+          await waitFor(() => document.querySelector('.send.stop') === null, 15_000)
+          checks.imageAttachmentUi = {
+            ok: thumbReady && lightbox && lightboxClosed,
+            detail: `thumb=${thumbReady} lightbox=${lightbox}/${lightboxClosed}`,
+          }
+          checks.imageMessage = {
+            ok: imageUserSent && messageImage,
+            detail: `sent=${imageUserSent} image=${messageImage}`,
+          }
+        } else {
+          checks.imageAttachmentUi = { ok: false, detail: 'composer missing' }
+          checks.imageMessage = { ok: false, detail: 'composer missing' }
         }
 
         const background = await window.xcode.request({
@@ -3646,13 +3797,6 @@ export function App(): React.JSX.Element {
     setReport(null)
     if (!alreadyShown) {
       append({ role: 'user', text: prompt, attachments: files })
-      if (files.length > 0) {
-        const names = files.map((file) => file.split(/[\\/]/).pop() ?? file)
-        append({
-          role: 'system',
-          text: t('附件：{{names}}', { names: names.join(language === 'zh' ? '、' : ', ') }),
-        })
-      }
     }
     if (busyRef.current) {
       queueRef.current.push({ prompt, attachments: files })
@@ -4548,7 +4692,8 @@ export function App(): React.JSX.Element {
         return
       }
       if (event.key === 'Escape') {
-        if (paletteOpen) setPaletteOpen(false)
+        if (imageLightbox) setImageLightbox(null)
+        else if (paletteOpen) setPaletteOpen(false)
         else if (branchOpen) {
           if (removeWorktree) {
             setRemoveWorktree(null)
@@ -4563,6 +4708,7 @@ export function App(): React.JSX.Element {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
+    imageLightbox,
     paletteOpen,
     branchOpen,
     removeWorktree,
@@ -6156,6 +6302,24 @@ export function App(): React.JSX.Element {
                 ) : (
                   <span className="message-text">{entry.text}</span>
                 )}
+                {entry.attachments?.length ? (
+                  <div className="message-attachments">
+                    {entry.attachments.map((file) =>
+                      isImageAttachment(file) ? (
+                        <AttachmentImage
+                          key={file}
+                          file={file}
+                          variant="message"
+                          onOpen={(src, name) => setImageLightbox({ src, name })}
+                        />
+                      ) : (
+                        <span className="message-attachment-file" key={file} title={file}>
+                          {attachmentName(file)}
+                        </span>
+                      ),
+                    )}
+                  </div>
+                ) : null}
                 {entry.text ? (
                   <span className="message-actions">
                     {entry.role === 'assistant' || entry.role === 'user' ? <CopyButton text={entry.text} /> : null}
@@ -6305,6 +6469,9 @@ export function App(): React.JSX.Element {
           <div className="composer-attachments" data-testid="attachments" hidden={attachments.length === 0}>
             {attachments.map((file) => (
               <span className="attachment-chip" key={file} title={file}>
+                {isImageAttachment(file) ? (
+                  <AttachmentImage file={file} variant="chip" onOpen={(src, name) => setImageLightbox({ src, name })} />
+                ) : null}
                 <span className="attachment-name">{file.split(/[\\/]/).pop() ?? file}</span>
                 <button
                   className="attachment-remove"
@@ -6823,6 +6990,24 @@ export function App(): React.JSX.Element {
         onSession={(item) => void loadSession(item)}
         onClose={() => setPaletteOpen(false)}
       />
+      {imageLightbox ? (
+        <div
+          className="modal-scrim image-lightbox-scrim"
+          data-testid="image-lightbox"
+          onClick={() => setImageLightbox(null)}
+        >
+          <figure className="image-lightbox-card" onClick={(event) => event.stopPropagation()}>
+            <img src={imageLightbox.src} alt={imageLightbox.name} />
+            <figcaption>
+              <span className="image-lightbox-name">{imageLightbox.name}</span>
+              <span className="spacer" />
+              <button className="btn btn-quiet" onClick={() => setImageLightbox(null)}>
+                {t('关闭')}
+              </button>
+            </figcaption>
+          </figure>
+        </div>
+      ) : null}
       {branchOpen ? (
         <div className="modal-scrim" onClick={() => setBranchOpen(false)}>
           <div

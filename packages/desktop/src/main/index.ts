@@ -114,6 +114,15 @@ if (isHeadlessSmoke) {
   process.env.X_CODE_EXPORT_DIR = path.join(smokeHome, 'exports')
 }
 const REQUEST_TIMEOUT_MS = 120_000
+const IMAGE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024
+const IMAGE_PREVIEW_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+}
 const LONG_REQUEST_TIMEOUT_MS = 15 * 60_000
 
 /** Agent turns and document/network work can legitimately outlive the default
@@ -1027,11 +1036,10 @@ function installIpc(): void {
         }
       }
       const target = path.join(os.tmpdir(), `x-code-region-${Date.now()}-${process.pid}.png`)
-      const wasVisible = senderWindow?.isVisible() ?? false
-      if (wasVisible) senderWindow?.hide()
       try {
-        // Give the compositor a moment to remove this window from the capture.
-        await new Promise((resolve) => setTimeout(resolve, 180))
+        // Let the composer repaint after closing the capture menu, but keep the
+        // app visible so the user can select a region of the project itself.
+        await new Promise((resolve) => setTimeout(resolve, 150))
         const exitCode = await new Promise<number>((resolve) => {
           const child = spawn('screencapture', ['-i', '-x', '-t', 'png', target], { stdio: 'ignore' })
           child.on('error', () => resolve(1))
@@ -1066,7 +1074,6 @@ function installIpc(): void {
         }
       } finally {
         fs.rmSync(target, { force: true })
-        if (wasVisible) senderWindow?.show()
       }
     }
     if (request?.method === 'app:capture-screen') {
@@ -1192,6 +1199,45 @@ function installIpc(): void {
       if (fs.statSync(target).isDirectory()) await shell.openPath(target)
       else shell.showItemInFolder(target)
       return { id: request.id, ok: true, result: { opened: true } }
+    }
+    if (request?.method === 'app:image-preview') {
+      const raw = (request.params as { path?: string }).path ?? ''
+      if (!raw.trim()) {
+        return { id: request.id, ok: false, error: { code: 'invalid-path', message: 'Path is required' } }
+      }
+      const target = path.resolve(raw)
+      const mime = IMAGE_PREVIEW_MIME[path.extname(target).toLowerCase()]
+      if (!mime) {
+        return {
+          id: request.id,
+          ok: false,
+          error: { code: 'unsupported-image', message: 'Only raster image previews are supported' },
+        }
+      }
+      try {
+        const stat = fs.statSync(target)
+        if (!stat.isFile()) throw new Error('Not a file')
+        if (stat.size > IMAGE_PREVIEW_MAX_BYTES) {
+          return {
+            id: request.id,
+            ok: false,
+            error: { code: 'image-too-large', message: 'Image is larger than 20 MB' },
+          }
+        }
+        const buffer = fs.readFileSync(target)
+        return {
+          id: request.id,
+          ok: true,
+          result: {
+            dataUrl: `data:${mime};base64,${buffer.toString('base64')}`,
+            mime,
+            name: path.basename(target),
+            size: stat.size,
+          },
+        }
+      } catch {
+        return { id: request.id, ok: false, error: { code: 'missing-image', message: 'Image not found' } }
+      }
     }
     if (request?.method === 'app:window-info') {
       const focusedId = BrowserWindow.getFocusedWindow()?.id ?? null

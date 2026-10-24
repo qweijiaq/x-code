@@ -116,10 +116,12 @@ in Settings → Hooks; user-level hooks always run.
 - The agent replies in the language of the latest user message: Chinese input
   (including mixed Chinese/English) gets a Chinese reply instead of switching to
   English because the code or tool output is English.
-- `Cmd+V` pastes screenshots, drag & drop adds files.
+- `Cmd+V` pastes screenshots, drag & drop adds files. Image attachments show a
+  thumbnail in the composer and in the sent user message; click either thumbnail
+  to open a full-size preview. Non-image attachments show a file chip.
 - The camera button offers **框选区域** (native macOS region selection; the app
-  window hides while you drag) and **整个屏幕**. macOS asks for Screen
-  Recording permission the first time.
+  window stays visible so you can capture part of the project) and **整个屏幕**.
+  macOS asks for Screen Recording permission the first time.
 - The microphone button opens a recording bar with elapsed time, an input-level
   meter, **取消** (discard) and **完成并转写**. Audio is recorded as mono 16-bit
   WAV and transcribed locally with Whisper. Released builds bundle the model;
