@@ -1,0 +1,5 @@
+Whisper model weights (ggml-tiny.bin)
+
+The ggml model is converted from OpenAI Whisper.
+OpenAI Whisper: Copyright (c) 2022 OpenAI, released under the MIT License.
+whisper.cpp: Copyright (c) 2022 Georgi Gerganov, released under the MIT License.

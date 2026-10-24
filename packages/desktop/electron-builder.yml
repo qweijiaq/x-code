@@ -1,0 +1,88 @@
+appId: dev.xcode.desktop
+productName: X-Code
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - '!dist/**/*.map'
+  - package.json
+  # UI smoke fixture (--ui-smoke) needs the PDF sample inside the package.
+  - tests/fixtures/smoke.pdf
+  # The renderer and runtime are bundled by Vite/esbuild, so only native or
+  # asset-loading packages need to ship as node_modules. Everything else is
+  # already inside dist/ and would only inflate the installer.
+  - '!node_modules/**'
+  - node_modules/node-pty/**
+  - node_modules/node-addon-api/**
+  - node_modules/fs-ext-extra-prebuilt/**
+  - node_modules/@napi-rs/**
+  - node_modules/@vscode/**
+  - node_modules/@fugood/**
+  - node_modules/@napi-audio/**
+  - node_modules/tesseract.js/**
+  - node_modules/tesseract.js-core/**
+  - node_modules/pdf-parse/**
+  - node_modules/pdfjs-dist/**
+  - node_modules/undici/**
+  - node_modules/bmp-js/**
+  - node_modules/idb-keyval/**
+  - node_modules/is-url/**
+  - node_modules/node-fetch/**
+  - node_modules/opencollective-postinstall/**
+  - node_modules/regenerator-runtime/**
+  - node_modules/wasm-feature-detect/**
+  - node_modules/zlibjs/**
+asarUnpack:
+  - dist/runtime/*-worker.js
+  - node_modules/node-pty/**
+  - node_modules/fs-ext-extra-prebuilt/**
+  - node_modules/@napi-rs/canvas/**
+  - node_modules/@vscode/ripgrep/**
+  - node_modules/tesseract.js/**
+  - node_modules/pdf-parse/**
+extraResources:
+  - from: build/icon.png
+    to: icon.png
+  # Optional offline speech model (scripts/fetch-whisper-model.mjs).
+  - from: build/whisper
+    to: whisper
+    filter:
+      - '**/*'
+artifactName: X-Code-${version}-${arch}.${ext}
+mac:
+  category: public.app-category.developer-tools
+  icon: icon.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: X-Code uses the microphone for local voice input transcription.
+  target:
+    - dmg
+    - zip
+dmg:
+  sign: false
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+win:
+  target: nsis
+  icon: icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  icon: icon.png
+  maintainer: X-Code
+npmRebuild: false

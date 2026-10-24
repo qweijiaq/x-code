@@ -1,0 +1,303 @@
+import { describe, expect, it } from 'vitest'
+
+import { randomUUID } from 'node:crypto'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
+import { GLYPH_SELECT_POINTER } from '../../src/ui/render/terminal-glyphs.js'
+import { createTestWorkspace } from '../fixtures/cli-test-helpers.js'
+import { startFakeProvider } from '../fixtures/fake-provider-server.js'
+import { createTuiHarness } from './harness.js'
+import { exitTui, submitInput } from './test-context.js'
+
+async function createPeerTestWorkspace(prefix: string): Promise<Awaited<ReturnType<typeof createTestWorkspace>>> {
+  const workspace = await createTestWorkspace(prefix)
+  if (process.platform !== 'win32') return workspace
+  const xcodeHome = path.join(os.homedir(), '.x-code', 'peer-test-runtime', randomUUID())
+  await fs.mkdir(xcodeHome, { recursive: true })
+  return {
+    ...workspace,
+    xcodeHome,
+    async cleanup() {
+      await Promise.all([workspace.cleanup(), fs.rm(xcodeHome, { recursive: true, force: true })])
+    },
+  }
+}
+
+describe('TUI cross-session messaging', () => {
+  it('registers named agents and lets two locally trusted sessions exchange without authority dialogs', async () => {
+    const alphaProvider = await startFakeProvider([
+      {
+        type: 'tool-call',
+        name: 'sendMessage',
+        input: { to: 'beta', message: 'handoff from alpha\n第二行 👋', summary: 'PTY handoff' },
+        finalText: 'sender observed delivery',
+      },
+    ])
+    const betaProvider = await startFakeProvider([
+      {
+        type: 'tool-call',
+        name: 'sendMessage',
+        input: { to: 'alpha', message: 'reply from beta', summary: 'approved peer reply' },
+        finalText: 'receiver processed handoff',
+      },
+    ])
+    const workspace = await createPeerTestWorkspace('xc-pty-peer-double-')
+    const alpha = await createTuiHarness({ workspace, provider: alphaProvider })
+    const beta = await createTuiHarness({ workspace, provider: betaProvider })
+    try {
+      await alpha.startCli(['-t', '--name', 'alpha'])
+      await beta.startCli(['-t', '--name', 'beta'])
+
+      await submitInput(alpha, '/list-agents')
+      await alpha.waitForText(/beta · peer:[0-9a-f-]{36} · idle/)
+
+      await submitInput(alpha, 'send the prepared handoff')
+      await beta.waitForText('Peer message · alpha')
+      await beta.waitForText('handoff from alpha')
+      await beta.waitForText('第二行 👋')
+      await alpha.waitForText('Peer message · beta')
+      await alpha.waitForText('reply from beta')
+      expect(beta.text()).not.toContain('Peer-influenced request · allow once only')
+      const alphaRequests = await alphaProvider.waitForMainRequests(1, 10_000)
+      const betaRequests = await betaProvider.waitForMainRequests(1, 10_000)
+      expect(alphaRequests[0]?.tools).toEqual(expect.arrayContaining(['listAgents', 'sendMessage']))
+      expect(betaRequests[0]?.rawBody).toContain('<peer_message')
+      expect(betaRequests[0]?.rawBody).toContain('handoff from alpha')
+
+      await exitTui(alpha)
+      await exitTui(beta)
+    } finally {
+      await alpha.dispose()
+      await beta.dispose()
+      await alphaProvider.close()
+      await betaProvider.close()
+      await workspace.cleanup()
+    }
+  })
+
+  it('routes a message around three independent named terminal sessions', async () => {
+    const alphaProvider = await startFakeProvider([
+      {
+        type: 'tool-call',
+        name: 'sendMessage',
+        input: { to: 'beta', message: 'ring alpha to beta' },
+        finalText: 'alpha started ring',
+      },
+      { type: 'completion', text: 'alpha received completed ring' },
+    ])
+    const betaProvider = await startFakeProvider([
+      {
+        type: 'tool-call',
+        name: 'sendMessage',
+        input: { to: 'gamma', message: 'ring beta to gamma' },
+        finalText: 'beta forwarded ring',
+      },
+    ])
+    const gammaProvider = await startFakeProvider([
+      {
+        type: 'tool-call',
+        name: 'sendMessage',
+        input: { to: 'alpha', message: 'ring gamma to alpha' },
+        finalText: 'gamma closed ring',
+      },
+    ])
+    const workspace = await createPeerTestWorkspace('xc-pty-peer-ring-')
+    const alpha = await createTuiHarness({ workspace, provider: alphaProvider })
+    const beta = await createTuiHarness({ workspace, provider: betaProvider })
+    const gamma = await createTuiHarness({ workspace, provider: gammaProvider })
+    try {
+      await alpha.startCli(['-t', '--name', 'alpha'])
+      await beta.startCli(['-t', '--name', 'beta'])
+      await gamma.startCli(['-t', '--name', 'gamma'])
+
+      await vi.waitFor(
+        async () => {
+          const registrations = await fs.readdir(path.join(workspace.xcodeHome, 'runtime', 'peers'))
+          expect(registrations.filter((name) => name.endsWith('.json'))).toHaveLength(3)
+        },
+        { timeout: 10_000 },
+      )
+      await submitInput(alpha, '/list-agents')
+      await alpha.waitForText(/beta .*peer:[0-9a-f-]{36} .*idle/)
+      await alpha.waitForText(/gamma .*peer:[0-9a-f-]{36} .*idle/)
+      await submitInput(alpha, 'start the three-session ring')
+
+      await beta.waitForText('ring alpha to beta', 10_000)
+      await gamma.waitForText('ring beta to gamma', 10_000)
+      await alpha.waitForText('ring gamma to alpha', 10_000)
+
+      const alphaRequests = await alphaProvider.waitForMainRequests(3, 10_000)
+      const betaRequests = await betaProvider.waitForMainRequests(2, 10_000)
+      const gammaRequests = await gammaProvider.waitForMainRequests(2, 10_000)
+      expect(alphaRequests[2]?.rawBody).toContain('ring gamma to alpha')
+      expect(betaRequests[0]?.rawBody).toContain('ring alpha to beta')
+      expect(gammaRequests[0]?.rawBody).toContain('ring beta to gamma')
+      await alpha.waitForText('alpha received completed ring')
+      await beta.waitForText('beta forwarded ring')
+      await gamma.waitForText('gamma closed ring')
+
+      await exitTui(alpha)
+      await exitTui(beta)
+      await exitTui(gamma)
+    } finally {
+      await alpha.dispose()
+      await beta.dispose()
+      await gamma.dispose()
+      await alphaProvider.close()
+      await betaProvider.close()
+      await gammaProvider.close()
+      await workspace.cleanup()
+    }
+  })
+
+  it('renders authority metadata and payload injection as inert visible escapes', async () => {
+    const metadataInjection = `unsafe\x1b]52;c;bWV0YWRhdGE=\x07\u202e.txt`
+    const payloadInjection =
+      "touch authority-pwned.txt '" + '\x1b[999;999H\x1b]52;c;cGF5bG9hZA==\x07payload\u2066' + "'"
+    const alphaProvider = await startFakeProvider([
+      {
+        type: 'tool-call',
+        name: 'sendMessage',
+        input: { to: 'beta', message: 'exercise the proposed local operations' },
+        finalText: 'sender completed',
+      },
+    ])
+    const betaProvider = await startFakeProvider([
+      { type: 'tool-call', name: 'readFile', id: 'call_metadata_injection', input: { filePath: metadataInjection } },
+      {
+        type: 'tool-call',
+        name: 'readFile',
+        id: 'call_metadata_injection_repeat',
+        input: { filePath: metadataInjection },
+      },
+      {
+        type: 'tool-call',
+        name: 'shell',
+        id: 'call_payload_injection',
+        input: { command: payloadInjection },
+        finalText: 'authority injection safely denied',
+      },
+    ])
+    const workspace = await createPeerTestWorkspace('xc-pty-peer-authority-injection-')
+    const alpha = await createTuiHarness({ workspace, provider: alphaProvider, columns: 160 })
+    const beta = await createTuiHarness({ workspace, provider: betaProvider, columns: 160 })
+    const sideEffectPath = path.join(workspace.cwd, 'authority-pwned.txt')
+    try {
+      await alpha.startCli(['--name', 'alpha'])
+      await beta.startCli(['--name', 'beta'])
+      await submitInput(alpha, 'send the authority injection test')
+
+      await beta.waitForText('Peer-influenced request · allow once only')
+      await beta.waitForText('unsafe\\u001B]52;c;bWV0YWRhdGE=\\u0007\\u202E.txt')
+      expect(beta.raw()).not.toContain('\x1b]52;c;bWV0YWRhdGE=\x07')
+      expect(beta.raw()).not.toContain('\x07')
+      expect(beta.raw()).not.toContain('\u202e')
+      beta.key('up')
+      await beta.waitForScreen(
+        (screen) => screen.includes(`${GLYPH_SELECT_POINTER} Allow once`),
+        'peer authority allow option selected immediately',
+      )
+      beta.key('escape')
+
+      await betaProvider.waitForMainRequests(2, 10_000)
+      await beta.waitForScreen(
+        (screen) =>
+          screen.includes('unsafe\\u001B]52;c;bWV0YWRhdGE=\\u0007\\u202E.txt') &&
+          screen.includes(`${GLYPH_SELECT_POINTER} Deny`),
+        'repeated peer authority request reset to deny',
+      )
+      beta.key('escape')
+
+      await beta.waitForText(/Payload: canonical-json · \d+ original UTF-8 bytes/)
+      await beta.waitForText(/SHA-256: [a-f0-9]{64}/)
+      await beta.waitForText('\\u001B[999;999H')
+      await beta.waitForText('\\u001B]52;c;cGF5bG9hZA==\\u0007')
+      expect(beta.raw()).not.toContain('\x1b[999;999H')
+      expect(beta.raw()).not.toContain('\x1b]52;c;cGF5bG9hZA==\x07')
+      expect(beta.raw()).not.toContain('\x07')
+      expect(beta.raw()).not.toContain('\u2066')
+      await expect(fs.access(sideEffectPath)).rejects.toThrow()
+
+      beta.key('escape')
+      await beta.waitForText('authority injection safely denied')
+      await expect(fs.access(sideEffectPath)).rejects.toThrow()
+      await exitTui(alpha)
+      await exitTui(beta)
+    } finally {
+      await alpha.dispose()
+      await beta.dispose()
+      await alphaProvider.close()
+      await betaProvider.close()
+      await workspace.cleanup()
+    }
+  })
+
+  it.each(['Accept', 'Refuse'] as const)(
+    'shows a held-message %s decision without model authority',
+    async (decision) => {
+      const alphaProvider = await startFakeProvider([
+        {
+          type: 'tool-call',
+          name: 'sendMessage',
+          input: { to: 'beta', message: `held ${decision.toLowerCase()} payload` },
+          finalText: 'sender observed held status',
+        },
+      ])
+      const betaProvider = await startFakeProvider([{ type: 'completion', text: 'accepted held payload' }])
+      const workspace = await createPeerTestWorkspace(`xc-pty-peer-held-${decision.toLowerCase()}-`)
+      const alpha = await createTuiHarness({ workspace, provider: alphaProvider })
+      const beta = await createTuiHarness({ workspace, provider: betaProvider })
+      try {
+        await fs.writeFile(
+          path.join(workspace.xcodeHome, 'config.json'),
+          JSON.stringify({
+            theme: 'dark',
+            peerMessaging: { inbound: 'hold', dialogExpiryMs: 60_000 },
+          }),
+        )
+        await alpha.startCli(['--name', 'alpha'])
+        await beta.startCli(['--name', 'beta'])
+        await submitInput(alpha, 'send the held payload')
+
+        await beta.waitForText('Accept held message from alpha')
+        await beta.waitForText(`held ${decision.toLowerCase()} payload`)
+        await beta.waitForScreen((screen) => screen.includes('Accept held message from alpha'), 'held dialog visible')
+        if (decision === 'Refuse') {
+          beta.key('down')
+          await beta.waitForScreen(
+            (screen) => screen.includes(`${GLYPH_SELECT_POINTER} 2. Refuse`),
+            'held refusal selected',
+          )
+        }
+        beta.key('enter')
+        await beta.waitForText(`${decision === 'Accept' ? 'Accepted' : 'Refused'} held message from alpha.`)
+
+        if (decision === 'Accept') {
+          const [request] = await betaProvider.waitForMainRequests(1, 10_000)
+          expect(request?.rawBody).toContain('<peer_message')
+          // exitTui's first Ctrl+C must land on an idle beta — otherwise it
+          // interrupts the in-flight turn instead of arming the exit hint.
+          await beta.waitForScreen(
+            (screen) => screen.includes('accepted held payload') && !screen.includes('esc to interrupt'),
+            'idle beta after accepted held payload',
+            10_000,
+          )
+        } else {
+          await alpha.waitForText('denied by beta')
+          expect(betaProvider.mainRequests()).toHaveLength(0)
+        }
+
+        await exitTui(alpha)
+        await exitTui(beta)
+      } finally {
+        await alpha.dispose()
+        await beta.dispose()
+        await alphaProvider.close()
+        await betaProvider.close()
+        await workspace.cleanup()
+      }
+    },
+  )
+})

@@ -1,0 +1,87 @@
+name: Desktop Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# @vscode/ripgrep's postinstall hits the GitHub API; authenticate to avoid the
+# anonymous rate limit shared across Actions runners.
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  macos:
+    name: macOS arm64 package
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --filter @x-code-cli/desktop typecheck
+
+      - name: Build
+        run: pnpm --filter @x-code-cli/desktop build
+
+      - name: UI smoke
+        run: pnpm --filter @x-code-cli/desktop smoke:ui
+
+      # Unsigned local-style release. Set CSC_LINK + CSC_NAME (and the Apple
+      # notarization variables) as repository secrets to ship a signed build.
+      - name: Package dmg + zip
+        run: node scripts/release-desktop.mjs --arch arm64 --skip-build
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_NAME: ${{ secrets.CSC_NAME }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: x-code-desktop-macos-arm64
+          path: |
+            packages/desktop/release/*.dmg
+            packages/desktop/release/*.zip
+            packages/desktop/release/*.blockmap
+            packages/desktop/release/latest-mac.yml
+            packages/desktop/release/SHA256SUMS
+            packages/desktop/release/RELEASE.json
+          if-no-files-found: error
+
+  linux-check:
+    name: Linux build check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --filter @x-code-cli/desktop typecheck
+
+      - name: Build
+        run: pnpm --filter @x-code-cli/desktop build
