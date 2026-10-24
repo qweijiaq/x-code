@@ -146,6 +146,8 @@ export {
   getCompressionThreshold,
   getContextWindow,
   getContextWindowOverride,
+  getModelContextWindowOverride,
+  setModelContextWindowOverrides,
   setContextWindowOverride,
 } from './agent/context-window.js'
 export {

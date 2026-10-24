@@ -1860,6 +1860,37 @@ export function App(): React.JSX.Element {
           ok: libraryPanel && libraryIndexed && librarySearchOk,
           detail: `panel=${libraryPanel} indexed=${libraryIndexed} search=${librarySearchOk}`,
         }
+        clickSettingsTab('模型与密钥')
+        const contextInputMounted = await waitFor(
+          () => document.querySelector('[data-testid="context-window-input"]') !== null,
+          3000,
+        )
+        const contextInput = document.querySelector<HTMLInputElement>('[data-testid="context-window-input"]')
+        let contextSaved = false
+        let contextReset = false
+        if (contextInput) {
+          const setContextValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+          setContextValue?.call(contextInput, '131072')
+          contextInput.dispatchEvent(new Event('input', { bubbles: true }))
+          await waitFor(
+            () => document.querySelector<HTMLButtonElement>('[data-testid="context-window-save"]')?.disabled === false,
+            2000,
+          )
+          document.querySelector<HTMLButtonElement>('[data-testid="context-window-save"]')?.click()
+          contextSaved = await waitFor(
+            () => document.querySelector('[data-testid="context-window-reset"]') !== null,
+            4000,
+          )
+          document.querySelector<HTMLButtonElement>('[data-testid="context-window-reset"]')?.click()
+          contextReset = await waitFor(
+            () => document.querySelector('[data-testid="context-window-reset"]') === null,
+            4000,
+          )
+        }
+        checks.contextWindow = {
+          ok: contextInputMounted && contextSaved && contextReset,
+          detail: `input=${contextInputMounted} saved=${contextSaved} reset=${contextReset}`,
+        }
         document.querySelector<HTMLButtonElement>('.settings-drawer .btn-quiet')?.click()
         await waitFor(() => document.querySelector('.settings-drawer') === null, 2000)
 

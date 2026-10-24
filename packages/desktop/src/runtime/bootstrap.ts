@@ -29,6 +29,7 @@ import {
   resolveModelId,
   resolveStreamConfig,
   setContextWindowOverride,
+  setModelContextWindowOverrides,
 } from '@x-code-cli/core'
 import type {
   AgentOptions,
@@ -167,6 +168,7 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   initializeOpenAIAuthContext()
   const config = loadUserConfig()
   setContextWindowOverride(config.contextWindow)
+  setModelContextWindowOverrides(desktopSettings.contextWindowOverrides)
 
   const available = getAvailableProviders()
   const providers: ProviderStatus[] = PROVIDERS.map((provider) => ({

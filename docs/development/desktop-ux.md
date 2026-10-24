@@ -152,5 +152,11 @@ in Settings → Hooks; user-level hooks always run.
   a provider fallback (128k default) or a config `contextWindow` override;
   automatic compression starts at 80% of that ceiling. Switching models keeps
   the last usage value and replaces only the ceiling.
+- Settings → 模型与密钥 → **上下文窗口** sets a per-model ceiling (minimum
+  32768 tokens) for the active model. Per-model overrides beat the global
+  `contextWindow` setting and are stored in desktop settings as
+  `contextWindowOverrides`; **恢复默认** removes the override for that model
+  only. This is useful for OpenAI-compatible endpoints whose real limit is
+  smaller or larger than the provider fallback.
 - A ↓ button appears when you scroll up, and streaming no longer forces the
   chat back to the bottom.

@@ -254,6 +254,9 @@ export interface ToolSettingsView {
 
 export interface SettingsSnapshot {
   workspace: string
+  activeModelId: string
+  contextWindow: number
+  contextWindowOverride?: number
   providers: ProviderSettingsView[]
   skills: SkillSettingsView[]
   mcpServers: McpServerView[]
@@ -842,6 +845,10 @@ export interface RequestMap {
     result: SettingsActionResult
   }
   'settings:set-always-allow-all': { params: { enabled: boolean }; result: SettingsActionResult }
+  'settings:set-context-window': {
+    params: { modelId: string; tokens: number | null }
+    result: SettingsActionResult
+  }
   'settings:set-notifications': { params: { enabled: boolean }; result: SettingsActionResult }
   'settings:set-onboarded': { params: { value: boolean }; result: SettingsActionResult }
   'settings:set-update-feed': { params: { feed: string }; result: SettingsActionResult }

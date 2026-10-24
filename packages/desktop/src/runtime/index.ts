@@ -499,6 +499,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.setAlwaysAllowAll(request.params.enabled))
       }
+      case 'settings:set-context-window': {
+        await ensureInitialized()
+        return ok(request.id, await host.setContextWindow(request.params.modelId, request.params.tokens))
+      }
       case 'settings:set-notifications': {
         await ensureInitialized()
         return ok(request.id, await host.setNotifications(request.params.enabled))

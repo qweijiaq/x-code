@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { userXcodeDir } from '@x-code-cli/core'
+import { MIN_CONTEXT_WINDOW_OVERRIDE, userXcodeDir } from '@x-code-cli/core'
 
 export interface ProjectOverrides {
   modelId?: string
@@ -30,6 +30,19 @@ interface DesktopSettingsFile {
   archivedSessions?: string[]
   projectSettings?: Record<string, ProjectOverrides>
   trustedProjectHooks?: string[]
+  contextWindowOverrides?: Record<string, number>
+}
+
+function normalizeContextWindowOverrides(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, number> = {}
+  for (const [modelId, tokens] of Object.entries(raw as Record<string, unknown>)) {
+    if (!modelId.trim()) continue
+    if (typeof tokens === 'number' && Number.isSafeInteger(tokens) && tokens >= MIN_CONTEXT_WINDOW_OVERRIDE) {
+      out[modelId] = tokens
+    }
+  }
+  return out
 }
 
 function settingsPath(): string {
@@ -91,6 +104,7 @@ export function loadDesktopSettings(): DesktopSettingsFile {
               .filter((entry): entry is string => typeof entry === 'string')
               .map((entry) => path.resolve(entry))
           : [],
+        contextWindowOverrides: normalizeContextWindowOverrides(data.contextWindowOverrides),
       }
     }
   } catch {

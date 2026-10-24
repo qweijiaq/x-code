@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -151,6 +151,25 @@ describe('desktop tool settings', () => {
       autoAllowedTools: ['writeFile'],
       alwaysAllowAll: true,
     })
+  })
+})
+
+describe('desktop context window overrides', () => {
+  afterEach(() => {
+    saveDesktopSettings({ contextWindowOverrides: {} })
+  })
+
+  it('round-trips per-model overrides and drops invalid entries', () => {
+    saveDesktopSettings({
+      contextWindowOverrides: {
+        'openai:gpt-5.6-sol': 500000,
+        'anthropic:claude-opus-4-8': 20000,
+        '': 60000,
+      } as Record<string, number>,
+    })
+    expect(loadDesktopSettings().contextWindowOverrides).toEqual({ 'openai:gpt-5.6-sol': 500000 })
+    saveDesktopSettings({ contextWindowOverrides: {} })
+    expect(loadDesktopSettings().contextWindowOverrides).toEqual({})
   })
 })
 

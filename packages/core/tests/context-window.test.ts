@@ -7,7 +7,9 @@ import {
   getContextWindow,
   getContextWindowOverride,
   getMaxOutputTokens,
+  getModelContextWindowOverride,
   setContextWindowOverride,
+  setModelContextWindowOverrides,
 } from '../src/agent/context-window.js'
 import { isolateOpenAIAuth } from './provider-env.js'
 
@@ -16,10 +18,12 @@ let restoreOpenAIAuth: () => void
 beforeEach(() => {
   restoreOpenAIAuth = isolateOpenAIAuth()
   setContextWindowOverride(undefined)
+  setModelContextWindowOverrides({})
 })
 
 afterEach(() => {
   setContextWindowOverride(undefined)
+  setModelContextWindowOverrides({})
   restoreOpenAIAuth()
 })
 
@@ -63,6 +67,18 @@ describe('getContextWindow', () => {
     expect(setContextWindowOverride(32767)).toBeUndefined()
     expect(setContextWindowOverride('invalid')).toBeUndefined()
     expect(getContextWindow('alibaba:qwen-max')).toBe(32768)
+  })
+
+  it('applies per-model overrides before the global override', () => {
+    setModelContextWindowOverrides({ 'openai:gpt-5.6-sol': 500000, invalid: 10 })
+    expect(getModelContextWindowOverride('openai:gpt-5.6-sol')).toBe(500000)
+    expect(getModelContextWindowOverride('invalid')).toBeUndefined()
+    expect(getContextWindow('openai:gpt-5.6-sol')).toBe(500000)
+    setContextWindowOverride(64000)
+    expect(getContextWindow('openai:gpt-5.6-sol')).toBe(500000)
+    expect(getContextWindow('google:gemini-3.8-flash')).toBe(64000)
+    setModelContextWindowOverrides({})
+    expect(getContextWindow('openai:gpt-5.6-sol')).toBe(64000)
   })
 })
 

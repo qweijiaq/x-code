@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import {
   KEEP_RECENT_TOKENS,
+  MIN_CONTEXT_WINDOW_OVERRIDE,
   PROVIDERS,
   agentLoop,
   appendCheckpoint,
@@ -27,6 +28,7 @@ import {
   forkSession as forkSessionFile,
   getContextWindow,
   getDiffStatsForCheckpoint,
+  getModelContextWindowOverride,
   getPermissionLevel,
   getPluginUserConfig,
   hydrateLoopState,
@@ -48,6 +50,7 @@ import {
   scanWorkspaceFiles,
   scoreAndRank,
   searchLibrary,
+  setModelContextWindowOverrides,
   setPluginEnabled,
   setPluginUserConfig,
   setShellSandbox,
@@ -2169,6 +2172,11 @@ export class AgentHost {
 
     return {
       workspace: bootstrap.workspace,
+      activeModelId: this.modelId,
+      contextWindow: getContextWindow(this.modelId),
+      ...(getModelContextWindowOverride(this.modelId) !== undefined
+        ? { contextWindowOverride: getModelContextWindowOverride(this.modelId) }
+        : {}),
       providers,
       skills,
       tools,
@@ -2295,6 +2303,22 @@ export class AgentHost {
     this.alwaysAllowAll = enabled
     saveDesktopSettings({ alwaysAllowAll: enabled })
     this.requireBootstrap().baseOptions.trustMode = enabled
+    return this.settingsResult()
+  }
+
+  async setContextWindow(modelId: string, tokens: number | null): Promise<SettingsActionResult> {
+    const id = modelId.trim()
+    if (!id) throw new Error('模型 ID 不能为空')
+    if (tokens !== null && (!Number.isSafeInteger(tokens) || tokens < MIN_CONTEXT_WINDOW_OVERRIDE)) {
+      throw new Error(`上下文上限不能小于 ${MIN_CONTEXT_WINDOW_OVERRIDE} tokens`)
+    }
+    const overrides = { ...(loadDesktopSettings().contextWindowOverrides ?? {}) }
+    if (tokens === null) delete overrides[id]
+    else overrides[id] = tokens
+    saveDesktopSettings({ contextWindowOverrides: overrides })
+    setModelContextWindowOverrides(overrides)
+    this.send({ type: 'app:state', state: this.getState() })
+    void this.emitSettings()
     return this.settingsResult()
   }
 

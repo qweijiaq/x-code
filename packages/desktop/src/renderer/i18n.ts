@@ -896,6 +896,17 @@ export const EN: Record<string, string> = {
   远端: 'Remote',
   选择父目录: 'Choose parent folder',
   '默认：仓库旁边的目录': 'Default: beside the repository',
+  上下文窗口: 'Context window',
+  '当前模型：{{model}}；有效上限 {{tokens}} tokens。': 'Current model: {{model}}; effective limit: {{tokens}} tokens.',
+  '覆盖 tokens（≥ {{min}}）': 'Override tokens (≥ {{min}})',
+  保存覆盖: 'Save override',
+  恢复默认: 'Reset to default',
+  '已为当前模型覆盖上下文上限；切换模型后可为其他模型单独设置。':
+    'This model uses a context override. Switch models to configure others separately.',
+  '留空使用模型表或 provider 兜底值；覆盖只影响当前模型。':
+    'Leave empty to use the model table/provider fallback; overrides affect only this model.',
+  '上下文上限不能小于 {{min}} tokens': 'Context limit cannot be below {{min}} tokens',
+  上下文上限已更新: 'Context limit updated',
 }
 
 const storedLanguage = ((): Language => {

@@ -32,6 +32,7 @@ const DEFAULT_CONTEXT_WINDOW = 128000
 export const MIN_CONTEXT_WINDOW_OVERRIDE = 32768
 
 let contextWindowOverride: number | undefined
+let modelContextWindowOverrides: Record<string, number> = {}
 
 /** Return the user-defined context window applied uniformly to every model. */
 export function getContextWindowOverride(): number | undefined {
@@ -44,6 +45,24 @@ export function setContextWindowOverride(value: unknown): number | undefined {
   contextWindowOverride =
     typeof value === 'number' && Number.isSafeInteger(value) && value >= MIN_CONTEXT_WINDOW_OVERRIDE ? value : undefined
   return contextWindowOverride
+}
+
+/** Per-model overrides set from desktop settings. Keys are full model ids. */
+export function setModelContextWindowOverrides(value: unknown): void {
+  const next: Record<string, number> = {}
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const [modelId, tokens] of Object.entries(value as Record<string, unknown>)) {
+      if (!modelId.trim()) continue
+      if (typeof tokens === 'number' && Number.isSafeInteger(tokens) && tokens >= MIN_CONTEXT_WINDOW_OVERRIDE) {
+        next[modelId] = tokens
+      }
+    }
+  }
+  modelContextWindowOverrides = next
+}
+
+export function getModelContextWindowOverride(modelId: string): number | undefined {
+  return modelContextWindowOverrides[modelId]
 }
 
 /** Context window sizes per model (tokens). */
@@ -118,6 +137,8 @@ const PROVIDER_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
 /** Resolve the raw/configured context ceiling for a model id like `provider:model`.
  *  Safety headroom is applied exactly once by getCompressionThreshold(). */
 export function getContextWindow(modelId: string): number {
+  const perModel = modelContextWindowOverrides[modelId]
+  if (perModel !== undefined) return perModel
   if (contextWindowOverride !== undefined) return contextWindowOverride
   const runtimeModel = getOpenAIChatGPTRuntimeModel(modelId)
   if (runtimeModel) return runtimeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW

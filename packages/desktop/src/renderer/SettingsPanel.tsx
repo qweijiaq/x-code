@@ -28,6 +28,8 @@ import { ProjectSettings } from './ProjectSettings.js'
 import { StorageSettings } from './StorageSettings.js'
 import i18n from './i18n.js'
 
+const MIN_CONTEXT_WINDOW = 32_768
+
 type Tab =
   | 'api'
   | 'project'
@@ -138,6 +140,9 @@ export function SettingsPanel({
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({})
   const [baseUrlDrafts, setBaseUrlDrafts] = useState<Record<string, string>>({})
   const [customModelDraft, setCustomModelDraft] = useState('')
+  const [contextWindowDraft, setContextWindowDraft] = useState(
+    settings.contextWindowOverride ? String(settings.contextWindowOverride) : '',
+  )
   const [testResults, setTestResults] = useState<Record<string, TestConnectionResult | { testing: true }>>({})
   const [mcpName, setMcpName] = useState('')
   const [mcpJson, setMcpJson] = useState(MCP_PLACEHOLDER)
@@ -188,6 +193,10 @@ export function SettingsPanel({
     }
   }
 
+  useEffect(() => {
+    setContextWindowDraft(settings.contextWindowOverride ? String(settings.contextWindowOverride) : '')
+  }, [settings.contextWindowOverride, settings.activeModelId])
+
   const apply = async (
     method: string,
     params: Record<string, unknown>,
@@ -214,6 +223,19 @@ export function SettingsPanel({
     } finally {
       setBusy(null)
     }
+  }
+
+  const saveContextWindow = async (tokens: number | null): Promise<void> => {
+    if (tokens !== null && (!Number.isSafeInteger(tokens) || tokens < MIN_CONTEXT_WINDOW)) {
+      setError(t('上下文上限不能小于 {{min}} tokens', { min: MIN_CONTEXT_WINDOW }))
+      return
+    }
+    const result = await apply(
+      'settings:set-context-window',
+      { modelId: settings.activeModelId, tokens },
+      'context-window',
+    )
+    if (result) setNotice(t('上下文上限已更新'))
   }
 
   const openExternal = async (url: string): Promise<void> => {
@@ -953,6 +975,47 @@ export function SettingsPanel({
                   </div>
                 )
               })}
+              <div className="settings-section-title">{t('上下文窗口')}</div>
+              <p className="settings-note">
+                {t('当前模型：{{model}}；有效上限 {{tokens}} tokens。', {
+                  model: settings.activeModelId,
+                  tokens: settings.contextWindow.toLocaleString(),
+                })}
+              </p>
+              <div className="settings-actions">
+                <input
+                  className="settings-input"
+                  data-testid="context-window-input"
+                  type="number"
+                  min={MIN_CONTEXT_WINDOW}
+                  placeholder={t('覆盖 tokens（≥ {{min}}）', { min: MIN_CONTEXT_WINDOW })}
+                  value={contextWindowDraft}
+                  onChange={(event) => setContextWindowDraft(event.target.value)}
+                />
+                <button
+                  className="btn solid"
+                  data-testid="context-window-save"
+                  disabled={busy !== null || !contextWindowDraft.trim()}
+                  onClick={() => void saveContextWindow(Number(contextWindowDraft))}
+                >
+                  {busy === 'context-window' ? t('保存中…') : t('保存覆盖')}
+                </button>
+                {settings.contextWindowOverride ? (
+                  <button
+                    className="btn"
+                    data-testid="context-window-reset"
+                    disabled={busy !== null}
+                    onClick={() => void saveContextWindow(null)}
+                  >
+                    {t('恢复默认')}
+                  </button>
+                ) : null}
+              </div>
+              <p className="settings-hint">
+                {settings.contextWindowOverride
+                  ? t('已为当前模型覆盖上下文上限；切换模型后可为其他模型单独设置。')
+                  : t('留空使用模型表或 provider 兜底值；覆盖只影响当前模型。')}
+              </p>
             </>
           ) : null}
 
