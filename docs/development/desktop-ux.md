@@ -107,7 +107,9 @@ workspace), while other tools are whole-tool only.
 
 Allow rules only skip **ask-level** prompts. Destructive shell commands,
 deny-level classifications, path checks and plan mode are evaluated before
-rules and cannot be bypassed from this screen.
+rules and cannot be bypassed from this screen. Rules are loaded at runtime
+start, so "don't ask again" approvals survive restarts; changes made in one
+window reload the other windows' rule sets.
 
 ## Editor integration
 

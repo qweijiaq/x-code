@@ -277,7 +277,13 @@ export {
   extractCompoundRules,
   suggestRuleLabel,
 } from './permissions/index.js'
-export { loadPersistedRules, persistRule, readPersistedRules, removePersistedRule } from './permissions/index.js'
+export {
+  loadPersistedRules,
+  persistRule,
+  readPersistedRules,
+  reloadPersistedRules,
+  removePersistedRule,
+} from './permissions/index.js'
 export type { AllowRule } from './permissions/session-store.js'
 export {
   MAX_EGRESS_APPROVAL_BYTES,

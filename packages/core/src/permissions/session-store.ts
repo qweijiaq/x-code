@@ -4,6 +4,8 @@
 // is stored as an AllowRule both in-memory AND on disk at
 // `.x-code/local/permissions.json`. On next startup the persisted rules
 // are loaded so approvals survive across sessions.
+import path from 'node:path'
+
 import { isReadOnly, splitShellCommands } from '../tools/shell-utils.js'
 import { persistRule, readPersistedRules } from './persistence.js'
 
@@ -705,6 +707,10 @@ export function clearSessionRules(): void {
 
 // ─── Disk persistence ───
 
+/** Rules last loaded from each project file, so a reload can drop rules the
+ *  user deleted on disk without clearing session-only approvals. */
+const rulesLoadedFromDisk = new Map<string, AllowRule[]>()
+
 /**
  * Load persisted permission rules from `.x-code/local/permissions.json`
  * into the in-memory store. Safe to call multiple times (deduplicates).
@@ -713,6 +719,21 @@ export function clearSessionRules(): void {
 export function loadPersistedRules(cwd: string): void {
   const rules = readPersistedRules(cwd)
   for (const rule of rules) store.addRule(rule)
+  rulesLoadedFromDisk.set(path.resolve(cwd), rules)
+}
+
+/**
+ * Re-read the project file and swap the rules loaded from it: rules added on
+ * disk become active and rules removed on disk stop applying immediately.
+ * Rules approved in this session are untouched.
+ */
+export function reloadPersistedRules(cwd: string): void {
+  const key = path.resolve(cwd)
+  const before = rulesLoadedFromDisk.get(key) ?? []
+  const after = readPersistedRules(cwd)
+  for (const rule of before) store.removeRule(rule)
+  for (const rule of after) store.addRule(rule)
+  rulesLoadedFromDisk.set(key, after)
 }
 
 export { persistRule }

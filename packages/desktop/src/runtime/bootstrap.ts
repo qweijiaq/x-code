@@ -26,6 +26,7 @@ import {
   loadAllPlugins,
   loadLocalHookConfigs,
   loadUserConfig,
+  reloadPersistedRules,
   resolveModelId,
   resolveStreamConfig,
   setContextWindowOverride,
@@ -156,6 +157,8 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
     // Keep the launch cwd if the workspace is not accessible.
   }
   loadWorkspaceEnv(workspace)
+  // "Don't ask again" approvals from earlier sessions live in the project.
+  reloadPersistedRules(workspace)
   await applyStoredSecrets()
   const desktopSettings = loadDesktopSettings()
   setShellSandbox({

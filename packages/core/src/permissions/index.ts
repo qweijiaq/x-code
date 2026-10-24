@@ -226,7 +226,7 @@ export {
   extractCompoundRules,
   suggestRuleLabel,
 } from './session-store.js'
-export { loadPersistedRules, persistRule } from './session-store.js'
+export { loadPersistedRules, persistRule, reloadPersistedRules } from './session-store.js'
 export { readPersistedRules, removePersistedRule } from './persistence.js'
 export {
   MAX_EGRESS_APPROVAL_BYTES,

@@ -655,6 +655,8 @@ const SHARED_SETTINGS_METHODS = new Set<string>([
   'settings:mcp-trust-project',
   'settings:set-tool-profile',
   'settings:set-plugin-enabled',
+  'permissions:add-rule',
+  'permissions:remove-rule',
   'settings:mcp-save',
   'settings:mcp-remove',
   'settings:marketplace-install',

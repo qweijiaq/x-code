@@ -6,6 +6,7 @@ import { persistRule, readPersistedRules, removePersistedRule } from '../src/per
 import {
   clearSessionRules,
   loadPersistedRules,
+  reloadPersistedRules,
   removeSessionAllowRule,
   sessionRulesMatch,
 } from '../src/permissions/session-store.js'
@@ -87,5 +88,19 @@ describe('permission persistence', () => {
     expect(sessionRulesMatch('shell', { command: 'git commit -m x' }, cwdKey)).toBe(false)
     expect(sessionRulesMatch('shell', { command: 'git push origin main' }, cwdKey)).toBe(true)
     expect(removePersistedRule(cwd, { tool: 'shell', pattern: 'git commit', type: 'prefix' })).toBe(false)
+  })
+
+  it('reloads rules deleted on disk without clearing other approvals', async () => {
+    persistRule(cwd, { tool: 'shell', pattern: 'npm test', type: 'prefix' })
+    persistRule(cwd, { tool: 'shell', pattern: 'git push', type: 'prefix' })
+    loadPersistedRules(cwd)
+    const cwdKey = path.resolve(cwd)
+    expect(sessionRulesMatch('shell', { command: 'npm test --watch' }, cwdKey)).toBe(true)
+
+    removePersistedRule(cwd, { tool: 'shell', pattern: 'npm test', type: 'prefix' })
+    reloadPersistedRules(cwd)
+
+    expect(sessionRulesMatch('shell', { command: 'npm test --watch' }, cwdKey)).toBe(false)
+    expect(sessionRulesMatch('shell', { command: 'git push origin main' }, cwdKey)).toBe(true)
   })
 })
