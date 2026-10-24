@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -47,15 +47,11 @@ import { ChecksPanel } from './ChecksPanel.js'
 import { CommandPalette } from './CommandPalette.js'
 import type { PaletteAction } from './CommandPalette.js'
 import { DocumentPanel } from './DocumentPanel.js'
-import { FilePanel } from './FilePanel.js'
 import { GitPanel } from './GitPanel.js'
 import { Inspector } from './Inspector.js'
 import type { InspectorTab } from './Inspector.js'
 import { CopyButton, MarkdownView } from './MarkdownView.js'
-import { Onboarding } from './Onboarding.js'
 import { RewindPanel } from './RewindPanel.js'
-import { SettingsPanel } from './SettingsPanel.js'
-import { TerminalPanel } from './TerminalPanel.js'
 import {
   AttachIcon,
   BranchIcon,
@@ -75,6 +71,11 @@ import { detectMention, insertMention } from './mention.js'
 import { applyTheme, storedTheme, watchSystemTheme } from './theme.js'
 import type { ThemeSetting } from './theme.js'
 import { encodeWav } from './wav.js'
+
+const SettingsPanel = lazy(() => import('./SettingsPanel.js').then((module) => ({ default: module.SettingsPanel })))
+const FilePanel = lazy(() => import('./FilePanel.js').then((module) => ({ default: module.FilePanel })))
+const TerminalPanel = lazy(() => import('./TerminalPanel.js').then((module) => ({ default: module.TerminalPanel })))
+const Onboarding = lazy(() => import('./Onboarding.js').then((module) => ({ default: module.Onboarding })))
 
 const isUiSmoke = new URLSearchParams(window.location.search).has('ui-smoke')
 if (isUiSmoke) {
@@ -7732,16 +7733,18 @@ export function App(): React.JSX.Element {
             />
           ) : null}
           {inspectorTab === 'file' ? (
-            <FilePanel
-              workspace={appState?.workspace ?? settings?.workspace ?? ''}
-              initialPath={fileInitialPath}
-              onOpenEditor={(path, line) => openInEditor(path, line)}
-              onClose={() => {
-                closeInspector()
-                setFileInitialPath(null)
-              }}
-              embedded
-            />
+            <Suspense fallback={null}>
+              <FilePanel
+                workspace={appState?.workspace ?? settings?.workspace ?? ''}
+                initialPath={fileInitialPath}
+                onOpenEditor={(path, line) => openInEditor(path, line)}
+                onClose={() => {
+                  closeInspector()
+                  setFileInitialPath(null)
+                }}
+                embedded
+              />
+            </Suspense>
           ) : null}
           {inspectorTab === 'terminal' ? (
             <aside className="terminal-drawer embedded" data-testid="terminal-shell" aria-label={t('终端')}>
@@ -7758,7 +7761,9 @@ export function App(): React.JSX.Element {
                   {t('关闭')}
                 </button>
               </header>
-              <TerminalPanel />
+              <Suspense fallback={null}>
+                <TerminalPanel />
+              </Suspense>
             </aside>
           ) : null}
         </Inspector>
@@ -7847,21 +7852,23 @@ export function App(): React.JSX.Element {
       ) : null}
 
       {settingsOpen && settings ? (
-        <SettingsPanel
-          settings={settings}
-          onSettings={setSettings}
-          onState={setAppState}
-          onClose={() => setSettingsOpen(false)}
-          theme={themeSetting}
-          onTheme={setThemeSetting}
-          onLanguage={(next) => void i18n.changeLanguage(next)}
-          workspace={appState?.workspace ?? ''}
-          onOpenDocument={(path, page) => void openDocument(path, page)}
-          activeTab={settingsTab ?? undefined}
-          onTabChange={setSettingsTab}
-          onUsage={(key) => markUsage(key)}
-          onSessionsChanged={() => void refreshSessions()}
-        />
+        <Suspense fallback={null}>
+          <SettingsPanel
+            settings={settings}
+            onSettings={setSettings}
+            onState={setAppState}
+            onClose={() => setSettingsOpen(false)}
+            theme={themeSetting}
+            onTheme={setThemeSetting}
+            onLanguage={(next) => void i18n.changeLanguage(next)}
+            workspace={appState?.workspace ?? ''}
+            onOpenDocument={(path, page) => void openDocument(path, page)}
+            activeTab={settingsTab ?? undefined}
+            onTabChange={setSettingsTab}
+            onUsage={(key) => markUsage(key)}
+            onSessionsChanged={() => void refreshSessions()}
+          />
+        </Suspense>
       ) : null}
       {backgroundOpen ? <BackgroundPanel onClose={() => setBackgroundOpen(false)} /> : null}
       {rewindOpen ? (
@@ -8178,26 +8185,28 @@ export function App(): React.JSX.Element {
         </div>
       ) : null}
       {settings && !settings.onboarded && !onboardingDismissed && (!isUiSmoke || forcedOnboarding) && !wantsSettings ? (
-        <Onboarding
-          settings={settings}
-          theme={themeSetting}
-          language={language}
-          onTheme={setThemeSetting}
-          onLanguage={(next) => void i18n.changeLanguage(next)}
-          onSettings={setSettings}
-          onDone={() => {
-            setOnboardingDismissed(true)
-            void refreshSettings()
-            void refreshState()
-            void refreshSessions()
-          }}
-          onSkip={() => {
-            setOnboardingDismissed(true)
-            void window.xcode
-              .request({ id: crypto.randomUUID(), method: 'settings:set-onboarded', params: { value: true } })
-              .then(() => refreshSettings())
-          }}
-        />
+        <Suspense fallback={null}>
+          <Onboarding
+            settings={settings}
+            theme={themeSetting}
+            language={language}
+            onTheme={setThemeSetting}
+            onLanguage={(next) => void i18n.changeLanguage(next)}
+            onSettings={setSettings}
+            onDone={() => {
+              setOnboardingDismissed(true)
+              void refreshSettings()
+              void refreshState()
+              void refreshSessions()
+            }}
+            onSkip={() => {
+              setOnboardingDismissed(true)
+              void window.xcode
+                .request({ id: crypto.randomUUID(), method: 'settings:set-onboarded', params: { value: true } })
+                .then(() => refreshSettings())
+            }}
+          />
+        </Suspense>
       ) : null}
     </div>
   )
