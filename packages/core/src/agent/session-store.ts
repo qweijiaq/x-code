@@ -900,6 +900,11 @@ async function appendHeaderNow(state: LoopState, modelId: string, firstPrompt: s
     }
     try {
       await createWithSnapshot(state.sessionFilePath, [JSON.stringify(makeEntry(state.sessionId))])
+      // The old transcript chain lived in the deleted file. Keeping its epoch
+      // would make the next flush append a delta whose parent no longer exists.
+      state.committedTranscriptEpochId = undefined
+      state.persistedMessageCount = 0
+      state.transcriptRequiresSnapshot = true
       return
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') return
@@ -922,6 +927,10 @@ async function appendHeaderNow(state: LoopState, modelId: string, firstPrompt: s
       await createWithSnapshot(filePath, [JSON.stringify(makeEntry(sessionId))])
       state.sessionId = sessionId
       state.sessionFilePath = filePath
+      // A brand-new file cannot continue an epoch chain from another path.
+      state.committedTranscriptEpochId = undefined
+      state.persistedMessageCount = 0
+      state.transcriptRequiresSnapshot = true
       return
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue

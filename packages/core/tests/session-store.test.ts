@@ -156,6 +156,34 @@ describe('session-store: round-trip', () => {
     expect(forked.messageCount).toBe(2)
   })
 
+  it('writes a fresh snapshot after a pinned session file was deleted', async () => {
+    const state = createLoopState()
+    state.sessionId = '20260101-120000-002'
+    state.taskSlug = 'deleted-file'
+    state.messages = [
+      { role: 'user', content: 'first' },
+      { role: 'assistant', content: 'answer' },
+    ]
+
+    await appendHeader(state, 'openai:test', 'first')
+    await flushPendingMessages(state)
+    const filePath = getSessionFilePath(state)
+    await fs.rm(filePath)
+
+    state.messages.push({ role: 'user', content: 'after delete' })
+    await appendHeader(state, 'openai:test', 'after delete')
+    await flushPendingMessages(state)
+
+    const loaded = await loadSession(filePath)
+    expect(loaded).not.toBeNull()
+    expect(loaded!.transcriptIntegrity).toBe('clean')
+    expect(loaded!.messages).toEqual([
+      { role: 'user', content: 'first' },
+      { role: 'assistant', content: 'answer' },
+      { role: 'user', content: 'after delete' },
+    ])
+  })
+
   it('falls back to exclusive creation when the filesystem does not support hard links', async () => {
     const source = createLoopState()
     const competitor = createLoopState()

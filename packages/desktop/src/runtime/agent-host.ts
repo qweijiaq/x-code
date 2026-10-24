@@ -545,6 +545,9 @@ export class AgentHost {
     this.cancelAllApprovals()
     const loaded = await loadSessionView(filePath)
     if (!loaded) throw new Error(`session-not-found: ${filePath}`)
+    if (loaded.loaded.transcriptIntegrity === 'failed') {
+      throw new Error('该会话的 transcript 完整性校验失败，可能已损坏，已拒绝加载。')
+    }
 
     let modelChanged = false
     if (loaded.view.modelId && loaded.view.modelId !== this.modelId) {
