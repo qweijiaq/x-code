@@ -731,9 +731,23 @@ body::before {
 }
 
 .model-item-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 6px;
   font-size: 10px;
   letter-spacing: 0.12em;
   color: var(--ink-45);
+}
+
+.model-item-context {
+  padding: 1px 6px;
+  border: 1px solid var(--ink-08);
+  border-radius: 99px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 
 .model-item-desc {
@@ -1127,8 +1141,9 @@ body::before {
 
 .composer-hint {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 6px 16px;
 }
 
 .composer-hint .usage,
@@ -6056,6 +6071,15 @@ iframe.file-preview {
   background: var(--ink-45);
 }
 
+.context-numbers {
+  font-family: var(--mono);
+  letter-spacing: 0;
+}
+
+.context-percent {
+  font-family: var(--mono);
+}
+
 .context-meter.warn .context-fill {
   background: var(--ochre);
 }
@@ -6637,4 +6661,93 @@ iframe.file-preview {
 .tab-add:hover {
   background: var(--paper-2);
   color: var(--ink-70);
+}
+
+/* ── Markdown composer ───────────────────────────────────────────────── */
+
+.markdown-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  margin-bottom: 6px;
+}
+
+.markdown-toggle,
+.markdown-preview-toggle {
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.markdown-toggle.active,
+.markdown-preview-toggle.active {
+  border-color: var(--cinnabar);
+  color: var(--cinnabar);
+}
+
+.markdown-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.markdown-toolbar button {
+  min-width: 26px;
+  padding: 3px 7px;
+  border: 1px solid var(--ink-08);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-70);
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.markdown-toolbar button:hover {
+  border-color: var(--cinnabar);
+  color: var(--cinnabar);
+}
+
+.markdown-preview {
+  max-height: 240px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px dashed var(--ink-20);
+  border-radius: 8px;
+  background: var(--paper-2);
+  font-size: 12px;
+}
+
+.message.user .markdown {
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+/* ── Tool-call visibility ────────────────────────────────────────────── */
+
+.turn-tool-toggle {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(760px, 100%);
+  padding: 5px 10px;
+  border: 1px dashed var(--ink-20);
+  border-radius: 8px;
+  background: var(--paper-2);
+  color: var(--ink-45);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+.turn-tool-toggle .tool-failure {
+  color: var(--cinnabar);
+}
+
+.turn-tool-toggle .btn {
+  padding: 2px 9px;
+  font-size: 10px;
 }

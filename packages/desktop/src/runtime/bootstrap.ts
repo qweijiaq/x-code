@@ -20,6 +20,7 @@ import {
   emptyPluginRegistry,
   ensureDefaultMarketplaces,
   getAvailableProviders,
+  getContextWindow,
   getProviderModels,
   initializeOpenAIAuthContext,
   loadAllPlugins,
@@ -120,6 +121,7 @@ function buildModels(available: string[], activeModelId: string | null): ModelOp
         label: model.label,
         provider: provider.name,
         description: model.description,
+        contextWindow: getContextWindow(model.id),
       })
     }
   }
@@ -129,6 +131,7 @@ function buildModels(available: string[], activeModelId: string | null): ModelOp
       label: activeModelId,
       provider: activeModelId.split(':')[0] ?? 'custom',
       description: '当前配置的模型',
+      contextWindow: getContextWindow(activeModelId),
     })
   }
   return models
@@ -205,6 +208,7 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
       label: local.label,
       provider: local.provider,
       description: local.description,
+      contextWindow: getContextWindow(local.id),
     })
   }
   const customModelId = loadDesktopSettings().customModelId?.trim()
@@ -216,6 +220,7 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
         label: customModelId.replace(/^custom:/, ''),
         provider: 'custom',
         description: '自定义 OpenAI 兼容模型',
+        contextWindow: getContextWindow(id),
       })
     }
   }
@@ -227,6 +232,7 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
       label: '演示模型',
       provider: 'demo',
       description: '未检测到 API Key。在设置中配置后即可使用真实模型。',
+      contextWindow: getContextWindow(DEMO_MODEL_ID),
       demo: true,
     })
   }

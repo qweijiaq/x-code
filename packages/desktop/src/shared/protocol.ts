@@ -33,6 +33,8 @@ export interface ModelOption {
   label: string
   provider: string
   description: string
+  /** Context ceiling for this model (tokens). */
+  contextWindow?: number
   demo?: boolean
 }
 
@@ -48,6 +50,8 @@ export interface AppState {
   models: ModelOption[]
   providers: ProviderStatus[]
   activeModelId: string
+  /** Context ceiling for the active model (tokens). */
+  contextWindow?: number
   demo: boolean
   thinking: boolean
   permissionMode: string

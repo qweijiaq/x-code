@@ -75,6 +75,12 @@ const forcedOnboarding = isUiSmoke && new URLSearchParams(window.location.search
 const wantsSettings = new URLSearchParams(window.location.search).has('settings')
 const wantsSlashDemo = new URLSearchParams(window.location.search).has('slash')
 
+function formatContextTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}m`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`
+  return String(count)
+}
+
 function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const started = Date.now()
@@ -99,6 +105,7 @@ interface Entry {
   id: string
   role: Role
   text: string
+  turnId?: string
   toolCallId?: string
   toolName?: string
   toolInput?: Record<string, unknown>
@@ -110,6 +117,10 @@ interface Entry {
   subagent?: SubAgentView
   attachments?: string[]
 }
+
+type TurnRenderItem =
+  | { kind: 'entry'; entry: Entry }
+  | { kind: 'toggle'; key: string; count: number; failures: number; collapsed: boolean }
 
 const ROLE_LABEL: Record<Role, string> = {
   user: '你',
@@ -438,6 +449,8 @@ export function App(): React.JSX.Element {
   const [branchQuery, setBranchQuery] = useState('')
   const [branchBusy, setBranchBusy] = useState<string | null>(null)
   const [branchError, setBranchError] = useState<string | null>(null)
+  const [markdownToolsOpen, setMarkdownToolsOpen] = useState(false)
+  const [markdownPreview, setMarkdownPreview] = useState(false)
   const [removeWorktree, setRemoveWorktree] = useState<{ path: string; branch: string } | null>(null)
   const [removeWorktreeBusy, setRemoveWorktreeBusy] = useState(false)
   const [removeWorktreeError, setRemoveWorktreeError] = useState<string | null>(null)
@@ -451,6 +464,7 @@ export function App(): React.JSX.Element {
   const [workspaces, setWorkspaces] = useState<WorkspaceListItem[]>([])
   const [sessions, setSessions] = useState<SessionListItem[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [collapsedTurns, setCollapsedTurns] = useState<Set<string>>(new Set())
   const [tabs, setTabs] = useState<string[]>([])
   const [pendingSession, setPendingSession] = useState<{ sessionId: string; at: number } | null>(null)
   const [sessionQuery, setSessionQuery] = useState('')
@@ -512,6 +526,7 @@ export function App(): React.JSX.Element {
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   const [paletteIndex, setPaletteIndex] = useState(0)
   const activeTurn = useRef<string | null>(null)
+  const activeTextEntryId = useRef<string | null>(null)
   const busyRef = useRef(false)
   const queueRef = useRef<Array<{ prompt: string; attachments: string[] }>>([])
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -641,6 +656,76 @@ export function App(): React.JSX.Element {
       element.setSelectionRange(next.cursor, next.cursor)
       // Keep browsing: picking a directory reopens the menu on its children.
       if (file.isDirectory) updateMention(next.text, next.cursor)
+    })
+  }
+
+  const applyMarkdown = (kind: 'bold' | 'italic' | 'code' | 'codeBlock' | 'link' | 'list' | 'quote'): void => {
+    const element = textareaRef.current
+    const start = element?.selectionStart ?? input.length
+    const end = element?.selectionEnd ?? input.length
+    const selected = input.slice(start, end)
+    if (kind === 'list' || kind === 'quote') {
+      const prefix = kind === 'list' ? '- ' : '> '
+      const lineStart = input.lastIndexOf('\n', start - 1) + 1
+      const block = input
+        .slice(lineStart, end)
+        .split('\n')
+        .map((line) => (line.startsWith(prefix) ? line : prefix + line))
+        .join('\n')
+      const next = input.slice(0, lineStart) + block + input.slice(end)
+      const cursor = lineStart + block.length
+      setInput(next)
+      updateMention(next, cursor)
+      requestAnimationFrame(() => {
+        const node = textareaRef.current
+        if (!node) return
+        node.focus()
+        node.setSelectionRange(cursor, cursor)
+      })
+      return
+    }
+
+    let before = ''
+    let after = ''
+    let placeholder = ''
+    switch (kind) {
+      case 'bold':
+        before = '**'
+        after = '**'
+        placeholder = t('粗体')
+        break
+      case 'italic':
+        before = '*'
+        after = '*'
+        placeholder = t('斜体')
+        break
+      case 'code':
+        before = '`'
+        after = '`'
+        placeholder = t('行内代码')
+        break
+      case 'codeBlock':
+        before = (start > 0 ? '\n' : '') + '```\n'
+        after = '\n```\n'
+        placeholder = t('代码块')
+        break
+      case 'link':
+        before = '['
+        after = '](https://)'
+        placeholder = t('链接')
+        break
+    }
+    const content = selected || placeholder
+    const next = input.slice(0, start) + before + content + after + input.slice(end)
+    const cursorStart = start + before.length
+    const cursorEnd = cursorStart + content.length
+    setInput(next)
+    updateMention(next, cursorEnd)
+    requestAnimationFrame(() => {
+      const node = textareaRef.current
+      if (!node) return
+      node.focus()
+      node.setSelectionRange(cursorStart, cursorEnd)
     })
   }
 
@@ -851,26 +936,38 @@ export function App(): React.JSX.Element {
           break
         case 'agent:turn-start':
           activeTurn.current = event.turnId
+          activeTextEntryId.current = null
           busyRef.current = true
           setBusy(true)
           setNotice(null)
           setActiveSessionId(event.sessionId)
           addTab(event.sessionId)
-          setEntries((prev) => [...prev, { id: event.turnId, role: 'assistant', text: '' }])
           break
-        case 'agent:text-delta':
-          setEntries((prev) =>
-            prev.map((entry) => (entry.id === event.turnId ? { ...entry, text: entry.text + event.delta } : entry)),
-          )
+        case 'agent:text-delta': {
+          const textEntryId = activeTextEntryId.current
+          if (!textEntryId) {
+            const id = crypto.randomUUID()
+            activeTextEntryId.current = id
+            append({ id, role: 'assistant', text: event.delta, turnId: activeTurn.current ?? undefined })
+          } else {
+            setEntries((prev) =>
+              prev.map((entry) => (entry.id === textEntryId ? { ...entry, text: entry.text + event.delta } : entry)),
+            )
+          }
           break
+        }
         case 'agent:tool-call':
           // toolSearch is an internal deferred-tool loader; the CLI hides it
           // and the desktop transcript should too.
           if (event.toolName === 'toolSearch') break
+          // Text after a tool belongs after this card, not in the earlier
+          // assistant bubble that was created before the tool ran.
+          activeTextEntryId.current = null
           append({
             id: event.toolCallId,
             role: 'tool',
             text: '',
+            turnId: activeTurn.current ?? undefined,
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             toolInput: event.input,
@@ -982,9 +1079,11 @@ export function App(): React.JSX.Element {
           setNotice(event.mode === 'plan' ? i18n.t('计划模式') : null)
           break
         case 'agent:context-compressed':
+          activeTextEntryId.current = null
           append({
             role: 'system',
             text: i18n.t('上下文已压缩：{{summary}}', { summary: event.summary.slice(0, 160) }),
+            turnId: activeTurn.current ?? undefined,
           })
           setNotice(null)
           break
@@ -1012,6 +1111,7 @@ export function App(): React.JSX.Element {
           break
         case 'agent:turn-end':
           activeTurn.current = null
+          activeTextEntryId.current = null
           busyRef.current = false
           setBusy(false)
           setNotice(null)
@@ -1035,7 +1135,8 @@ export function App(): React.JSX.Element {
           void refreshSessions()
           break
         case 'agent:error':
-          append({ role: 'error', text: event.message })
+          activeTextEntryId.current = null
+          append({ role: 'error', text: event.message, turnId: activeTurn.current ?? undefined })
           busyRef.current = false
           setBusy(false)
           break
@@ -1308,6 +1409,15 @@ export function App(): React.JSX.Element {
           ok: agent.ok && text.includes('演示模型'),
           detail: agent.ok ? `streamed ${text.length} chars` : agent.error.message,
         }
+        const contextMeterReady = await waitFor(
+          () => document.querySelector('.context-meter .context-numbers')?.textContent?.includes('/') ?? false,
+          2_000,
+        )
+        const contextNumbersText = document.querySelector('.context-meter .context-numbers')?.textContent?.trim() ?? ''
+        checks.contextMeter = {
+          ok: contextMeterReady && /\d.*\/.*\d/.test(contextNumbersText),
+          detail: contextNumbersText || 'context meter missing',
+        }
 
         const attachmentState: {
           event: { files: string[]; mediaParts: number; textBytes: number } | null
@@ -1417,6 +1527,14 @@ export function App(): React.JSX.Element {
           ok: toolTurn.ok && sawApproval && sawDiff,
           detail: `approval=${sawApproval} diff=${sawDiff}`,
         }
+        const lastToolCard = Array.from(document.querySelectorAll('.chat > .tool-card')).pop()
+        const lastAssistant = Array.from(document.querySelectorAll('.chat > .message.assistant')).pop()
+        const toolOrderBits = lastToolCard && lastAssistant ? lastToolCard.compareDocumentPosition(lastAssistant) : 0
+        const toolOrderOk = (toolOrderBits & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+        checks.toolOrder = {
+          ok: toolOrderOk,
+          detail: `tool=${Boolean(lastToolCard)} answer=${Boolean(lastAssistant)} after=${toolOrderOk}`,
+        }
         const capturedEdit = diffEdit as { toolCallId: string; filePath: string } | null
         if (capturedEdit) {
           const revertResponse = await window.xcode.request({
@@ -1483,6 +1601,29 @@ export function App(): React.JSX.Element {
         checks.toolDeny = {
           ok: denyTurn.ok && sawDenyApproval && !deniedDiff,
           detail: `approval=${sawDenyApproval} diff=${deniedDiff}`,
+        }
+
+        const turnToggles = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="turn-tool-toggle"]'))
+        const lastTurnToggle = turnToggles.at(-1)
+        const turnToolCount = Number(/工具调用\s*(\d+)\s*次/.exec(lastTurnToggle?.textContent ?? '')?.[1] ?? 0)
+        const toolCardsBefore = document.querySelectorAll('.tool-card').length
+        lastTurnToggle?.querySelector<HTMLButtonElement>('[data-testid="turn-tool-toggle-button"]')?.click()
+        const toolsHidden = await waitFor(
+          () => document.querySelectorAll('.tool-card').length === toolCardsBefore - turnToolCount,
+          2000,
+        )
+        const toggleStays = lastTurnToggle?.isConnected === true
+        Array.from(document.querySelectorAll<HTMLElement>('[data-testid="turn-tool-toggle"]'))
+          .at(-1)
+          ?.querySelector<HTMLButtonElement>('[data-testid="turn-tool-toggle-button"]')
+          ?.click()
+        const toolsRestored = await waitFor(
+          () => document.querySelectorAll('.tool-card').length === toolCardsBefore,
+          2000,
+        )
+        checks.turnToolCollapse = {
+          ok: turnToggles.length >= 2 && turnToolCount > 0 && toolsHidden && toggleStays && toolsRestored,
+          detail: `turns=${turnToggles.length} tools=${turnToolCount} hidden=${toolsHidden} keeps=${toggleStays} restored=${toolsRestored}`,
         }
 
         // Build enough history that reactive compaction has something to
@@ -1674,6 +1815,23 @@ export function App(): React.JSX.Element {
         checks.customModelMenu = {
           ok: customModelMenu,
           detail: customModelMenu ? 'custom model menu mounted' : 'custom model menu missing',
+        }
+        const modelContextBadge = document.querySelector('.model-list .model-item-context')?.textContent?.trim() ?? ''
+        checks.modelContext = {
+          ok: /\d/.test(modelContextBadge),
+          detail: modelContextBadge || 'context badge missing',
+        }
+        const contextBeforeSwitch = document.querySelector('.context-meter .context-numbers')?.textContent?.trim() ?? ''
+        document.querySelector<HTMLButtonElement>('.model-list .model-item.active')?.click()
+        const switchMenuClosed = await waitFor(() => document.querySelector('.model-menu') === null, 2_000)
+        const contextAfterSwitch = document.querySelector('.context-meter .context-numbers')?.textContent?.trim() ?? ''
+        checks.modelSwitchUsage = {
+          ok:
+            switchMenuClosed &&
+            Boolean(contextBeforeSwitch) &&
+            contextBeforeSwitch === contextAfterSwitch &&
+            !contextAfterSwitch.startsWith('0 /'),
+          detail: `${contextBeforeSwitch || 'none'} -> ${contextAfterSwitch || 'none'}`,
         }
         document.querySelector<HTMLButtonElement>('.menu-scrim')?.click()
 
@@ -2946,6 +3104,49 @@ export function App(): React.JSX.Element {
         }
         checks.continuity = { ok: continuityOk, detail: continuityDetail }
 
+        const markdownComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+        let markdownComposerOk = false
+        let markdownComposerDetail = 'composer missing'
+        if (markdownComposer) {
+          const setTextareaValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          setTextareaValue?.call(markdownComposer, 'bold text')
+          markdownComposer.dispatchEvent(new Event('input', { bubbles: true }))
+          await new Promise((resolve) => setTimeout(resolve, 50))
+          markdownComposer.focus()
+          markdownComposer.setSelectionRange(0, 4)
+          document.querySelector<HTMLButtonElement>('[data-testid="markdown-toggle"]')?.click()
+          const toolbar = await waitFor(
+            () => document.querySelector('[data-testid="markdown-toolbar"]') !== null,
+            2_000,
+          )
+          document.querySelector<HTMLButtonElement>('[data-testid="markdown-bold"]')?.click()
+          const wrapped = await waitFor(() => markdownComposer.value === '**bold** text', 2_000)
+          document.querySelector<HTMLButtonElement>('[data-testid="markdown-preview-toggle"]')?.click()
+          const preview = await waitFor(
+            () => document.querySelector('[data-testid="markdown-preview"] strong')?.textContent === 'bold',
+            2_000,
+          )
+          markdownComposerOk = toolbar && wrapped && preview
+          markdownComposerDetail = `toolbar=${toolbar} wrapped=${wrapped} preview=${preview}`
+          setTextareaValue?.call(markdownComposer, '')
+          markdownComposer.dispatchEvent(new Event('input', { bubbles: true }))
+          document.querySelector<HTMLButtonElement>('[data-testid="markdown-toggle"]')?.click()
+          await waitFor(() => document.querySelector('[data-testid="markdown-toolbar"]') === null, 2_000)
+        }
+        checks.markdownComposer = { ok: markdownComposerOk, detail: markdownComposerDetail }
+
+        const userCopyButton = Array.from(
+          document.querySelectorAll<HTMLButtonElement>('.message.user .message-actions .copy-btn'),
+        )
+          .filter((button) => button.textContent?.trim() === '复制')
+          .pop()
+        userCopyButton?.click()
+        const userCopied = await waitFor(() => userCopyButton?.textContent === '已复制', 2_000)
+        checks.userCopy = {
+          ok: Boolean(userCopyButton) && userCopied,
+          detail: `button=${Boolean(userCopyButton)} copied=${userCopied}`,
+        }
+
         const captureButton = document.querySelector<HTMLButtonElement>('[data-testid="capture-button"]')
         captureButton?.click()
         const captureMenu = await waitFor(() => document.querySelector('[data-testid="capture-menu"]') !== null, 2_000)
@@ -3512,7 +3713,9 @@ export function App(): React.JSX.Element {
       method: 'models:set',
       params: { modelId: model.id },
     })
-    if (response.ok) setAppState(response.result as AppState)
+    if (response.ok) {
+      setAppState(response.result as AppState)
+    }
   }
 
   const scanLocalModels = async (): Promise<void> => {
@@ -5162,10 +5365,10 @@ export function App(): React.JSX.Element {
   const localModelOptions = filteredModels.filter(isLocalModel)
   const remoteModelOptions = filteredModels.filter((model) => !isLocalModel(model))
   const canSend = !busy && (input.trim().length > 0 || attachments.length > 0)
+  const contextWindow = appState?.contextWindow ?? usage?.contextWindow ?? null
+  const usedContextTokens = usage?.currentContextTokens ?? 0
   const contextPercent =
-    usage?.contextWindow && usage.contextWindow > 0
-      ? Math.min(100, Math.round((usage.currentContextTokens / usage.contextWindow) * 100))
-      : null
+    contextWindow && contextWindow > 0 ? Math.min(100, Math.round((usedContextTokens / contextWindow) * 100)) : null
   const findNeedle = findQuery.trim().toLowerCase()
   const findMatchIds = findNeedle
     ? entries
@@ -5203,6 +5406,51 @@ export function App(): React.JSX.Element {
   const visibleBranches = (branchView?.branches ?? []).filter(
     (branch) => !branchNeedle || branch.name.toLowerCase().includes(branchNeedle),
   )
+  const turnGroups: Entry[][] = []
+  let currentTurn: Entry[] | undefined
+  let currentTurnId: string | undefined
+  for (const entry of entries) {
+    const startsTurn =
+      !currentTurn ||
+      entry.role === 'user' ||
+      (entry.turnId !== undefined && currentTurnId !== undefined && entry.turnId !== currentTurnId)
+    if (startsTurn) {
+      const group: Entry[] = []
+      turnGroups.push(group)
+      currentTurn = group
+      currentTurnId = undefined
+    }
+    if (!currentTurn) continue
+    currentTurn.push(entry)
+    if (entry.turnId) currentTurnId = entry.turnId
+  }
+  const turnItems: TurnRenderItem[] = []
+  for (const group of turnGroups) {
+    const entryKey = group.find((entry) => entry.role === 'user')?.id ?? group[0]?.id ?? 'turn'
+    const key = `${activeSessionId ?? 'current'}:${entryKey}`
+    const tools = group.filter((entry) => entry.role === 'tool')
+    const collapsed = collapsedTurns.has(key)
+    const failures = tools.filter((entry) => entry.toolStatus === 'error' || entry.toolStatus === 'denied').length
+    let toggleAdded = false
+    for (const entry of group) {
+      if (entry.role === 'tool') {
+        if (!toggleAdded) {
+          turnItems.push({ kind: 'toggle', key, count: tools.length, failures, collapsed })
+          toggleAdded = true
+        }
+        if (collapsed) continue
+      }
+      turnItems.push({ kind: 'entry', entry })
+    }
+  }
+  const toggleTurnTools = (key: string): void => {
+    setCollapsedTurns((previous) => {
+      const next = new Set(previous)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
   const showPendingSession =
     pendingSession !== null && !sessions.some((item) => item.sessionId === pendingSession.sessionId)
   const lastUserId = [...entries].reverse().find((entry) => entry.role === 'user')?.id ?? null
@@ -5491,7 +5739,19 @@ export function App(): React.JSX.Element {
                             onClick={() => void chooseModel(model)}
                           >
                             <span className="model-item-label">{model.label}</span>
-                            <span className="model-item-meta">{model.provider}</span>
+                            <span className="model-item-meta">
+                              {model.provider}
+                              {model.contextWindow ? (
+                                <span
+                                  className="model-item-context"
+                                  title={t('上下文上限 {{tokens}} tokens', {
+                                    tokens: model.contextWindow.toLocaleString(),
+                                  })}
+                                >
+                                  {formatContextTokens(model.contextWindow)} {t('上下文')}
+                                </span>
+                              ) : null}
+                            </span>
                             <span className="model-item-desc">{model.description}</span>
                           </button>
                         ))}
@@ -5507,7 +5767,19 @@ export function App(): React.JSX.Element {
                             onClick={() => void chooseModel(model)}
                           >
                             <span className="model-item-label">{model.label}</span>
-                            <span className="model-item-meta">{model.provider}</span>
+                            <span className="model-item-meta">
+                              {model.provider}
+                              {model.contextWindow ? (
+                                <span
+                                  className="model-item-context"
+                                  title={t('上下文上限 {{tokens}} tokens', {
+                                    tokens: model.contextWindow.toLocaleString(),
+                                  })}
+                                >
+                                  {formatContextTokens(model.contextWindow)} {t('上下文')}
+                                </span>
+                              ) : null}
+                            </span>
                             <span className="model-item-desc">{model.description}</span>
                           </button>
                         ))}
@@ -5806,8 +6078,28 @@ export function App(): React.JSX.Element {
               </div>
             </div>
           ) : null}
-          {entries.map((entry) =>
-            entry.role === 'tool' ? (
+          {turnItems.map((item) => {
+            if (item.kind === 'toggle') {
+              return (
+                <div className="turn-tool-toggle" data-testid="turn-tool-toggle" key={`turn-toggle-${item.key}`}>
+                  <span>{t('工具调用 {{count}} 次', { count: item.count })}</span>
+                  {item.failures > 0 ? (
+                    <span className="tool-failure">{t('{{count}} 个失败', { count: item.failures })}</span>
+                  ) : null}
+                  <span className="spacer" />
+                  <button
+                    type="button"
+                    className="btn btn-quiet"
+                    data-testid="turn-tool-toggle-button"
+                    onClick={() => toggleTurnTools(item.key)}
+                  >
+                    {item.collapsed ? t('展开') : t('收起')}
+                  </button>
+                </div>
+              )
+            }
+            const entry = item.entry
+            return entry.role === 'tool' ? (
               <article key={entry.id} className={`tool-card ${entry.toolStatus ?? 'running'}`}>
                 <div className="tool-head">
                   <span className="tool-name">{entry.toolName ?? 'tool'}</span>
@@ -5859,14 +6151,14 @@ export function App(): React.JSX.Element {
                 }`}
               >
                 <span className="role">{t(ROLE_LABEL[entry.role])}</span>
-                {entry.role === 'assistant' ? (
+                {entry.role === 'assistant' || entry.role === 'user' ? (
                   <MarkdownView text={entry.text} />
                 ) : (
                   <span className="message-text">{entry.text}</span>
                 )}
                 {entry.text ? (
                   <span className="message-actions">
-                    {entry.role === 'assistant' ? <CopyButton text={entry.text} /> : null}
+                    {entry.role === 'assistant' || entry.role === 'user' ? <CopyButton text={entry.text} /> : null}
                     {entry.role === 'assistant' && entry.id === lastAssistantId && !busy ? (
                       <button type="button" className="copy-btn" onClick={() => void regenerateLast()}>
                         {t('重新生成')}
@@ -5880,8 +6172,8 @@ export function App(): React.JSX.Element {
                   </span>
                 ) : null}
               </article>
-            ),
-          )}
+            )
+          })}
         </main>
         {showScrollBottom ? (
           <button
@@ -6024,6 +6316,95 @@ export function App(): React.JSX.Element {
               </span>
             ))}
           </div>
+          <div className="markdown-bar">
+            <button
+              type="button"
+              className={`btn btn-quiet markdown-toggle ${markdownToolsOpen ? 'active' : ''}`}
+              data-testid="markdown-toggle"
+              title={t('Markdown 格式')}
+              aria-label={t('Markdown 格式')}
+              onClick={() => setMarkdownToolsOpen((open) => !open)}
+            >
+              MD
+            </button>
+            {markdownToolsOpen ? (
+              <div className="markdown-toolbar" data-testid="markdown-toolbar">
+                <button
+                  type="button"
+                  data-testid="markdown-bold"
+                  title={`${t('粗体')} (⌘B)`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyMarkdown('bold')}
+                >
+                  <strong>B</strong>
+                </button>
+                <button
+                  type="button"
+                  title={`${t('斜体')} (⌘I)`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyMarkdown('italic')}
+                >
+                  <em>I</em>
+                </button>
+                <button
+                  type="button"
+                  title={`${t('行内代码')} (⌘E)`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyMarkdown('code')}
+                >
+                  {'</>'}
+                </button>
+                <button
+                  type="button"
+                  title={t('代码块')}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyMarkdown('codeBlock')}
+                >
+                  {'{ }'}
+                </button>
+                <button
+                  type="button"
+                  title={t('链接')}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyMarkdown('link')}
+                >
+                  {t('链接')}
+                </button>
+                <button
+                  type="button"
+                  title={t('列表')}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyMarkdown('list')}
+                >
+                  {t('列表')}
+                </button>
+                <button
+                  type="button"
+                  title={t('引用')}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyMarkdown('quote')}
+                >
+                  {t('引用')}
+                </button>
+              </div>
+            ) : null}
+            <span className="spacer" />
+            {markdownToolsOpen ? (
+              <button
+                type="button"
+                className={`btn btn-quiet markdown-preview-toggle ${markdownPreview ? 'active' : ''}`}
+                data-testid="markdown-preview-toggle"
+                onClick={() => setMarkdownPreview((preview) => !preview)}
+              >
+                {t('预览')}
+              </button>
+            ) : null}
+          </div>
+          {markdownToolsOpen && markdownPreview ? (
+            <div className="markdown-preview" data-testid="markdown-preview">
+              {input.trim() ? <MarkdownView text={input} /> : <div className="menu-hint">{t('暂无内容')}</div>}
+            </div>
+          ) : null}
           <div className="composer-box">
             <textarea
               ref={textareaRef}
@@ -6087,6 +6468,24 @@ export function App(): React.JSX.Element {
                     event.preventDefault()
                     const command = paletteCommands[paletteIndex]
                     if (command) runSlashCommand(command)
+                    return
+                  }
+                }
+                if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
+                  const key = event.key.toLowerCase()
+                  if (key === 'b') {
+                    event.preventDefault()
+                    applyMarkdown('bold')
+                    return
+                  }
+                  if (key === 'i') {
+                    event.preventDefault()
+                    applyMarkdown('italic')
+                    return
+                  }
+                  if (key === 'e') {
+                    event.preventDefault()
+                    applyMarkdown('code')
                     return
                   }
                 }
@@ -6179,26 +6578,27 @@ export function App(): React.JSX.Element {
           </div>
           <div className="composer-hint">
             <span>{t('Enter 发送 · Shift+Enter 换行')}</span>
-            {usage ? (
-              <>
-                {contextPercent !== null ? (
-                  <span
-                    className={`context-meter ${contextPercent >= 85 ? 'danger' : contextPercent >= 65 ? 'warn' : ''}`}
-                    title={t('上下文 {{used}} / {{total}} tokens', {
-                      used: usage.currentContextTokens,
-                      total: usage.contextWindow,
-                    })}
-                  >
-                    <span className="context-track">
-                      <span className="context-fill" style={{ width: `${contextPercent}%` }} />
-                    </span>
-                    {contextPercent}%
-                  </span>
-                ) : null}
-                <span className="usage">
-                  ↑{usage.inputTokens} ↓{usage.outputTokens}
+            {contextPercent !== null ? (
+              <span
+                className={`context-meter ${contextPercent >= 85 ? 'danger' : contextPercent >= 65 ? 'warn' : ''}`}
+                title={t('上下文 {{used}} / {{total}} tokens', {
+                  used: usedContextTokens,
+                  total: contextWindow ?? 0,
+                })}
+              >
+                <span className="context-track">
+                  <span className="context-fill" style={{ width: `${contextPercent}%` }} />
                 </span>
-              </>
+                <span className="context-numbers">
+                  {formatContextTokens(usedContextTokens)} / {formatContextTokens(contextWindow ?? 0)}
+                </span>
+                <span className="context-percent">{contextPercent}%</span>
+              </span>
+            ) : null}
+            {usage ? (
+              <span className="usage">
+                ↑{usage.inputTokens} ↓{usage.outputTokens}
+              </span>
             ) : null}
             {queued > 0 ? <span className="queued">{t('已排队 {{count}}', { count: queued })}</span> : null}
           </div>

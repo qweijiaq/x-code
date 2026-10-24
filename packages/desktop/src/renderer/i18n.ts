@@ -869,6 +869,19 @@ export const EN: Record<string, string> = {
   '已清理失效的 worktree 记录': 'Stale worktree records pruned',
   '清理失效 worktree 失败：{{message}}': 'Could not prune worktrees: {{message}}',
   '移除 worktree 不会删除分支。': 'Removing a worktree does not delete the branch.',
+  'Markdown 格式': 'Markdown formatting',
+  粗体: 'Bold',
+  斜体: 'Italic',
+  行内代码: 'Inline code',
+  代码块: 'Code block',
+  链接: 'Link',
+  列表: 'List',
+  引用: 'Quote',
+  暂无内容: 'Nothing to preview',
+  '工具调用 {{count}} 次': '{{count}} tool call(s)',
+  '{{count}} 个失败': '{{count}} failed',
+  上下文: 'Context',
+  '上下文上限 {{tokens}} tokens': 'Context limit: {{tokens}} tokens',
 }
 
 const storedLanguage = ((): Language => {

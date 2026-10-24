@@ -141,7 +141,16 @@ describe('heavy tool description budgets', () => {
     const withExtra = buildSystemPrompt({ modelId: 'test:model', extra })
     const withoutExtra = buildSystemPrompt({ modelId: 'test:model' })
 
-    expect(withExtra.endsWith(extra)).toBe(true)
-    expect(withExtra.startsWith(withoutExtra)).toBe(true)
+    expect(withoutExtra).not.toContain(extra)
+    expect(withExtra).toContain(extra)
+    expect(withExtra.indexOf('## Response Language (final)')).toBeGreaterThan(withExtra.indexOf(extra))
+  })
+
+  it('ends with an explicit response-language rule that English context cannot override', () => {
+    const prompt = buildSystemPrompt({ modelId: 'test:model', extra: '## Task Mode: Coding\nUse English.' })
+
+    expect(prompt).toContain('Chinese input')
+    expect(prompt).toContain('Simplified Chinese')
+    expect(prompt.trimEnd().endsWith('Do not translate code, file paths, commands, or identifiers.')).toBe(true)
   })
 })

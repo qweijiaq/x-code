@@ -79,8 +79,9 @@ Settings that are shared across windows (keys, tools, skills, plugins, hooks,
 commands, memory and project overrides) are reloaded in the other windows after
 a change; theme and language follow through shared storage.
 
-The model menu has a search box and groups **Local models** (Ollama / LM Studio)
-separately from cloud/built-in models.
+The model menu has a search box, groups **Local models** (Ollama / LM Studio)
+separately from cloud/built-in models, and shows each model's context ceiling.
+Switching models updates the ceiling but keeps the last request's usage reading.
 
 Per-project overrides (model, task mode, automatic checks) apply whenever that
 workspace is active; clearing them restores the global defaults.
@@ -103,6 +104,18 @@ in Settings → Hooks; user-level hooks always run.
 
 ## Input
 
+- The composer has a **MD** toolbar (bold, italic, inline code, code block, link,
+  list, quote) with a live Markdown preview. `Cmd/Ctrl+B` / `I` / `E` apply bold /
+  italic / inline code in the textarea. Sent user messages render Markdown too.
+- Each user turn that used tools shows a compact `工具调用 N 次` row before its
+  first tool card. Its **收起 / 展开** button collapses every tool card in that
+  turn only; each tool's result still keeps its own details toggle. Failures are
+  counted in the row, and individual turns are independent.
+- User messages render Markdown after sending and have a **复制** action, alongside
+  the existing assistant copy/regenerate actions.
+- The agent replies in the language of the latest user message: Chinese input
+  (including mixed Chinese/English) gets a Chinese reply instead of switching to
+  English because the code or tool output is English.
 - `Cmd+V` pastes screenshots, drag & drop adds files.
 - The camera button offers **框选区域** (native macOS region selection; the app
   window hides while you drag) and **整个屏幕**. macOS asks for Screen
@@ -123,7 +136,10 @@ in Settings → Hooks; user-level hooks always run.
 - Code blocks can toggle wrapping and copy.
 - HTML / SVG / Markdown files opened in the file browser have a live **预览**
   toggle (HTML runs sandboxed without scripts).
-- The context meter in the composer footer shows current context usage; amber
-  at 65%, red at 85%.
+- The context meter in the composer footer shows **used / max tokens** and the
+  percentage for the active model. The ceiling comes from the model table with
+  a provider fallback (128k default) or a config `contextWindow` override;
+  automatic compression starts at 80% of that ceiling. Switching models keeps
+  the last usage value and replaces only the ceiling.
 - A ↓ button appears when you scroll up, and streaming no longer forces the
   chat back to the bottom.

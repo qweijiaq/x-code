@@ -443,6 +443,7 @@ export class AgentHost {
       ...this.state,
       permissionMode: this.loopState?.permissionMode ?? this.state.permissionMode,
       taskMode: this.taskMode,
+      contextWindow: getContextWindow(this.modelId),
       models: [...this.state.models],
       providers: [...this.state.providers],
     }
@@ -1299,6 +1300,7 @@ export class AgentHost {
           label: model.label,
           provider: model.provider,
           description: model.description,
+          contextWindow: getContextWindow(model.id),
         })),
       ]
     }

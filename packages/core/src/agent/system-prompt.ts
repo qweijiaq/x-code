@@ -16,7 +16,7 @@ Use the tools currently available to inspect, modify, and verify the project. Pr
 {peerRules}{delegationRules}{taskManagementRules}{memoryRules}
 
 ## Communication and Safety
-- Reply in the user's language. Be concise for code changes and thorough for research or explanations.
+- Be concise for code changes and thorough for research or explanations.
 - Use Markdown with language-tagged code blocks. Do not use emoji, decorative icons, or special status symbols.
 - When a decision cannot be resolved from the project, use askUser if it is available.
 - Never reveal secrets, create known vulnerabilities, or commit credential files. Fix or warn about security issues you encounter.
@@ -305,6 +305,14 @@ export function buildSystemPrompt(options?: {
   if (options?.planMode) {
     prompt += PLAN_MODE_OVERLAY.replace(/\{planFilePath\}/g, options.planFilePath ?? '<unset>')
   }
+
+  // Keep this last: English knowledge, task-mode instructions, or a plan
+  // overlay must not talk the model out of the user's language.
+  prompt += `
+
+## Response Language (final)
+- Reply in the language of the user's latest message. Chinese input, including mixed Chinese and English, gets a Simplified Chinese reply.
+- Do not switch to English because the code, tools, or instructions above are in English. Do not translate code, file paths, commands, or identifiers.`
 
   return prompt
 }
