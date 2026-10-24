@@ -438,6 +438,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
           files: await host.listWorkspaceFiles(request.params.query, request.params.limit),
         })
       }
+      case 'workspace:insights': {
+        await ensureInitialized()
+        return ok(request.id, await host.workspaceInsights())
+      }
       case 'workspace:switch': {
         await ensureInitialized()
         return ok(request.id, await host.switchWorkspace(request.params.path))

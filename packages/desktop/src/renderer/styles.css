@@ -3060,7 +3060,7 @@ body::before {
   top: calc(100% + 8px);
   right: 0;
   z-index: 40;
-  width: 160px;
+  width: 236px;
   padding: 6px;
   border: 1px solid var(--ink-20);
   background: var(--paper);
@@ -3079,6 +3079,26 @@ body::before {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+}
+
+.mode-item-label {
+  display: block;
+}
+
+.mode-item-desc {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-45);
+  font-size: 10px;
+}
+
+.mode-menu-note {
+  margin-top: 4px;
+  padding: 7px 10px 3px;
+  border-top: 1px solid var(--ink-20);
+  color: var(--ink-45);
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .mode-item:hover,

@@ -37,6 +37,7 @@ import type {
   UpdateCheckResult,
   UsageView,
   WorkspaceFileItem,
+  WorkspaceInsightsView,
   WorkspaceList,
   WorkspaceListItem,
 } from '../shared/protocol.js'
@@ -211,6 +212,13 @@ const TASK_MODE_LABEL: Record<TaskMode, string> = {
   writing: '写作',
   research: '科研',
   office: '办公',
+}
+
+const TASK_MODE_DESCRIPTION: Record<TaskMode, string> = {
+  coding: '代码、测试与 diff 优先',
+  writing: '结构、语气与文稿优先',
+  research: '资料、引用与不确定性优先',
+  office: '文档、表格与导出优先',
 }
 
 const TASK_MODE_TEMPLATE: Record<TaskMode, { hint: string; suggestions: string[] }> = {
@@ -539,6 +547,7 @@ export function App(): React.JSX.Element {
   const sessionSearchRef = useRef<HTMLInputElement | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [workspaces, setWorkspaces] = useState<WorkspaceListItem[]>([])
+  const [workspaceInsights, setWorkspaceInsights] = useState<WorkspaceInsightsView | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [collapsedTurns, setCollapsedTurns] = useState<Set<string>>(new Set())
@@ -688,6 +697,15 @@ export function App(): React.JSX.Element {
       params: {},
     })
     if (response.ok) setWorkspaces((response.result as WorkspaceList).projects)
+  }
+
+  const refreshWorkspaceInsights = async (): Promise<void> => {
+    const response = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'workspace:insights',
+      params: {},
+    })
+    if (response.ok) setWorkspaceInsights(response.result as WorkspaceInsightsView)
   }
 
   const updateMention = (value: string, caret: number): void => {
@@ -871,7 +889,12 @@ export function App(): React.JSX.Element {
     void refreshCommands()
     // The onboarding overlay needs the settings snapshot on first launch.
     void refreshSettings()
+    void refreshWorkspaceInsights()
   }, [])
+
+  useEffect(() => {
+    if (appState?.workspace) void refreshWorkspaceInsights()
+  }, [appState?.workspace])
 
   useEffect(() => {
     const onOpenFile = (event: Event): void => {
@@ -2407,19 +2430,27 @@ export function App(): React.JSX.Element {
         document.querySelector<HTMLButtonElement>('[data-testid="task-mode-chip"]')?.click()
         const modeMenu = await waitFor(() => document.querySelector('[data-testid="task-mode-menu"]') !== null, 2_000)
         Array.from(document.querySelectorAll<HTMLButtonElement>('.mode-item'))
-          .find((button) => button.textContent?.trim() === '写作')
+          .find((button) => button.querySelector('.mode-item-label')?.textContent?.trim() === '写作')
           ?.click()
         const writingHint = await waitFor(
-          () => (document.querySelector('.empty-sub')?.textContent ?? '').includes('说说你想写什么'),
+          () => (document.querySelector('[data-testid="starter-hint"]')?.textContent ?? '').trim().length > 0,
           3_000,
         )
-        const suggestionChips = document.querySelectorAll('.mode-suggestion').length === 3
+        const suggestionChips = document.querySelectorAll('.mode-suggestion').length > 0
+        const workspaceStarters = await waitFor(() => {
+          const text = document.querySelector('[data-testid="workspace-starters"]')?.textContent ?? ''
+          return text.includes('项目检查') || text.includes('README') || text.includes('未提交')
+        }, 3_000)
+        checks.workspaceStarters = {
+          ok: workspaceStarters,
+          detail: `hint=${writingHint} suggestions=${suggestionChips}`,
+        }
         const modeState = await window.xcode.request({ id: crypto.randomUUID(), method: 'app:state', params: {} })
         const modePersisted = modeState.ok && (modeState.result as AppState).taskMode === 'writing'
         document.querySelector<HTMLButtonElement>('[data-testid="task-mode-chip"]')?.click()
         await waitFor(() => document.querySelector('[data-testid="task-mode-menu"]') !== null, 2_000)
         Array.from(document.querySelectorAll<HTMLButtonElement>('.mode-item'))
-          .find((button) => button.textContent?.trim() === '编程')
+          .find((button) => button.querySelector('.mode-item-label')?.textContent?.trim() === '编程')
           ?.click()
         const backToCoding = await waitFor(
           () => (document.querySelector('[data-testid="task-mode-chip"]')?.textContent ?? '').includes('编程'),
@@ -6031,6 +6062,39 @@ export function App(): React.JSX.Element {
   }, [input])
 
   const taskMode = normalizeTaskMode(appState?.taskMode)
+  const starterSuggestions = ((): string[] => {
+    const insights = workspaceInsights
+    const fallback = TASK_MODE_TEMPLATE[taskMode].suggestions.map((suggestion) => t(suggestion))
+    if (!insights) return fallback
+    const items: string[] = []
+    if (insights.git.changeCount > 0) items.push(t('Review 当前改动并给出修复建议'))
+    if (insights.checks.some((check) => /test|测试/i.test(check.label))) {
+      items.push(t('运行项目检查并修复失败项'))
+    } else if (insights.checks.length > 0) {
+      items.push(t('运行项目检查'))
+    }
+    if (insights.recentDocument) {
+      items.push(t('总结最近打开的文档：{{name}}', { name: insights.recentDocument.name }))
+    }
+    if (insights.hasSpreadsheet) items.push(t('汇总表格中的关键数据'))
+    else if (insights.hasDocuments) items.push(t('总结当前目录中的文档'))
+    if (insights.hasTex || insights.hasBib) items.push(t('整理参考资料并列出可用文献'))
+    if (insights.hasPackageJson) items.push(t('分析这个项目的结构并给出改进建议'))
+    if (insights.hasReadme) items.push(t('根据 README 介绍这个项目'))
+    return items.length > 0 ? [...new Set(items)].slice(0, 4) : fallback
+  })()
+  const starterHint = ((): string => {
+    const insights = workspaceInsights
+    if (insights && insights.git.changeCount > 0) {
+      return t('当前有 {{count}} 个未提交改动，可以从这里开始。', { count: insights.git.changeCount })
+    }
+    if (insights && insights.checks.length > 0) {
+      return t('检测到 {{count}} 项项目检查，可以从这里开始。', { count: insights.checks.length })
+    }
+    if (insights?.recentDocument) return t('最近的文档：{{name}}', { name: insights.recentDocument.name })
+    if (insights?.hasPackageJson) return t('这是一个 Node 项目；也可以直接描述你想做的事。')
+    return t(TASK_MODE_TEMPLATE[taskMode].hint)
+  })()
   const activeModel = appState?.models.find((model) => model.id === appState?.activeModelId)
   const currentTitle = activeModel?.label ?? t('模型')
   const modelNeedle = modelQuery.trim().toLowerCase()
@@ -6520,9 +6584,11 @@ export function App(): React.JSX.Element {
                       className={`mode-item ${mode === taskMode ? 'active' : ''}`}
                       onClick={() => void chooseTaskMode(mode)}
                     >
-                      {t(TASK_MODE_LABEL[mode])}
+                      <span className="mode-item-label">{t(TASK_MODE_LABEL[mode])}</span>
+                      <span className="mode-item-desc">{t(TASK_MODE_DESCRIPTION[mode])}</span>
                     </button>
                   ))}
+                  <div className="mode-menu-note">{t('模式只调整回答侧重点，不限制可用工具。')}</div>
                 </div>
               </>
             ) : null}
@@ -6760,11 +6826,13 @@ export function App(): React.JSX.Element {
           {entries.length === 0 ? (
             <div className="empty">
               <p className="empty-title">{t('静候一问')}</p>
-              <p className="empty-sub">{t(TASK_MODE_TEMPLATE[taskMode].hint)}</p>
-              <div className="mode-suggestions">
-                {TASK_MODE_TEMPLATE[taskMode].suggestions.map((suggestion) => (
+              <p className="empty-sub" data-testid="starter-hint">
+                {starterHint}
+              </p>
+              <div className="mode-suggestions" data-testid="workspace-starters">
+                {starterSuggestions.map((suggestion) => (
                   <button key={suggestion} className="mode-suggestion" onClick={() => setInput(suggestion)}>
-                    {t(suggestion)}
+                    {suggestion}
                   </button>
                 ))}
               </div>

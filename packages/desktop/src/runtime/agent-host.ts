@@ -130,6 +130,7 @@ import type {
   UsageView,
   UserConfigFieldView,
   UserConfigValues,
+  WorkspaceInsightsView,
   WorkspaceList,
   WorktreeOpenResult,
 } from '../shared/protocol.js'
@@ -139,6 +140,7 @@ import { testProviderConnection } from './connection-test.js'
 import { createDemoModel } from './demo-model.js'
 import { loadDesktopSettings, saveDesktopSettings } from './desktop-settings.js'
 import type { ProjectOverrides } from './desktop-settings.js'
+import { recentDocuments } from './document-store.js'
 import {
   createBranchWorktree,
   createTurnCheckpoint,
@@ -521,6 +523,37 @@ export class AgentHost {
         relative: entry.relPath,
         isDirectory: entry.isDirectory,
       }))
+  }
+
+  /** Cheap workspace shape used by the empty-state starter actions. Only the
+   *  top level is inspected; no recursive scan. */
+  async workspaceInsights(): Promise<WorkspaceInsightsView> {
+    const workspace = this.requireBootstrap().workspace
+    const names = await fs.promises.readdir(workspace).catch(() => [] as string[])
+    const lower = names.map((name) => name.toLowerCase())
+    const hasExtension = (extensions: string[]): boolean =>
+      lower.some((name) => extensions.some((extension) => name.endsWith(extension)))
+    const [checks, git] = await Promise.all([
+      detectProjectChecks(workspace).catch(() => []),
+      gitStatus(workspace).catch(() => null),
+    ])
+    const recent = recentDocuments()[0]
+    return {
+      hasPackageJson: lower.includes('package.json'),
+      hasReadme: lower.some((name) => name.startsWith('readme')),
+      hasCargo: lower.includes('cargo.toml'),
+      hasTex: hasExtension(['.tex']),
+      hasBib: hasExtension(['.bib']),
+      hasSpreadsheet: hasExtension(['.xlsx', '.xls', '.csv', '.ods']),
+      hasDocuments: hasExtension(['.pdf', '.docx', '.doc', '.pptx', '.ppt', '.odt', '.odp']) || recent !== undefined,
+      ...(recent ? { recentDocument: { name: recent.name, path: recent.path } } : {}),
+      checks: checks.map((check) => ({
+        id: check.id,
+        label: check.label,
+        commandLine: [check.command, ...check.args].join(' '),
+      })),
+      git: { isRepo: git?.isRepo === true, changeCount: git?.files.length ?? 0 },
+    }
   }
 
   async switchWorkspace(nextPath: string): Promise<SettingsActionResult> {

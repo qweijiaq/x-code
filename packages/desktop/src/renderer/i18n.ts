@@ -968,6 +968,25 @@ export const EN: Record<string, string> = {
   'API Key / 上下文上限': 'API keys / context limit',
   '索引 / 搜索': 'Index / search',
   '启用 / 沙箱': 'Enable / sandbox',
+  'Review 当前改动并给出修复建议': 'Review the current changes and suggest fixes',
+  运行项目检查并修复失败项: 'Run project checks and fix failures',
+  '总结最近打开的文档：{{name}}': 'Summarize the recent document: {{name}}',
+  汇总表格中的关键数据: 'Summarize the key data in the spreadsheet',
+  总结当前目录中的文档: 'Summarize the documents in this folder',
+  整理参考资料并列出可用文献: 'Organize reference material and list available sources',
+  分析这个项目的结构并给出改进建议: 'Analyze this project and suggest improvements',
+  '根据 README 介绍这个项目': 'Introduce this project from its README',
+  '当前有 {{count}} 个未提交改动，可以从这里开始。':
+    'There are {{count}} uncommitted changes; start from one of these.',
+  '检测到 {{count}} 项项目检查，可以从这里开始。': '{{count}} project checks detected; start from one of these.',
+  '最近的文档：{{name}}': 'Recent document: {{name}}',
+  '这是一个 Node 项目；也可以直接描述你想做的事。':
+    'This is a Node project; you can also describe what you want to do.',
+  '代码、测试与 diff 优先': 'Code, tests and diffs first',
+  '结构、语气与文稿优先': 'Structure, tone and drafts first',
+  '资料、引用与不确定性优先': 'Sources, citations and uncertainty first',
+  '文档、表格与导出优先': 'Documents, spreadsheets and exports first',
+  '模式只调整回答侧重点，不限制可用工具。': 'Modes only adjust what the answer emphasizes; every tool stays available.',
 }
 
 const storedLanguage = ((): Language => {

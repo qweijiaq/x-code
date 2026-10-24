@@ -75,6 +75,12 @@ not overwrite the global recent-project entry.
   answers can be copied.
 - Drafts survive session switches; edit-and-resend, regenerate and queued
   messages are supported.
+- The empty state recommends workspace-aware next steps: uncommitted changes,
+  runnable project checks, a recent document, spreadsheets, or the README. When
+  nothing can be inferred it falls back to the task-mode hint.
+- The task mode in the top bar (coding / writing / research / office) only
+  changes what the answer emphasizes; it never removes tools. The menu spells
+  out each mode's focus.
 
 ## Context and models
 

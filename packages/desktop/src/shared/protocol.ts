@@ -507,6 +507,19 @@ export interface WorkspaceFileItem {
   isDirectory: boolean
 }
 
+export interface WorkspaceInsightsView {
+  hasPackageJson: boolean
+  hasReadme: boolean
+  hasCargo: boolean
+  hasTex: boolean
+  hasBib: boolean
+  hasSpreadsheet: boolean
+  hasDocuments: boolean
+  recentDocument?: { name: string; path: string }
+  checks: Array<{ id: string; label: string; commandLine: string }>
+  git: { isRepo: boolean; changeCount: number }
+}
+
 export interface WorkspaceList {
   projects: WorkspaceListItem[]
   current: string
@@ -1052,6 +1065,7 @@ export interface RequestMap {
     params: { query: string; limit?: number }
     result: { files: WorkspaceFileItem[] }
   }
+  'workspace:insights': { params: Record<string, never>; result: WorkspaceInsightsView }
   'workspace:switch': { params: { path: string }; result: SettingsActionResult }
   'settings:set-tool-profile': { params: { profile: 'full' | 'standard' }; result: SettingsActionResult }
   'settings:set-plugin-enabled': { params: { id: string; enabled: boolean }; result: SettingsActionResult }
