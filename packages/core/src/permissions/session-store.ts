@@ -606,6 +606,12 @@ class SessionPermissionStore {
     if (!exists) this.rules.push(rule)
   }
 
+  removeRule(rule: AllowRule): void {
+    this.rules = this.rules.filter(
+      (r) => !(r.tool === rule.tool && r.pattern === rule.pattern && r.type === rule.type && r.cwd === rule.cwd),
+    )
+  }
+
   matches(toolName: string, input: Record<string, unknown>, executionCwd?: string): boolean {
     if (toolName !== 'shell') {
       // Non-shell tools: tool-wide allow is the only rule shape we
@@ -683,6 +689,10 @@ const store = new SessionPermissionStore()
 
 export function addSessionAllowRule(rule: AllowRule): void {
   store.addRule(rule)
+}
+
+export function removeSessionAllowRule(rule: AllowRule): void {
+  store.removeRule(rule)
 }
 
 export function sessionRulesMatch(toolName: string, input: Record<string, unknown>, executionCwd?: string): boolean {

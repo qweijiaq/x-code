@@ -8,6 +8,9 @@ import type {
   MarketplaceEntryView,
   MarketplaceListView,
   McpServerView,
+  PermissionRuleType,
+  PermissionRuleView,
+  PermissionRulesResult,
   PluginConsentPreviewView,
   PluginInstallResult,
   PluginInstallTarget,
@@ -41,6 +44,7 @@ type Tab =
   | 'plugins'
   | 'market'
   | 'tools'
+  | 'permissions'
   | 'library'
   | 'storage'
 
@@ -55,6 +59,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'plugins', label: '插件' },
   { id: 'market', label: '插件市场' },
   { id: 'tools', label: '工具' },
+  { id: 'permissions', label: '权限' },
   { id: 'library', label: '文档库' },
   { id: 'storage', label: '存储' },
 ]
@@ -143,6 +148,10 @@ export function SettingsPanel({
   const [contextWindowDraft, setContextWindowDraft] = useState(
     settings.contextWindowOverride ? String(settings.contextWindowOverride) : '',
   )
+  const [permissionRules, setPermissionRules] = useState<PermissionRuleView[] | null>(null)
+  const [permissionTool, setPermissionTool] = useState('shell')
+  const [permissionType, setPermissionType] = useState<PermissionRuleType>('prefix')
+  const [permissionPattern, setPermissionPattern] = useState('')
   const [testResults, setTestResults] = useState<Record<string, TestConnectionResult | { testing: true }>>({})
   const [mcpName, setMcpName] = useState('')
   const [mcpJson, setMcpJson] = useState(MCP_PLACEHOLDER)
@@ -237,6 +246,67 @@ export function SettingsPanel({
     )
     if (result) setNotice(t('上下文上限已更新'))
   }
+
+  const showPermissionRules = (response: RuntimeResponse): boolean => {
+    if (!response.ok) {
+      setError(response.error.message)
+      return false
+    }
+    setPermissionRules((response.result as PermissionRulesResult).rules)
+    return true
+  }
+
+  const addPermissionRule = async (): Promise<void> => {
+    setBusy('permission-rule')
+    setError(null)
+    setNotice(null)
+    try {
+      const response = await request('permissions:add-rule', {
+        tool: permissionTool,
+        type: permissionType,
+        pattern: permissionType === 'tool' ? '*' : permissionPattern,
+      })
+      if (!showPermissionRules(response)) return
+      setPermissionPattern('')
+      setNotice(t('权限规则已保存'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const removePermissionRule = async (rule: PermissionRuleView): Promise<void> => {
+    setBusy('permission-rule')
+    setError(null)
+    setNotice(null)
+    try {
+      const response = await request('permissions:remove-rule', {
+        tool: rule.tool,
+        type: rule.type,
+        pattern: rule.pattern,
+        cwd: rule.cwd,
+      })
+      if (showPermissionRules(response)) setNotice(t('权限规则已删除'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  useEffect(() => {
+    if (tab !== 'permissions') return
+    let cancelled = false
+    void (async () => {
+      const response = await request('permissions:rules', {})
+      if (cancelled) return
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      setPermissionRules((response.result as PermissionRulesResult).rules)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [tab])
 
   const openExternal = async (url: string): Promise<void> => {
     if (!url.startsWith('https://')) {
@@ -1556,6 +1626,89 @@ export function SettingsPanel({
                 </div>
               ))}
             </>
+          ) : null}
+          {tab === 'permissions' ? (
+            <div data-testid="permissions-tab">
+              <div className="settings-section-title">{t('权限规则')}</div>
+              <p className="settings-note">
+                {t(
+                  '这里显示当前项目已持久化的“不再询问”规则。规则只会跳过“询问”级操作，不会绕过拒绝级命令、路径校验或计划模式。',
+                )}
+              </p>
+              <div className="settings-actions">
+                <input
+                  className="settings-input"
+                  data-testid="permission-tool"
+                  value={permissionTool}
+                  placeholder={t('工具名，如 shell')}
+                  onChange={(event) => setPermissionTool(event.target.value)}
+                />
+                <select
+                  className="settings-input"
+                  data-testid="permission-type"
+                  value={permissionType}
+                  onChange={(event) => setPermissionType(event.target.value as PermissionRuleType)}
+                >
+                  <option value="prefix">{t('前缀匹配')}</option>
+                  <option value="exact">{t('完全匹配')}</option>
+                  <option value="tool">{t('整个工具')}</option>
+                </select>
+                <input
+                  className="settings-input"
+                  data-testid="permission-pattern"
+                  value={permissionPattern}
+                  disabled={permissionType === 'tool'}
+                  placeholder={t('命令前缀或完整命令')}
+                  onChange={(event) => setPermissionPattern(event.target.value)}
+                />
+                <button
+                  className="btn solid"
+                  data-testid="permission-add"
+                  disabled={busy !== null || (permissionType !== 'tool' && permissionPattern.trim().length === 0)}
+                  onClick={() => void addPermissionRule()}
+                >
+                  {t('添加规则')}
+                </button>
+              </div>
+              <p className="settings-hint">{t('前缀与精确匹配只对 shell 生效；其他工具请使用“整个工具”。')}</p>
+              {permissionRules === null ? (
+                <p className="settings-hint">{t('加载中…')}</p>
+              ) : permissionRules.length === 0 ? (
+                <p className="settings-hint" data-testid="permission-empty">
+                  {t('暂无持久化权限规则。')}
+                </p>
+              ) : (
+                <div data-testid="permission-rules">
+                  {permissionRules.map((rule) => (
+                    <div className="setting-row" key={`${rule.tool}:${rule.type}:${rule.pattern}:${rule.cwd ?? ''}`}>
+                      <div className="setting-main">
+                        <div className="setting-name">
+                          <span className="settings-badge">{rule.tool}</span>
+                          {rule.label}
+                        </div>
+                        <div className="setting-desc">
+                          {rule.type === 'prefix'
+                            ? t('前缀匹配')
+                            : rule.type === 'exact'
+                              ? t('完全匹配')
+                              : t('整个工具')}
+                          {rule.cwd ? ` · ${rule.cwd}` : ''}
+                        </div>
+                      </div>
+                      <button
+                        className="btn"
+                        data-testid="permission-remove"
+                        data-rule={rule.label}
+                        disabled={busy !== null}
+                        onClick={() => void removePermissionRule(rule)}
+                      >
+                        {t('删除')}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : null}
           {tab === 'library' ? (
             <div data-testid="library-tab">

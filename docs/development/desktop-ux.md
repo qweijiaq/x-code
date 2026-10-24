@@ -95,6 +95,20 @@ workspace is active; clearing them restores the global defaults.
 Project-level `hooks.json` is **not executed until the workspace is trusted**
 in Settings → Hooks; user-level hooks always run.
 
+## Permissions
+
+**Settings → 权限** lists the "don't ask again" rules persisted in
+`.x-code/local/permissions.json` for the current project. Each rule shows its
+tool and match shape (`shell:git commit:*`, `shell:=rm build.log`,
+`writeFile:*`); **删除** removes it from disk and from the running session so
+the next call asks again. Rules can also be added manually: shell supports
+prefix, exact and whole-tool rules (shell rules are bound to the current
+workspace), while other tools are whole-tool only.
+
+Allow rules only skip **ask-level** prompts. Destructive shell commands,
+deny-level classifications, path checks and plan mode are evaluated before
+rules and cannot be bypassed from this screen.
+
 ## Editor integration
 
 - Click the **file path on a diff card** (chat, Git panel) to open VS Code or

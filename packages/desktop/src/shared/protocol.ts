@@ -252,6 +252,22 @@ export interface ToolSettingsView {
   alwaysAllow: boolean
 }
 
+export type PermissionRuleType = 'exact' | 'prefix' | 'tool'
+
+export interface PermissionRuleView {
+  tool: string
+  pattern: string
+  type: PermissionRuleType
+  /** Shell rules are bound to the project they were approved in. */
+  cwd?: string
+  /** Human-readable form, e.g. `git commit:*`. */
+  label: string
+}
+
+export interface PermissionRulesResult {
+  rules: PermissionRuleView[]
+}
+
 export interface SettingsSnapshot {
   workspace: string
   activeModelId: string
@@ -848,6 +864,15 @@ export interface RequestMap {
   'settings:set-context-window': {
     params: { modelId: string; tokens: number | null }
     result: SettingsActionResult
+  }
+  'permissions:rules': { params: Record<string, never>; result: PermissionRulesResult }
+  'permissions:add-rule': {
+    params: { tool: string; type: PermissionRuleType; pattern: string }
+    result: PermissionRulesResult
+  }
+  'permissions:remove-rule': {
+    params: { tool: string; type: PermissionRuleType; pattern: string; cwd?: string }
+    result: PermissionRulesResult
   }
   'settings:set-notifications': { params: { enabled: boolean }; result: SettingsActionResult }
   'settings:set-onboarded': { params: { value: boolean }; result: SettingsActionResult }

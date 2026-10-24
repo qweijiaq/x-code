@@ -2,8 +2,13 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { persistRule, readPersistedRules } from '../src/permissions/persistence.js'
-import { clearSessionRules, loadPersistedRules, sessionRulesMatch } from '../src/permissions/session-store.js'
+import { persistRule, readPersistedRules, removePersistedRule } from '../src/permissions/persistence.js'
+import {
+  clearSessionRules,
+  loadPersistedRules,
+  removeSessionAllowRule,
+  sessionRulesMatch,
+} from '../src/permissions/session-store.js'
 
 describe('permission persistence', () => {
   let cwd: string
@@ -66,5 +71,21 @@ describe('permission persistence', () => {
     await fs.writeFile(invalidCwd, 'blocks directory creation', 'utf-8')
 
     expect(() => persistRule(invalidCwd, { tool: 'shell', pattern: 'git push', type: 'prefix' })).toThrow()
+  })
+
+  it('removes persisted and in-memory rules without touching the others', async () => {
+    persistRule(cwd, { tool: 'shell', pattern: 'git commit', type: 'prefix' })
+    persistRule(cwd, { tool: 'shell', pattern: 'git push', type: 'prefix' })
+    loadPersistedRules(cwd)
+    const cwdKey = path.resolve(cwd)
+    expect(sessionRulesMatch('shell', { command: 'git commit -m x' }, cwdKey)).toBe(true)
+
+    expect(removePersistedRule(cwd, { tool: 'shell', pattern: 'git commit', type: 'prefix' })).toBe(true)
+    removeSessionAllowRule({ tool: 'shell', pattern: 'git commit', type: 'prefix', cwd: cwdKey })
+
+    expect(readPersistedRules(cwd)).toEqual([{ tool: 'shell', pattern: 'git push', type: 'prefix', cwd: cwdKey }])
+    expect(sessionRulesMatch('shell', { command: 'git commit -m x' }, cwdKey)).toBe(false)
+    expect(sessionRulesMatch('shell', { command: 'git push origin main' }, cwdKey)).toBe(true)
+    expect(removePersistedRule(cwd, { tool: 'shell', pattern: 'git commit', type: 'prefix' })).toBe(false)
   })
 })

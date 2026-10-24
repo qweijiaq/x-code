@@ -6,6 +6,7 @@ import {
   KEEP_RECENT_TOKENS,
   MIN_CONTEXT_WINDOW_OVERRIDE,
   PROVIDERS,
+  addSessionAllowRule,
   agentLoop,
   appendCheckpoint,
   buildContextBreakdownInput,
@@ -41,7 +42,11 @@ import {
   markBoundaryAndReflush,
   modelSupportsVision,
   parseHookConfig,
+  persistRule,
+  readPersistedRules,
   reloadSkillRegistry,
+  removePersistedRule,
+  removeSessionAllowRule,
   renameSession as renameSessionFile,
   restoreCheckpoint,
   salvageSession as salvageSessionFile,
@@ -62,6 +67,7 @@ import {
 } from '@x-code-cli/core'
 import type {
   AgentCallbacks,
+  AllowRule,
   AuthorityApproval,
   EditDiffPayload,
   FileEntry,
@@ -95,6 +101,8 @@ import type {
   MarketplaceListView,
   McpServerView,
   MemoryPanelView,
+  PermissionRuleType,
+  PermissionRulesResult,
   PluginConsentPreviewView,
   PluginInstallResult,
   PluginInstallTarget,
@@ -143,6 +151,7 @@ import { discoverLocalModels, withLocalModels } from './local-models.js'
 import { requestMain } from './main-bridge.js'
 import { addMarketplace, installMarketplacePluginInfo, listMarketplacePlugins } from './marketplace-service.js'
 import { McpService } from './mcp-service.js'
+import { normalizeNewPermissionRule, visiblePermissionRules } from './permission-rules.js'
 import {
   coerceUserConfigValue,
   installPluginTarget,
@@ -2320,6 +2329,34 @@ export class AgentHost {
     this.send({ type: 'app:state', state: this.getState() })
     void this.emitSettings()
     return this.settingsResult()
+  }
+
+  listPermissionRules(): PermissionRulesResult {
+    return { rules: visiblePermissionRules(readPersistedRules(this.workspaceRoot()), this.workspaceRoot()) }
+  }
+
+  addPermissionRule(tool: string, type: PermissionRuleType, pattern: string): PermissionRulesResult {
+    const workspace = this.workspaceRoot()
+    const rule = normalizeNewPermissionRule(tool, type, pattern, workspace)
+    persistRule(workspace, rule)
+    addSessionAllowRule(rule)
+    return this.listPermissionRules()
+  }
+
+  removePermissionRule(tool: string, type: PermissionRuleType, pattern: string, cwd?: string): PermissionRulesResult {
+    const workspace = this.workspaceRoot()
+    const rule: AllowRule = {
+      tool: tool.trim(),
+      pattern: pattern.trim(),
+      type,
+      ...(cwd ? { cwd } : {}),
+    }
+    removePersistedRule(workspace, rule)
+    removeSessionAllowRule({
+      ...rule,
+      ...(rule.tool === 'shell' && !rule.cwd ? { cwd: workspace } : {}),
+    })
+    return this.listPermissionRules()
   }
 
   testConnection(provider: string, key?: string, baseUrl?: string): Promise<TestConnectionResult> {

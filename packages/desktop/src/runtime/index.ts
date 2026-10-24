@@ -503,6 +503,26 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.setContextWindow(request.params.modelId, request.params.tokens))
       }
+      case 'permissions:rules': {
+        await ensureInitialized()
+        return ok(request.id, host.listPermissionRules())
+      }
+      case 'permissions:add-rule': {
+        await ensureInitialized()
+        return ok(request.id, host.addPermissionRule(request.params.tool, request.params.type, request.params.pattern))
+      }
+      case 'permissions:remove-rule': {
+        await ensureInitialized()
+        return ok(
+          request.id,
+          host.removePermissionRule(
+            request.params.tool,
+            request.params.type,
+            request.params.pattern,
+            request.params.cwd,
+          ),
+        )
+      }
       case 'settings:set-notifications': {
         await ensureInitialized()
         return ok(request.id, await host.setNotifications(request.params.enabled))

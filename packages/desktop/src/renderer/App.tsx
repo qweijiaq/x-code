@@ -1891,6 +1891,44 @@ export function App(): React.JSX.Element {
           ok: contextInputMounted && contextSaved && contextReset,
           detail: `input=${contextInputMounted} saved=${contextSaved} reset=${contextReset}`,
         }
+        clickSettingsTab('权限')
+        const permissionTabMounted = await waitFor(
+          () => document.querySelector('[data-testid="permission-tool"]') !== null,
+          3000,
+        )
+        let permissionAdded = false
+        let permissionRemoved = false
+        if (permissionTabMounted) {
+          const permissionToolInput = document.querySelector<HTMLInputElement>('[data-testid="permission-tool"]')
+          const permissionPatternInput = document.querySelector<HTMLInputElement>('[data-testid="permission-pattern"]')
+          const setPermissionValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+          setPermissionValue?.call(permissionToolInput, 'shell')
+          permissionToolInput?.dispatchEvent(new Event('input', { bubbles: true }))
+          setPermissionValue?.call(permissionPatternInput, 'echo smoke-perm')
+          permissionPatternInput?.dispatchEvent(new Event('input', { bubbles: true }))
+          await waitFor(
+            () => document.querySelector<HTMLButtonElement>('[data-testid="permission-add"]')?.disabled === false,
+            2000,
+          )
+          document.querySelector<HTMLButtonElement>('[data-testid="permission-add"]')?.click()
+          permissionAdded = await waitFor(
+            () =>
+              document.querySelector('[data-testid="permission-remove"][data-rule="shell:echo smoke-perm:*"]') !== null,
+            4000,
+          )
+          document
+            .querySelector<HTMLButtonElement>('[data-testid="permission-remove"][data-rule="shell:echo smoke-perm:*"]')
+            ?.click()
+          permissionRemoved = await waitFor(
+            () =>
+              document.querySelector('[data-testid="permission-remove"][data-rule="shell:echo smoke-perm:*"]') === null,
+            4000,
+          )
+        }
+        checks.permissionRules = {
+          ok: permissionTabMounted && permissionAdded && permissionRemoved,
+          detail: `tab=${permissionTabMounted} add=${permissionAdded} remove=${permissionRemoved}`,
+        }
         document.querySelector<HTMLButtonElement>('.settings-drawer .btn-quiet')?.click()
         await waitFor(() => document.querySelector('.settings-drawer') === null, 2000)
 

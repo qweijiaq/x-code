@@ -219,7 +219,7 @@ export async function checkPermission(
     .approved
 }
 
-export { addSessionAllowRule, clearSessionRules, buildAllowRule } from './session-store.js'
+export { addSessionAllowRule, clearSessionRules, buildAllowRule, removeSessionAllowRule } from './session-store.js'
 export {
   extractCommandPrefix,
   extractCompoundPrefixes,
@@ -227,6 +227,7 @@ export {
   suggestRuleLabel,
 } from './session-store.js'
 export { loadPersistedRules, persistRule } from './session-store.js'
+export { readPersistedRules, removePersistedRule } from './persistence.js'
 export {
   MAX_EGRESS_APPROVAL_BYTES,
   authoritySnapshotHash,

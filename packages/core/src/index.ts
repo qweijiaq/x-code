@@ -270,14 +270,14 @@ export type {
 
 // Permissions
 export { checkPermission, getPermissionLevel } from './permissions/index.js'
-export { addSessionAllowRule, clearSessionRules, buildAllowRule } from './permissions/index.js'
+export { addSessionAllowRule, clearSessionRules, buildAllowRule, removeSessionAllowRule } from './permissions/index.js'
 export {
   extractCommandPrefix,
   extractCompoundPrefixes,
   extractCompoundRules,
   suggestRuleLabel,
 } from './permissions/index.js'
-export { loadPersistedRules, persistRule } from './permissions/index.js'
+export { loadPersistedRules, persistRule, readPersistedRules, removePersistedRule } from './permissions/index.js'
 export type { AllowRule } from './permissions/session-store.js'
 export {
   MAX_EGRESS_APPROVAL_BYTES,

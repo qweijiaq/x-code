@@ -907,6 +907,20 @@ export const EN: Record<string, string> = {
     'Leave empty to use the model table/provider fallback; overrides affect only this model.',
   '上下文上限不能小于 {{min}} tokens': 'Context limit cannot be below {{min}} tokens',
   上下文上限已更新: 'Context limit updated',
+  权限规则: 'Permission rules',
+  '这里显示当前项目已持久化的“不再询问”规则。规则只会跳过“询问”级操作，不会绕过拒绝级命令、路径校验或计划模式。':
+    'These are the persisted "don\'t ask again" rules for this project. They only skip ask-level prompts; they never bypass deny-level commands, path checks, or plan mode.',
+  '工具名，如 shell': 'Tool name, e.g. shell',
+  前缀匹配: 'Prefix match',
+  完全匹配: 'Exact match',
+  整个工具: 'Whole tool',
+  命令前缀或完整命令: 'Command prefix or exact command',
+  添加规则: 'Add rule',
+  '前缀与精确匹配只对 shell 生效；其他工具请使用“整个工具”。':
+    'Prefix and exact matching apply to shell only; use "Whole tool" for other tools.',
+  '暂无持久化权限规则。': 'No persisted permission rules yet.',
+  权限规则已保存: 'Permission rule saved',
+  权限规则已删除: 'Permission rule removed',
 }
 
 const storedLanguage = ((): Language => {

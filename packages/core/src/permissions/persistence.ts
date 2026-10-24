@@ -94,20 +94,40 @@ export function readPersistedRules(cwd: string): AllowRule[] {
 export function persistRule(cwd: string, rule: AllowRule): void {
   const filePath = getPermissionsPath(cwd)
   const rules = readPersistedRules(cwd)
-  const normalizedRule = rule.tool === 'shell' && !rule.cwd ? { ...rule, cwd: path.resolve(cwd) } : rule
+  const normalizedRule = normalizeRule(cwd, rule)
 
-  if (
-    !rules.some(
-      (entry) =>
-        entry.tool === normalizedRule.tool &&
-        entry.pattern === normalizedRule.pattern &&
-        entry.type === normalizedRule.type &&
-        entry.cwd === normalizedRule.cwd,
-    )
-  ) {
+  if (!rules.some((entry) => sameRule(entry, normalizedRule))) {
     rules.push(normalizedRule)
   }
 
+  writeRules(filePath, rules)
+}
+
+/**
+ * Remove a rule from `.x-code/local/permissions.json`.
+ * Returns true when the file changed. Shell rules without `cwd` are
+ * normalized to the project directory, matching `persistRule`.
+ */
+export function removePersistedRule(cwd: string, rule: AllowRule): boolean {
+  const rules = readPersistedRules(cwd)
+  const normalizedRule = normalizeRule(cwd, rule)
+  const remaining = rules.filter((entry) => !sameRule(entry, normalizedRule))
+  if (remaining.length === rules.length) return false
+  writeRules(getPermissionsPath(cwd), remaining)
+  return true
+}
+
+function normalizeRule(cwd: string, rule: AllowRule): AllowRule {
+  return rule.tool === 'shell' && !rule.cwd ? { ...rule, cwd: path.resolve(cwd) } : rule
+}
+
+function sameRule(left: AllowRule, right: AllowRule): boolean {
+  return (
+    left.tool === right.tool && left.pattern === right.pattern && left.type === right.type && left.cwd === right.cwd
+  )
+}
+
+function writeRules(filePath: string, rules: AllowRule[]): void {
   const dir = path.dirname(filePath)
   fs.mkdirSync(dir, { recursive: true })
   const gitignorePath = path.join(dir, '.gitignore')
