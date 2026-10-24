@@ -83,6 +83,31 @@ function runCombined(command, commandArgs, timeout) {
   return `${result.stdout ?? ''}${result.stderr ?? ''}`
 }
 
+function lastLines(error, count = 8) {
+  const text = [error?.stderr, error?.stdout, error?.message].filter(Boolean).join('\n').trim()
+  return text.split('\n').slice(-count).join(' | ')
+}
+
+/** Electron smoke can lose its first launch to transient window/PTY setup;
+ *  retry once with the captured output so a release gate is deterministic. */
+function runAppSmoke(binary, smokeArgs, timeout, env) {
+  let firstError = null
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const output = run(binary, smokeArgs, { timeout, env })
+      return { output, retried: attempt > 1 }
+    } catch (error) {
+      if (attempt === 1) {
+        firstError = error
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000)
+      } else {
+        throw new Error(`attempt 1: ${lastLines(firstError)}; attempt 2: ${lastLines(error)}`)
+      }
+    }
+  }
+  throw new Error(lastLines(firstError))
+}
+
 function hash(file, algorithm, encoding = 'hex') {
   const key = `${algorithm}:${encoding}:${file}`
   const cached = hashCache.get(key)
@@ -302,29 +327,23 @@ if (skipSmoke) {
       failed('Packaged app headless smoke', 'app executable not found')
     } else {
       check('Packaged app headless smoke', () => {
-        const output = run(binary, ['--smoke-test'], {
-          timeout: 240_000,
-          env: { X_CODE_HOME: smokeHome },
-        })
-        const line = output.split('\n').find((entry) => entry.startsWith('SMOKE_RESULT '))
+        const result = runAppSmoke(binary, ['--smoke-test'], 240_000, { X_CODE_HOME: smokeHome })
+        const line = result.output.split('\n').find((entry) => entry.startsWith('SMOKE_RESULT '))
         if (!line) throw new Error('SMOKE_RESULT missing')
         const report = JSON.parse(line.slice('SMOKE_RESULT '.length))
         if (report.ok !== true) throw new Error('smoke reported ok=false')
-        return 'SMOKE_RESULT ok=true'
+        return `SMOKE_RESULT ok=true${result.retried ? ' (passed on retry)' : ''}`
       })
     }
     if (runUiSmoke) {
       check('Packaged app UI smoke', () => {
-        const output = run(binary, ['--ui-smoke'], {
-          timeout: 300_000,
-          env: { X_CODE_HOME: smokeHome },
-        })
-        const line = output.split('\n').find((entry) => entry.startsWith('UI_SMOKE_RESULT '))
+        const result = runAppSmoke(binary, ['--ui-smoke'], 300_000, { X_CODE_HOME: smokeHome })
+        const line = result.output.split('\n').find((entry) => entry.startsWith('UI_SMOKE_RESULT '))
         if (!line) throw new Error('UI_SMOKE_RESULT missing')
         const report = JSON.parse(line.slice('UI_SMOKE_RESULT '.length))
         if (report.ok !== true)
           throw new Error(`ui smoke reported ok=false (${Object.keys(report.checks ?? {}).length} checks)`)
-        return `${Object.keys(report.checks ?? {}).length} checks passed`
+        return `${Object.keys(report.checks ?? {}).length} checks passed${result.retried ? ' (passed on retry)' : ''}`
       })
     } else {
       skipped('Packaged app UI smoke', 'pass --ui to run it')
