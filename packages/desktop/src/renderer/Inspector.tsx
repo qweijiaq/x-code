@@ -34,6 +34,16 @@ export function Inspector({ tab, onTab, onClose, children }: InspectorProps): Re
     return 560
   })
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
+
+  const moveTab = (delta: number): void => {
+    const index = TABS.findIndex((item) => item.id === tab)
+    const next = (index + delta + TABS.length) % TABS.length
+    const item = TABS[next]
+    if (!item) return
+    onTab(item.id)
+    setTimeout(() => tabRefs.current[next]?.focus(), 0)
+  }
 
   const startResize = (event: React.PointerEvent<HTMLDivElement>): void => {
     event.preventDefault()
@@ -73,14 +83,37 @@ export function Inspector({ tab, onTab, onClose, children }: InspectorProps): Re
       />
       <header className="inspector-head">
         <div className="inspector-tabs" role="tablist">
-          {TABS.map((item) => (
+          {TABS.map((item, index) => (
             <button
               key={item.id}
+              ref={(node) => {
+                tabRefs.current[index] = node
+              }}
               className={`inspector-tab ${item.id === tab ? 'active' : ''}`}
               data-testid={`inspector-tab-${item.id}`}
               role="tab"
               aria-selected={item.id === tab}
+              aria-controls={`inspector-panel-${item.id}`}
+              tabIndex={item.id === tab ? 0 : -1}
               onClick={() => onTab(item.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowRight') {
+                  event.preventDefault()
+                  moveTab(1)
+                } else if (event.key === 'ArrowLeft') {
+                  event.preventDefault()
+                  moveTab(-1)
+                } else if (event.key === 'Home') {
+                  event.preventDefault()
+                  onTab(TABS[0]!.id)
+                  setTimeout(() => tabRefs.current[0]?.focus(), 0)
+                } else if (event.key === 'End') {
+                  event.preventDefault()
+                  const last = TABS.length - 1
+                  onTab(TABS[last]!.id)
+                  setTimeout(() => tabRefs.current[last]?.focus(), 0)
+                }
+              }}
             >
               {t(item.label)}
             </button>
@@ -96,7 +129,14 @@ export function Inspector({ tab, onTab, onClose, children }: InspectorProps): Re
           ×
         </button>
       </header>
-      <div className="inspector-body">{children}</div>
+      <div
+        className="inspector-body"
+        role="tabpanel"
+        id={`inspector-panel-${tab}`}
+        aria-label={t(TABS.find((item) => item.id === tab)?.label ?? '')}
+      >
+        {children}
+      </div>
     </aside>
   )
 }

@@ -2811,7 +2811,9 @@ export function App(): React.JSX.Element {
         document.querySelector<HTMLButtonElement>('[data-testid="document-button"]')?.click()
         const inspectorMounted = await waitFor(() => document.querySelector('[data-testid="inspector"]') !== null, 3000)
         const documentTabActive = document.querySelector('[data-testid="inspector-tab-document"].active') !== null
-        document.querySelector<HTMLButtonElement>('[data-testid="inspector-tab-git"]')?.click()
+        const documentTabButton = document.querySelector<HTMLButtonElement>('[data-testid="inspector-tab-document"]')
+        documentTabButton?.focus()
+        documentTabButton?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
         const gitInsideInspector = await waitFor(
           () => document.querySelector('[data-testid="inspector"] [data-testid="git-drawer"]') !== null,
           4000,
