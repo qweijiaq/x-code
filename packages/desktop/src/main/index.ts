@@ -664,6 +664,7 @@ const SHARED_SETTINGS_METHODS = new Set<string>([
   'settings:set-browser-visual-check',
   'permissions:add-rule',
   'permissions:remove-rule',
+  'skill-market:register-mcp',
   'settings:mcp-save',
   'settings:mcp-remove',
   'settings:marketplace-install',

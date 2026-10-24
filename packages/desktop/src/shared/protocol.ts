@@ -958,6 +958,7 @@ export interface RequestMap {
     params: { provider: SkillMarketProvider; id: string; version?: string; sourceUrl?: string }
     result: SkillImportResult
   }
+  'skill-market:register-mcp': { params: Record<string, never>; result: SettingsActionResult }
   'plugins:import': { params: { path: string }; result: PluginInstallResult }
   'plugins:install-command': {
     params: { command: string; userConfig?: UserConfigValues }

@@ -12,7 +12,7 @@ import type { CopiedSkill } from './skill-install-command.js'
 
 const SKILLHUB_SEARCH_URL = 'https://api.skillhub.cn/api/v1/search'
 const SKILLHUB_DOWNLOAD_URL = 'https://api.skillhub.cn/api/v1/download'
-const SKILLSMP_MCP_URL = 'https://skillsmp.com/mcp'
+export const SKILLSMP_MCP_URL = 'https://skillsmp.com/mcp'
 const SKILLSMP_PROTOCOL_VERSION = '2025-06-18'
 const MAX_ZIP_BYTES = 20 * 1024 * 1024
 const MAX_EXTRACTED_BYTES = 50 * 1024 * 1024
@@ -58,6 +58,15 @@ export function parseSkillHubId(id: string): { namespace?: string; slug: string 
   throw new Error('无效的 SkillHub 技能 ID')
 }
 
+/** Human-facing SkillHub page. The API's `homepage` field points at
+ *  api.skillhub.cn endpoints, which are not useful in a browser. */
+export function skillHubPageUrl(handle: string | undefined, publicSlug: string): string {
+  const encoded = encodeURIComponent(publicSlug)
+  return handle
+    ? `https://skillhub.cn/skills/@${encodeURIComponent(handle)}/${encoded}`
+    : `https://skillhub.cn/skills/${encoded}`
+}
+
 export function parseSkillHubSearch(payload: unknown, installed: Set<string>): SkillMarketEntryView[] {
   const results =
     payload && typeof payload === 'object' && Array.isArray((payload as { results?: unknown }).results)
@@ -86,7 +95,7 @@ export function parseSkillHubSearch(payload: unknown, installed: Set<string>): S
       ...(optionalNumber(item.stars) !== undefined ? { stars: optionalNumber(item.stars) } : {}),
       ...(optionalNumber(item.downloads) !== undefined ? { downloads: optionalNumber(item.downloads) } : {}),
       ...(optionalString(item.category) ? { category: optionalString(item.category) } : {}),
-      ...(optionalString(item.homepage) ? { homepage: optionalString(item.homepage) } : {}),
+      homepage: skillHubPageUrl(handle, publicSlug),
       ...(labels.requires_api_key === 'true' ? { requiresKey: true } : {}),
       installed: false,
     }

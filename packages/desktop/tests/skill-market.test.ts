@@ -141,11 +141,14 @@ describe('SkillHub catalog', () => {
         stars: 190,
         downloads: 279720,
         category: 'office-efficiency',
-        homepage: 'https://api.skillhub.cn/user_5f9c21aa/pdf-image-text-extractor',
+        homepage: 'https://skillhub.cn/skills/@user_5f9c21aa/pdf-image-text-extractor',
         requiresKey: true,
         installed: true,
       },
     ])
+    expect(parseSkillHubSearch({ results: [{ slug: 'plain' }] }, new Set())[0]?.homepage).toBe(
+      'https://skillhub.cn/skills/plain',
+    )
   })
 
   it('searches with q/limit and reuses the in-memory cache', async () => {

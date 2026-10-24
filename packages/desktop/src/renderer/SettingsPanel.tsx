@@ -137,6 +137,16 @@ export function SettingsPanel({
 }: SettingsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const language = i18n.language === 'en' ? 'en' : 'zh'
+  const skillsMpServer = settings.mcpServers.find((server) => server.name === 'skillsmp')
+  const skillsMpStatus = ((): string => {
+    if (!skillsMpServer) return t('未注册')
+    const status = skillsMpServer.status
+    if (status.kind === 'connected') return t('已连接 · {{count}} 个工具', { count: status.toolCount })
+    if (status.kind === 'connecting') return t('连接中')
+    if (status.kind === 'needs_auth') return t('需要认证')
+    if (status.kind === 'disabled') return t('已禁用')
+    return t('连接失败：{{message}}', { message: status.error })
+  })()
   const [localTab, setLocalTab] = useState<Tab>(() =>
     activeTab && TABS.some((item) => item.id === activeTab) ? (activeTab as Tab) : 'api',
   )
@@ -596,6 +606,25 @@ export function SettingsPanel({
         return
       }
       setSkillMarketResults(response.result as SkillMarketListView)
+    } finally {
+      setSkillMarketBusy(false)
+    }
+  }
+
+  const registerSkillsMpMcp = async (): Promise<void> => {
+    setSkillMarketBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const response = await request('skill-market:register-mcp', {})
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      const result = response.result as SettingsActionResult
+      onSettings(result.settings)
+      onState(result.state)
+      setNotice(t('SkillsMP 已注册为 MCP 服务器'))
     } finally {
       setSkillMarketBusy(false)
     }
@@ -1297,6 +1326,32 @@ export function SettingsPanel({
                   '从 SkillHub 或 SkillsMP 搜索并安装 Agent Skills。技能写入 ~/.x-code/skills，下一轮对话生效；安装前请自行确认来源可信。',
                 )}
               </p>
+              {skillMarketProvider === 'skillsmp' ? (
+                <div className="setting-row" data-testid="skill-market-mcp">
+                  <div className="setting-main">
+                    <div className="setting-name">
+                      {t('SkillsMP MCP 工具')}
+                      {skillsMpServer ? <span className="settings-badge">{t('已注册')}</span> : null}
+                    </div>
+                    <div className="setting-desc">
+                      {t(
+                        '把 https://skillsmp.com/mcp 注册为用户级 MCP 服务器后，agent 可以在对话中直接调用 search_skills / get_skill / list_categories。',
+                      )}
+                    </div>
+                    <div className="setting-meta">{skillsMpStatus}</div>
+                  </div>
+                  <div className="setting-actions-col">
+                    <button
+                      className="btn solid"
+                      data-testid="skill-market-register-mcp"
+                      disabled={skillMarketBusy || Boolean(skillsMpServer)}
+                      onClick={() => void registerSkillsMpMcp()}
+                    >
+                      {skillsMpServer ? t('已注册') : t('注册为 MCP 服务器')}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="settings-actions">
                 <div className="segmented">
                   <button

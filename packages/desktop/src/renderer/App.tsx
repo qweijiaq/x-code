@@ -1835,11 +1835,23 @@ export function App(): React.JSX.Element {
         const skillMarketProviders =
           document.querySelector('[data-testid="skill-market-skillhub"]') !== null &&
           document.querySelector('[data-testid="skill-market-skillsmp"]') !== null
+        document.querySelector<HTMLButtonElement>('[data-testid="skill-market-skillsmp"]')?.click()
+        const skillMarketMcpRow = await waitFor(
+          () => document.querySelector('[data-testid="skill-market-mcp"]') !== null,
+          2000,
+        )
+        const skillMarketMcpButton = document.querySelector('[data-testid="skill-market-register-mcp"]') !== null
+        document.querySelector<HTMLButtonElement>('[data-testid="skill-market-skillhub"]')?.click()
         const skillMarketSearchDisabled =
           document.querySelector<HTMLButtonElement>('[data-testid="skill-market-search"]')?.disabled === true
         checks.skillMarketTab = {
-          ok: skillMarketMounted && skillMarketProviders && skillMarketSearchDisabled,
-          detail: `tab=${skillMarketMounted} providers=${skillMarketProviders} emptyQueryDisabled=${skillMarketSearchDisabled}`,
+          ok:
+            skillMarketMounted &&
+            skillMarketProviders &&
+            skillMarketMcpRow &&
+            skillMarketMcpButton &&
+            skillMarketSearchDisabled,
+          detail: `tab=${skillMarketMounted} providers=${skillMarketProviders} mcpRow=${skillMarketMcpRow} mcpButton=${skillMarketMcpButton} emptyQueryDisabled=${skillMarketSearchDisabled}`,
         }
         clickSettingsTab('插件市场')
         const marketMounted = await waitFor(() => document.querySelector('.market-form') !== null, 3000)

@@ -4,6 +4,7 @@ import {
   detectScope,
   emptyRegistry,
   getTokenStorage,
+  isHttpConfig,
   loadMcpConfigsFromDisk,
   removeServerFromConfig,
   serverExists,
@@ -13,6 +14,7 @@ import {
 import type { McpRegistry, McpServerConfig, McpServerStatus } from '@x-code-cli/core'
 
 import type { McpServerStatusView, McpServerView } from '../shared/protocol.js'
+import { SKILLSMP_MCP_URL } from './skill-market.js'
 
 function chooseSafeOption(options: Array<{ label: string; description: string }>): string {
   const safe = options.find((option) => /skip|no|not now|不|稍后|忽略/i.test(option.label))
@@ -111,6 +113,26 @@ export class McpService {
     if (!result.removed) {
       throw new Error('只能删除用户级 MCP 配置；项目级配置请直接编辑项目 .x-code/config.json')
     }
+    await this.reload()
+  }
+
+  /** Register the read-only SkillsMP MCP server at user scope. An existing
+   *  entry is only accepted when it is the exact remote HTTP shape; other
+   *  `skillsmp` configs are left untouched and reported as a conflict. */
+  async registerSkillsMp(): Promise<void> {
+    const existing = this.registry.getConfig('skillsmp')
+    if (existing) {
+      if (!isHttpConfig(existing) || existing.url !== SKILLSMP_MCP_URL || existing.enabled === false) {
+        throw new Error(
+          '已存在名为 skillsmp 的 MCP 配置，但与技能市场所需的远程 HTTP 配置不一致，请先在 MCP 设置中检查',
+        )
+      }
+      return
+    }
+    if (await serverExists('skillsmp', 'user', this.workspace)) {
+      throw new Error('已存在名为 skillsmp 的 MCP 配置，请先在 MCP 设置中检查')
+    }
+    await writeServerToConfig('skillsmp', { type: 'http', url: SKILLSMP_MCP_URL }, 'user', this.workspace)
     await this.reload()
   }
 

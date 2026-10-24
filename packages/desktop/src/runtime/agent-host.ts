@@ -2682,6 +2682,15 @@ export class AgentHost {
     return this.settingsResult()
   }
 
+  async registerSkillsMpMcp(): Promise<SettingsActionResult> {
+    this.assertIdle()
+    if (!this.mcp) throw new Error('mcp-not-ready')
+    await this.mcp.registerSkillsMp()
+    this.rewireMcp()
+    this.invalidatePromptCache()
+    return this.settingsResult()
+  }
+
   async reloadMcp(): Promise<SettingsActionResult> {
     this.assertIdle()
     if (!this.mcp) throw new Error('mcp-not-ready')

@@ -608,6 +608,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
           ),
         )
       }
+      case 'skill-market:register-mcp': {
+        await ensureInitialized()
+        return ok(request.id, await host.registerSkillsMpMcp())
+      }
       case 'plugins:import': {
         await ensureInitialized()
         return ok(request.id, await host.installPluginPath(request.params.path))

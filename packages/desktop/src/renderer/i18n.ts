@@ -947,6 +947,13 @@ export const EN: Record<string, string> = {
   查看来源: 'View source',
   '已从技能市场安装：{{names}}': 'Installed from the skill marketplace: {{names}}',
   请输入搜索关键词: 'Enter a search keyword',
+  未注册: 'Not registered',
+  已注册: 'Registered',
+  'SkillsMP MCP 工具': 'SkillsMP MCP tools',
+  '把 https://skillsmp.com/mcp 注册为用户级 MCP 服务器后，agent 可以在对话中直接调用 search_skills / get_skill / list_categories。':
+    'Registering https://skillsmp.com/mcp as a user-scope MCP server lets the agent call search_skills / get_skill / list_categories directly in a conversation.',
+  '注册为 MCP 服务器': 'Register as MCP server',
+  'SkillsMP 已注册为 MCP 服务器': 'SkillsMP registered as an MCP server',
 }
 
 const storedLanguage = ((): Language => {
