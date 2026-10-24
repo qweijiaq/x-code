@@ -2562,6 +2562,47 @@ body::before {
 
 /* ── Document switcher and lazy page loading ─────────────────────────── */
 
+.document-tabs {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  padding: 8px 22px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ink-20);
+  background: var(--paper-2);
+  scrollbar-width: thin;
+}
+
+.document-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  padding: 4px 10px;
+  overflow: hidden;
+  border: 1px solid var(--ink-20);
+  background: var(--paper);
+  color: var(--ink-60);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.document-tab.active {
+  border-color: var(--cinnabar);
+  color: var(--cinnabar);
+}
+
+.document-tab:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.document-tab-more {
+  color: var(--ink-50);
+}
+
 .document-switcher {
   display: flex;
   flex: none;

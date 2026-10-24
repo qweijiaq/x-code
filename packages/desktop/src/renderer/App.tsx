@@ -57,6 +57,7 @@ import {
   BranchIcon,
   CaptureIcon,
   ChevronIcon,
+  DocumentIcon,
   MicIcon,
   MoreIcon,
   RegionIcon,
@@ -2676,6 +2677,23 @@ export function App(): React.JSX.Element {
           attachCenterDetail = `dx=${dx.toFixed(1)} dy=${dy.toFixed(1)}`
         }
         checks.attachCentered = { ok: attachCentered, detail: attachCenterDetail }
+        const documentButton = document.querySelector('[data-testid="document-button"]') !== null
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', metaKey: true, shiftKey: true, bubbles: true }))
+        const documentOpened = await waitFor(
+          () => document.querySelector('[data-testid="document-drawer"]') !== null,
+          3000,
+        )
+        document
+          .querySelector<HTMLButtonElement>('[data-testid="document-drawer"] .drawer-head .btn:last-child')
+          ?.click()
+        const documentClosed = await waitFor(
+          () => document.querySelector('[data-testid="document-drawer"]') === null,
+          2000,
+        )
+        checks.documentQuickAccess = {
+          ok: documentButton && documentOpened && documentClosed,
+          detail: `button=${documentButton} shortcut=${documentOpened} closed=${documentClosed}`,
+        }
         if (!writeAlways) {
           await window.xcode.request({
             id: crypto.randomUUID(),
@@ -5045,6 +5063,11 @@ export function App(): React.JSX.Element {
         setTimeout(() => sessionSearchRef.current?.focus(), 30)
         return
       }
+      if (mod && event.shiftKey && event.key.toLowerCase() === 'd') {
+        event.preventDefault()
+        void openDocumentPanel()
+        return
+      }
       if (mod && event.key.toLowerCase() === 'f') {
         event.preventDefault()
         setFindOpen(true)
@@ -5074,6 +5097,7 @@ export function App(): React.JSX.Element {
         if (imageLightbox) setImageLightbox(null)
         else if (salvageTarget) setSalvageTarget(null)
         else if (paletteOpen) setPaletteOpen(false)
+        else if (documentOpen) setDocumentOpen(false)
         else if (branchOpen) {
           if (removeWorktree) {
             setRemoveWorktree(null)
@@ -5091,12 +5115,14 @@ export function App(): React.JSX.Element {
     imageLightbox,
     salvageTarget,
     paletteOpen,
+    documentOpen,
     branchOpen,
     removeWorktree,
     shortcutSheetOpen,
     findOpen,
     newSession,
     openSettings,
+    openDocumentPanel,
     changeZoom,
     openInNewWindow,
   ])
@@ -7142,6 +7168,15 @@ export function App(): React.JSX.Element {
                 }
               }}
             />
+            <button
+              className="btn attach"
+              data-testid="document-button"
+              title={t('文档面板')}
+              aria-label={t('文档面板')}
+              onClick={() => void openDocumentPanel()}
+            >
+              <DocumentIcon />
+            </button>
             <button className="btn attach" title={t('选择文档或媒体文件')} onClick={() => void pickDocument()}>
               <AttachIcon />
             </button>
@@ -7715,6 +7750,7 @@ export function App(): React.JSX.Element {
                   ['T', t('新建标签页')],
                   ['⇧N', t('新建窗口')],
                   ['⇧F', t('搜索会话')],
+                  ['⇧D', t('文档面板')],
                   ['F', t('在当前会话中查找')],
                   [',', t('打开设置')],
                   ['+', t('放大界面')],

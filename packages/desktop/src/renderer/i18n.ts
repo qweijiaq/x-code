@@ -955,6 +955,8 @@ export const EN: Record<string, string> = {
   '注册为 MCP 服务器': 'Register as MCP server',
   'SkillsMP 已注册为 MCP 服务器': 'SkillsMP registered as an MCP server',
   关闭结果: 'Close result',
+  全部最近文档: 'All recent documents',
+  '全部…': 'All…',
 }
 
 const storedLanguage = ((): Language => {

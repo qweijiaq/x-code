@@ -116,6 +116,16 @@ export function AttachIcon(): JSX.Element {
   )
 }
 
+export function DocumentIcon(): JSX.Element {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M6 3h8l4 4v14H6z" />
+      <path d="M14 3v5h5" />
+      <path d="M9 13h6M9 17h6" />
+    </svg>
+  )
+}
+
 export function SendIcon(): JSX.Element {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" {...stroke} aria-hidden="true">

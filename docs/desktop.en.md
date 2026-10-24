@@ -64,7 +64,9 @@ not overwrite the global recent-project entry.
   show thumbnails, live under `~/.x-code/attachments`, and are restored when a
   historical session is reopened.
 - Large documents, PDFs, Word and Excel files open in the document panel;
-  PDFs support page rendering, OCR and the extracted text view.
+  PDFs support page rendering, OCR and the extracted text view. The document
+  icon beside the composer or `Cmd/Ctrl+Shift+D` reopens the workspace's last
+  document, recent documents stay as tabs at the top, and `Esc` closes it.
 - Voice input uses local Whisper and never uploads audio; the model may be
   downloaded on first use.
 - Each turn's tool calls collapse individually or as a group; user messages and

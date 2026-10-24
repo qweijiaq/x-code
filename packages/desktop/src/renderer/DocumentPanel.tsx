@@ -216,6 +216,30 @@ export function DocumentPanel({
           </button>
         </header>
 
+        {documents.length > 0 ? (
+          <div className="document-tabs" data-testid="document-tabs">
+            {documents.slice(0, 6).map((item) => (
+              <button
+                key={item.path}
+                className={`document-tab ${item.path === view?.path ? 'active' : ''}`}
+                disabled={!item.exists}
+                title={item.path}
+                onClick={() => onSwitchDocument(item.path)}
+              >
+                {item.name}
+                {item.hasOcr ? <span className="document-switch-tag">OCR</span> : null}
+              </button>
+            ))}
+            <button
+              className="document-tab document-tab-more"
+              onClick={() => setDocsOpen((open) => !open)}
+              title={t('全部最近文档')}
+            >
+              {t('全部…')}
+            </button>
+          </div>
+        ) : null}
+
         {switcherOpen ? (
           <div className="document-switcher">
             <button
