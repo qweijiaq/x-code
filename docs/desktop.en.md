@@ -110,6 +110,8 @@ not overwrite the global recent-project entry.
 - Built-in terminal, file tree and a light editor; diff cards open VS Code or
   Cursor at the changed line.
 - Background shell sessions, system notifications, zoom, tray and global shortcut.
+- **Settings → Tools** enables the browser sub-agent (a managed Chrome launched
+  through `npx @playwright/mcp`) and the independent automatic visual checks.
 - The document library indexes PDF / Word / Excel / Markdown locally with
   keyword and optional semantic search.
 - The storage panel reports session, attachment, library and voice-model usage

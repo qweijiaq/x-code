@@ -1614,6 +1614,50 @@ export function SettingsPanel({
               {settings.alwaysAllowAll ? (
                 <div className="settings-warn">{t('全部工具已自动放行，写文件和执行命令不会再弹出确认。')}</div>
               ) : null}
+              <div className="setting-row" data-testid="browser-agent">
+                <div className="setting-main">
+                  <div className="setting-name">{t('浏览器子代理')}</div>
+                  <div className="setting-desc">
+                    {t(
+                      '允许 task 工具把点击、输入、登录等多步浏览器操作委派给 browser 子代理。首次使用会通过 npx @playwright/mcp 启动受管 Chrome（需要 Node 和 Chrome，首次可能需要数十秒）。',
+                    )}
+                  </div>
+                </div>
+                <div className="setting-actions-col">
+                  <button
+                    className={`settings-toggle ${settings.browser.enabled ? 'on' : ''}`}
+                    disabled={busy !== null}
+                    onClick={() =>
+                      void apply('settings:set-browser-enabled', { enabled: !settings.browser.enabled }, 'browser')
+                    }
+                  >
+                    {settings.browser.enabled ? t('已开启（点击关闭）') : t('开启')}
+                  </button>
+                </div>
+              </div>
+              <div className="setting-row" data-testid="browser-visual-check">
+                <div className="setting-main">
+                  <div className="setting-name">{t('自动视觉检查')}</div>
+                  <div className="setting-desc">
+                    {t('根代理在显著的界面改动后，可对 localhost 截取一次临时截图。与浏览器子代理独立开关。')}
+                  </div>
+                </div>
+                <div className="setting-actions-col">
+                  <button
+                    className={`settings-toggle ${settings.browser.visualCheck ? 'on' : ''}`}
+                    disabled={busy !== null}
+                    onClick={() =>
+                      void apply(
+                        'settings:set-browser-visual-check',
+                        { enabled: !settings.browser.visualCheck },
+                        'browser-visual',
+                      )
+                    }
+                  >
+                    {settings.browser.visualCheck ? t('已开启（点击关闭）') : t('开启')}
+                  </button>
+                </div>
+              </div>
               <div className="setting-row">
                 <div className="setting-main">
                   <div className="setting-name">{t('工具面')}</div>

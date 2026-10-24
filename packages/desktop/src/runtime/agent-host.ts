@@ -38,6 +38,7 @@ import {
   listSessions,
   loadLocalHookConfigs,
   loadPluginCommands,
+  loadUserConfig,
   localHookPaths,
   markBoundaryAndReflush,
   modelSupportsVision,
@@ -60,6 +61,7 @@ import {
   setPluginUserConfig,
   setShellSandbox,
   setSkillDisabled,
+  shutdownBrowserMcp,
   toolRegistry,
   transcribeAudio,
   uninstallPlugin,
@@ -2196,6 +2198,10 @@ export class AgentHost {
       toolProfile: (bootstrap.baseOptions.toolProfile ?? 'full') as 'full' | 'standard',
       thinking: bootstrap.baseOptions.thinking ?? false,
       alwaysAllowAll: this.alwaysAllowAll,
+      browser: {
+        enabled: bootstrap.subAgentRegistry?.names().includes('browser') ?? false,
+        visualCheck: bootstrap.baseOptions.browserVisualCheckEnabled !== false,
+      },
       secretStorage: secretStorageKind(),
       shellSandbox: {
         supported: process.platform === 'darwin',
@@ -2329,6 +2335,34 @@ export class AgentHost {
     this.send({ type: 'app:state', state: this.getState() })
     void this.emitSettings()
     return this.settingsResult()
+  }
+
+  async setBrowserEnabled(enabled: boolean): Promise<SettingsActionResult> {
+    this.assertIdle()
+    const browser = loadUserConfig().browser
+    saveUserConfig({ browser: { ...browser, enabled } })
+    this.requireBootstrap().subAgentRegistry?.setBrowserEnabled(enabled)
+    this.invalidatePromptCache()
+    await this.shutdownBrowserIfUnused()
+    return this.settingsResult()
+  }
+
+  async setBrowserVisualCheck(enabled: boolean): Promise<SettingsActionResult> {
+    this.assertIdle()
+    const browser = loadUserConfig().browser
+    saveUserConfig({ browser: { ...browser, visualCheck: enabled } })
+    const bootstrap = this.requireBootstrap()
+    bootstrap.baseOptions.browserVisualCheckEnabled = enabled
+    this.invalidatePromptCache()
+    await this.shutdownBrowserIfUnused()
+    return this.settingsResult()
+  }
+
+  private async shutdownBrowserIfUnused(): Promise<void> {
+    const browser = loadUserConfig().browser
+    if (browser?.enabled !== true && browser?.visualCheck === false) {
+      await shutdownBrowserMcp().catch(() => undefined)
+    }
   }
 
   listPermissionRules(): PermissionRulesResult {

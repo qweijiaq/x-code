@@ -503,6 +503,14 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.setContextWindow(request.params.modelId, request.params.tokens))
       }
+      case 'settings:set-browser-enabled': {
+        await ensureInitialized()
+        return ok(request.id, await host.setBrowserEnabled(request.params.enabled))
+      }
+      case 'settings:set-browser-visual-check': {
+        await ensureInitialized()
+        return ok(request.id, await host.setBrowserVisualCheck(request.params.enabled))
+      }
       case 'permissions:rules': {
         await ensureInitialized()
         return ok(request.id, host.listPermissionRules())

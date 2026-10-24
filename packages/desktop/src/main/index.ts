@@ -660,6 +660,8 @@ const SHARED_SETTINGS_METHODS = new Set<string>([
   'settings:mcp-trust-project',
   'settings:set-tool-profile',
   'settings:set-plugin-enabled',
+  'settings:set-browser-enabled',
+  'settings:set-browser-visual-check',
   'permissions:add-rule',
   'permissions:remove-rule',
   'settings:mcp-save',

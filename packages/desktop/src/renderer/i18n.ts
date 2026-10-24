@@ -176,7 +176,7 @@ export const EN: Record<string, string> = {
   '/rewind 尚未在桌面端实现。': '/rewind is not implemented in the desktop app yet.',
   'peer 跨会话消息未在桌面端启用。': 'Peer cross-session messaging is not enabled in the desktop app.',
   'peer 上下文说明': 'Peer context',
-  '浏览器子代理尚未接入桌面端。': 'Browser subagents are not wired into the desktop app yet.',
+  '浏览器子代理可在 设置 → 工具 中开启或关闭。': 'Turn the browser sub-agent on or off in Settings → Tools.',
   浏览器子代理说明: 'Browser subagents',
   'MCP 配置不是合法 JSON': 'MCP config is not valid JSON',
   'MCP 配置必须是 JSON 对象': 'MCP config must be a JSON object',
@@ -926,6 +926,12 @@ export const EN: Record<string, string> = {
   打开安装包: 'Open installer',
   '已下载 {{file}}（{{size}} MB），校验通过。': 'Downloaded {{file}} ({{size}} MB); checksum verified.',
   安装包已下载并通过校验: 'Installer downloaded and verified',
+  浏览器子代理: 'Browser sub-agent',
+  '允许 task 工具把点击、输入、登录等多步浏览器操作委派给 browser 子代理。首次使用会通过 npx @playwright/mcp 启动受管 Chrome（需要 Node 和 Chrome，首次可能需要数十秒）。':
+    'Lets the task tool delegate multi-step browser work (clicking, typing, signing in) to the browser sub-agent. First use launches a managed Chrome through npx @playwright/mcp (needs Node and Chrome; the first launch can take tens of seconds).',
+  自动视觉检查: 'Automatic visual checks',
+  '根代理在显著的界面改动后，可对 localhost 截取一次临时截图。与浏览器子代理独立开关。':
+    'The root agent can take one temporary localhost screenshot after a significant visual change. Independent from the browser sub-agent.',
 }
 
 const storedLanguage = ((): Language => {

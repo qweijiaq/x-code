@@ -2057,6 +2057,50 @@ export function App(): React.JSX.Element {
           detail: `before=${beforeAll} enabled=${enableValue} restored=${restoreValue}`,
         }
 
+        const browserBefore = snapshot?.browser.enabled ?? false
+        const browserOn = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'settings:set-browser-enabled',
+          params: { enabled: !browserBefore },
+        })
+        const browserOnValue = browserOn.ok
+          ? (browserOn.result as SettingsActionResult).settings.browser.enabled
+          : undefined
+        const browserRestore = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'settings:set-browser-enabled',
+          params: { enabled: browserBefore },
+        })
+        const browserRestoreValue = browserRestore.ok
+          ? (browserRestore.result as SettingsActionResult).settings.browser.enabled
+          : undefined
+        checks.browserAgent = {
+          ok: browserOnValue === !browserBefore && browserRestoreValue === browserBefore,
+          detail: `before=${browserBefore} enabled=${browserOnValue} restored=${browserRestoreValue}`,
+        }
+
+        const visualBefore = snapshot?.browser.visualCheck ?? true
+        const visualOff = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'settings:set-browser-visual-check',
+          params: { enabled: !visualBefore },
+        })
+        const visualOffValue = visualOff.ok
+          ? (visualOff.result as SettingsActionResult).settings.browser.visualCheck
+          : undefined
+        const visualRestore = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'settings:set-browser-visual-check',
+          params: { enabled: visualBefore },
+        })
+        const visualRestoreValue = visualRestore.ok
+          ? (visualRestore.result as SettingsActionResult).settings.browser.visualCheck
+          : undefined
+        checks.browserVisualCheck = {
+          ok: visualOffValue === !visualBefore && visualRestoreValue === visualBefore,
+          detail: `before=${visualBefore} toggled=${visualOffValue} restored=${visualRestoreValue}`,
+        }
+
         // The drawer was closed after the tab checks above; reopen it on the
         // Tools tab to exercise the sandbox row in the DOM.
         document.querySelector<HTMLButtonElement>('[data-testid="settings-toggle"]')?.click()
@@ -5683,7 +5727,7 @@ export function App(): React.JSX.Element {
     {
       name: '/browser',
       description: t('浏览器子代理说明'),
-      run: () => setReport(t('浏览器子代理尚未接入桌面端。')),
+      run: () => setReport(t('浏览器子代理可在 设置 → 工具 中开启或关闭。')),
     },
     {
       name: '/clear-peer-context',

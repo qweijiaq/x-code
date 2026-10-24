@@ -292,6 +292,12 @@ export interface SettingsSnapshot {
   toolProfile: 'full' | 'standard'
   thinking: boolean
   alwaysAllowAll: boolean
+  browser: {
+    /** Interactive browser sub-agent (`task` can delegate browser work). */
+    enabled: boolean
+    /** One-shot localhost screenshots after visual changes. */
+    visualCheck: boolean
+  }
   /** How stored API keys are persisted: OS-encrypted via safeStorage, or
    *  plaintext with 0600 when encryption is unavailable. */
   secretStorage: 'encrypted' | 'plain' | 'unknown'
@@ -874,6 +880,8 @@ export interface RequestMap {
     params: { modelId: string; tokens: number | null }
     result: SettingsActionResult
   }
+  'settings:set-browser-enabled': { params: { enabled: boolean }; result: SettingsActionResult }
+  'settings:set-browser-visual-check': { params: { enabled: boolean }; result: SettingsActionResult }
   'permissions:rules': { params: Record<string, never>; result: PermissionRulesResult }
   'permissions:add-rule': {
     params: { tool: string; type: PermissionRuleType; pattern: string }
