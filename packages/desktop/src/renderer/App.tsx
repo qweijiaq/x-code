@@ -3412,6 +3412,28 @@ export function App(): React.JSX.Element {
         const tabSwitchWhileOpen = await waitFor(() => document.querySelector('.storage-list') !== null, 3_000)
         document.querySelector<HTMLButtonElement>('.settings-drawer .btn-quiet')?.click()
         await waitFor(() => document.querySelector('.settings-drawer') === null, 2_000)
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }))
+        await waitFor(() => document.querySelector('[data-testid="command-palette"]') !== null, 2_000)
+        const aliasPaletteInput = document.querySelector<HTMLInputElement>('[data-testid="palette-input"]')
+        if (aliasPaletteInput) setInputValue(aliasPaletteInput, '截图')
+        const aliasCapture = await waitFor(
+          () => Array.from(document.querySelectorAll('.palette-row')).some((row) => row.textContent?.includes('截图')),
+          2_000,
+        )
+        if (aliasPaletteInput) setInputValue(aliasPaletteInput, 'worktree')
+        const aliasWorktree = await waitFor(
+          () =>
+            Array.from(document.querySelectorAll('.palette-row')).some((row) =>
+              row.textContent?.includes('在新窗口打开分支'),
+            ),
+          2_000,
+        )
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        await waitFor(() => document.querySelector('[data-testid="command-palette"]') === null, 2_000)
+        checks.paletteAliases = {
+          ok: aliasCapture && aliasWorktree,
+          detail: `capture=${aliasCapture} worktree=${aliasWorktree}`,
+        }
         checks.paletteShortcuts = {
           ok:
             paletteMounted &&
@@ -5847,6 +5869,7 @@ export function App(): React.JSX.Element {
       id: 'branch-window',
       label: t('在新窗口打开分支'),
       hint: t('Git worktree'),
+      keywords: ['branch', 'worktree', '分支', '工作树'],
       run: () => void openBranchPicker(),
     },
     {
@@ -5885,8 +5908,83 @@ export function App(): React.JSX.Element {
         }),
     },
     { id: 'documents', label: t('文档面板'), hint: t('PDF / Office / 表格'), run: () => openDocumentPanel() },
-    { id: 'git', label: t('Git 变更'), hint: t('查看与回退'), run: () => openGitPanel() },
-    { id: 'checks', label: t('项目检查'), hint: t('类型检查 / 测试'), run: () => openChecksPanel() },
+    {
+      id: 'attach',
+      label: t('附加文件或图片'),
+      hint: t('文档 / 图片 / 音频'),
+      keywords: ['attach', 'file', 'upload', '图片', '附件', '上传', 'pdf'],
+      run: () => pickDocument(),
+    },
+    {
+      id: 'capture-region',
+      label: t('截图：框选区域'),
+      hint: t('屏幕截图'),
+      keywords: ['screenshot', 'capture', 'region', '截图', '截屏'],
+      run: () => captureRegion(),
+    },
+    {
+      id: 'capture-screen',
+      label: t('截图：整个屏幕'),
+      hint: t('屏幕截图'),
+      keywords: ['screenshot', 'capture', 'screen', '截图', '截屏'],
+      run: () => captureScreen(),
+    },
+    {
+      id: 'voice',
+      label: recording ? t('停止录音并转写') : t('语音输入'),
+      hint: t('本地 Whisper'),
+      keywords: ['voice', 'microphone', 'mic', '录音', '语音', '转写'],
+      run: () => toggleRecording(),
+    },
+    {
+      id: 'skill-market',
+      label: t('技能市场'),
+      hint: 'SkillHub / SkillsMP',
+      keywords: ['skill', 'market', 'marketplace', '技能', '安装技能'],
+      run: () => openSettings('skillmarket'),
+    },
+    {
+      id: 'permissions',
+      label: t('权限规则'),
+      hint: t('不再询问 / 允许'),
+      keywords: ['permission', 'allow', 'deny', '权限', '授权'],
+      run: () => openSettings('permissions'),
+    },
+    {
+      id: 'model-settings',
+      label: t('模型与密钥'),
+      hint: t('API Key / 上下文上限'),
+      keywords: ['api', 'key', 'model', 'context', '模型', '密钥', '上下文'],
+      run: () => openSettings('api'),
+    },
+    {
+      id: 'tools-settings',
+      label: t('工具与浏览器子代理'),
+      hint: t('启用 / 沙箱'),
+      keywords: ['tools', 'browser', 'sandbox', '工具', '浏览器', '沙箱'],
+      run: () => openSettings('tools'),
+    },
+    {
+      id: 'library',
+      label: t('文档库'),
+      hint: t('索引 / 搜索'),
+      keywords: ['library', 'index', 'search', '索引', '检索'],
+      run: () => openSettings('library'),
+    },
+    {
+      id: 'git',
+      label: t('Git 变更'),
+      hint: t('查看与回退'),
+      keywords: ['git', 'diff', 'undo', '撤销', '版本'],
+      run: () => openGitPanel(),
+    },
+    {
+      id: 'checks',
+      label: t('项目检查'),
+      hint: t('类型检查 / 测试'),
+      keywords: ['test', 'lint', 'typecheck', '测试', '检查'],
+      run: () => openChecksPanel(),
+    },
     {
       id: 'terminal',
       label: terminalOpen ? t('收起终端') : t('打开终端'),
@@ -6502,6 +6600,17 @@ export function App(): React.JSX.Element {
                       }}
                     >
                       <span className="tools-item-label">{t('文档面板')}</span>
+                    </button>
+                    <button
+                      className="tools-item"
+                      data-testid="tools-skill-market"
+                      onClick={() => {
+                        setToolsMenuOpen(false)
+                        void openSettings('skillmarket')
+                      }}
+                    >
+                      <span className="tools-item-label">{t('技能市场')}</span>
+                      <span className="tools-item-meta">SkillHub / SkillsMP</span>
                     </button>
                     <button
                       className="tools-item"
@@ -7236,6 +7345,9 @@ export function App(): React.JSX.Element {
           </div>
           <div className="composer-hint">
             <span>{t('Enter 发送 · Shift+Enter 换行')}</span>
+            <button type="button" className="capability-hint" onClick={() => setPaletteOpen(true)}>
+              {window.xcode.platform === 'darwin' ? '⌘K' : 'Ctrl+K'} {t('全部能力')}
+            </button>
             {contextPercent !== null ? (
               <span
                 className={`context-meter ${contextPercent >= 85 ? 'danger' : contextPercent >= 65 ? 'warn' : ''}`}

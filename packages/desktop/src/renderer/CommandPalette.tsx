@@ -13,6 +13,8 @@ export interface PaletteAction {
   id: string
   label: string
   hint?: string
+  /** Extra search terms (synonyms, English names, examples). */
+  keywords?: string[]
   run: () => void | Promise<void>
 }
 
@@ -86,7 +88,12 @@ export function CommandPalette({
   const matches = (value: string): boolean => !trimmed || value.toLowerCase().includes(trimmed)
 
   const actionRows: Row[] = actions
-    .filter((action) => matches(action.label) || matches(action.hint ?? ''))
+    .filter(
+      (action) =>
+        matches(action.label) ||
+        matches(action.hint ?? '') ||
+        (action.keywords ?? []).some((keyword) => matches(keyword)),
+    )
     .map((action) => ({
       key: `action:${action.id}`,
       group: t('操作'),

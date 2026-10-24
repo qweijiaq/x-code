@@ -59,7 +59,9 @@ not overwrite the global recent-project entry.
 ## Composer
 
 - Markdown editing and preview, `@` file references, slash-command palette and
-  the `Cmd+K` command palette.
+  the `Cmd+K` command palette. The palette matches synonyms too (screenshot,
+  worktree, skill market, permission rules); the "All capabilities" link below
+  the composer opens the same palette.
 - Paste or drop images, or capture a screen region from the capture menu. Images
   show thumbnails, live under `~/.x-code/attachments`, and are restored when a
   historical session is reopened.

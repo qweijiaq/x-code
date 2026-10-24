@@ -957,6 +957,17 @@ export const EN: Record<string, string> = {
   关闭结果: 'Close result',
   全部最近文档: 'All recent documents',
   '全部…': 'All…',
+  全部能力: 'All capabilities',
+  附加文件或图片: 'Attach a file or image',
+  '文档 / 图片 / 音频': 'Documents / images / audio',
+  '截图：框选区域': 'Screenshot: select a region',
+  '截图：整个屏幕': 'Screenshot: entire screen',
+  屏幕截图: 'Screen capture',
+  '本地 Whisper': 'Local Whisper',
+  工具与浏览器子代理: 'Tools and browser sub-agent',
+  'API Key / 上下文上限': 'API keys / context limit',
+  '索引 / 搜索': 'Index / search',
+  '启用 / 沙箱': 'Enable / sandbox',
 }
 
 const storedLanguage = ((): Language => {

@@ -1189,6 +1189,19 @@ body::before {
   color: var(--ochre);
 }
 
+.capability-hint {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink-45);
+  font: inherit;
+  cursor: pointer;
+}
+
+.capability-hint:hover {
+  color: var(--cinnabar);
+}
+
 /* ── Settings drawer ─────────────────────────────────────────────────── */
 
 .settings-drawer {

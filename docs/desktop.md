@@ -51,6 +51,8 @@ worktree 窗口有独立的工作区路径和 `.x-code/sessions`，不会覆盖�
 ## 对话输入
 
 - Markdown 编辑与预览、`@` 文件引用、斜杠命令面板、`Cmd+K` 全局面板。
+  `Cmd+K` 支持按同义词搜索能力（截图、worktree、技能市场、权限规则等），
+  输入框下方的“全部能力”也是同一入口。
 - 粘贴或拖入图片、通过截图菜单附加屏幕区域；图片会显示缩略图并保存在
   `~/.x-code/attachments`，重新打开历史会话时恢复。
 - 长文档、PDF、Word、Excel 通过 `readDocument` / 文档面板查看；PDF 支持分页
