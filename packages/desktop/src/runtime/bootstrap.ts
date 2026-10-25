@@ -45,7 +45,7 @@ import type {
 import { setShellSandbox } from '@x-code-cli/core'
 
 import type { AppState, ModelOption, ProviderStatus } from '../shared/protocol.js'
-import { loadDesktopSettings } from './desktop-settings.js'
+import { applySearchProviderPreference, loadDesktopSettings } from './desktop-settings.js'
 import { discoverLocalModels, withLocalModels } from './local-models.js'
 import { applyStoredSecrets } from './secrets.js'
 
@@ -161,6 +161,7 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   reloadPersistedRules(workspace)
   await applyStoredSecrets()
   const desktopSettings = loadDesktopSettings()
+  applySearchProviderPreference(desktopSettings.searchProvider)
   setShellSandbox({
     enabled: process.platform === 'darwin' && desktopSettings.shellSandbox !== false,
     workspace,

@@ -412,6 +412,69 @@ export function resolveWebSearchProvider(modelProvider?: string): { id: string; 
   return 'provider' in picked ? { id: picked.provider.id, label: picked.provider.label } : null
 }
 
+export interface WebSearchTestResult {
+  ok: boolean
+  provider: string
+  results: number
+  latencyMs: number
+  message: string
+}
+
+/** Live probe used by settings UIs. `key` is a not-yet-saved draft: it is
+ *  placed in the environment only for the duration of the request so the
+ *  provider functions can stay unchanged. DeepSeek is rejected — its search
+ *  is a billable model turn, not a key check. */
+export async function testWebSearchProvider(
+  providerId: string,
+  key?: string,
+  signal?: AbortSignal,
+): Promise<WebSearchTestResult> {
+  const started = Date.now()
+  const provider = SEARCH_PROVIDERS.find((candidate) => candidate.id === providerId)
+  if (!provider) {
+    return {
+      ok: false,
+      provider: providerId,
+      results: 0,
+      latencyMs: 0,
+      message: `Unknown standalone search provider: ${providerId}`,
+    }
+  }
+  const draft = key?.trim()
+  const previous = process.env[provider.envKey]
+  if (draft) process.env[provider.envKey] = draft
+  if (!process.env[provider.envKey]) {
+    return {
+      ok: false,
+      provider: provider.label,
+      results: 0,
+      latencyMs: 0,
+      message: `${provider.envKey} is not configured`,
+    }
+  }
+  try {
+    const response = await provider.search('x-code search connection test', 1, signal)
+    return {
+      ok: true,
+      provider: provider.label,
+      results: response.results.length,
+      latencyMs: Date.now() - started,
+      message: `Connected to ${provider.label}`,
+    }
+  } catch (error) {
+    const message = (error instanceof Error ? error.message : String(error)).replaceAll(
+      process.env[provider.envKey] ?? '',
+      '••••',
+    )
+    return { ok: false, provider: provider.label, results: 0, latencyMs: Date.now() - started, message }
+  } finally {
+    if (draft) {
+      if (previous === undefined) delete process.env[provider.envKey]
+      else process.env[provider.envKey] = previous
+    }
+  }
+}
+
 function buildMissingKeyError(): string {
   const { type } = getShellProvider()
   let setupBlock: string

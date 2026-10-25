@@ -6,7 +6,11 @@ import path from 'node:path'
 
 import { listInstalledPlugins } from '@x-code-cli/core'
 
-import { loadDesktopSettings, saveDesktopSettings } from '../src/runtime/desktop-settings.js'
+import {
+  applySearchProviderPreference,
+  loadDesktopSettings,
+  saveDesktopSettings,
+} from '../src/runtime/desktop-settings.js'
 import {
   installPluginWithConsent,
   normalizeInstallCommand,
@@ -204,6 +208,25 @@ describe('desktop tool settings', () => {
       autoAllowedTools: ['writeFile'],
       alwaysAllowAll: true,
     })
+  })
+
+  it('round-trips the preferred search provider and ignores unknown ids', () => {
+    saveDesktopSettings({ searchProvider: 'brave' })
+    expect(loadDesktopSettings().searchProvider).toBe('brave')
+
+    saveDesktopSettings({ searchProvider: 'deepseek' })
+    expect(loadDesktopSettings().searchProvider).toBeUndefined()
+
+    saveDesktopSettings({ searchProvider: 'tavily' })
+    const original = process.env.X_CODE_WEB_SEARCH_PROVIDER
+    process.env.X_CODE_WEB_SEARCH_PROVIDER = 'from-shell'
+    applySearchProviderPreference('tavily')
+    expect(process.env.X_CODE_WEB_SEARCH_PROVIDER).toBe('tavily')
+    applySearchProviderPreference(undefined)
+    expect(process.env.X_CODE_WEB_SEARCH_PROVIDER).toBe('from-shell')
+    if (original === undefined) delete process.env.X_CODE_WEB_SEARCH_PROVIDER
+    else process.env.X_CODE_WEB_SEARCH_PROVIDER = original
+    saveDesktopSettings({ searchProvider: undefined })
   })
 })
 

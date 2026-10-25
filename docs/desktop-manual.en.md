@@ -112,7 +112,7 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **Shell sandbox (macOS)**: agent shell commands run in a workspace-write sandbox; writes are limited to the workspace and temp dirs, sensitive paths are unreadable, and the network is off by default. The built-in terminal is not sandboxed; Hooks and stdio MCP can opt in.
 - **Project trust**: project hooks and project MCP servers do not run before trust; plugin installs have their own consent preview.
 - **Secrets**: provider API keys use OS secure storage or a `0600` file and never cross into the renderer. ChatGPT tokens are a plaintext file; protect `~/.x-code/auth/`.
-- **Web search**: `webSearch` needs a search-service key (Tavily's free tier is recommended). Configure it in Settings → Tools → Search service. Without a key the model cannot search the web and is told how to configure one; `webFetch` still fetches pages directly. Search keys are stored separately from model keys and stay on this device.
+- **Web search**: `webSearch` needs a search-service key (Tavily's free tier is recommended). Configure it in Settings → Tools → Search service. Without a key the model cannot search the web and is told how to configure one; `webFetch` still fetches pages directly. Search keys are stored separately from model keys and stay on this device. With several services configured, pick one under "Preferred search service"; "Test connection" verifies a key before you rely on it.
 - **Third-party skills**: skill content becomes model context. Verify the source before installing; the marketplace copies files but does not execute skill scripts.
 
 ## Automation and Extensions
@@ -136,7 +136,7 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **Memory**: view, edit and delete memory topics.
 - **MCP**: add, authenticate, enable and remove servers.
 - **Plugins / Plugin marketplace**: install, configure and uninstall.
-- **Tools**: enablement, always-allow, tool profile, shell sandbox, browser sub-agent, search service (Tavily / Brave / Exa web-search keys), diagnostics.
+- **Tools**: enablement, always-allow, tool profile, shell sandbox, browser sub-agent, search service (Tavily / Brave / Exa web-search keys, preferred provider and connection test), diagnostics.
 - **Permissions**: persisted allow rules.
 - **Document library**: local index, semantic search toggle, rebuild and clear.
 - **Storage**: usage, cleanup, backup and restore.

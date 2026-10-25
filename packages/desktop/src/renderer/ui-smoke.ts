@@ -876,9 +876,15 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     )
     const tavilyRow = document.querySelector('[data-testid="search-provider-tavily"]')
     const tavilyInput = tavilyRow?.querySelector<HTMLInputElement>('input[type="password"]')
+    const preferredSelect = document.querySelector<HTMLSelectElement>('[data-testid="search-preferred"] select')
     const tavilyStatus = snapshot?.searchProviders.find((provider) => provider.id === 'tavily')
-    let searchSettingsOk = Boolean(searchSection && tavilyRow && tavilyInput)
-    let searchSettingsDetail = searchSettingsOk ? 'search providers rendered' : 'search providers missing'
+    const searchTestButton = tavilyRow
+      ? Array.from(tavilyRow.querySelectorAll('button')).find((button) => button.textContent?.includes('测试'))
+      : undefined
+    let searchSettingsOk = Boolean(searchSection && tavilyRow && tavilyInput && preferredSelect && searchTestButton)
+    let searchSettingsDetail = searchSettingsOk
+      ? 'search providers, preferred picker and test button rendered'
+      : 'search settings controls missing'
     if (searchSettingsOk && tavilyStatus && tavilyStatus.source === 'none') {
       const saveSearch = await window.xcode.request({
         id: crypto.randomUUID(),
@@ -890,19 +896,26 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
             (provider) => provider.id === 'tavily',
           )
         : undefined
+      const prefer = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'settings:set-search-provider',
+        params: { provider: 'tavily' },
+      })
+      const preferredId = prefer.ok ? (prefer.result as SettingsActionResult).settings.searchProvider : undefined
       const clearSearch = await window.xcode.request({
         id: crypto.randomUUID(),
         method: 'settings:clear-search-key',
         params: { provider: 'tavily' },
       })
-      const clearedView = clearSearch.ok
-        ? (clearSearch.result as SettingsActionResult).settings.searchProviders.find(
-            (provider) => provider.id === 'tavily',
-          )
-        : undefined
+      const cleared = clearSearch.ok ? (clearSearch.result as SettingsActionResult).settings : undefined
+      const clearedView = cleared?.searchProviders.find((provider) => provider.id === 'tavily')
       searchSettingsOk =
-        savedView?.source === 'stored' && savedView.hint === '••••1234' && clearedView?.source === 'none'
-      searchSettingsDetail = `saved=${savedView?.source ?? 'failed'} cleared=${clearedView?.source ?? 'failed'}`
+        savedView?.source === 'stored' &&
+        savedView.hint === '••••1234' &&
+        preferredId === 'tavily' &&
+        cleared?.searchProvider === '' &&
+        clearedView?.source === 'none'
+      searchSettingsDetail = `saved=${savedView?.source ?? 'failed'} preferred=${preferredId ?? 'failed'} cleared=${clearedView?.source ?? 'failed'}`
     }
     checks.searchProviders = { ok: searchSettingsOk, detail: searchSettingsDetail }
 

@@ -106,6 +106,12 @@ export const EN: Record<string, string> = {
   '已配置（环境变量）': 'Configured (environment variable)',
   搜索服务已更新: 'Search service updated',
   搜索服务已清除: 'Search service cleared',
+  首选搜索服务: 'Preferred search service',
+  '自动（按配置顺序）': 'Automatic (configuration order)',
+  首选搜索服务已更新: 'Preferred search service updated',
+  '连接成功 · {{count}} 条结果 · {{ms}}ms': 'Connected · {{count}} result(s) · {{ms}}ms',
+  '配置了多个搜索服务时，webSearch 使用这里选中的服务；选择“自动”时按 Tavily → Brave → Exa → Perplexity → Firecrawl 的顺序取第一个已配置的服务。':
+    'When several search services are configured, webSearch uses the one selected here. "Automatic" picks the first configured service in Tavily → Brave → Exa → Perplexity → Firecrawl order.',
   'webSearch 需要联网搜索服务的 API Key。未配置时模型无法调用联网搜索（会提示配置），webFetch 直接抓取网页不受影响。密钥只保存在本机，并注入当前应用进程。':
     'WebSearch needs an API key from a search service. Without one the model cannot search the web (it will be told to configure a key); webFetch still works. Keys stay on this device and are injected into the running app only.',
   来源: 'Source',

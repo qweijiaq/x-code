@@ -489,6 +489,14 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.clearSearchKey(request.params.provider))
       }
+      case 'settings:set-search-provider': {
+        await ensureInitialized()
+        return ok(request.id, await host.setSearchProvider(request.params.provider))
+      }
+      case 'settings:test-search-key': {
+        await ensureInitialized()
+        return ok(request.id, await host.testSearchKey(request.params.provider, request.params.key))
+      }
       case 'settings:set-custom-model': {
         await ensureInitialized()
         return ok(

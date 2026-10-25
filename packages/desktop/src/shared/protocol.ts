@@ -299,6 +299,14 @@ export interface SearchProviderView {
   modelKeyOnly?: boolean
 }
 
+export interface SearchTestResult {
+  ok: boolean
+  provider: string
+  results: number
+  latencyMs: number
+  message: string
+}
+
 export type PermissionRuleType = 'exact' | 'prefix' | 'tool'
 
 export interface PermissionRuleView {
@@ -328,6 +336,8 @@ export interface SettingsSnapshot {
   pluginErrors: string[]
   tools: ToolSettingsView[]
   searchProviders: SearchProviderView[]
+  /** Preferred standalone provider id; empty means automatic order. */
+  searchProvider: string
   toolProfile: 'full' | 'standard'
   thinking: boolean
   alwaysAllowAll: boolean
@@ -955,6 +965,14 @@ export interface RequestMap {
   'settings:clear-api-key': { params: { provider: string }; result: SettingsActionResult }
   'settings:set-search-key': { params: { provider: string; key: string }; result: SettingsActionResult }
   'settings:clear-search-key': { params: { provider: string }; result: SettingsActionResult }
+  'settings:set-search-provider': {
+    params: { provider: string | null }
+    result: SettingsActionResult
+  }
+  'settings:test-search-key': {
+    params: { provider: string; key?: string }
+    result: SearchTestResult
+  }
   'settings:set-skill-enabled': { params: { name: string; enabled: boolean }; result: SettingsActionResult }
   'settings:set-tool-enabled': { params: { name: string; enabled: boolean }; result: SettingsActionResult }
   'settings:set-tool-always-allow': {

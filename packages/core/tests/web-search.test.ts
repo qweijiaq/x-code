@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { resolveWebSearchProvider, setWebSearchModelProvider, webSearch } from '../src/tools/web-search.js'
+import {
+  resolveWebSearchProvider,
+  setWebSearchModelProvider,
+  testWebSearchProvider,
+  webSearch,
+} from '../src/tools/web-search.js'
 
 const execute = (input: { query: string; maxResults?: number }, abortSignal?: AbortSignal) =>
   webSearch.execute!(input, { toolCallId: 'test', messages: [], abortSignal } as any)
@@ -372,5 +377,54 @@ describe('resolveWebSearchProvider', () => {
     vi.stubEnv('DEEPSEEK_API_KEY', 'ds-key')
     vi.stubEnv('FIRECRAWL_API_KEY', 'fc-key')
     expect(resolveWebSearchProvider('deepseek')).toEqual({ id: 'firecrawl', label: 'Firecrawl' })
+  })
+})
+
+describe('testWebSearchProvider', () => {
+  it('probes a draft key without persisting it in the environment', async () => {
+    clearSearchEnv()
+    const mockFetch = stubFetchJson({
+      results: [{ title: 'Result', url: 'https://example.com', content: 'ok' }],
+    })
+
+    const result = await testWebSearchProvider('tavily', 'draft-key')
+
+    expect(result).toMatchObject({ ok: true, provider: 'Tavily', results: 1 })
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    expect(mockFetch.mock.calls[0]![1]).toMatchObject({
+      headers: expect.objectContaining({ Authorization: 'Bearer draft-key' }),
+    })
+    expect(process.env.TAVILY_API_KEY).toBe('')
+  })
+
+  it('redacts the key from provider error messages', async () => {
+    clearSearchEnv()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('invalid api key draft-secret', { status: 401, statusText: 'Unauthorized' })),
+    )
+
+    const result = await testWebSearchProvider('tavily', 'draft-secret')
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('HTTP 401')
+    expect(result.message).not.toContain('draft-secret')
+    expect(result.message).toContain('••••')
+  })
+
+  it('rejects providers without a standalone key', async () => {
+    clearSearchEnv()
+    const result = await testWebSearchProvider('deepseek', 'ds-key')
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('Unknown standalone search provider')
+  })
+
+  it('reports a missing key without making a request', async () => {
+    clearSearchEnv()
+    const mockFetch = stubFetchJson({ results: [] })
+    const result = await testWebSearchProvider('brave')
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('BRAVE_API_KEY')
+    expect(mockFetch).not.toHaveBeenCalled()
   })
 })

@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { MIN_CONTEXT_WINDOW_OVERRIDE, userXcodeDir } from '@x-code-cli/core'
+import { MIN_CONTEXT_WINDOW_OVERRIDE, WEB_SEARCH_PROVIDERS, userXcodeDir } from '@x-code-cli/core'
 
 export interface ProjectOverrides {
   modelId?: string
@@ -31,6 +31,17 @@ interface DesktopSettingsFile {
   projectSettings?: Record<string, ProjectOverrides>
   trustedProjectHooks?: string[]
   contextWindowOverrides?: Record<string, number>
+  searchProvider?: string
+}
+
+const STANDALONE_SEARCH_IDS = new Set(
+  WEB_SEARCH_PROVIDERS.filter((provider) => !provider.modelKeyOnly).map((provider) => provider.id),
+)
+
+function normalizeSearchProvider(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const id = raw.trim().toLowerCase()
+  return STANDALONE_SEARCH_IDS.has(id) ? id : undefined
 }
 
 function normalizeContextWindowOverrides(raw: unknown): Record<string, number> {
@@ -105,6 +116,7 @@ export function loadDesktopSettings(): DesktopSettingsFile {
               .map((entry) => path.resolve(entry))
           : [],
         contextWindowOverrides: normalizeContextWindowOverrides(data.contextWindowOverrides),
+        searchProvider: normalizeSearchProvider(data.searchProvider),
       }
     }
   } catch {
@@ -120,4 +132,24 @@ export function saveDesktopSettings(update: DesktopSettingsFile): void {
   const tmp = `${file}.tmp`
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8')
   fs.renameSync(tmp, file)
+}
+
+let searchProviderOriginal: string | undefined
+let searchProviderCaptured = false
+
+/** Point core's webSearch override at the user's preferred provider. An empty
+ *  preference restores whatever the shell/.env supplied, so CLI-style env
+ *  overrides keep working. */
+export function applySearchProviderPreference(provider: string | undefined): void {
+  if (!searchProviderCaptured) {
+    searchProviderOriginal = process.env.X_CODE_WEB_SEARCH_PROVIDER
+    searchProviderCaptured = true
+  }
+  if (provider) {
+    process.env.X_CODE_WEB_SEARCH_PROVIDER = provider
+  } else if (searchProviderOriginal === undefined) {
+    delete process.env.X_CODE_WEB_SEARCH_PROVIDER
+  } else {
+    process.env.X_CODE_WEB_SEARCH_PROVIDER = searchProviderOriginal
+  }
 }

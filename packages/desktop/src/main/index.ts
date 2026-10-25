@@ -55,12 +55,21 @@ const isHeadlessSmoke = isSmoke || isUiSmoke
 // or secrets. An isolated home also makes approval-related checks
 // deterministic regardless of the user's persisted trust settings.
 if (isHeadlessSmoke) {
+  const originalHome = process.env.X_CODE_HOME?.trim() || path.join(os.homedir(), '.x-code')
   const smokeHome = path.join(os.tmpdir(), 'xcode-desktop-smoke-home')
   process.env.X_CODE_HOME = smokeHome
   try {
     fs.rmSync(smokeHome, { recursive: true, force: true })
   } catch {
     // Best-effort cleanup.
+  }
+  // Reuse locally cached OCR language data so smoke runs do not depend on
+  // downloading tessdata; CI without a cache still falls back to the network.
+  try {
+    fs.mkdirSync(smokeHome, { recursive: true })
+    fs.cpSync(path.join(originalHome, 'tessdata'), path.join(smokeHome, 'tessdata'), { recursive: true })
+  } catch {
+    // No cached tessdata.
   }
   // Sessions, plugins, and workspace scans resolve against the workspace.
   // Keep them inside the disposable smoke home so a test run never writes
@@ -665,6 +674,7 @@ const SHARED_SETTINGS_METHODS = new Set<string>([
   'settings:clear-api-key',
   'settings:set-search-key',
   'settings:clear-search-key',
+  'settings:set-search-provider',
   'settings:set-skill-enabled',
   'settings:set-tool-enabled',
   'settings:set-tool-always-allow',

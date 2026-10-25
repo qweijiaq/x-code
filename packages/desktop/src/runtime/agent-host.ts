@@ -64,6 +64,7 @@ import {
   setShellSandbox,
   setSkillDisabled,
   shutdownBrowserMcp,
+  testWebSearchProvider,
   toolRegistry,
   transcribeAudio,
   uninstallPlugin,
@@ -121,6 +122,7 @@ import type {
   RewindResultView,
   RuntimeEvent,
   SearchProviderView,
+  SearchTestResult,
   SessionListItem,
   SessionSearchResult,
   SettingsActionResult,
@@ -144,7 +146,7 @@ import { DEMO_MODEL_ID, bootstrapRuntime } from './bootstrap.js'
 import type { RuntimeBootstrap } from './bootstrap.js'
 import { testProviderConnection } from './connection-test.js'
 import { createDemoModel } from './demo-model.js'
-import { loadDesktopSettings, saveDesktopSettings } from './desktop-settings.js'
+import { applySearchProviderPreference, loadDesktopSettings, saveDesktopSettings } from './desktop-settings.js'
 import type { ProjectOverrides } from './desktop-settings.js'
 import { recentDocuments } from './document-store.js'
 import {
@@ -2351,6 +2353,7 @@ export class AgentHost {
       skills,
       tools,
       searchProviders,
+      searchProvider: loadDesktopSettings().searchProvider ?? '',
       plugins,
       pluginErrors: bootstrap.pluginErrors,
       mcpServers,
@@ -2426,7 +2429,29 @@ export class AgentHost {
   async clearSearchKey(provider: string): Promise<SettingsActionResult> {
     this.assertIdle()
     await clearStoredSearchKey(provider)
+    if ((loadDesktopSettings().searchProvider ?? '') === provider) {
+      saveDesktopSettings({ searchProvider: undefined })
+      applySearchProviderPreference(undefined)
+    }
     return this.settingsResult()
+  }
+
+  async setSearchProvider(provider: string | null): Promise<SettingsActionResult> {
+    this.assertIdle()
+    const id = provider?.trim().toLowerCase() || ''
+    if (id) {
+      const known = WEB_SEARCH_PROVIDERS.some((candidate) => candidate.id === id && !candidate.modelKeyOnly)
+      if (!known) throw new Error(`未知的搜索服务: ${id}`)
+      if (searchSecretStatus(id).source === 'none') throw new Error('请先配置该搜索服务的 API Key')
+    }
+    saveDesktopSettings({ searchProvider: id || undefined })
+    applySearchProviderPreference(id || undefined)
+    return this.settingsResult()
+  }
+
+  async testSearchKey(provider: string, key?: string): Promise<SearchTestResult> {
+    this.assertIdle()
+    return testWebSearchProvider(provider, key)
   }
 
   async setShellSandboxConfig(update: {
@@ -2876,6 +2901,7 @@ export class AgentHost {
       this.disabledTools = new Set(desktopSettings.disabledTools ?? [])
       this.autoAllowedTools = new Set(desktopSettings.autoAllowedTools ?? [])
       this.alwaysAllowAll = desktopSettings.alwaysAllowAll === true
+      applySearchProviderPreference(desktopSettings.searchProvider)
       this.requireBootstrap().baseOptions.trustMode = this.alwaysAllowAll
       this.applyToolFilter()
       this.send({ type: 'app:state', state: this.getState() })

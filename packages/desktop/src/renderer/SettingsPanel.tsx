@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -17,6 +18,7 @@ import type {
   PluginInstallTarget,
   RuntimeRequest,
   RuntimeResponse,
+  SearchTestResult,
   SettingsActionResult,
   SettingsSnapshot,
   SkillImportResult,
@@ -165,6 +167,7 @@ export function SettingsPanel({
   const [error, setError] = useState<string | null>(null)
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({})
   const [searchKeyDrafts, setSearchKeyDrafts] = useState<Record<string, string>>({})
+  const [searchTestResults, setSearchTestResults] = useState<Record<string, SearchTestResult | { testing: true }>>({})
   const [baseUrlDrafts, setBaseUrlDrafts] = useState<Record<string, string>>({})
   const [customModelDraft, setCustomModelDraft] = useState('')
   const [contextWindowDraft, setContextWindowDraft] = useState(
@@ -391,7 +394,44 @@ export function SettingsPanel({
 
   const clearSearchKeyEntry = async (provider: string): Promise<void> => {
     const result = await apply('settings:clear-search-key', { provider }, `search:${provider}`)
-    if (result) setNotice(t('搜索服务已清除'))
+    if (result) {
+      setSearchTestResults((prev) => {
+        const next = { ...prev }
+        delete next[provider]
+        return next
+      })
+      setNotice(t('搜索服务已清除'))
+    }
+  }
+
+  const testSearchKey = async (provider: string): Promise<void> => {
+    setSearchTestResults((prev) => ({ ...prev, [provider]: { testing: true } }))
+    const response = await request('settings:test-search-key', {
+      provider,
+      key: searchKeyDrafts[provider]?.trim() || undefined,
+    })
+    const result: SearchTestResult = response.ok
+      ? (response.result as SearchTestResult)
+      : { ok: false, provider, results: 0, latencyMs: 0, message: response.error.message }
+    setSearchTestResults((prev) => ({ ...prev, [provider]: result }))
+  }
+
+  const setPreferredSearchProvider = async (provider: string): Promise<void> => {
+    const result = await apply('settings:set-search-provider', { provider: provider || null }, 'search-provider')
+    if (result) setNotice(t('首选搜索服务已更新'))
+  }
+
+  const renderSearchTest = (provider: string): ReactNode => {
+    const result = searchTestResults[provider]
+    if (!result) return null
+    if ('testing' in result) return <div className="settings-test">{t('测试中…')}</div>
+    return (
+      <div className={`settings-test ${result.ok ? 'ok' : 'fail'}`}>
+        {result.ok
+          ? t('连接成功 · {{count}} 条结果 · {{ms}}ms', { count: result.results, ms: result.latencyMs })
+          : t('连接失败：{{message}}', { message: result.message })}
+      </div>
+    )
   }
 
   const saveCustomModel = async (): Promise<void> => {
@@ -1942,6 +1982,35 @@ export function SettingsPanel({
                   'webSearch 需要联网搜索服务的 API Key。未配置时模型无法调用联网搜索（会提示配置），webFetch 直接抓取网页不受影响。密钥只保存在本机，并注入当前应用进程。',
                 )}
               </div>
+              <div className="setting-row" data-testid="search-preferred">
+                <div className="setting-main">
+                  <div className="setting-name">{t('首选搜索服务')}</div>
+                  <div className="setting-desc">
+                    {t(
+                      '配置了多个搜索服务时，webSearch 使用这里选中的服务；选择“自动”时按 Tavily → Brave → Exa → Perplexity → Firecrawl 的顺序取第一个已配置的服务。',
+                    )}
+                  </div>
+                </div>
+                <div className="setting-actions-col">
+                  <select
+                    className="settings-input"
+                    value={settings.searchProvider}
+                    disabled={busy !== null}
+                    onChange={(event) => void setPreferredSearchProvider(event.target.value)}
+                  >
+                    <option value="">{t('自动（按配置顺序）')}</option>
+                    {settings.searchProviders.map((provider) => (
+                      <option
+                        key={provider.id}
+                        value={provider.id}
+                        disabled={!provider.configured && provider.id !== settings.searchProvider}
+                      >
+                        {provider.configured ? provider.label : `${provider.label} · ${t('未配置')}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <div data-testid="search-providers">
                 {settings.searchProviders.map((provider) => {
                   const draft = searchKeyDrafts[provider.id] ?? ''
@@ -1991,7 +2060,19 @@ export function SettingsPanel({
                             {t('清除')}
                           </button>
                         ) : null}
+                        <button
+                          className="btn"
+                          disabled={
+                            busy !== null ||
+                            'testing' in (searchTestResults[provider.id] ?? {}) ||
+                            (draft.trim().length === 0 && provider.source === 'none')
+                          }
+                          onClick={() => void testSearchKey(provider.id)}
+                        >
+                          {'testing' in (searchTestResults[provider.id] ?? {}) ? t('测试中…') : t('测试连接')}
+                        </button>
                       </div>
+                      {renderSearchTest(provider.id)}
                     </div>
                   )
                 })}
