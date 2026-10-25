@@ -1,5 +1,6 @@
 appId: dev.xcode.desktop
 productName: X-Code
+afterSign: scripts/after-sign.cjs
 directories:
   output: release
   buildResources: build

@@ -2,7 +2,8 @@
 
 > The complete feature-by-feature guide, screenshots and troubleshooting steps
 > live in the [user manual](./desktop-manual.en.md). The **?** button in the
-> app's top bar opens the same manual.
+> app's top bar opens the same manual. The community build is unsigned; see the
+> [unsigned install guide](./desktop-install-unsigned.en.md).
 
 X-Code Desktop is the graphical front end for the same agent runtime: models,
 tools, sessions, memory, plugins, MCP servers, skills, and hooks all share

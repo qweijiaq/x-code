@@ -194,7 +194,9 @@ and library, Git/project-check panels, a sandboxed shell, persisted permission
 rules, a **SkillHub / SkillsMP skill marketplace**, themes and an
 English/Chinese UI. See the [desktop guide](./docs/desktop.en.md) for the full
 tour, or open **? → User manual** inside the app for the complete in-app
-[manual](./docs/desktop-manual.en.md).
+[manual](./docs/desktop-manual.en.md). The community build is unsigned; see the
+[unsigned install guide](./docs/desktop-install-unsigned.en.md) if macOS blocks
+the first launch.
 
 ## Key Features
 

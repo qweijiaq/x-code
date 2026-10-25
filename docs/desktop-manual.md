@@ -177,7 +177,11 @@
 - **文档空白或没有文字**：扫描版 PDF 需要 OCR；在文档面板点击 OCR，或让 agent 用 `readDocument` 读取。
 - **终端无法启动**：确认 runtime 已连接；终端使用 PTY，失败信息会显示在顶部。
 - **界面白屏**：使用崩溃恢复页重新加载，并导出诊断包；错误日志在 `~/.x-code/logs/desktop-errors.log`。
-- **Gatekeeper 阻止打开**：未签名构建需要右键 → 打开，或 `xattr -dr com.apple.quarantine /Applications/X-Code.app`。
+- **Gatekeeper 阻止打开**：未签名社区版首次打开会提示“无法验证开发者”。macOS 15
+  及以后：先关闭提示，再到 **系统设置 → 隐私与安全性 → 安全性 → 仍要打开**，认证后
+  再双击应用。若提示“应用已损坏”，先核对 `SHA256SUMS`，再执行
+  `xattr -dr com.apple.quarantine /Applications/X-Code.app`。完整步骤见
+  `docs/desktop-install-unsigned.md`。
 
 ## 已知限制
 

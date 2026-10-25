@@ -270,19 +270,25 @@ check('zip integrity (unzip -t)', () => {
 
 const appPath = findPackagedApp()
 if (!appPath) {
-  skipped('Code signing', 'packaged .app not found')
+  skipped('Bundle signature integrity', 'packaged .app not found')
+  skipped('Developer ID signing', 'packaged .app not found')
   skipped('Gatekeeper assessment', 'packaged .app not found')
 } else {
   const signed = release?.signed === true
+  check('Bundle signature integrity', () => {
+    run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath], { timeout: 60_000 })
+    const info = runCombined('codesign', ['-dv', '--verbose=4', appPath], 60_000)
+    return /Signature=adhoc/.test(info) ? 'valid ad-hoc signature' : 'valid Developer ID signature'
+  })
+
   if (!signed) {
     const detail = requireSigned
       ? 'RELEASE.json says signed=false and --require-signed was passed'
-      : 'RELEASE.json says signed=false; unsigned builds are for local testing'
-    if (requireSigned) failed('Code signing', detail)
-    else skipped('Code signing', detail)
+      : 'RELEASE.json says signed=false; ad-hoc community build'
+    if (requireSigned) failed('Developer ID signing', detail)
+    else skipped('Developer ID signing', detail)
   } else {
-    check('Code signing', () => {
-      run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath], { timeout: 60_000 })
+    check('Developer ID signing', () => {
       const info = runCombined('codesign', ['-dv', '--verbose=4', appPath], 60_000)
       const authority = info.match(/^Authority=(.+)$/m)?.[1]?.trim()
       const team = info.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim()

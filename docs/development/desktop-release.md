@@ -33,8 +33,12 @@ Artifacts land in `packages/desktop/release/`:
 }
 ```
 
-Unsigned builds are blocked by Gatekeeper on other machines. For local
-testing, right-click the app → Open, or `xattr -dr com.apple.quarantine`.
+Unsigned builds are blocked by Gatekeeper on other machines. The packaging
+hook applies a free **ad-hoc signature** to the whole app bundle (Electron only
+ships a linker signature) so "app is damaged" errors are less likely, but
+Gatekeeper still requires the user to approve the first launch. See
+[`desktop-install-unsigned.md`](../desktop-install-unsigned.md) for the
+user-facing steps.
 
 ## Signing & notarization
 
@@ -76,6 +80,10 @@ signing, Gatekeeper, notarization ticket, and launches the packaged app with
 `PASSED` / `FAILED` / `NOT EXECUTED` for each item. `--allow-dirty` permits
 uncommitted files during local testing; `--e2e` runs the real-LLM suite and
 therefore spends provider tokens.
+
+For an unsigned community build, `Bundle signature integrity` must still pass
+(the ad-hoc signature covers the app bundle); `Developer ID signing`,
+Gatekeeper and the notarization ticket remain `NOT EXECUTED`.
 
 Unsigned builds report signing, Gatekeeper and notarization as
 `NOT EXECUTED`, with a final `Production signed/notarized release: NOT READY`.

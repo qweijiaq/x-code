@@ -192,7 +192,8 @@ pnpm release:desktop --arch arm64   # macOS dmg + zip（默认未签名）
 按模型的上下文上限、文档面板与文档库、Git/项目检查面板、沙箱 shell、持久化权限
 规则、**SkillHub / SkillsMP 技能市场**、主题与中英文界面。完整说明见
 [桌面端指南](./docs/desktop.md)；应用内顶栏的 **?** 入口可直接打开
-[用户手册](./docs/desktop-manual.md)。
+[用户手册](./docs/desktop-manual.md)。社区版未签名，首次打开被 macOS 拦截时见
+[未签名版安装指南](./docs/desktop-install-unsigned.md)。
 
 ## 核心功能
 

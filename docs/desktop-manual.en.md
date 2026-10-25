@@ -177,7 +177,12 @@ Typing `/` lists every command; `/help` shows the full list. Common commands inc
 - **Blank document or no text**: scanned PDFs need OCR; click OCR in the document panel or ask the agent to use `readDocument`.
 - **Terminal will not start**: confirm the runtime is connected; the terminal uses a PTY and reports failures at the top.
 - **Blank window**: use the crash recovery screen to reload and export diagnostics; the log is `~/.x-code/logs/desktop-errors.log`.
-- **Gatekeeper blocks the app**: unsigned builds need right-click → Open, or `xattr -dr com.apple.quarantine /Applications/X-Code.app`.
+- **Gatekeeper blocks the app**: the unsigned community build shows "cannot verify
+  the developer" on first launch. On macOS 15+, dismiss the prompt, open
+  **System Settings → Privacy & Security → Security → Open Anyway**, authenticate,
+  then launch again. If macOS says the app is damaged, verify `SHA256SUMS` first,
+  then run `xattr -dr com.apple.quarantine /Applications/X-Code.app`. Full steps:
+  `docs/desktop-install-unsigned.en.md`.
 
 ## Known Limitations
 
