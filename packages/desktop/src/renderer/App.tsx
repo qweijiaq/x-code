@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -101,64 +101,67 @@ function attachmentName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() ?? filePath
 }
 
-function AttachmentImage({
-  file,
-  variant,
-  onOpen,
-}: {
-  file: string
-  variant: 'chip' | 'message'
-  onOpen: (src: string, name: string) => void
-}): React.JSX.Element {
-  const [src, setSrc] = useState<string | null>(() => imagePreviewCache.get(file) ?? null)
-  const [failed, setFailed] = useState(false)
-  const name = attachmentName(file)
-  useEffect(() => {
-    if (src || failed) return
-    let cancelled = false
-    void window.xcode
-      .request({
-        id: crypto.randomUUID(),
-        method: 'app:image-preview',
-        params: { path: file },
-      })
-      .then((response) => {
-        if (cancelled) return
-        if (!response.ok) {
-          setFailed(true)
-          return
-        }
-        const dataUrl = (response.result as { dataUrl: string }).dataUrl
-        imagePreviewCache.set(file, dataUrl)
-        setSrc(dataUrl)
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true)
-      })
-    return () => {
-      cancelled = true
+const AttachmentImage = memo(
+  function AttachmentImage({
+    file,
+    variant,
+    onOpen,
+  }: {
+    file: string
+    variant: 'chip' | 'message'
+    onOpen: (src: string, name: string) => void
+  }): React.JSX.Element {
+    const [src, setSrc] = useState<string | null>(() => imagePreviewCache.get(file) ?? null)
+    const [failed, setFailed] = useState(false)
+    const name = attachmentName(file)
+    useEffect(() => {
+      if (src || failed) return
+      let cancelled = false
+      void window.xcode
+        .request({
+          id: crypto.randomUUID(),
+          method: 'app:image-preview',
+          params: { path: file },
+        })
+        .then((response) => {
+          if (cancelled) return
+          if (!response.ok) {
+            setFailed(true)
+            return
+          }
+          const dataUrl = (response.result as { dataUrl: string }).dataUrl
+          imagePreviewCache.set(file, dataUrl)
+          setSrc(dataUrl)
+        })
+        .catch(() => {
+          if (!cancelled) setFailed(true)
+        })
+      return () => {
+        cancelled = true
+      }
+    }, [file, src, failed])
+    if (failed) {
+      return <span className="attachment-image-fallback">{name}</span>
     }
-  }, [file, src, failed])
-  if (failed) {
-    return <span className="attachment-image-fallback">{name}</span>
-  }
-  if (!src) {
-    return <span className={`attachment-image-loading ${variant}`} aria-label={name} />
-  }
-  if (variant === 'chip') {
+    if (!src) {
+      return <span className={`attachment-image-loading ${variant}`} aria-label={name} />
+    }
+    if (variant === 'chip') {
+      return (
+        <button type="button" className="attachment-thumb-button" title={name} onClick={() => onOpen(src, name)}>
+          <img className="attachment-thumb" src={src} alt={name} loading="lazy" />
+        </button>
+      )
+    }
     return (
-      <button type="button" className="attachment-thumb-button" title={name} onClick={() => onOpen(src, name)}>
-        <img className="attachment-thumb" src={src} alt={name} loading="lazy" />
+      <button type="button" className="message-attachment" title={name} onClick={() => onOpen(src, name)}>
+        <img src={src} alt={name} loading="lazy" />
+        <span>{name}</span>
       </button>
     )
-  }
-  return (
-    <button type="button" className="message-attachment" title={name} onClick={() => onOpen(src, name)}>
-      <img src={src} alt={name} loading="lazy" />
-      <span>{name}</span>
-    </button>
-  )
-}
+  },
+  (prev, next) => prev.file === next.file && prev.variant === next.variant,
+)
 
 type Role = 'user' | 'assistant' | 'tool' | 'system' | 'error'
 
@@ -331,7 +334,7 @@ function extractSourceUrls(text: string): string[] {
   return [...new Set(cleaned)].slice(0, 8)
 }
 
-function SourceList({ text }: { text: string }): React.JSX.Element | null {
+const SourceList = memo(function SourceList({ text }: { text: string }): React.JSX.Element | null {
   const { t } = useTranslation()
   const urls = extractSourceUrls(text)
   if (urls.length === 0) return null
@@ -365,9 +368,9 @@ function SourceList({ text }: { text: string }): React.JSX.Element | null {
       })}
     </div>
   )
-}
+})
 
-function SubAgentBlock({ agent }: { agent: SubAgentView }): React.JSX.Element {
+const SubAgentBlock = memo(function SubAgentBlock({ agent }: { agent: SubAgentView }): React.JSX.Element {
   const { t } = useTranslation()
   const [open, setOpen] = useState(true)
   const statusLabel =
@@ -406,7 +409,7 @@ function SubAgentBlock({ agent }: { agent: SubAgentView }): React.JSX.Element {
       ) : null}
     </div>
   )
-}
+})
 
 function draftStorageKey(sessionId: string | null): string {
   return `xcode.draft.${sessionId ?? 'new'}`
