@@ -349,6 +349,25 @@ const SEARCH_PROVIDERS: WebSearchProvider[] = [
 
 const ALL_PROVIDERS: WebSearchProvider[] = [...SEARCH_PROVIDERS, deepseekProvider]
 
+/** Public metadata for settings UIs; no search functions or secrets. */
+export interface WebSearchProviderInfo {
+  id: string
+  label: string
+  envKey: string
+  signup: string
+  /** Uses the active model's key (DeepSeek built-in search) rather than a
+   *  separately stored search key. */
+  modelKeyOnly?: boolean
+}
+
+export const WEB_SEARCH_PROVIDERS: WebSearchProviderInfo[] = ALL_PROVIDERS.map((provider) => ({
+  id: provider.id,
+  label: provider.label,
+  envKey: provider.envKey,
+  signup: provider.signup,
+  ...(provider.id === 'deepseek' ? { modelKeyOnly: true } : {}),
+}))
+
 /** Side-channel: provider name of the active model (modelId split on ':').
  *  Set by the agent loop each turn, mirroring setZhipuReasoningEffort, so
  *  the statically-registered tool can tell whether the user runs DeepSeek. */
@@ -416,6 +435,9 @@ function buildMissingKeyError(): string {
 
   return [
     'Error: WebSearch requires a search API key. Options (set any one):',
+    '',
+    '  Desktop app: Settings → Tools → Search service → paste a key (applies immediately).',
+    '  CLI: export one of the variables below and restart the shell.',
     '',
     '  1. Tavily     — 1000 searches/month free, recommended',
     '     Sign up: https://tavily.com → copy API key from dashboard (TAVILY_API_KEY)',

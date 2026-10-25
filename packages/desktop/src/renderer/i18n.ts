@@ -101,6 +101,13 @@ export const EN: Record<string, string> = {
   '保存并连接…': 'Saving & connecting…',
   已保存: 'Saved',
   未配置: 'Not configured',
+  搜索服务: 'Search service',
+  '已配置（本机存储）': 'Configured (stored on this device)',
+  '已配置（环境变量）': 'Configured (environment variable)',
+  搜索服务已更新: 'Search service updated',
+  搜索服务已清除: 'Search service cleared',
+  'webSearch 需要联网搜索服务的 API Key。未配置时模型无法调用联网搜索（会提示配置），webFetch 直接抓取网页不受影响。密钥只保存在本机，并注入当前应用进程。':
+    'WebSearch needs an API key from a search service. Without one the model cannot search the web (it will be told to configure a key); webFetch still works. Keys stay on this device and are injected into the running app only.',
   来源: 'Source',
   来自环境变量: 'From environment',
   '环境 / 插件 / MCP 诊断': 'Environment / plugins / MCP diagnostics',

@@ -164,6 +164,7 @@ export function SettingsPanel({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({})
+  const [searchKeyDrafts, setSearchKeyDrafts] = useState<Record<string, string>>({})
   const [baseUrlDrafts, setBaseUrlDrafts] = useState<Record<string, string>>({})
   const [customModelDraft, setCustomModelDraft] = useState('')
   const [contextWindowDraft, setContextWindowDraft] = useState(
@@ -376,6 +377,21 @@ export function SettingsPanel({
     if (result) {
       setKeyDrafts((prev) => ({ ...prev, [provider]: '' }))
     }
+  }
+
+  const saveSearchKey = async (provider: string): Promise<void> => {
+    const key = searchKeyDrafts[provider]?.trim()
+    if (!key) return
+    const result = await apply('settings:set-search-key', { provider, key }, `search:${provider}`)
+    if (result) {
+      setSearchKeyDrafts((prev) => ({ ...prev, [provider]: '' }))
+      setNotice(t('搜索服务已更新'))
+    }
+  }
+
+  const clearSearchKeyEntry = async (provider: string): Promise<void> => {
+    const result = await apply('settings:clear-search-key', { provider }, `search:${provider}`)
+    if (result) setNotice(t('搜索服务已清除'))
   }
 
   const saveCustomModel = async (): Promise<void> => {
@@ -1919,6 +1935,66 @@ export function SettingsPanel({
                     {settings.browser.visualCheck ? t('已开启（点击关闭）') : t('开启')}
                   </button>
                 </div>
+              </div>
+              <div className="settings-section-title">{t('搜索服务')}</div>
+              <div className="settings-note">
+                {t(
+                  'webSearch 需要联网搜索服务的 API Key。未配置时模型无法调用联网搜索（会提示配置），webFetch 直接抓取网页不受影响。密钥只保存在本机，并注入当前应用进程。',
+                )}
+              </div>
+              <div data-testid="search-providers">
+                {settings.searchProviders.map((provider) => {
+                  const draft = searchKeyDrafts[provider.id] ?? ''
+                  const badge =
+                    provider.source === 'stored'
+                      ? t('已配置（本机存储）')
+                      : provider.source === 'env'
+                        ? t('已配置（环境变量）')
+                        : t('未配置')
+                  return (
+                    <div className="provider-row" key={provider.id} data-testid={`search-provider-${provider.id}`}>
+                      <div className="provider-head">
+                        <span className="provider-name">{provider.label}</span>
+                        <span className={`settings-badge ${provider.source === 'none' ? '' : 'on'}`}>{badge}</span>
+                        {provider.hint ? <span className="provider-hint">{provider.hint}</span> : null}
+                        {provider.signup.startsWith('https://') ? (
+                          <button className="link-button" onClick={() => void openExternal(provider.signup)}>
+                            {t('获取 Key')}
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="provider-meta">{provider.envKey}</div>
+                      <div className="provider-actions">
+                        <input
+                          className="settings-input"
+                          type="password"
+                          autoComplete="off"
+                          placeholder={provider.source === 'stored' ? t('输入新 Key 覆盖') : t('粘贴 API Key')}
+                          value={draft}
+                          onChange={(event) =>
+                            setSearchKeyDrafts((prev) => ({ ...prev, [provider.id]: event.target.value }))
+                          }
+                        />
+                        <button
+                          className="btn solid"
+                          disabled={busy !== null || draft.trim().length === 0}
+                          onClick={() => void saveSearchKey(provider.id)}
+                        >
+                          {busy === `search:${provider.id}` ? t('保存中…') : t('保存')}
+                        </button>
+                        {provider.source === 'stored' ? (
+                          <button
+                            className="btn btn-quiet"
+                            disabled={busy !== null}
+                            onClick={() => void clearSearchKeyEntry(provider.id)}
+                          >
+                            {t('清除')}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
               <div className="setting-row" data-testid="diagnostics-export">
                 <div className="setting-main">

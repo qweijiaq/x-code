@@ -14,9 +14,12 @@ import {
 } from '../src/runtime/plugin-install.js'
 import {
   clearProviderKey,
+  clearSearchKey,
   loadSecrets,
   providerSecretStatus,
   saveProviderKey,
+  saveSearchKey,
+  searchSecretStatus,
   secretStorageKind,
   setSecretCipher,
 } from '../src/runtime/secrets.js'
@@ -136,6 +139,56 @@ describe('desktop API-key storage', () => {
     }
     expect(parsed.providers.anthropic?.enc).toBeTruthy()
     expect(providerSecretStatus('anthropic')).toMatchObject({ source: 'stored', hint: '••••1234' })
+  })
+})
+
+describe('desktop search-provider keys', () => {
+  const secretsFile = (): string => path.join(home, 'desktop-secrets.json')
+
+  beforeEach(() => {
+    setSecretCipher(null)
+    fs.rmSync(secretsFile(), { force: true })
+    delete process.env.TAVILY_API_KEY
+    delete process.env.EXA_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
+  })
+
+  it('stores, injects, and clears a search key separately from model keys', async () => {
+    await saveSearchKey('tavily', 'tvly-search-4321')
+
+    const parsed = JSON.parse(fs.readFileSync(secretsFile(), 'utf-8')) as {
+      version: number
+      providers?: Record<string, unknown>
+      search?: Record<string, { plain?: string }>
+    }
+    expect(parsed.version).toBe(2)
+    expect(parsed.search?.tavily?.plain).toBe('tvly-search-4321')
+    expect(parsed.providers ?? {}).toEqual({})
+    expect(process.env.TAVILY_API_KEY).toBe('tvly-search-4321')
+    expect(searchSecretStatus('tavily')).toMatchObject({ source: 'stored', hint: '••••4321' })
+    expect(providerSecretStatus('tavily').source).toBe('none')
+
+    await saveProviderKey('anthropic', 'sk-model-8888')
+    expect(fs.readFileSync(secretsFile(), 'utf8')).toContain('tvly-search-4321')
+
+    await clearSearchKey('tavily')
+    expect(process.env.TAVILY_API_KEY).toBeUndefined()
+    expect(searchSecretStatus('tavily').source).toBe('none')
+    expect(providerSecretStatus('anthropic').source).toBe('stored')
+  })
+
+  it('encrypts search keys when the cipher is available', async () => {
+    setSecretCipher(mockCipher())
+    await saveSearchKey('exa', 'exa-secret-7777')
+    expect(fs.readFileSync(secretsFile(), 'utf8')).not.toContain('exa-secret-7777')
+
+    await loadSecrets()
+    expect(searchSecretStatus('exa')).toMatchObject({ source: 'stored', hint: '••••7777' })
+  })
+
+  it('rejects providers that are not standalone search services', async () => {
+    await expect(saveSearchKey('deepseek', 'sk-deepseek')).rejects.toThrow()
+    await expect(saveSearchKey('anthropic', 'sk-model')).rejects.toThrow()
   })
 })
 

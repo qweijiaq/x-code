@@ -287,6 +287,18 @@ export interface ToolSettingsView {
   alwaysAllow: boolean
 }
 
+export interface SearchProviderView {
+  id: string
+  label: string
+  envKey: string
+  signup: string
+  configured: boolean
+  source: 'stored' | 'env' | 'none'
+  hint?: string
+  /** DeepSeek built-in search uses the model provider key. */
+  modelKeyOnly?: boolean
+}
+
 export type PermissionRuleType = 'exact' | 'prefix' | 'tool'
 
 export interface PermissionRuleView {
@@ -315,6 +327,7 @@ export interface SettingsSnapshot {
   plugins: PluginSettingsView[]
   pluginErrors: string[]
   tools: ToolSettingsView[]
+  searchProviders: SearchProviderView[]
   toolProfile: 'full' | 'standard'
   thinking: boolean
   alwaysAllowAll: boolean
@@ -940,6 +953,8 @@ export interface RequestMap {
     result: SettingsActionResult
   }
   'settings:clear-api-key': { params: { provider: string }; result: SettingsActionResult }
+  'settings:set-search-key': { params: { provider: string; key: string }; result: SettingsActionResult }
+  'settings:clear-search-key': { params: { provider: string }; result: SettingsActionResult }
   'settings:set-skill-enabled': { params: { name: string; enabled: boolean }; result: SettingsActionResult }
   'settings:set-tool-enabled': { params: { name: string; enabled: boolean }; result: SettingsActionResult }
   'settings:set-tool-always-allow': {

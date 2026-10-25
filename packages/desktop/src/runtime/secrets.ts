@@ -15,7 +15,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { PROVIDERS, userXcodeDir } from '@x-code-cli/core'
+import { PROVIDERS, WEB_SEARCH_PROVIDERS, userXcodeDir } from '@x-code-cli/core'
 
 import { requestMain } from './main-bridge.js'
 
@@ -27,6 +27,7 @@ interface StoredEntry {
 interface SecretsFile {
   version?: number
   providers?: Record<string, StoredEntry | string>
+  search?: Record<string, StoredEntry | string>
   baseUrls?: Record<string, string>
 }
 
@@ -51,11 +52,15 @@ const CUSTOM_BASE_URL_ENV = 'OPENAI_COMPATIBLE_BASE_URL'
 
 const ENV_BY_PROVIDER = new Map<string, string>(PROVIDERS.map((provider) => [provider.name, provider.envKey]))
 ENV_BY_PROVIDER.set('custom', CUSTOM_ENV_KEY)
+const SEARCH_ENV_BY_PROVIDER = new Map<string, string>(
+  WEB_SEARCH_PROVIDERS.filter((provider) => !provider.modelKeyOnly).map((provider) => [provider.id, provider.envKey]),
+)
 
 let originals: Map<string, string | undefined> | null = null
 
 interface SecretsCache {
   providers: Map<string, string>
+  search: Map<string, string>
   baseUrls: Map<string, string>
 }
 
@@ -113,6 +118,7 @@ function readRaw(): SecretsFile {
         version: typeof data.version === 'number' ? data.version : 1,
         providers:
           data.providers && typeof data.providers === 'object' && !Array.isArray(data.providers) ? data.providers : {},
+        search: data.search && typeof data.search === 'object' && !Array.isArray(data.search) ? data.search : {},
         baseUrls:
           data.baseUrls && typeof data.baseUrls === 'object' && !Array.isArray(data.baseUrls) ? data.baseUrls : {},
       }
@@ -120,7 +126,7 @@ function readRaw(): SecretsFile {
   } catch {
     // Missing or malformed secrets file.
   }
-  return { version: 1, providers: {}, baseUrls: {} }
+  return { version: 1, providers: {}, search: {}, baseUrls: {} }
 }
 
 function writeRaw(data: SecretsFile): void {
@@ -146,6 +152,7 @@ function captureOriginals(): void {
   if (originals) return
   originals = new Map()
   for (const envKey of ENV_BY_PROVIDER.values()) originals.set(envKey, process.env[envKey])
+  for (const envKey of SEARCH_ENV_BY_PROVIDER.values()) originals.set(envKey, process.env[envKey])
   originals.set(CUSTOM_BASE_URL_ENV, process.env[CUSTOM_BASE_URL_ENV])
 }
 
@@ -157,30 +164,24 @@ function maskHint(key: string): string | undefined {
   return key.length >= 4 ? `••••${key.slice(-4)}` : undefined
 }
 
-/** Read the file, decrypt entries, and migrate legacy plaintext values to
- *  `enc` when the cipher is available. Populates the in-memory cache. */
-export async function loadSecrets(): Promise<void> {
-  const raw = readRaw()
-  const canEncrypt = await cipher.available().catch(() => false)
-  storageKind = canEncrypt ? 'encrypted' : 'plain'
-  const providers = new Map<string, string>()
-  const baseUrls = new Map<string, string>()
-  for (const [key, value] of Object.entries(raw.baseUrls ?? {})) {
-    if (typeof value === 'string' && value.trim()) baseUrls.set(key, value)
-  }
-
-  const nextEntries: Record<string, StoredEntry> = {}
+async function decodeEntries(
+  entries: Record<string, StoredEntry | string> | undefined,
+  allowed: Map<string, string> | null,
+): Promise<{ values: Map<string, string>; next: Record<string, StoredEntry>; migrated: boolean }> {
+  const values = new Map<string, string>()
+  const next: Record<string, StoredEntry> = {}
   let migrated = false
-  for (const [provider, entry] of Object.entries(raw.providers ?? {})) {
+  for (const [id, entry] of Object.entries(entries ?? {})) {
+    if (allowed && !allowed.has(id)) continue
     let value: string | null = null
     if (typeof entry === 'string') {
       value = entry
       const encoded = await encodeEntry(entry)
-      nextEntries[provider] = encoded
+      next[id] = encoded
       migrated = migrated || encoded.enc !== undefined
     } else if (entry && typeof entry === 'object') {
       if (typeof entry.enc === 'string') {
-        nextEntries[provider] = entry
+        next[id] = entry
         try {
           value = await cipher.decrypt(entry.enc)
         } catch {
@@ -189,20 +190,44 @@ export async function loadSecrets(): Promise<void> {
       } else if (typeof entry.plain === 'string') {
         value = entry.plain
         const encoded = await encodeEntry(entry.plain)
-        nextEntries[provider] = encoded
+        next[id] = encoded
         migrated = migrated || encoded.enc !== undefined
       }
     }
-    if (value && value.trim()) providers.set(provider, value.trim())
+    if (value && value.trim()) values.set(id, value.trim())
+  }
+  return { values, next, migrated }
+}
+
+/** Read the file, decrypt entries, and migrate legacy plaintext values to
+ *  `enc` when the cipher is available. Populates the in-memory cache. */
+export async function loadSecrets(): Promise<void> {
+  const raw = readRaw()
+  const canEncrypt = await cipher.available().catch(() => false)
+  storageKind = canEncrypt ? 'encrypted' : 'plain'
+  const baseUrls = new Map<string, string>()
+  for (const [key, value] of Object.entries(raw.baseUrls ?? {})) {
+    if (typeof value === 'string' && value.trim()) baseUrls.set(key, value)
   }
 
-  cache = { providers, baseUrls }
-  if (migrated) writeRaw({ providers: nextEntries, baseUrls: Object.fromEntries(baseUrls) })
+  const providersDecoded = await decodeEntries(raw.providers, ENV_BY_PROVIDER)
+  const providers = providersDecoded.values
+  const searchDecoded = await decodeEntries(raw.search, SEARCH_ENV_BY_PROVIDER)
+  const search = searchDecoded.values
+
+  cache = { providers, search, baseUrls }
+  if (providersDecoded.migrated || searchDecoded.migrated) {
+    writeRaw({
+      providers: providersDecoded.next,
+      search: searchDecoded.next,
+      baseUrls: Object.fromEntries(baseUrls),
+    })
+  }
 }
 
 async function ensureLoaded(): Promise<SecretsCache> {
   if (!cache) await loadSecrets()
-  return cache ?? { providers: new Map(), baseUrls: new Map() }
+  return cache ?? { providers: new Map(), search: new Map(), baseUrls: new Map() }
 }
 
 /** Inject stored keys into the environment. Call after loading the workspace
@@ -214,8 +239,56 @@ export async function applyStoredSecrets(): Promise<void> {
     const envKey = envKeyFor(provider)
     if (envKey && key.trim()) process.env[envKey] = key.trim()
   }
+  for (const [provider, key] of loaded.search) {
+    const envKey = SEARCH_ENV_BY_PROVIDER.get(provider)
+    if (envKey && key.trim()) process.env[envKey] = key.trim()
+  }
   const customBaseUrl = loaded.baseUrls.get('custom')
   if (customBaseUrl) process.env[CUSTOM_BASE_URL_ENV] = customBaseUrl
+}
+
+export function searchSecretStatus(provider: string): ProviderSecretStatus {
+  const envKey = SEARCH_ENV_BY_PROVIDER.get(provider)
+  if (!envKey) return { source: 'none' }
+  const stored = cache?.search.get(provider)
+  if (stored) return { source: 'stored', hint: maskHint(stored) }
+  if (process.env[envKey]) return { source: 'env' }
+  return { source: 'none' }
+}
+
+export async function saveSearchKey(provider: string, key: string): Promise<void> {
+  const envKey = SEARCH_ENV_BY_PROVIDER.get(provider)
+  if (!envKey) throw new Error(`未知的搜索服务: ${provider}`)
+  const trimmed = key.trim()
+  if (!trimmed) throw new Error('API Key 不能为空')
+  captureOriginals()
+  const loaded = await ensureLoaded()
+  const raw = readRaw()
+  const nextSearch: Record<string, StoredEntry> = {}
+  for (const [name, entry] of Object.entries(raw.search ?? {})) {
+    if (typeof entry === 'string') nextSearch[name] = await encodeEntry(entry)
+    else if (entry && typeof entry === 'object') nextSearch[name] = entry
+  }
+  nextSearch[provider] = await encodeEntry(trimmed)
+  writeRaw({ providers: raw.providers ?? {}, search: nextSearch, baseUrls: raw.baseUrls ?? {} })
+  loaded.search.set(provider, trimmed)
+  process.env[envKey] = trimmed
+}
+
+export async function clearSearchKey(provider: string): Promise<void> {
+  const envKey = SEARCH_ENV_BY_PROVIDER.get(provider)
+  if (!envKey) throw new Error(`未知的搜索服务: ${provider}`)
+  const loaded = await ensureLoaded()
+  const raw = readRaw()
+  const nextSearch = { ...(raw.search ?? {}) }
+  delete nextSearch[provider]
+  writeRaw({ providers: raw.providers ?? {}, search: nextSearch, baseUrls: raw.baseUrls ?? {} })
+  loaded.search.delete(provider)
+
+  captureOriginals()
+  const original = originals?.get(envKey)
+  if (original === undefined) delete process.env[envKey]
+  else process.env[envKey] = original
 }
 
 export function secretStorageKind(): SecretStorageKind {
@@ -254,7 +327,7 @@ export async function saveProviderKey(provider: string, key: string, baseUrl?: s
   nextEntries[provider] = await encodeEntry(trimmed)
   const nextBaseUrls = { ...(raw.baseUrls ?? {}) }
   if (provider === 'custom' && baseUrl?.trim()) nextBaseUrls.custom = baseUrl.trim()
-  writeRaw({ providers: nextEntries, baseUrls: nextBaseUrls })
+  writeRaw({ providers: nextEntries, search: raw.search ?? {}, baseUrls: nextBaseUrls })
 
   loaded.providers.set(provider, trimmed)
   if (provider === 'custom' && baseUrl?.trim()) loaded.baseUrls.set('custom', baseUrl.trim())
@@ -269,7 +342,7 @@ export async function saveCustomBaseUrl(baseUrl: string): Promise<void> {
   const loaded = await ensureLoaded()
   const raw = readRaw()
   const nextBaseUrls = { ...(raw.baseUrls ?? {}), custom: trimmed }
-  writeRaw({ providers: raw.providers ?? {}, baseUrls: nextBaseUrls })
+  writeRaw({ providers: raw.providers ?? {}, search: raw.search ?? {}, baseUrls: nextBaseUrls })
   loaded.baseUrls.set('custom', trimmed)
   process.env[CUSTOM_BASE_URL_ENV] = trimmed
 }
@@ -283,7 +356,7 @@ export async function clearProviderKey(provider: string): Promise<void> {
   delete nextEntries[provider]
   const nextBaseUrls = { ...(raw.baseUrls ?? {}) }
   if (provider === 'custom') delete nextBaseUrls.custom
-  writeRaw({ providers: nextEntries, baseUrls: nextBaseUrls })
+  writeRaw({ providers: nextEntries, search: raw.search ?? {}, baseUrls: nextBaseUrls })
 
   loaded.providers.delete(provider)
   if (provider === 'custom') loaded.baseUrls.delete('custom')

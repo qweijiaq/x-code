@@ -870,6 +870,42 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     }
     checks.shellSandbox = { ok: sandboxOk, detail: sandboxDetail }
 
+    const searchSection = await waitFor(
+      () => document.querySelector('[data-testid="search-providers"]') !== null,
+      2_000,
+    )
+    const tavilyRow = document.querySelector('[data-testid="search-provider-tavily"]')
+    const tavilyInput = tavilyRow?.querySelector<HTMLInputElement>('input[type="password"]')
+    const tavilyStatus = snapshot?.searchProviders.find((provider) => provider.id === 'tavily')
+    let searchSettingsOk = Boolean(searchSection && tavilyRow && tavilyInput)
+    let searchSettingsDetail = searchSettingsOk ? 'search providers rendered' : 'search providers missing'
+    if (searchSettingsOk && tavilyStatus && tavilyStatus.source === 'none') {
+      const saveSearch = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'settings:set-search-key',
+        params: { provider: 'tavily', key: 'tvly-smoke-1234' },
+      })
+      const savedView = saveSearch.ok
+        ? (saveSearch.result as SettingsActionResult).settings.searchProviders.find(
+            (provider) => provider.id === 'tavily',
+          )
+        : undefined
+      const clearSearch = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'settings:clear-search-key',
+        params: { provider: 'tavily' },
+      })
+      const clearedView = clearSearch.ok
+        ? (clearSearch.result as SettingsActionResult).settings.searchProviders.find(
+            (provider) => provider.id === 'tavily',
+          )
+        : undefined
+      searchSettingsOk =
+        savedView?.source === 'stored' && savedView.hint === '••••1234' && clearedView?.source === 'none'
+      searchSettingsDetail = `saved=${savedView?.source ?? 'failed'} cleared=${clearedView?.source ?? 'failed'}`
+    }
+    checks.searchProviders = { ok: searchSettingsOk, detail: searchSettingsDetail }
+
     const settingsBeforeExt = await window.xcode.request({
       id: crypto.randomUUID(),
       method: 'settings:get',

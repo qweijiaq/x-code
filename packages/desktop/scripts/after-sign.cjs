@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- electron-builder loads this hook as CommonJS */
 const { execFileSync, spawnSync } = require('node:child_process')
 const path = require('node:path')
 

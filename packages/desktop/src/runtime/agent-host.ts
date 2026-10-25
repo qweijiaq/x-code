@@ -7,6 +7,7 @@ import {
   KEEP_RECENT_TOKENS,
   MIN_CONTEXT_WINDOW_OVERRIDE,
   PROVIDERS,
+  WEB_SEARCH_PROVIDERS,
   addSessionAllowRule,
   agentLoop,
   appendCheckpoint,
@@ -119,6 +120,7 @@ import type {
   RewindCheckpointView,
   RewindResultView,
   RuntimeEvent,
+  SearchProviderView,
   SessionListItem,
   SessionSearchResult,
   SettingsActionResult,
@@ -178,9 +180,12 @@ import {
 import type { CheckResult } from './project-checks.js'
 import {
   clearProviderKey,
+  clearSearchKey as clearStoredSearchKey,
   providerSecretStatus,
   saveCustomBaseUrl,
   saveProviderKey,
+  saveSearchKey,
+  searchSecretStatus,
   secretStorageKind,
 } from './secrets.js'
 import { listSessionItems, loadSessionView, searchSessionItems, toSessionMessages, usageView } from './sessions.js'
@@ -2320,6 +2325,20 @@ export class AgentHost {
       }
     })
     const mcpServers: McpServerView[] = this.mcp ? await this.mcp.list() : []
+    const searchProviders: SearchProviderView[] = WEB_SEARCH_PROVIDERS.filter((provider) => !provider.modelKeyOnly).map(
+      (provider) => {
+        const status = searchSecretStatus(provider.id)
+        return {
+          id: provider.id,
+          label: provider.label,
+          envKey: provider.envKey,
+          signup: provider.signup,
+          configured: status.source !== 'none',
+          source: status.source,
+          ...(status.hint ? { hint: status.hint } : {}),
+        }
+      },
+    )
 
     return {
       workspace: bootstrap.workspace,
@@ -2331,6 +2350,7 @@ export class AgentHost {
       providers,
       skills,
       tools,
+      searchProviders,
       plugins,
       pluginErrors: bootstrap.pluginErrors,
       mcpServers,
@@ -2394,6 +2414,18 @@ export class AgentHost {
     this.assertIdle()
     await clearProviderKey(provider)
     await this.reloadExtensions(this.modelId)
+    return this.settingsResult()
+  }
+
+  async setSearchKey(provider: string, key: string): Promise<SettingsActionResult> {
+    this.assertIdle()
+    await saveSearchKey(provider, key)
+    return this.settingsResult()
+  }
+
+  async clearSearchKey(provider: string): Promise<SettingsActionResult> {
+    this.assertIdle()
+    await clearStoredSearchKey(provider)
     return this.settingsResult()
   }
 

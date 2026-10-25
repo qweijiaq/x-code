@@ -663,6 +663,8 @@ const SHARED_SETTINGS_METHODS = new Set<string>([
   'settings:set-api-key',
   'settings:set-custom-model',
   'settings:clear-api-key',
+  'settings:set-search-key',
+  'settings:clear-search-key',
   'settings:set-skill-enabled',
   'settings:set-tool-enabled',
   'settings:set-tool-always-allow',
