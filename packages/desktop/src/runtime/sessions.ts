@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 
 import { TOOL_SEARCH_TOOL_NAME, extractText, getContextWindow, listSessions, loadSession } from '@x-code-cli/core'
@@ -153,8 +154,12 @@ function attachmentViewsFromContent(content: ModelMessage['content'], refPaths: 
     const name = filename || (filePath ? basenameOf(filePath) : '') || `attachment-${attachmentIndex}`
     pendingPath = undefined
     const data = base64FromPart(raw)
+    // Prefer the on-disk attachment: the renderer can load it lazily through
+    // app:image-preview. Embedding base64 in every session:load makes image-heavy
+    // transcripts large and keeps copies in renderer memory.
+    const canLoadFromDisk = Boolean(filePath && existsSync(filePath))
     const dataUrl =
-      data && mime?.startsWith('image/') && data.length <= MAX_RESTORED_IMAGE_BASE64
+      data && mime?.startsWith('image/') && !canLoadFromDisk && data.length <= MAX_RESTORED_IMAGE_BASE64
         ? `data:${mime};base64,${data}`
         : undefined
     add({

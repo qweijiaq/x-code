@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
 import type { ModelMessage } from '@x-code-cli/core'
 
 import { toSessionMessages } from '../src/runtime/sessions.js'
@@ -31,6 +35,23 @@ describe('desktop session message conversion', () => {
         dataUrl: 'data:image/png;base64,aGVsbG8=',
       },
     ])
+  })
+
+  it('leaves existing image files out of the payload and loads them lazily', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xcode-session-image-'))
+    const file = path.join(dir, 'attached.png')
+    fs.writeFileSync(file, Buffer.from('hello'))
+    try {
+      const messages = userMessage([
+        { type: 'text', text: `look\n\n@"${file}"` },
+        { type: 'text', text: `<<file kind="image" path="${file}">>` },
+        { type: 'file', data: 'aGVsbG8=', mediaType: 'image/png', filename: 'attached.png' },
+      ])
+      const out = toSessionMessages(messages)
+      expect(out[0]?.attachmentViews).toEqual([{ name: 'attached.png', path: file, mime: 'image/png' }])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('restores path-only images when ingestion fell back to a text notice', () => {

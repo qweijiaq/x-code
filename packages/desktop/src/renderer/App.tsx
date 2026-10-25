@@ -637,6 +637,7 @@ export function App(): React.JSX.Element {
   const activeTextEntryId = useRef<string | null>(null)
   const pendingTextRef = useRef<{ entryId: string; text: string } | null>(null)
   const streamFrameRef = useRef<number | null>(null)
+  const lastTextFlushRef = useRef(0)
   const busyRef = useRef(false)
   const queueRef = useRef<Array<{ prompt: string; attachments: string[] }>>([])
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -1063,12 +1064,27 @@ export function App(): React.JSX.Element {
         cancelAnimationFrame(streamFrameRef.current)
         streamFrameRef.current = null
       }
+      lastTextFlushRef.current = performance.now()
       const pending = pendingTextRef.current
       pendingTextRef.current = null
       if (!pending) return
       setEntries((prev) =>
         prev.map((entry) => (entry.id === pending.entryId ? { ...entry, text: entry.text + pending.text } : entry)),
       )
+    }
+
+    const scheduleTextFlush = (): void => {
+      if (streamFrameRef.current !== null) return
+      streamFrameRef.current = requestAnimationFrame(() => {
+        streamFrameRef.current = null
+        // Rendering Markdown at 60fps for a growing answer is mostly wasted
+        // work; ~30fps keeps the stream smooth without re-parsing every frame.
+        if (performance.now() - lastTextFlushRef.current < 32 && pendingTextRef.current) {
+          scheduleTextFlush()
+          return
+        }
+        flushPendingText()
+      })
     }
 
     const off = window.xcode.onEvent((event: RuntimeEvent) => {
@@ -1110,12 +1126,7 @@ export function App(): React.JSX.Element {
               entryId: textEntryId,
               text: (pending?.entryId === textEntryId ? pending.text : '') + event.delta,
             }
-            if (streamFrameRef.current === null) {
-              streamFrameRef.current = requestAnimationFrame(() => {
-                streamFrameRef.current = null
-                flushPendingText()
-              })
-            }
+            if (streamFrameRef.current === null) scheduleTextFlush()
           }
           break
         }
