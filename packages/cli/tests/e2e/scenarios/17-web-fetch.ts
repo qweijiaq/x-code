@@ -1,7 +1,7 @@
 import type { Scenario } from '../framework/types.js'
 
 const PAGE_PHRASE =
-  /illustrative examples|literature without prior coordination|may use this domain|documentation examples|without needing permission|avoid use in operations/i
+  /illustrative examples|literature without prior coordination|may use this domain|documentation examples|without needing permission|avoid use in operations|示例|文档示例|无需许可|无需事先协调|不用于/i
 
 const scenario: Scenario = {
   id: '17-web-fetch',
