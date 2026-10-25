@@ -543,8 +543,8 @@ export const EN: Record<string, string> = {
   '在当前会话中查找…': 'Find in this conversation…',
   '在文本框中输入时，? 与单键快捷键不会触发；带修饰键的快捷键始终可用。':
     'Single-key shortcuts do not fire while typing in a text field; modifier shortcuts always work.',
-  '填写发布目录中 RELEASE.json 的 HTTPS 地址即可检查新版本；可下载匹配当前平台的安装包并校验 sha256，下载后手动安装。自动安装仍需要签名后的应用。':
-    'Paste the HTTPS URL of RELEASE.json to check for updates. You can download the installer for this platform and verify its SHA-256, then install it manually; fully automatic install still requires a signed app.',
+  '默认使用官方 GitHub Release 的 RELEASE.json 检查新版本，也可以填入自建发布目录的 HTTPS 地址。可下载匹配当前平台的安装包并校验 sha256，下载后手动安装；自动安装仍需要签名后的应用。':
+    'Checks the official GitHub Release RELEASE.json by default; you can also paste the HTTPS URL of your own release directory. You can download the installer for this platform and verify its SHA-256, then install it manually; fully automatic install still requires a signed app.',
   复: 'Un',
   '密钥存储状态未知。': 'Secret storage status is unknown.',
   对话: 'Conversation',

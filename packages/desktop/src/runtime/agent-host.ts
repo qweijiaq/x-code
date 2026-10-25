@@ -86,6 +86,7 @@ import type {
   UserConfigItem,
 } from '@x-code-cli/core'
 
+import { DEFAULT_UPDATE_FEED } from '../shared/constants.js'
 import type {
   AppState,
   ApprovalKind,
@@ -2374,7 +2375,7 @@ export class AgentHost {
       },
       notifications: loadDesktopSettings().notifications !== false,
       onboarded: loadDesktopSettings().onboarded === true,
-      updateFeed: loadDesktopSettings().updateFeed ?? '',
+      updateFeed: loadDesktopSettings().updateFeed || DEFAULT_UPDATE_FEED,
     }
   }
 

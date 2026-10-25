@@ -34,7 +34,7 @@ import { McpTokenStorage } from './token-storage.js'
 
 const CLIENT_METADATA_BASE: Omit<OAuthClientMetadata, 'redirect_uris'> = {
   client_name: 'X-Code CLI',
-  client_uri: 'https://github.com/woai3c/x-code-cli',
+  client_uri: 'https://github.com/qweijiaq/x-code',
   grant_types: ['authorization_code', 'refresh_token'],
   response_types: ['code'],
   token_endpoint_auth_method: 'none',

@@ -1912,9 +1912,13 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     })
     const updateResult = updateCheck.ok ? (updateCheck.result as UpdateCheckResult) : null
     checks.updateCheck = {
-      ok: updateCheck.ok && updateResult?.configured === false && Boolean(updateResult.currentVersion),
+      ok:
+        updateCheck.ok &&
+        updateResult?.configured === false &&
+        Boolean(updateResult.currentVersion) &&
+        (snapshot?.updateFeed ?? '').includes('qweijiaq/x-code'),
       detail: updateCheck.ok
-        ? `current=${updateResult?.currentVersion} configured=${updateResult?.configured}`
+        ? `current=${updateResult?.currentVersion} configured=${updateResult?.configured} defaultFeed=${snapshot?.updateFeed ? 'yes' : 'missing'}`
         : updateCheck.error.message,
     }
 

@@ -1096,7 +1096,7 @@ export function SettingsPanel({
               <div className="setting-name">{t('桌面端更新')}</div>
               <div className="setting-desc">
                 {t(
-                  '填写发布目录中 RELEASE.json 的 HTTPS 地址即可检查新版本；可下载匹配当前平台的安装包并校验 sha256，下载后手动安装。自动安装仍需要签名后的应用。',
+                  '默认使用官方 GitHub Release 的 RELEASE.json 检查新版本，也可以填入自建发布目录的 HTTPS 地址。可下载匹配当前平台的安装包并校验 sha256，下载后手动安装；自动安装仍需要签名后的应用。',
                 )}
               </div>
               {updateResult ? (

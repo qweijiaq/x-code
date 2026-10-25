@@ -183,6 +183,10 @@ xc -m sonnet "Refactor the formatDate function" # Specify a model
 `packages/desktop` is an Electron app over the same runtime and `~/.x-code`
 data — sessions, memory, plugins, MCP, skills and hooks carry over unchanged.
 
+Download the macOS arm64 build from
+[GitHub Releases](https://github.com/qweijiaq/x-code/releases/latest), or build
+from source:
+
 ```bash
 pnpm dev:desktop            # build and launch the desktop app
 pnpm release:desktop --arch arm64   # macOS dmg + zip (unsigned by default)
@@ -353,7 +357,7 @@ Requires Node.js 22+ and pnpm 10.x.
 The repository pins pnpm 10.28.2 through `packageManager`. If pnpm 11 is installed globally, run `corepack enable` and use the repository-local `pnpm` (or `corepack pnpm`); running pnpm 11 directly is intentionally rejected by `engines.pnpm`.
 
 ```bash
-git clone https://github.com/woai3c/x-code-cli.git
+git clone https://github.com/qweijiaq/x-code.git
 cd x-code-cli
 pnpm install
 pnpm dev
@@ -369,7 +373,7 @@ For a deep dive into the implementation, check out the companion Juejin booklet:
 
 ## Feedback & Contributing
 
-Issues and pull requests are welcome: <https://github.com/woai3c/x-code-cli>
+Issues and pull requests are welcome: <https://github.com/qweijiaq/x-code>
 
 ## License
 

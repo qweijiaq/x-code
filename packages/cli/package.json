@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/woai3c/x-code-cli",
+    "url": "https://github.com/qweijiaq/x-code",
     "directory": "packages/cli"
   },
   "type": "module",

@@ -4,7 +4,7 @@ The community build does not have an Apple Developer ID signature or notarizatio
 
 ## 1. Download and verify
 
-Download from the release page:
+Download from the [release page](https://github.com/qweijiaq/x-code/releases/latest):
 
 - `X-Code-<version>-arm64.dmg`
 - `SHA256SUMS`

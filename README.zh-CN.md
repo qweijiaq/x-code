@@ -183,6 +183,9 @@ xc -m sonnet "重构 formatDate 函数"    # 指定模型
 `packages/desktop` 是同一套 runtime、同一份 `~/.x-code` 数据的 Electron 界面：
 会话、记忆、插件、MCP、技能和 Hooks 与 CLI 完全共享。
 
+从 [GitHub Releases](https://github.com/qweijiaq/x-code/releases/latest) 下载
+macOS arm64 安装包；也可以从源码构建：
+
 ```bash
 pnpm dev:desktop                    # 构建并启动桌面端
 pnpm release:desktop --arch arm64   # macOS dmg + zip（默认未签名）
@@ -350,7 +353,7 @@ set DEBUG_STDOUT=1 && xc
 仓库通过 `packageManager` 固定使用 pnpm 10.28.2。如果全局安装的是 pnpm 11，请先运行 `corepack enable`，再在仓库内使用 `pnpm`（或直接使用 `corepack pnpm`）；`engines.pnpm` 会有意拒绝 pnpm 11 直接执行。
 
 ```bash
-git clone https://github.com/woai3c/x-code-cli.git
+git clone https://github.com/qweijiaq/x-code.git
 cd x-code-cli
 pnpm install
 pnpm dev
@@ -367,7 +370,7 @@ pnpm dev
 
 ## 反馈与贡献
 
-欢迎通过 Issue 和 Pull Request 反馈：<https://github.com/woai3c/x-code-cli>
+欢迎通过 Issue 和 Pull Request 反馈：<https://github.com/qweijiaq/x-code>
 
 ## License
 

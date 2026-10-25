@@ -94,7 +94,10 @@ manual acceptance on those platforms.
 
 ## Update feed
 
-Host `RELEASE.json` at an HTTPS URL and paste it into
+The app defaults to
+`https://github.com/qweijiaq/x-code/releases/latest/download/RELEASE.json`, so
+upload `RELEASE.json` as a release asset and the manual update check works
+without configuration. Users can still paste another HTTPS URL into
 **Settings → 桌面端更新 → 保存并检查**. The main process compares `version`
 with the running app version and shows the result; `url` (if present) gets an
 "打开发布页" action.

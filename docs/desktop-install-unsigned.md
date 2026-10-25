@@ -4,7 +4,7 @@
 
 ## 1. 下载并校验
 
-从发布页下载：
+从 [发布页](https://github.com/qweijiaq/x-code/releases/latest) 下载：
 
 - `X-Code-<version>-arm64.dmg`
 - `SHA256SUMS`
