@@ -18,7 +18,7 @@ interface ManualPanelProps {
 
 const shots = import.meta.glob('./manual-assets/*.{png,jpg,jpeg}', {
   eager: true,
-  query: '?url',
+  query: '?inline',
   import: 'default',
 }) as Record<string, string>
 

@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { useState } from 'react'
 import type { JSX, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import type { Components } from 'react-markdown'
 
 interface HastNode {
@@ -102,6 +102,7 @@ export function MarkdownView({ text }: { text: string }): JSX.Element {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        urlTransform={(url) => (url.startsWith('data:image/') ? url : defaultUrlTransform(url))}
         components={components}
       >
         {text}

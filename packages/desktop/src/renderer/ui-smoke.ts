@@ -2184,7 +2184,13 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="manual-toc-item"]'))
       .find((item) => item.textContent?.trim() === '界面总览')
       ?.click()
-    const manualImages = await waitFor(() => document.querySelectorAll('.manual-content img').length > 0, 3000)
+    const manualImages = await waitFor(
+      () =>
+        Array.from(document.querySelectorAll<HTMLImageElement>('.manual-content img')).some(
+          (image) => image.complete && image.naturalWidth > 0,
+        ),
+      3000,
+    )
     const manualSearch = document.querySelector<HTMLInputElement>('[data-testid="manual-search"]')
     if (manualSearch) setInputValue(manualSearch, '备份')
     const manualFiltered = await waitFor(
