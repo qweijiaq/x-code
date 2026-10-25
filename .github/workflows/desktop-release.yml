@@ -75,6 +75,9 @@ jobs:
 
   linux-check:
     name: Linux build and package
+    # Not part of the 1.0.0 support statement; run manually until accepted on a
+    # real Linux desktop.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -113,6 +116,9 @@ jobs:
 
   windows:
     name: Windows x64 package
+    # Not part of the 1.0.0 support statement; run manually until accepted on a
+    # real Windows desktop.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     defaults:
       run:

@@ -1,9 +1,10 @@
 # Desktop release
 
-The desktop app ships as a macOS `.dmg` + `.zip` locally; CI also builds
-Windows NSIS and Linux AppImage/deb artifacts. The release script writes
-`SHA256SUMS` and `RELEASE.json`, which the app's **Settings → 桌面端更新**
-panel can read to check for a newer version.
+The desktop app ships as a macOS `.dmg` + `.zip` locally; CI additionally
+builds Windows NSIS and Linux AppImage/deb artifacts on manual dispatch (they
+are not part of the 1.0.0 support statement until accepted on real devices).
+The release script writes `SHA256SUMS` and `RELEASE.json`, which the app's
+**Settings → 桌面端更新** panel can read to check for a newer version.
 
 ## Local unsigned build
 
@@ -22,14 +23,14 @@ Artifacts land in `packages/desktop/release/`:
 
 ```json
 {
-  "version": "0.6.1",
+  "version": "1.0.0",
   "builtAt": "2026-10-24T03:00:00.000Z",
   "commit": "…",
   "platform": "darwin",
   "arch": "arm64",
   "signed": false,
   "notarized": false,
-  "artifacts": [{ "file": "X-Code-0.6.1-arm64.dmg", "size": 0, "sha256": "…" }]
+  "artifacts": [{ "file": "X-Code-1.0.0-arm64.dmg", "size": 0, "sha256": "…" }]
 }
 ```
 

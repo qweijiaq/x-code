@@ -73,7 +73,8 @@ run('pnpm', builderArgs, {
   env: { CSC_IDENTITY_AUTO_DISCOVERY: signing ? 'true' : 'false' },
 })
 
-const artifactPattern = /^X-Code-.*\.(dmg|zip|blockmap)$/
+const escapedVersion = pkg.version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const artifactPattern = new RegExp(`^X-Code-${escapedVersion}-.*\\.(dmg|zip|blockmap)$`)
 const files = fs.existsSync(releaseDir)
   ? fs
       .readdirSync(releaseDir)

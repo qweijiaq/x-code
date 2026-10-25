@@ -1,3 +1,21 @@
+## v1.0.0 (2026-10-25)
+
+首个桌面版正式发布（macOS arm64）。桌面端与 CLI 共用同一运行时、工具和
+`~/.x-code` 数据，会话、记忆、插件、MCP、技能与 hooks 互通。
+
+### Features
+
+- add Electron desktop app with multi-window session tabs and branch worktree windows
+- add image paste, screen capture and local Whisper voice input
+- add Markdown composer, unified inspector, command palette and in-app manual (zh/en)
+- add document panel, document library, Git and project-check panels
+- add per-user search service settings (Tavily / Brave / Exa / Perplexity / Firecrawl) with preferred provider and connection test
+- add SkillHub / SkillsMP skill marketplaces, plugin configuration and MCP management
+- add session pin/archive/search/export, checkpoints, rewind and fork
+- add local model discovery (Ollama / LM Studio), sandboxed shell and persisted permission rules
+- add crash recovery, diagnostics export and safe user backup/restore
+- add ad-hoc signed community builds, `latest-mac.yml`, SHA256SUMS, release verification and an unsigned install guide
+
 ## v0.6.1 (2026-09-16)
 
 ### Features
