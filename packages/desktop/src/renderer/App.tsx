@@ -635,6 +635,8 @@ export function App(): React.JSX.Element {
   const [paletteIndex, setPaletteIndex] = useState(0)
   const activeTurn = useRef<string | null>(null)
   const activeTextEntryId = useRef<string | null>(null)
+  const pendingTextRef = useRef<{ entryId: string; text: string } | null>(null)
+  const streamFrameRef = useRef<number | null>(null)
   const busyRef = useRef(false)
   const queueRef = useRef<Array<{ prompt: string; attachments: string[] }>>([])
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -1054,7 +1056,25 @@ export function App(): React.JSX.Element {
   }, [sessionQuery])
 
   useEffect(() => {
+    // Streaming deltas arrive many times per second; coalesce them into one
+    // render per frame so long conversations do not re-parse Markdown per token.
+    const flushPendingText = (): void => {
+      if (streamFrameRef.current !== null) {
+        cancelAnimationFrame(streamFrameRef.current)
+        streamFrameRef.current = null
+      }
+      const pending = pendingTextRef.current
+      pendingTextRef.current = null
+      if (!pending) return
+      setEntries((prev) =>
+        prev.map((entry) => (entry.id === pending.entryId ? { ...entry, text: entry.text + pending.text } : entry)),
+      )
+    }
+
     const off = window.xcode.onEvent((event: RuntimeEvent) => {
+      if (event.type !== 'agent:text-delta' && event.type !== 'agent:usage' && event.type !== 'agent:tool-progress') {
+        flushPendingText()
+      }
       switch (event.type) {
         case 'runtime:ready':
           setStatus('ready')
@@ -1085,9 +1105,17 @@ export function App(): React.JSX.Element {
             activeTextEntryId.current = id
             append({ id, role: 'assistant', text: event.delta, turnId: activeTurn.current ?? undefined })
           } else {
-            setEntries((prev) =>
-              prev.map((entry) => (entry.id === textEntryId ? { ...entry, text: entry.text + event.delta } : entry)),
-            )
+            const pending = pendingTextRef.current
+            pendingTextRef.current = {
+              entryId: textEntryId,
+              text: (pending?.entryId === textEntryId ? pending.text : '') + event.delta,
+            }
+            if (streamFrameRef.current === null) {
+              streamFrameRef.current = requestAnimationFrame(() => {
+                streamFrameRef.current = null
+                flushPendingText()
+              })
+            }
           }
           break
         }
@@ -1346,6 +1374,11 @@ export function App(): React.JSX.Element {
     })
     return () => {
       off()
+      if (streamFrameRef.current !== null) {
+        cancelAnimationFrame(streamFrameRef.current)
+        streamFrameRef.current = null
+      }
+      pendingTextRef.current = null
       if (settingsSyncTimerRef.current) {
         clearTimeout(settingsSyncTimerRef.current)
         settingsSyncTimerRef.current = null

@@ -1,7 +1,7 @@
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
@@ -96,7 +96,7 @@ const components: Components = {
 /** Markdown rendering for assistant output. Code blocks get a language label
  *  and a copy button; links open in the system browser instead of navigating
  *  the sandboxed window. */
-export function MarkdownView({ text }: { text: string }): JSX.Element {
+export const MarkdownView = memo(function MarkdownView({ text }: { text: string }): JSX.Element {
   return (
     <div className="markdown">
       <ReactMarkdown
@@ -109,4 +109,4 @@ export function MarkdownView({ text }: { text: string }): JSX.Element {
       </ReactMarkdown>
     </div>
   )
-}
+})
