@@ -15,6 +15,7 @@ import { tool } from 'ai'
 
 import { z } from 'zod'
 
+import { workspaceOutputNote } from '../utils/output-location.js'
 import { formatToolError } from '../utils/tool-errors.js'
 import { reportProgress } from './progress.js'
 
@@ -71,7 +72,6 @@ async function toHtml(content: string, contentFormat: 'markdown' | 'html', title
   const body = contentFormat === 'html' ? content : String(await marked.parse(content, { async: false }))
   return wrapHtml(body, title)
 }
-
 async function assertWritableOutput(output: string): Promise<void> {
   const exists = await fs
     .access(output)
@@ -103,12 +103,12 @@ export const documentExport = tool({
   description:
     'Export a Markdown or HTML document to PDF or DOCX on this machine, without uploading it. PDF rendering ' +
     'requires the desktop app (Electron); DOCX uses macOS textutil. Returns the output path; refuses to overwrite ' +
-    'an existing file. This is a write operation and requires permission.',
+    'an existing file. Write the output inside the working directory (not the system temp directory). This is a write operation and requires permission.',
   inputSchema: z.object({
     content: z.string().min(1).max(500_000).describe('Document body'),
     contentFormat: z.enum(['markdown', 'html']).optional().describe('How to interpret content (default markdown)'),
     format: z.enum(['pdf', 'docx']).describe('Output format'),
-    output: z.string().min(1).max(4096).describe('Absolute output path (must not exist)'),
+    output: z.string().min(1).max(4096).describe('Absolute output path inside the working directory (must not exist)'),
     title: z.string().max(200).optional().describe('Document title used in metadata/header'),
   }),
   execute: async ({ content, contentFormat, format, output, title }, { toolCallId, abortSignal }) => {
@@ -132,7 +132,7 @@ export const documentExport = tool({
       }
       abortSignal?.throwIfAborted()
       const stats = await fs.stat(resolved)
-      return `Exported ${format.toUpperCase()} → ${resolved} (${Math.max(1, Math.round(stats.size / 1024))} KB)`
+      return `Exported ${format.toUpperCase()} → ${resolved} (${Math.max(1, Math.round(stats.size / 1024))} KB)${workspaceOutputNote(resolved)}`
     } catch (err) {
       return formatToolError('exporting the document', err)
     }

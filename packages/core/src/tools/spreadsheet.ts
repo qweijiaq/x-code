@@ -13,6 +13,7 @@ import { tool } from 'ai'
 
 import { z } from 'zod'
 
+import { workspaceOutputNote } from '../utils/output-location.js'
 import { formatToolError } from '../utils/tool-errors.js'
 import { reportProgress } from './progress.js'
 
@@ -69,7 +70,12 @@ const inputSchema = z.object({
   values: z.array(z.number()).min(1).max(MAX_CHART_POINTS).optional(),
   title: z.string().max(100).optional(),
   chartType: z.enum(['bar', 'line']).optional(),
-  output: z.string().min(1).max(4096).optional().describe('Chart output path (must not exist)'),
+  output: z
+    .string()
+    .min(1)
+    .max(4096)
+    .optional()
+    .describe('Chart output path inside the working directory (must not exist)'),
 })
 
 type Input = z.infer<typeof inputSchema>
@@ -324,7 +330,7 @@ export const spreadsheet = tool({
         await assertWritableOutput(output)
         reportProgress(toolCallId, 'Rendering chart')
         await fs.writeFile(output, renderChartSvg(input))
-        return `Chart written to ${output}`
+        return `Chart written to ${output}${workspaceOutputNote(output)}`
       }
 
       if (!input.filePath) throw new Error(`${input.action} needs a filePath.`)
@@ -450,7 +456,7 @@ export const spreadsheet = tool({
         }
       }
       await workbook.xlsx.writeFile(filePath)
-      return `Wrote ${rows.length} row(s) to ${filePath} (${input.write.mode}).`
+      return `Wrote ${rows.length} row(s) to ${filePath} (${input.write.mode}).${workspaceOutputNote(filePath)}`
     } catch (err) {
       return formatToolError('working with the spreadsheet', err)
     }

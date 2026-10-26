@@ -143,6 +143,10 @@ terminal while continuing the conversation.
 - Background shell sessions, system notifications, zoom, tray and global shortcut.
 - **Settings → Tools** enables the browser sub-agent (a managed Chrome launched
   through `npx @playwright/mcp`) and the independent automatic visual checks.
+- Files the agent creates for you to keep default to the current workspace; the
+  system temp directory is reserved for disposable intermediates. `writeFile`,
+  `shell`, `documentExport`, `convert` and `spreadsheet` add an
+  `[Output location]` reminder when a path lands under temp.
 - The document library indexes PDF / Word / Excel / Markdown locally with
   keyword and optional semantic search.
 - The storage panel reports session, attachment, library and voice-model usage

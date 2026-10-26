@@ -37,6 +37,7 @@ import type {
 import { isReadOnly, splitShellCommands } from '../tools/shell-utils.js'
 import type { AgentCallbacks, AgentOptions, LanguageModel, PermissionDecision } from '../types/index.js'
 import { XCODE_DIR, debugLog, isAbortError } from '../utils.js'
+import { workspaceOutputNote } from '../utils/output-location.js'
 import { runBrowserVisualCheck } from './browser/visual-check.js'
 import { createBuiltInToolHandlers } from './built-in-tool-handlers.js'
 import { computeEditDiff } from './diff.js'
@@ -112,9 +113,9 @@ async function executeWriteTool(
     if (payload && callbacks.onFileEdit) callbacks.onFileEdit(toolCallId, payload)
 
     if (isNew) {
-      return `File created: ${filePath} (${lineCount} lines)`
+      return `File created: ${filePath} (${lineCount} lines)${workspaceOutputNote(filePath)}`
     }
-    return `File written: ${filePath} (${lineCount} lines)`
+    return `File written: ${filePath} (${lineCount} lines)${workspaceOutputNote(filePath)}`
   }
 
   if (toolName === 'edit') {
@@ -137,7 +138,7 @@ async function executeWriteTool(
       const newContent = applyBatchEdits(content, edits)
       await applyEdit(content, newContent)
 
-      return `File edited: ${filePath} (${edits.length} replacements)`
+      return `File edited: ${filePath} (${edits.length} replacements)${workspaceOutputNote(filePath)}`
     }
 
     const oldString = input.oldString as string
@@ -159,7 +160,7 @@ async function executeWriteTool(
     const newContent = replaceAll ? content.replaceAll(oldString, newString) : content.replace(oldString, newString)
     await applyEdit(content, newContent)
 
-    return `File edited: ${filePath}`
+    return `File edited: ${filePath}${workspaceOutputNote(filePath)}`
   }
 
   return toolErrorString('unknown write tool')

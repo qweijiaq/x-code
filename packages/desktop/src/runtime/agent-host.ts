@@ -1554,7 +1554,7 @@ export class AgentHost {
           ...bootstrap.baseOptions,
           modelId: this.modelId,
           abortSignal: controller.signal,
-          systemPromptExtra: taskModeInstruction(this.taskMode),
+          systemPromptExtra: `${taskModeInstruction(this.taskMode)}\nSave user-facing deliverables under ${this.requireBootstrap().workspace}; use the system temp directory only for disposable intermediates.`,
         },
         callbacks,
         state,

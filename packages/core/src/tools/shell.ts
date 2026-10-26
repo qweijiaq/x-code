@@ -10,6 +10,7 @@ Use glob, grep, listDir, readFile, edit, and writeFile for their matching file o
 
 Instructions:
 - Before a shell command creates files or directories, verify the parent with listDir.
+- Write deliverables the user will keep (reports, transcripts, exports, generated media) inside the working directory. Use the system temp directory only for disposable intermediates and delete them when the task is done.
 - Always quote file paths that contain spaces with double quotes.
 - Run independent commands in separate parallel tool calls; chain dependent commands using syntax valid for the current shell.
 - For git commands: prefer creating a new commit rather than amending. Never skip hooks (--no-verify) unless the user explicitly asks. Before running destructive operations (git reset --hard, git push --force), consider safer alternatives.

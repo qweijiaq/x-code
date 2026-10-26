@@ -12,6 +12,7 @@ import { tool } from 'ai'
 
 import { z } from 'zod'
 
+import { workspaceOutputNote } from '../utils/output-location.js'
 import { formatToolError } from '../utils/tool-errors.js'
 import { reportProgress } from './progress.js'
 
@@ -60,7 +61,8 @@ export const convert = tool({
   description:
     'Convert local files without uploading anything. Actions: "pdf-merge" combines input PDFs into one; ' +
     '"pdf-extract" copies a page range (e.g. "1-3,7") into a new PDF; "image-convert" converts a png/jpeg/tiff/bmp/gif ' +
-    'image on macOS via sips. The output path must not already exist. This is a write operation and requires permission.',
+    'image on macOS via sips. Write the output inside the working directory (not the system temp directory). ' +
+    'The output path must not already exist. This is a write operation and requires permission.',
   inputSchema: z.object({
     action: z.enum(['pdf-merge', 'pdf-extract', 'image-convert']).describe('Conversion to perform'),
     output: z.string().min(1).max(4096).describe('Absolute path for the new file (must not exist)'),
@@ -94,7 +96,7 @@ export const convert = tool({
           for (const page of pages) merged.addPage(page)
         }
         await fs.writeFile(output, await merged.save())
-        return `Merged ${sources.length} PDFs (${merged.getPageCount()} pages) → ${output}`
+        return `Merged ${sources.length} PDFs (${merged.getPageCount()} pages) → ${output}${workspaceOutputNote(output)}`
       }
 
       if (input.action === 'pdf-extract') {
@@ -115,7 +117,7 @@ export const convert = tool({
         )
         for (const page of copied) extracted.addPage(page)
         await fs.writeFile(output, await extracted.save())
-        return `Extracted ${pages.length} page(s) from ${path.basename(source)} → ${output}`
+        return `Extracted ${pages.length} page(s) from ${path.basename(source)} → ${output}${workspaceOutputNote(output)}`
       }
 
       if (!input.input) throw new Error('image-convert needs a source file.')
@@ -130,7 +132,7 @@ export const convert = tool({
         maxBuffer: 1024 * 1024,
       })
       const stats = await fs.stat(output)
-      return `Converted ${path.basename(source)} → ${output} (${Math.max(1, Math.round(stats.size / 1024))} KB)`
+      return `Converted ${path.basename(source)} → ${output} (${Math.max(1, Math.round(stats.size / 1024))} KB)${workspaceOutputNote(output)}`
     } catch (err) {
       return formatToolError('converting files', err)
     }

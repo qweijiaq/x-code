@@ -112,6 +112,9 @@ worktree 窗口有独立的工作区路径和 `.x-code/sessions`，不会覆盖�
 - 后台 shell 会话、系统通知、窗口缩放、托盘与全局快捷键。
 - **设置 → 工具** 可开启浏览器子代理（通过 `npx @playwright/mcp` 复用受管
   Chrome）和独立的自动视觉检查。
+- Agent 生成、需要保留的文件默认写入当前工作区；系统临时目录只用于可丢弃的
+  中间文件。`writeFile`、`shell`、`documentExport`、`convert` 和 `spreadsheet`
+  在写入临时目录时会在结果里提醒把交付物移回工作区。
 - 文档库把 PDF / Word / Excel / Markdown 索引到本机，支持关键词与可选语义检索。
 - 存储面板统计会话、附件、文档库、语音模型占用，并提供清理。
 - **设置 → 工具 → 诊断与支持** 可导出不含 API Key、MCP env/header 或命令内容的

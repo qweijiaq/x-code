@@ -33,5 +33,5 @@ clearing data, and produce summaries that are ready to paste into an email or sl
 }
 
 export function taskModeInstruction(mode: TaskMode): string {
-  return MODE_INSTRUCTIONS[mode]
+  return `${MODE_INSTRUCTIONS[mode]}\nSave files the user will keep (reports, exports, transcripts, generated media) inside the workspace; use the system temp directory only for disposable intermediates and clean them up.`
 }

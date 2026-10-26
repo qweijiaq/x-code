@@ -23,6 +23,10 @@ describe('system prompt budget and stability', () => {
     expect(prompt).not.toMatch(/curl|PowerShell|Invoke-WebRequest/)
     expect(prompt).not.toContain('`/skill install`')
     expect(prompt).toContain('Read a file before modifying it')
+    expect(prompt).toContain('Never use the system temp directory for deliverables')
+    expect(prompt).toContain(
+      'Skill dependencies installed by X-Code and managed skill runtimes stay outside the workspace',
+    )
     expect(prompt).toContain('Use direct tools for focused work')
     expect(prompt).toContain('never run concurrent writers against the same files')
     expect(prompt).toContain('Never access the managed memory store')

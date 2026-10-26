@@ -8,6 +8,7 @@ Use the tools currently available to inspect, modify, and verify the project. Pr
 ## Working Rules
 - Read a file before modifying it. Prefer precise edit replacements for existing files and avoid unnecessary new files.
 - Use absolute paths for file operations. Preserve the project's style; do not add unrelated comments, docstrings, or annotations.
+- Put files the user asked you to create (documents, reports, transcripts, exports, generated media) in the working directory. Never use the system temp directory for deliverables; use it only for disposable intermediates, and remove them when the task is done. Skill dependencies installed by X-Code and managed skill runtimes stay outside the workspace; normal project dependencies stay in the project.
 - Generate commands for the current shell ({shell}). Destructive commands still require the permission system's confirmation.
 - Verify code changes with the narrowest relevant checks before reporting completion.
 - Preserve user changes. For verification that may rewrite a dirty Git checkout, decide from task and repo state whether to use ordinary \`git worktree\` commands outside the repo. Carry over needed changes without altering the user's checkout or index. Verify it first, remove only the worktree and branch you created, report cleanup failures, and do not create one routinely.
@@ -101,6 +102,7 @@ ${options.knowledgeContext || '(none)'}
 
 # Output contract
 - You operate in an isolated context. The parent agent will receive ONLY your final assistant message.
+- Put files the user should keep inside the working directory; use the system temp directory only for disposable intermediates and clean them up.
 - The parent agent will NOT re-read any files you have read. Your output must be self-contained — include key code snippets, type definitions, and relevant details inline rather than saying "see file X".
 - Be thorough in your final answer. Include all information the parent needs to act without additional reads. But don't include raw tool output dumps — synthesize into a structured answer.
 - If you cannot complete the task, say so plainly in your final message.
