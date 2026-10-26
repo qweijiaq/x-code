@@ -14,6 +14,7 @@ import {
 } from '../src/agent/provenance.js'
 import {
   appendHeader,
+  appendUsage,
   clearPeerContext,
   commitTranscriptSnapshot,
   flushPendingMessages,
@@ -104,6 +105,30 @@ describe('tracked transcript provenance', () => {
       peerInfluenceActive: true,
       firstTaintedEntryId: 'assistant-entry',
     })
+  })
+
+  it('restores the current context rather than cumulative input tokens after resume', async () => {
+    const filePath = join(testDir, 'usage.jsonl')
+    const state = createLoopState()
+    state.sessionFilePath = filePath
+    state.taskSlug = 'usage'
+    appendTrackedMessage(state, { role: 'user', content: 'long conversation' })
+    await appendHeader(state, 'deepseek:deepseek-flash', 'long conversation', testDir)
+    state.tokenUsage = {
+      inputTokens: 3_900_000,
+      outputTokens: 20_000,
+      totalTokens: 3_920_000,
+      cacheReadTokens: 3_800_000,
+      cacheCreationTokens: 0,
+      currentContextTokens: 45_000,
+    }
+    await appendUsage(state, 'deepseek:deepseek-flash')
+
+    const loaded = await loadSession(filePath)
+    const resumed = hydrateLoopState(loaded!)
+
+    expect(resumed.tokenUsage.inputTokens).toBe(3_900_000)
+    expect(resumed.lastInputTokens).toBe(45_000)
   })
 
   it('persists taint across resume and clears it only by committing the complete affected suffix removal', async () => {

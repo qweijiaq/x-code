@@ -539,6 +539,7 @@ export function App(): React.JSX.Element {
   const toggleInspector = (tab: InspectorTab): void => setInspectorTab((current) => (current === tab ? null : tab))
   const terminalOpen = inspectorTab === 'terminal'
   const [backgroundOpen, setBackgroundOpen] = useState(false)
+  const [backgroundActive, setBackgroundActive] = useState(0)
   const [rewindOpen, setRewindOpen] = useState(false)
   const [onboardingDismissed, setOnboardingDismissed] = useState(false)
   const [usageProgress, setUsageProgress] = useState<Record<UsageKey, boolean>>(() => readUsage())
@@ -1453,6 +1454,31 @@ export function App(): React.JSX.Element {
     if (!isUiSmoke || uiSmokeRan.current) return
     uiSmokeRan.current = true
     void runUiSmoke({ setInput, setAttachments, openDocument, closeInspector, activeSessionId })
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const refreshBackgroundCount = async (): Promise<void> => {
+      const response = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'background:list',
+        params: {},
+      })
+      if (cancelled || !response.ok) return
+      const sessions = (response.result as { sessions: Array<{ status?: string }> }).sessions
+      const active = sessions.filter((session) =>
+        ['starting', 'running', 'terminating', 'finalizing'].includes(session.status ?? ''),
+      ).length
+      setBackgroundActive(active)
+    }
+    void refreshBackgroundCount()
+    const off = window.xcode.onEvent((event) => {
+      if (event.type === 'background:changed') void refreshBackgroundCount()
+    })
+    return () => {
+      cancelled = true
+      off()
+    }
   }, [])
 
   const submit = async (promptText: string, alreadyShown = false, files: string[] = attachments): Promise<void> => {
@@ -3853,7 +3879,10 @@ export function App(): React.JSX.Element {
                         setBackgroundOpen(true)
                       }}
                     >
-                      <span className="tools-item-label">{t('后台任务')}</span>
+                      <span className="tools-item-label">
+                        {t('后台任务')}
+                        {backgroundActive > 0 ? ` · ${backgroundActive}` : ''}
+                      </span>
                     </button>
                     <button
                       className="tools-item"
@@ -4498,7 +4527,7 @@ export function App(): React.JSX.Element {
                     setInput('')
                     return
                   }
-                  if (!canSend) return
+                  if (!input.trim() && attachments.length === 0) return
                   const prompt = input
                   setInput('')
                   void submit(prompt)
@@ -4552,7 +4581,11 @@ export function App(): React.JSX.Element {
               {recording ? <StopIcon /> : <MicIcon />}
             </button>
             {busy ? (
-              <button className="send stop" onClick={() => void abort()}>
+              <button
+                className="send stop"
+                title={backgroundActive > 0 ? t('停止当前回复；后台任务会继续运行') : t('停止当前回复')}
+                onClick={() => void abort()}
+              >
                 {t('停止')}
               </button>
             ) : (
@@ -4572,7 +4605,7 @@ export function App(): React.JSX.Element {
             )}
           </div>
           <div className="composer-hint">
-            <span>{t('Enter 发送 · Shift+Enter 换行')}</span>
+            <span>{busy ? t('Enter 排队 · 停止按钮结束当前任务') : t('Enter 发送 · Shift+Enter 换行')}</span>
             <button type="button" className="capability-hint" onClick={() => setPaletteOpen(true)}>
               {window.xcode.platform === 'darwin' ? '⌘K' : 'Ctrl+K'} {t('全部能力')}
             </button>

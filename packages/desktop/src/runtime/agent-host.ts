@@ -840,6 +840,7 @@ export class AgentHost {
 
   backgroundSessions(): BackgroundShellView[] {
     const sessions = this.loopState?.shellSessions.list() ?? []
+    const now = performance.now()
     return sessions.map((session) => ({
       shellId: session.shellId,
       command: session.command,
@@ -847,6 +848,10 @@ export class AgentHost {
       status: session.status,
       tty: session.tty,
       ...(session.startedAt !== undefined ? { startedAt: session.startedAt } : {}),
+      ...(session.startedAt !== undefined
+        ? { elapsedMs: Math.max(0, Math.round((session.exitedAt ?? now) - session.startedAt)) }
+        : {}),
+      outputBytes: session.omittedBytes + Buffer.byteLength(session.recentOutput, 'utf8'),
       ...(session.exitCode !== undefined ? { exitCode: session.exitCode } : {}),
       timedOut: session.timedOut,
       ...(session.failure ? { failure: session.failure.message } : {}),

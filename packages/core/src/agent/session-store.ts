@@ -1927,7 +1927,11 @@ export function hydrateLoopState(
         estimates: scannedCacheMissSummary.estimates,
       }
     : scannedCacheMissSummary
-  state.lastInputTokens = loaded.tokenUsage.inputTokens
+  // `inputTokens` is cumulative across the session and can be millions on a
+  // resumed conversation. Using it here made the first turn after resume look
+  // like the context was full and triggered compaction at a few percent. The
+  // last request's current context is the right comparison for the threshold.
+  state.lastInputTokens = loaded.tokenUsage.currentContextTokens || 0
   state.persistedMessageCount = loaded.trackedMessages.length
   state.checkpoints = loaded.checkpoints.slice()
   state.goal = loaded.goal ? structuredClone(loaded.goal) : null

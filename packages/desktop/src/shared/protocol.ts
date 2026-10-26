@@ -759,6 +759,8 @@ export interface BackgroundShellView {
   status: BackgroundShellStatus
   tty: boolean
   startedAt?: number
+  elapsedMs?: number
+  outputBytes?: number
   exitCode?: number
   timedOut: boolean
   failure?: string

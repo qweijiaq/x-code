@@ -28,6 +28,32 @@ function isActive(status: BackgroundShellView['status']): boolean {
   return status === 'starting' || status === 'running' || status === 'terminating' || status === 'finalizing'
 }
 
+function formatElapsed(ms: number | undefined): string {
+  const total = Math.max(0, Math.floor((ms ?? 0) / 1000))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+function formatBytes(bytes: number | undefined): string {
+  const value = Math.max(0, bytes ?? 0)
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/** Best-effort progress from tools that print percentages (npm, pip, ffmpeg,
+ *  curl, ...). Shell commands have no structured progress channel, so fall
+ *  back to an indeterminate bar driven by the elapsed timer. */
+function lastPercent(text: string): number | null {
+  let found: number | null = null
+  for (const match of text.matchAll(/(\d{1,3})\s*%/g)) {
+    const value = Number(match[1])
+    if (Number.isFinite(value) && value >= 0 && value <= 100) found = value
+  }
+  return found
+}
+
 export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
   const { t } = useTranslation()
   const [sessions, setSessions] = useState<BackgroundShellView[]>([])
@@ -67,6 +93,8 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
     }
   }
 
+  const activeCount = sessions.filter((session) => isActive(session.status)).length
+
   return (
     <>
       <div className="drawer-scrim" onClick={onClose} aria-hidden="true" />
@@ -77,7 +105,10 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
           </span>
           <div className="drawer-titles">
             <div className="drawer-title">{t('后台任务')}</div>
-            <div className="drawer-sub">{t('自动超出等待时间的 shell 命令')}</div>
+            <div className="drawer-sub">
+              {t('自动超出等待时间的 shell 命令')}
+              {activeCount > 0 ? ` · ${t('{{count}} 个运行中', { count: activeCount })}` : ''}
+            </div>
           </div>
           <span className="spacer" />
           <button className="btn btn-quiet" onClick={onClose}>
@@ -89,6 +120,13 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
           {!error && sessions.length === 0 ? <div className="background-empty">{t('暂无后台任务')}</div> : null}
           {sessions.map((session) => {
             const open = expanded === session.shellId
+            const active = isActive(session.status)
+            const percent = lastPercent(session.recentOutput)
+            const outputBytes = session.outputBytes ?? session.omittedBytes + session.recentOutput.length
+            const failed =
+              session.status === 'failed' ||
+              session.status === 'termination-failed' ||
+              (session.exitCode !== undefined && session.exitCode !== 0)
             return (
               <div className="background-item" key={session.shellId}>
                 <div className="background-row">
@@ -97,7 +135,7 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
                     {session.command}
                   </code>
                   <span className="background-meta">{session.cwd}</span>
-                  {isActive(session.status) ? (
+                  {active ? (
                     <button
                       className="btn btn-quiet"
                       disabled={stopping === session.shellId}
@@ -111,6 +149,21 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
                       {session.timedOut ? ` · ${t('超时')}` : ''}
                     </span>
                   )}
+                </div>
+                <div className="background-progress">
+                  <span
+                    className={`background-progress-fill ${active && percent === null ? 'indeterminate' : ''} ${
+                      failed ? 'failed' : ''
+                    }`}
+                    style={percent !== null ? { width: `${percent}%` } : active ? undefined : { width: '100%' }}
+                  />
+                </div>
+                <div className="background-stats">
+                  <span>
+                    {active ? t('已运行') : t('耗时')} {formatElapsed(session.elapsedMs)}
+                  </span>
+                  {percent !== null ? <span>{percent}%</span> : null}
+                  <span>{t('输出 {{size}}', { size: formatBytes(outputBytes) })}</span>
                 </div>
                 {session.failure ? <div className="settings-warn">{session.failure}</div> : null}
                 <button className="background-toggle" onClick={() => setExpanded(open ? null : session.shellId)}>

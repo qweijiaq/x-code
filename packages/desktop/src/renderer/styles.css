@@ -5221,6 +5221,49 @@ body::before,
   font-size: 11px;
 }
 
+.background-progress {
+  position: relative;
+  height: 4px;
+  margin: 8px 0 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ink-08);
+}
+
+.background-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--mineral);
+  transition: width 0.3s ease;
+}
+
+.background-progress-fill.indeterminate {
+  width: 35%;
+  animation: background-progress-slide 1.4s ease-in-out infinite;
+}
+
+.background-progress-fill.failed {
+  background: var(--cinnabar);
+}
+
+@keyframes background-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.background-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--ink-45);
+  font-size: 11px;
+}
+
 .background-toggle {
   align-self: flex-start;
   padding: 0;
