@@ -82,6 +82,26 @@ describe('loadSkills', () => {
     expect(names).toEqual(['skill-a', 'skill-b'])
   })
 
+  it('discovers nested @scope/<name>/SKILL.md layouts', async () => {
+    const dir = await makeTempSkillsDir([
+      {
+        dir: '@scope/nested-skill',
+        frontmatter: 'name: nested-skill\ndescription: Nested skill',
+        body: 'Nested body',
+      },
+      {
+        dir: 'flat-skill',
+        frontmatter: 'name: flat-skill\ndescription: Flat skill',
+        body: 'Flat body',
+      },
+    ])
+    process.env.XC_SKILLS_DIR = dir
+
+    const skills = await loadSkills()
+    const names = skills.map((skill) => skill.name).sort()
+    expect(names).toEqual(['flat-skill', 'nested-skill'])
+  })
+
   it('skips skill dirs without SKILL.md', async () => {
     const dir = await makeTempSkillsDir([
       {

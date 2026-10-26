@@ -621,6 +621,14 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.installSkillCommand(request.params.command))
       }
+      case 'skills:reload': {
+        await ensureInitialized()
+        return ok(request.id, await host.reloadSkills())
+      }
+      case 'settings:refresh-environment': {
+        await ensureInitialized()
+        return ok(request.id, await host.refreshEnvironment())
+      }
       case 'skill-market:search': {
         await ensureInitialized()
         return ok(

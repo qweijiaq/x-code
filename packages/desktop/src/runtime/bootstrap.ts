@@ -48,6 +48,7 @@ import type { AppState, ModelOption, ProviderStatus } from '../shared/protocol.j
 import { applySearchProviderPreference, loadDesktopSettings } from './desktop-settings.js'
 import { discoverLocalModels, withLocalModels } from './local-models.js'
 import { applyStoredSecrets } from './secrets.js'
+import { refreshShellEnvironment } from './shell-env.js'
 
 export const DEMO_MODEL_ID = 'demo:mock'
 
@@ -160,6 +161,9 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   // "Don't ask again" approvals from earlier sessions live in the project.
   reloadPersistedRules(workspace)
   await applyStoredSecrets()
+  // Pick up tools the user installed after the app was launched. Stored
+  // secrets and .env values win over the shell snapshot.
+  await refreshShellEnvironment()
   const desktopSettings = loadDesktopSettings()
   applySearchProviderPreference(desktopSettings.searchProvider)
   setShellSandbox({

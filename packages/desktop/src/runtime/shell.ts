@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 
 import type { RuntimeEvent, ShellCreateParams } from '../shared/protocol.js'
+import { refreshShellEnvironment } from './shell-env.js'
 
 type PtyModule = typeof import('node-pty')
 type Pty = import('node-pty').IPty
@@ -20,7 +21,9 @@ export function interactiveShell(): { file: string; args: string[] } {
     return { file: process.env.COMSPEC ?? 'cmd.exe', args: [] }
   }
   const file = process.env.SHELL?.trim() || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh')
-  return { file, args: ['-i'] }
+  // Login shell so .zprofile/.zlogin and .zshrc are both applied, matching the
+  // user's terminal app.
+  return { file, args: ['-l', '-i'] }
 }
 
 export function ptyEnv(): Record<string, string> {
@@ -42,6 +45,7 @@ export class ShellManager {
     const pty = await loadPty()
     const id = `shell-${++this.seq}`
     const { file, args } = interactiveShell()
+    await refreshShellEnvironment()
     const proc = pty.spawn(file, args, {
       name: 'xterm-256color',
       cols: Math.max(2, params.cols),

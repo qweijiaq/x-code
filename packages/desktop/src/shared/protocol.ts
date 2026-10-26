@@ -361,6 +361,16 @@ export interface SettingsActionResult {
   settings: SettingsSnapshot
 }
 
+export interface EnvironmentRefreshResult extends SettingsActionResult {
+  environment: {
+    refreshed: boolean
+    shell: string
+    added: number
+    updated: string[]
+    error?: string
+  }
+}
+
 export interface WorkspaceListItem {
   path: string
   name: string
@@ -1026,6 +1036,8 @@ export interface RequestMap {
   }
   'skills:import': { params: { path: string }; result: SkillImportResult }
   'skills:install-command': { params: { command: string }; result: SkillImportResult }
+  'skills:reload': { params: Record<string, never>; result: SettingsActionResult }
+  'settings:refresh-environment': { params: Record<string, never>; result: EnvironmentRefreshResult }
   'skill-market:search': {
     params: { provider: SkillMarketProvider; query: string; limit?: number }
     result: SkillMarketListView

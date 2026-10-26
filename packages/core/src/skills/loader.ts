@@ -34,6 +34,8 @@ const SKILL_FILE_LIST_SKIP_DIRS = new Set([
   '.git',
   '.venv',
   'venv',
+  'runtime',
+  'models',
   'dist',
   'build',
   'target',
@@ -83,6 +85,40 @@ async function listSkillFiles(skillDir: string): Promise<string[]> {
   return out.sort()
 }
 
+/** Find SKILL.md directories. Supports both `skills/<name>/SKILL.md` and the
+ *  nested `skills/@scope/<name>/SKILL.md` layout used by some third-party
+ *  installers. A directory containing SKILL.md is treated as a skill root and
+ *  is not descended into further. */
+async function findSkillDirs(root: string): Promise<string[]> {
+  const out: string[] = []
+  async function walk(dir: string, depth: number): Promise<void> {
+    if (depth > 3) return
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    const dirs = entries
+      .filter(
+        (entry) => entry.isDirectory() && !entry.name.startsWith('.') && !SKILL_FILE_LIST_SKIP_DIRS.has(entry.name),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name))
+    for (const entry of dirs) {
+      const full = path.join(dir, entry.name)
+      try {
+        await fs.access(path.join(full, SKILL_FILENAME))
+        out.push(full)
+        continue
+      } catch {
+        await walk(full, depth + 1)
+      }
+    }
+  }
+  await walk(root, 0)
+  return out
+}
+
 async function loadSkillsFromDir(
   dir: string,
   source: SkillDefinition['source'],
@@ -90,15 +126,7 @@ async function loadSkillsFromDir(
 ): Promise<SkillDefinition[]> {
   const skills: SkillDefinition[] = []
 
-  let entries: string[]
-  try {
-    entries = await fs.readdir(dir)
-  } catch {
-    return skills
-  }
-
-  for (const entry of entries) {
-    const skillDir = path.join(dir, entry)
+  for (const skillDir of await findSkillDirs(dir)) {
     const skillFile = path.join(skillDir, SKILL_FILENAME)
 
     try {

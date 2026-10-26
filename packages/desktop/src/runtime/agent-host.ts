@@ -98,6 +98,7 @@ import type {
   CompactResult,
   CustomCommandView,
   DiagnosticsExportResult,
+  EnvironmentRefreshResult,
   FileEditView,
   FileReadView,
   FileTreeEntryView,
@@ -192,6 +193,7 @@ import {
   secretStorageKind,
 } from './secrets.js'
 import { listSessionItems, loadSessionView, searchSessionItems, toSessionMessages, usageView } from './sessions.js'
+import { refreshShellEnvironment } from './shell-env.js'
 import { importSkillIntoUserDir } from './skill-import.js'
 import { installSkillsFromCommand, isPluginInstallCommand } from './skill-install-command.js'
 import type { CopiedSkill } from './skill-install-command.js'
@@ -376,6 +378,45 @@ function toTodoViews(todos: TodoItem[]): Array<{ content: string; activeForm: st
   return todos.map((todo) => ({ content: todo.content, activeForm: todo.activeForm, status: todo.status }))
 }
 
+const SKILL_SIGNATURE_SKIP = new Set([
+  'node_modules',
+  '.git',
+  '__pycache__',
+  '.venv',
+  'venv',
+  'runtime',
+  'models',
+  'dist',
+  'build',
+  'target',
+])
+
+/** Cheap change detector for external skill installs. Walks only skill
+ *  directories (bounded depth) and hashes path+mtime+size of SKILL.md. */
+async function collectSkillSignatures(dir: string, depth: number, out: string[]): Promise<void> {
+  if (depth > 4) return
+  let entries: import('node:fs').Dirent[]
+  try {
+    entries = await fs.promises.readdir(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith('.') || SKILL_SIGNATURE_SKIP.has(entry.name)) continue
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      await collectSkillSignatures(full, depth + 1, out)
+    } else if (entry.isFile() && entry.name === 'SKILL.md') {
+      try {
+        const stat = await fs.promises.stat(full)
+        out.push(`${full}:${stat.mtimeMs}:${stat.size}`)
+      } catch {
+        // Vanished while walking.
+      }
+    }
+  }
+}
+
 export class AgentHost {
   private bootstrap: RuntimeBootstrap | null = null
   private state: AppState | null = null
@@ -407,6 +448,8 @@ export class AgentHost {
   private shellUnsubscribe: (() => void) | null = null
   private turnSeq = 0
   private approvalSeq = 0
+  private skillPollTimer: ReturnType<typeof setInterval> | null = null
+  private skillSignature = ''
 
   constructor(
     private readonly send: (event: RuntimeEvent) => void,
@@ -469,6 +512,7 @@ export class AgentHost {
     this.applyProjectOverrides()
     this.send({ type: 'app:state', state: this.getState() })
     void this.emitSettings()
+    this.startSkillPolling()
     return this.getState()
   }
 
@@ -1442,6 +1486,9 @@ export class AgentHost {
 
   async submit(prompt: string, attachments: string[] = []): Promise<TurnResult> {
     if (this.activeTurn) throw new Error('turn-busy')
+    // Cached for 30s: makes tools installed in another terminal visible on the
+    // next turn without the per-turn cost of a login shell spawn.
+    await refreshShellEnvironment()
     const bootstrap = this.requireBootstrap()
     const existing = this.loopState
     const state = existing ?? createLoopState('default', { projectCwd: bootstrap.workspace })
@@ -2489,6 +2536,71 @@ export class AgentHost {
     return this.settingsResult()
   }
 
+  /** Re-scan skill directories without restarting. Used by the Settings button
+   *  and by the background poller when an external installer adds a SKILL.md. */
+  async reloadSkills(): Promise<SettingsActionResult> {
+    await this.reloadSkillsNow()
+    await this.emitSettings()
+    return this.settingsResult()
+  }
+
+  /** Re-read the login shell environment, then rebuild plugins/MCP/skills so
+   *  newly exported variables and installed CLIs take effect immediately. */
+  async refreshEnvironment(): Promise<EnvironmentRefreshResult> {
+    this.assertIdle()
+    const environment = await refreshShellEnvironment({ force: true })
+    await this.reloadExtensions(this.modelId)
+    return { ...(await this.settingsResult()), environment }
+  }
+
+  private async reloadSkillsNow(): Promise<void> {
+    const bootstrap = this.requireBootstrap()
+    if (!bootstrap.skillRegistry) return
+    await reloadSkillRegistry(bootstrap.skillRegistry, { extraDirs: bootstrap.skillExtraDirs })
+    this.invalidatePromptCache()
+  }
+
+  private startSkillPolling(): void {
+    if (this.skillPollTimer) return
+    void this.skillSignatureNow().then((signature) => {
+      this.skillSignature = signature
+    })
+    this.skillPollTimer = setInterval(() => {
+      void this.pollSkills()
+    }, 3_000)
+    this.skillPollTimer.unref?.()
+  }
+
+  private async pollSkills(): Promise<void> {
+    const signature = await this.skillSignatureNow()
+    if (signature === this.skillSignature) return
+    this.skillSignature = signature
+    try {
+      await this.reloadSkillsNow()
+      await this.emitSettings()
+    } catch (error) {
+      this.send({
+        type: 'runtime:log',
+        level: 'warn',
+        message: `skill reload failed: ${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+  }
+
+  private async skillSignatureNow(): Promise<string> {
+    const bootstrap = this.bootstrap
+    if (!bootstrap) return ''
+    const dirs = [
+      path.join(userXcodeDir(), 'skills'),
+      path.join(bootstrap.workspace, '.x-code', 'skills'),
+      ...(bootstrap.skillExtraDirs ?? []).map((entry) => entry.dir),
+    ]
+    const entries: string[] = []
+    for (const dir of dirs) await collectSkillSignatures(dir, 0, entries)
+    entries.sort()
+    return entries.join('\n')
+  }
+
   async setToolEnabled(name: string, enabled: boolean): Promise<SettingsActionResult> {
     if (enabled) this.disabledTools.delete(name)
     else this.disabledTools.add(name)
@@ -3023,6 +3135,10 @@ export class AgentHost {
 
   async shutdown(): Promise<void> {
     this.abort()
+    if (this.skillPollTimer) {
+      clearInterval(this.skillPollTimer)
+      this.skillPollTimer = null
+    }
     this.shellUnsubscribe?.()
     this.shellUnsubscribe = null
     await this.mcp?.shutdown()

@@ -529,9 +529,24 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       () => document.querySelector('[data-testid="skill-command"]') !== null,
       2000,
     )
+    const skillReloadButton = document.querySelector('[data-testid="skills-reload"]') !== null
+    const envRefreshButton = document.querySelector('[data-testid="env-refresh"]') !== null
     checks.skillCommandTab = {
-      ok: skillCommandMounted,
-      detail: skillCommandMounted ? 'skill command field mounted' : 'skill command field missing',
+      ok: skillCommandMounted && skillReloadButton && envRefreshButton,
+      detail: skillCommandMounted
+        ? `skill command field mounted, reload=${skillReloadButton} env=${envRefreshButton}`
+        : 'skill command field missing',
+    }
+    const skillReload = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'skills:reload',
+      params: {},
+    })
+    checks.skillReload = {
+      ok: skillReload.ok,
+      detail: skillReload.ok
+        ? `rescanned ${(skillReload.result as SettingsActionResult).settings.skills.length} skill(s)`
+        : skillReload.error.message,
     }
     clickSettingsTab('技能市场')
     const skillMarketMounted = await waitFor(
@@ -2327,6 +2342,25 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       await waitFor(() => document.querySelector('[data-testid="markdown-toolbar"]') === null, 2_000)
     }
     checks.markdownComposer = { ok: markdownComposerOk, detail: markdownComposerDetail }
+
+    const imeComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+    let imeOk = false
+    let imeDetail = 'composer missing'
+    if (imeComposer) {
+      const setImeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setImeValue?.call(imeComposer, 'ime composing test')
+      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      imeComposer.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: true }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      imeOk = imeComposer.value === 'ime composing test'
+      imeDetail = imeOk ? 'composing Enter kept the draft' : 'composing Enter submitted the draft'
+      setImeValue?.call(imeComposer, '')
+      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    checks.imeEnter = { ok: imeOk, detail: imeDetail }
 
     const userCopyButton = Array.from(
       document.querySelectorAll<HTMLButtonElement>('.message.user .message-actions .copy-btn'),

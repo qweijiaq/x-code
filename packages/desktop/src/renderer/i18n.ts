@@ -407,6 +407,16 @@ export const EN: Record<string, string> = {
   '获取 Key': 'Get key',
   密钥保存在本机: 'Keys are stored locally',
   模型服务密钥: 'Model service keys',
+  重新扫描: 'Rescan',
+  技能列表已重新扫描: 'Skill list rescanned',
+  刷新环境: 'Refresh environment',
+  '重新读取登录 shell 的 PATH 和环境变量，并重载插件与 MCP':
+    'Reload PATH and environment variables from your login shell, then reload plugins and MCP',
+  '环境已刷新（{{shell}}）：新增 {{added}} 个变量{{updated}}':
+    'Environment refreshed ({{shell}}): {{added}} new variable(s){{updated}}',
+  '，更新 {{names}}': ', updated {{names}}',
+  '环境刷新失败：{{message}}': 'Environment refresh failed: {{message}}',
+  未知错误: 'Unknown error',
   '技能来自用户目录、项目目录和插件贡献。启用状态写入用户设置，下一轮对话生效。':
     'Skills come from the user directory, the project, and plugins. Toggles are saved to user settings and apply on the next turn.',
   '支持粘贴 npx skills add / add-skill / xc plugin install 命令；只解析参数，不会执行 shell。':

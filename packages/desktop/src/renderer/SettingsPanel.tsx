@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import type {
   AppState,
   DiagnosticsExportResult,
+  EnvironmentRefreshResult,
   LibrarySearchView,
   LibraryStatsView,
   MarketplaceEntryView,
@@ -512,6 +513,45 @@ export function SettingsPanel({
     onSettings(result.settings)
     onUsage?.('skill')
     setNotice(t('已导入技能：{{names}}', { names: result.added.join(language === 'zh' ? '、' : ', ') }))
+  }
+
+  const reloadSkills = async (): Promise<void> => {
+    const result = await apply('skills:reload', {}, 'skills-reload')
+    if (result) setNotice(t('技能列表已重新扫描'))
+  }
+
+  const refreshEnvironment = async (): Promise<void> => {
+    setBusy('env-refresh')
+    setError(null)
+    setNotice(null)
+    try {
+      const response = await request('settings:refresh-environment', {})
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      const result = response.result as EnvironmentRefreshResult
+      onSettings(result.settings)
+      onState(result.state)
+      if (result.environment.refreshed) {
+        setNotice(
+          t('环境已刷新（{{shell}}）：新增 {{added}} 个变量{{updated}}', {
+            shell: result.environment.shell,
+            added: result.environment.added,
+            updated:
+              result.environment.updated.length > 0
+                ? t('，更新 {{names}}', { names: result.environment.updated.join(', ') })
+                : '',
+          }),
+        )
+      } else {
+        setError(t('环境刷新失败：{{message}}', { message: result.environment.error ?? t('未知错误') }))
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
   }
 
   const draftForFields = (fields: UserConfigFieldView[], values?: UserConfigValues): Record<string, string> => {
@@ -1330,6 +1370,23 @@ export function SettingsPanel({
                 {t('技能来自用户目录、项目目录和插件贡献。启用状态写入用户设置，下一轮对话生效。')}
               </p>
               <div className="settings-actions">
+                <button
+                  className="btn"
+                  data-testid="skills-reload"
+                  disabled={busy !== null}
+                  onClick={() => void reloadSkills()}
+                >
+                  {busy === 'skills-reload' ? t('扫描中…') : t('重新扫描')}
+                </button>
+                <button
+                  className="btn"
+                  data-testid="env-refresh"
+                  disabled={busy !== null}
+                  title={t('重新读取登录 shell 的 PATH 和环境变量，并重载插件与 MCP')}
+                  onClick={() => void refreshEnvironment()}
+                >
+                  {busy === 'env-refresh' ? t('刷新中…') : t('刷新环境')}
+                </button>
                 <button className="btn" disabled={busy !== null} onClick={() => void importSkill()}>
                   {busy === 'skill-import' ? t('导入中…') : t('从文件/文件夹导入')}
                 </button>

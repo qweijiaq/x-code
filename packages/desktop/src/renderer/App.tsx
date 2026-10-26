@@ -4401,6 +4401,9 @@ export function App(): React.JSX.Element {
               onKeyUp={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
               onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
               onKeyDown={(event) => {
+                // IME candidate selection sends Enter with isComposing=true
+                // (and keyCode 229). Never treat that as submit/send.
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return
                 if (mention !== null && mentionItems.length > 0) {
                   if (event.key === 'ArrowDown') {
                     event.preventDefault()

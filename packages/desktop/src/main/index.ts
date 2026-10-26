@@ -58,6 +58,9 @@ if (isHeadlessSmoke) {
   const originalHome = process.env.X_CODE_HOME?.trim() || path.join(os.homedir(), '.x-code')
   const smokeHome = path.join(os.tmpdir(), 'xcode-desktop-smoke-home')
   process.env.X_CODE_HOME = smokeHome
+  // Keep headless smokes deterministic: the user's rc files may export
+  // provider keys or tools that change model/provider selection.
+  process.env.XCODE_SKIP_SHELL_ENV_REFRESH = '1'
   try {
     fs.rmSync(smokeHome, { recursive: true, force: true })
   } catch {
@@ -682,6 +685,8 @@ const SHARED_SETTINGS_METHODS = new Set<string>([
   'settings:clear-search-key',
   'settings:set-search-provider',
   'settings:set-skill-enabled',
+  'skills:reload',
+  'settings:refresh-environment',
   'settings:set-tool-enabled',
   'settings:set-tool-always-allow',
   'settings:set-always-allow-all',
