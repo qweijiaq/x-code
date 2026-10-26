@@ -1,5 +1,9 @@
 ## v1.0.3 (2026-10-26)
 
+### Features
+
+- warn before sending a prompt that references absolute paths outside the current workspace, with a per-session “don’t warn again” option
+
 ### Bug Fixes
 
 - show update download progress (bytes, total, speed, percentage) instead of an indefinite "downloading" label

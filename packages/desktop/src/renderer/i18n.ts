@@ -593,6 +593,13 @@ export const EN: Record<string, string> = {
   '导出当前会话（markdown / json / pdf）': 'Export this session (markdown / json / pdf)',
   展开: 'Expand',
   工作区: 'Workspace',
+  工作区提醒: 'Workspace check',
+  '当前工作区：{{path}}': 'Current workspace: {{path}}',
+  '消息引用了工作区外的路径：': 'This message references paths outside the workspace:',
+  '仍要在这个工作区执行吗？如需切换工作区，请取消后在侧栏选择项目。':
+    'Run it in this workspace anyway? To switch, cancel and choose a project in the sidebar.',
+  本次会话不再提示: "Don't warn again this session",
+  仍在当前工作区执行: 'Run in this workspace anyway',
   已中止: 'Aborted',
   '已保存 /{{name}}。下一轮对话即可在 / 菜单中使用。':
     'Saved /{{name}}. It is available from the / menu on the next turn.',

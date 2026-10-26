@@ -2980,6 +2980,36 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail: `id=${Boolean(newSessionId)} tab=${newSessionTitle} sidebar=${newSessionRow}`,
     }
 
+    await waitFor(() => document.querySelector('.tab-busy') === null, 5_000)
+    const guardComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+    let workspaceGuardShown = false
+    let workspaceGuardClosed = false
+    if (guardComposer) {
+      const setGuardValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setGuardValue?.call(guardComposer, '看看 /Users/example/other-project/file.ts')
+      guardComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      guardComposer.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: false }),
+      )
+      workspaceGuardShown = await waitFor(
+        () => document.querySelector('[data-testid="workspace-guard"]') !== null,
+        3_000,
+      )
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="workspace-guard"] .branch-confirm-actions .btn-quiet')
+        ?.click()
+      workspaceGuardClosed = await waitFor(
+        () => document.querySelector('[data-testid="workspace-guard"]') === null,
+        2_000,
+      )
+      setGuardValue?.call(guardComposer, '')
+      guardComposer.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    checks.workspaceGuard = {
+      ok: workspaceGuardShown && workspaceGuardClosed,
+      detail: `shown=${workspaceGuardShown} closed=${workspaceGuardClosed}`,
+    }
+
     const editorProbe = await window.xcode.request({
       id: crypto.randomUUID(),
       method: 'app:open-in-editor',

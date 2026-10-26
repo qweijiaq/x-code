@@ -47,6 +47,7 @@ The **Outline** tab in the right-hand inspector (also the top-bar outline button
 - **Attachments**: use the paperclip, drag files into the window, or paste images.
 - **Images**: thumbnails are stored under `~/.x-code/attachments` and restored when a historical session is reopened.
 - **Screenshots**: select a region or the entire screen; the image becomes an attachment.
+- **Workspace check**: when a message references an absolute path outside the current workspace (`/Users/...`, `~/...`, `/Volumes/...`, or a Windows drive), X-Code asks before sending. You can continue, cancel and switch projects from the sidebar, or disable the warning for this session. Paths inside the workspace, URLs, and system paths such as `/usr` or `/tmp` are ignored.
 - **Voice**: click the microphone to record, click again to stop and transcribe locally. Audio is never uploaded; the Whisper model may download on first use.
 - **Document attachments**: PDF, Word, Excel, PowerPoint, Markdown, images and audio. Text is parsed locally; scanned PDFs can use local OCR.
 - **Message actions**: copy user messages; expand each tool call or the whole turn; copy code blocks and toggle wrapping.

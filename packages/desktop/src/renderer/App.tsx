@@ -71,6 +71,7 @@ import { applyTheme, storedTheme, watchSystemTheme } from './theme.js'
 import type { ThemeSetting } from './theme.js'
 import { forcedOnboarding, isUiSmoke, runUiSmoke } from './ui-smoke.js'
 import { encodeWav } from './wav.js'
+import { detectExternalWorkspacePaths } from './workspace-guard.js'
 
 const SettingsPanel = lazy(() => import('./SettingsPanel.js').then((module) => ({ default: module.SettingsPanel })))
 const FilePanel = lazy(() => import('./FilePanel.js').then((module) => ({ default: module.FilePanel })))
@@ -542,6 +543,13 @@ export function App(): React.JSX.Element {
   const terminalOpen = inspectorTab === 'terminal'
   const [backgroundOpen, setBackgroundOpen] = useState(false)
   const [backgroundActive, setBackgroundActive] = useState(0)
+  const [workspaceGuard, setWorkspaceGuard] = useState<{
+    prompt: string
+    files: string[]
+    external: string[]
+  } | null>(null)
+  const [workspaceGuardOff, setWorkspaceGuardOff] = useState(false)
+  const workspaceGuardBypassRef = useRef(false)
   const [rewindOpen, setRewindOpen] = useState(false)
   const [onboardingDismissed, setOnboardingDismissed] = useState(false)
   const [usageProgress, setUsageProgress] = useState<Record<UsageKey, boolean>>(() => readUsage())
@@ -1519,6 +1527,16 @@ export function App(): React.JSX.Element {
   const submit = async (promptText: string, alreadyShown = false, files: string[] = attachments): Promise<void> => {
     const prompt = promptText.trim() || (files.length > 0 ? t('请阅读并分析这些附件。') : '')
     if (!prompt) return
+    if (!alreadyShown && !busyRef.current && !workspaceGuardOff && !workspaceGuardBypassRef.current) {
+      const external = detectExternalWorkspacePaths(prompt, appState?.workspace ?? settings?.workspace ?? '')
+      if (external.length > 0) {
+        setWorkspaceGuard({ prompt, files, external })
+        setInput(prompt)
+        setAttachments(files)
+        return
+      }
+    }
+    workspaceGuardBypassRef.current = false
     if (activeSessionId) {
       // Give a brand-new tab a useful title immediately instead of waiting for
       // the session file to be listed (which can lag behind a long turn).
@@ -1558,6 +1576,20 @@ export function App(): React.JSX.Element {
     }
   }
   submitRef.current = (prompt, alreadyShown, files) => void submit(prompt, alreadyShown, files)
+
+  const continueInCurrentWorkspace = (): void => {
+    const guard = workspaceGuard
+    if (!guard) return
+    setWorkspaceGuard(null)
+    workspaceGuardBypassRef.current = true
+    setInput('')
+    setAttachments([])
+    void submit(guard.prompt, false, guard.files)
+  }
+
+  const cancelWorkspaceGuard = (): void => {
+    setWorkspaceGuard(null)
+  }
 
   const abort = async (): Promise<void> => {
     await window.xcode.request({ id: crypto.randomUUID(), method: 'agent:abort', params: {} })
@@ -4942,6 +4974,55 @@ export function App(): React.JSX.Element {
         onSession={(item) => void loadSession(item)}
         onClose={() => setPaletteOpen(false)}
       />
+      {workspaceGuard ? (
+        <div className="modal-scrim" onClick={cancelWorkspaceGuard}>
+          <div
+            className="shortcut-card"
+            data-testid="workspace-guard"
+            role="dialog"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="shortcut-head">
+              <span className="drawer-seal" aria-hidden="true">
+                界
+              </span>
+              <div className="drawer-title">{t('工作区提醒')}</div>
+              <span className="spacer" />
+              <button className="btn btn-quiet" onClick={cancelWorkspaceGuard}>
+                {t('取消')}
+              </button>
+            </div>
+            <p className="settings-note">
+              {t('当前工作区：{{path}}', { path: appState?.workspace ?? settings?.workspace ?? '' })}
+            </p>
+            <p className="settings-note">{t('消息引用了工作区外的路径：')}</p>
+            <ul className="workspace-guard-paths">
+              {workspaceGuard.external.map((path) => (
+                <li key={path}>
+                  <code>{path}</code>
+                </li>
+              ))}
+            </ul>
+            <p className="settings-note">{t('仍要在这个工作区执行吗？如需切换工作区，请取消后在侧栏选择项目。')}</p>
+            <label className="workspace-guard-off">
+              <input
+                type="checkbox"
+                checked={workspaceGuardOff}
+                onChange={(event) => setWorkspaceGuardOff(event.target.checked)}
+              />
+              {t('本次会话不再提示')}
+            </label>
+            <div className="branch-confirm-actions">
+              <button className="btn btn-quiet" onClick={cancelWorkspaceGuard}>
+                {t('取消')}
+              </button>
+              <button className="btn solid" data-testid="workspace-guard-continue" onClick={continueInCurrentWorkspace}>
+                {t('仍在当前工作区执行')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {salvageTarget ? (
         <div className="modal-scrim" onClick={() => setSalvageTarget(null)}>
           <div

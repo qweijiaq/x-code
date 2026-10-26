@@ -6417,6 +6417,25 @@ body::before,
   font-size: 12px;
 }
 
+.workspace-guard-paths {
+  max-height: 180px;
+  margin: 0;
+  padding-left: 20px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.workspace-guard-off {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+  color: var(--ink-45);
+  font-size: 11px;
+}
+
 .branch-confirm-actions {
   display: flex;
   justify-content: flex-end;
