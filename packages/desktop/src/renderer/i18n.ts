@@ -237,6 +237,11 @@ export const EN: Record<string, string> = {
   作为附件: 'Attach',
   '针对这篇文档提问…': 'Ask about this document…',
   提问: 'Ask',
+  '提问 {{n}}': 'Question {{n}}',
+  '回答 {{n}}': 'Answer {{n}}',
+  对话目录: 'Conversation outline',
+  '共 {{count}} 条': '{{count}} item(s)',
+  当前会话还没有提问: 'No questions in this session yet',
   '已跳过 {{count}} 页无文字层的 OCR（预览模式）':
     'OCR skipped for {{count}} page(s) without a text layer (preview mode).',
   '已对 {{count}} 页缺少文字层的内容执行本地 OCR。': 'Applied local OCR to {{count}} page(s).',

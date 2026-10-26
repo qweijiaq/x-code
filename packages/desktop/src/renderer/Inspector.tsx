@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-export type InspectorTab = 'document' | 'git' | 'checks' | 'terminal' | 'file'
+export type InspectorTab = 'outline' | 'document' | 'git' | 'checks' | 'terminal' | 'file'
 
 const TABS: Array<{ id: InspectorTab; label: string }> = [
+  { id: 'outline', label: '目录' },
   { id: 'document', label: '文档' },
   { id: 'git', label: 'Git' },
   { id: 'checks', label: '检查' },

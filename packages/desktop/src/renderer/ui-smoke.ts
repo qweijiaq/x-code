@@ -1467,6 +1467,17 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         inspectorClosed,
       detail: `mounted=${inspectorMounted} docTab=${documentTabActive} git=${gitInsideInspector} exclusive=${documentTabGone} terminalTab=${terminalTabPresent} resizer=${inspectorResizer} closed=${inspectorClosed}`,
     }
+    document.querySelector<HTMLButtonElement>('[data-testid="outline-toggle"]')?.click()
+    const outlineMounted = await waitFor(() => document.querySelector('[data-testid="outline-panel"]') !== null, 3_000)
+    const outlineItems = document.querySelectorAll('[data-testid="outline-item"]').length
+    document.querySelector<HTMLButtonElement>('[data-testid="outline-item"]')?.click()
+    document.querySelector<HTMLButtonElement>('[data-testid="inspector-close"]')?.click()
+    const outlineClosed = await waitFor(() => document.querySelector('[data-testid="inspector"]') === null, 2_000)
+    document.querySelector<HTMLButtonElement>('.scroll-bottom')?.click()
+    checks.outline = {
+      ok: outlineMounted && outlineItems > 0 && outlineClosed,
+      detail: `mounted=${outlineMounted} items=${outlineItems} closed=${outlineClosed}`,
+    }
     if (!writeAlways) {
       await window.xcode.request({
         id: crypto.randomUUID(),
@@ -2934,6 +2945,39 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     checks.sessionSalvage = {
       ok: corruptWrite.ok && corruptRowReady && salvageDialog && salvageRestored,
       detail: `write=${corruptWrite.ok} row=${corruptRowReady} dialog=${salvageDialog} restored=${salvageRestored}`,
+    }
+
+    document.querySelector<HTMLButtonElement>('.sidebar-sessions-section .sidebar-add')?.click()
+    await waitFor(() => document.querySelector('.sidebar-session-placeholder') !== null, 2_000)
+    const newSessionId = document.querySelector('.tab-item.active')?.getAttribute('data-session-id') ?? ''
+    const saveComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+    let newSessionTitle = false
+    let newSessionRow = false
+    if (saveComposer && newSessionId) {
+      const setSaveValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setSaveValue?.call(saveComposer, 'smoke autosave title')
+      saveComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      saveComposer.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: false }),
+      )
+      newSessionTitle = await waitFor(
+        () =>
+          document
+            .querySelector(`.tab-item[data-session-id="${newSessionId}"] .tab-title`)
+            ?.textContent?.includes('smoke autosave') ?? false,
+        4_000,
+      )
+      newSessionRow = await waitFor(
+        () =>
+          Array.from(document.querySelectorAll('.sidebar-session-row')).some((row) =>
+            row.textContent?.includes('smoke autosave'),
+          ),
+        20_000,
+      )
+    }
+    checks.newSessionSave = {
+      ok: Boolean(newSessionId) && newSessionTitle && newSessionRow,
+      detail: `id=${Boolean(newSessionId)} tab=${newSessionTitle} sidebar=${newSessionRow}`,
     }
 
     const editorProbe = await window.xcode.request({

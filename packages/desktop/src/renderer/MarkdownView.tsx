@@ -95,13 +95,21 @@ const components: Components = {
 
 /** Markdown rendering for assistant output. Code blocks get a language label
  *  and a copy button; links open in the system browser instead of navigating
- *  the sandboxed window. */
-export const MarkdownView = memo(function MarkdownView({ text }: { text: string }): JSX.Element {
+ *  the sandboxed window. While text is still streaming we skip syntax
+ *  highlighting: re-highlighting every partial code block makes the transcript
+ *  reflow and jitter, and the final render highlights it once. */
+export const MarkdownView = memo(function MarkdownView({
+  text,
+  streaming = false,
+}: {
+  text: string
+  streaming?: boolean
+}): JSX.Element {
   return (
     <div className="markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        rehypePlugins={streaming ? [] : [[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         urlTransform={(url) => (url.startsWith('data:image/') ? url : defaultUrlTransform(url))}
         components={components}
       >

@@ -68,6 +68,17 @@ export function MoreIcon(): JSX.Element {
   )
 }
 
+export function OutlineIcon(): JSX.Element {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M5 7h14M5 12h14M5 17h9" />
+      <circle cx="3" cy="7" r="0.7" fill="currentColor" stroke="none" />
+      <circle cx="3" cy="12" r="0.7" fill="currentColor" stroke="none" />
+      <circle cx="3" cy="17" r="0.7" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
 export function ChevronIcon(): JSX.Element {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" {...stroke} aria-hidden="true">

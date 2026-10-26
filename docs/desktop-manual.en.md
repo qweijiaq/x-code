@@ -19,12 +19,12 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **Top bar**: model picker, task mode, sidebar toggle, terminal, settings, more tools.
 - **Sidebar**: projects, getting-started checklist and sessions. Search, pin, archive, rename and export sessions.
 - **Session tabs**: one window can host several sessions; `Cmd/Ctrl+T` opens a tab, `Cmd/Ctrl+Shift+N` a new window.
-- **Right-hand Inspector**: documents, Git, project checks, terminal and file browser share one resizable pane.
+- **Right-hand Inspector**: documents, Git, project checks, terminal, file browser and the conversation outline share one resizable pane.
 - **Composer**: Markdown toolbar, attach, screenshot, voice, send/stop, context usage and the "All capabilities" link.
 
 ## Sessions and Tabs
 
-- **New session**: sidebar `＋`, `Cmd/Ctrl+N` or `Cmd/Ctrl+T`.
+- **New session**: sidebar `＋`, `Cmd/Ctrl+N` or `Cmd/Ctrl+T`. The first prompt immediately becomes the tab and sidebar title; messages are flushed during the turn, so the sidebar updates even while a long turn is still running.
 - **Switch**: click a sidebar row or a tab; the current draft survives the switch.
 - **Search**: sidebar search filters by title and first prompt; `Cmd/Ctrl+Shift+F` focuses it.
 - **Pin / archive**: session row menu. Archived sessions are available under "Show archived".
@@ -35,6 +35,10 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **Rewind**: `/rewind` or the palette; choose code only, conversation only, or both.
 - **Fork**: `/fork` copies the current session into an independent conversation.
 - **Recover a damaged session**: when transcript integrity fails, the app offers to salvage parseable messages into a new session without modifying the original file.
+
+## Conversation outline
+
+The **Outline** tab in the right-hand inspector (also the top-bar outline button and the Tools menu) lists every question and answer in the current conversation; click one to jump there. A jump pauses auto-follow; the **↓** button near the composer resumes it.
 
 ## Composer, Attachments and Voice
 

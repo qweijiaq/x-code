@@ -1811,6 +1811,88 @@ body::before {
   overflow: hidden;
 }
 
+.outline-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 12px;
+  gap: 8px;
+}
+
+.outline-head {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 4px 6px;
+  border-bottom: 1px solid var(--ink-08);
+}
+
+.outline-title {
+  font-family: var(--serif);
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.outline-count {
+  color: var(--ink-45);
+  font-size: 11px;
+}
+
+.outline-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.outline-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-70);
+  text-align: left;
+  cursor: pointer;
+}
+
+.outline-item:hover {
+  background: var(--ink-08);
+}
+
+.outline-role {
+  flex: none;
+  min-width: 42px;
+  color: var(--cinnabar);
+  font-size: 10px;
+}
+
+.outline-item.assistant .outline-role {
+  color: var(--ink-45);
+}
+
+.outline-text {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.outline-empty {
+  padding: 24px 0;
+  color: var(--ink-45);
+  font-size: 12px;
+  text-align: center;
+}
+
 .document-drawer.embedded,
 .git-drawer.embedded,
 .checks-drawer.embedded,

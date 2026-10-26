@@ -43,6 +43,7 @@ import { GitPanel } from './GitPanel.js'
 import { Inspector } from './Inspector.js'
 import type { InspectorTab } from './Inspector.js'
 import { CopyButton, MarkdownView } from './MarkdownView.js'
+import { OutlinePanel } from './OutlinePanel.js'
 import { RewindPanel } from './RewindPanel.js'
 import {
   AttachIcon,
@@ -53,6 +54,7 @@ import {
   HelpIcon,
   MicIcon,
   MoreIcon,
+  OutlineIcon,
   RegionIcon,
   SendIcon,
   SettingsIcon,
@@ -580,6 +582,7 @@ export function App(): React.JSX.Element {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [collapsedTurns, setCollapsedTurns] = useState<Set<string>>(new Set())
   const [tabs, setTabs] = useState<string[]>([])
+  const [tabTitles, setTabTitles] = useState<Record<string, string>>({})
   const [pendingSession, setPendingSession] = useState<{ sessionId: string; at: number } | null>(null)
   const [sessionQuery, setSessionQuery] = useState('')
   const [showArchived, setShowArchived] = useState(false)
@@ -1324,6 +1327,10 @@ export function App(): React.JSX.Element {
         case 'session:saved':
           setSessions((prev) => [event.item, ...prev.filter((item) => item.sessionId !== event.item.sessionId)])
           setActiveSessionId(event.item.sessionId)
+          setTabTitles((prev) => {
+            const title = (event.item.name || event.item.firstPrompt || '').trim()
+            return title ? { ...prev, [event.item.sessionId]: title.slice(0, 80) } : prev
+          })
           emptyTabsRef.current.delete(event.item.sessionId)
           if (pendingSessionRef.current === event.item.sessionId) {
             pendingSessionRef.current = null
@@ -1402,8 +1409,15 @@ export function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    const node = scrollRef.current
-    if (node && nearBottomRef.current) node.scrollTop = node.scrollHeight
+    if (!nearBottomRef.current) return
+    // Defer to the next frame so streaming markdown/code can finish its layout
+    // before we pin the transcript; writing scrollTop mid-commit causes the
+    // visible jump users notice while code is being generated.
+    const frame = requestAnimationFrame(() => {
+      const node = scrollRef.current
+      if (node && nearBottomRef.current) node.scrollTop = node.scrollHeight
+    })
+    return () => cancelAnimationFrame(frame)
   }, [entries])
 
   const handleChatScroll = (): void => {
@@ -1412,6 +1426,16 @@ export function App(): React.JSX.Element {
     const near = node.scrollHeight - node.scrollTop - node.clientHeight < 120
     nearBottomRef.current = near
     setShowScrollBottom(!near)
+  }
+
+  const jumpToEntry = (entryId: string): void => {
+    // Stop auto-following the stream, otherwise the next delta snaps back to
+    // the bottom immediately after the jump.
+    nearBottomRef.current = false
+    setShowScrollBottom(true)
+    requestAnimationFrame(() => {
+      document.getElementById(`entry-${entryId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    })
   }
 
   useEffect(() => {
@@ -1457,6 +1481,17 @@ export function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    if (!busy) return
+    // Session files are flushed while the turn is still running (especially
+    // when a long tool yields to the background), so refresh the sidebar
+    // during the turn instead of waiting for turn-end.
+    const timer = setInterval(() => {
+      void refreshSessions()
+    }, 3_000)
+    return () => clearInterval(timer)
+  }, [busy])
+
+  useEffect(() => {
     let cancelled = false
     const refreshBackgroundCount = async (): Promise<void> => {
       const response = await window.xcode.request({
@@ -1484,6 +1519,13 @@ export function App(): React.JSX.Element {
   const submit = async (promptText: string, alreadyShown = false, files: string[] = attachments): Promise<void> => {
     const prompt = promptText.trim() || (files.length > 0 ? t('请阅读并分析这些附件。') : '')
     if (!prompt) return
+    if (activeSessionId) {
+      // Give a brand-new tab a useful title immediately instead of waiting for
+      // the session file to be listed (which can lag behind a long turn).
+      setTabTitles((prev) =>
+        prev[activeSessionId] ? prev : { ...prev, [activeSessionId]: prompt.replace(/\s+/g, ' ').slice(0, 80) },
+      )
+    }
     if (editArmed && !alreadyShown && !busyRef.current) {
       const rewound = await rewindConversation()
       setEditArmed(false)
@@ -3445,7 +3487,9 @@ export function App(): React.JSX.Element {
             <div className="sidebar-sessions">
               {showPendingSession ? (
                 <div className="sidebar-session sidebar-session-placeholder active">
-                  <span className="sidebar-session-title">{t('新会话')}</span>
+                  <span className="sidebar-session-title">
+                    {tabTitles[pendingSession?.sessionId ?? ''] || t('新会话')}
+                  </span>
                   <span className="sidebar-session-meta">{t('刚刚')}</span>
                 </div>
               ) : null}
@@ -3763,6 +3807,21 @@ export function App(): React.JSX.Element {
               <SidebarIcon />
             </button>
             <button
+              className={`icon-btn ${inspectorTab === 'outline' ? 'active' : ''}`}
+              data-testid="outline-toggle"
+              title={t('对话目录')}
+              aria-label={t('对话目录')}
+              onClick={() => {
+                setModelMenuOpen(false)
+                setSettingsOpen(false)
+                setTaskModeMenuOpen(false)
+                setToolsMenuOpen(false)
+                toggleInspector('outline')
+              }}
+            >
+              <OutlineIcon />
+            </button>
+            <button
               className={`icon-btn ${terminalOpen ? 'active' : ''}`}
               data-testid="terminal-toggle"
               title={terminalOpen ? t('收起终端') : t('终端')}
@@ -3873,6 +3932,16 @@ export function App(): React.JSX.Element {
                     </button>
                     <button
                       className="tools-item"
+                      data-testid="tools-outline"
+                      onClick={() => {
+                        setToolsMenuOpen(false)
+                        toggleInspector('outline')
+                      }}
+                    >
+                      <span className="tools-item-label">{t('对话目录')}</span>
+                    </button>
+                    <button
+                      className="tools-item"
                       data-testid="background-toggle"
                       onClick={() => {
                         setToolsMenuOpen(false)
@@ -3941,7 +4010,7 @@ export function App(): React.JSX.Element {
                     onClick={() => void activateTab(sessionId)}
                   >
                     {busy && sessionId === activeSessionId ? <span className="tab-busy" aria-hidden="true" /> : null}
-                    <span className="tab-title">{item ? sessionTitle(item) : t('新会话')}</span>
+                    <span className="tab-title">{item ? sessionTitle(item) : tabTitles[sessionId] || t('新会话')}</span>
                   </button>
                   <button
                     className="tab-close"
@@ -4098,7 +4167,7 @@ export function App(): React.JSX.Element {
               >
                 <span className="role">{t(ROLE_LABEL[entry.role])}</span>
                 {entry.role === 'assistant' || entry.role === 'user' ? (
-                  <MarkdownView text={entry.text} />
+                  <MarkdownView text={entry.text} streaming={busy && entry.id === activeTextEntryId.current} />
                 ) : (
                   <span className="message-text">{entry.text}</span>
                 )}
@@ -4638,6 +4707,7 @@ export function App(): React.JSX.Element {
 
       {inspectorTab ? (
         <Inspector tab={inspectorTab} onTab={openInspector} onClose={closeInspector}>
+          {inspectorTab === 'outline' ? <OutlinePanel entries={entries} onJump={jumpToEntry} /> : null}
           {inspectorTab === 'document' ? (
             <DocumentPanel
               view={documentView}

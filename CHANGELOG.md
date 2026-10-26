@@ -1,5 +1,9 @@
 ## v1.0.1 (2026-10-26)
 
+### Features
+
+- add a conversation outline in the right inspector with jump-to-question/answer links
+
 ### Bug Fixes
 
 - keep IME candidate selection (Enter while composing) from submitting the composer
@@ -10,6 +14,8 @@
 - use the live context size instead of cumulative input tokens when a resumed session checks whether to compact
 - queue prompts with Enter while a turn is running; the Stop button ends the reply but leaves background tasks running
 - show elapsed time, output size and a determinate/indeterminate progress bar for background tasks
+- stop re-highlighting partial code blocks while streaming and defer auto-scroll to the next frame to reduce transcript jitter
+- give a new session tab/sidebar row its prompt title immediately and refresh the session list during a running turn
 
 ## v1.0.0 (2026-10-25)
 
