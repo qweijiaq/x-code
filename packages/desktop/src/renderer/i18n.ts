@@ -567,6 +567,10 @@ export const EN: Record<string, string> = {
   耗时: 'Took',
   '输出 {{size}}': 'Output {{size}}',
   '{{count}} 个运行中': '{{count}} running',
+  '{{count}} 个后台任务运行中；当前回复仍在等待。':
+    '{{count}} background task(s) running; the current reply is still waiting.',
+  停止等待: 'Stop waiting',
+  停止等待并执行排队: 'Stop waiting and run queued',
   '命令名（不含斜杠，如 review-doc）': 'Command name (no slash, e.g. review-doc)',
   '命令执行失败：{{message}}': 'Command failed: {{message}}',
   命令面板: 'Command palette',

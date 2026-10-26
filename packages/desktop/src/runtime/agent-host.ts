@@ -847,7 +847,9 @@ export class AgentHost {
 
   backgroundSessions(): BackgroundShellView[] {
     const sessions = this.loopState?.shellSessions.list() ?? []
-    const now = performance.now()
+    // Shell session timestamps use Date.now(); performance.now() would produce
+    // a negative elapsed time and clamp to 00:00 in the panel.
+    const now = Date.now()
     return sessions.map((session) => ({
       shellId: session.shellId,
       command: session.command,

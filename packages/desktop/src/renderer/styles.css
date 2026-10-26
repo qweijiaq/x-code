@@ -6576,6 +6576,19 @@ body::before,
   margin-left: auto;
 }
 
+.background-wait {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--ink-08);
+  border-radius: 8px;
+  background: var(--paper-2);
+  color: var(--ink-55);
+  font-size: 11px;
+}
+
 .queued-list {
   display: flex;
   flex-direction: column;

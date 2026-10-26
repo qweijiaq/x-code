@@ -4377,6 +4377,14 @@ export function App(): React.JSX.Element {
               </button>
             </div>
           ) : null}
+          {busy && backgroundActive > 0 ? (
+            <div className="background-wait" data-testid="background-wait">
+              <span>{t('{{count}} 个后台任务运行中；当前回复仍在等待。', { count: backgroundActive })}</span>
+              <button className="btn btn-quiet" onClick={() => void abort()}>
+                {queued > 0 ? t('停止等待并执行排队') : t('停止等待')}
+              </button>
+            </div>
+          ) : null}
           {queuedItems.length > 0 ? (
             <div className="queued-list" data-testid="queued-list">
               {queuedItems.map((item, index) => (
