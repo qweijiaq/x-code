@@ -49,6 +49,7 @@ import { applySearchProviderPreference, loadDesktopSettings } from './desktop-se
 import { discoverLocalModels, withLocalModels } from './local-models.js'
 import { applyStoredSecrets } from './secrets.js'
 import { refreshShellEnvironment } from './shell-env.js'
+import { applySkillRuntimeHints } from './skill-runtime.js'
 
 export const DEMO_MODEL_ID = 'demo:mock'
 
@@ -279,6 +280,7 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
     createSkillRegistry({ extraDirs: skillExtraDirs }).catch(() => undefined),
     createCommandRegistry({ extraDirs: commandExtraDirs }).catch(() => undefined),
   ])
+  if (skillRegistry) applySkillRuntimeHints(skillRegistry)
 
   const streamConfig = resolveStreamConfig(config)
   const baseOptions: AgentOptions = {

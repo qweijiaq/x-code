@@ -37,6 +37,10 @@ export interface SkillDefinition {
    *  id (`name@marketplace`). UI shows this as "(from plugin: …)" and
    *  `/skill uninstall` redirects to `/plugin uninstall`. */
   pluginId?: string
+  /** Desktop-managed isolated runtime (dependency env, interpreter paths).
+   *  Appended to the activation payload so the model installs/runs skill
+   *  dependencies in the runtime directory instead of the project. */
+  runtimeHint?: string
 }
 
 export interface SkillEntry extends SkillDefinition {
@@ -134,6 +138,7 @@ export function formatSkillActivationBody(skill: SkillDefinition): string {
   lines.push(
     'Relative paths in this skill (e.g., scripts/foo.sh, references/api.md) are resolved against the base directory above.',
   )
+  if (skill.runtimeHint) lines.push('', skill.runtimeHint)
   if (skill.files.length > 0) {
     lines.push('', 'Files in this skill directory:')
     const shown = skill.files.slice(0, MAX_RENDERED_FILES)

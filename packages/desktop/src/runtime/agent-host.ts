@@ -198,6 +198,13 @@ import { importSkillIntoUserDir } from './skill-import.js'
 import { installSkillsFromCommand, isPluginInstallCommand } from './skill-install-command.js'
 import type { CopiedSkill } from './skill-install-command.js'
 import { assertGitHubSkillUrl, installSkillHubSkill, searchSkillMarket } from './skill-market.js'
+import {
+  applySkillRuntimeHints,
+  clearLegacySkillRuntime as clearLegacyRuntime,
+  clearSkillRuntime as clearRuntime,
+  installSkillRuntime as installRuntime,
+  skillRuntimeView,
+} from './skill-runtime.js'
 import { DEFAULT_TASK_MODE, isTaskMode, taskModeInstruction } from './task-modes.js'
 import type { TaskMode } from './task-modes.js'
 import { exportUserBackup, importUserBackup } from './user-backup.js'
@@ -2355,6 +2362,7 @@ export class AgentHost {
       pluginId: skill.pluginId,
       enabled: !skill.disabled,
       removable: skill.source === 'user' && !skill.pluginId,
+      runtime: skillRuntimeView(skill),
     }))
     const tools: ToolSettingsView[] = Object.entries(toolRegistry).map(([name, tool]) => {
       const meta = TOOL_META[name]
@@ -2535,7 +2543,7 @@ export class AgentHost {
     await setSkillDisabled(name, 'user', !enabled)
     const bootstrap = this.requireBootstrap()
     if (bootstrap.skillRegistry) {
-      await reloadSkillRegistry(bootstrap.skillRegistry, { extraDirs: bootstrap.skillExtraDirs })
+      await this.reloadSkillsRegistry(bootstrap.skillRegistry, bootstrap.skillExtraDirs)
     }
     this.invalidatePromptCache()
     return this.settingsResult()
@@ -2549,6 +2557,46 @@ export class AgentHost {
     return this.settingsResult()
   }
 
+  /** Install a skill's declared dependencies into its isolated runtime dir. */
+  async installSkillRuntime(name: string): Promise<SettingsActionResult> {
+    this.assertIdle()
+    const registry = this.requireBootstrap().skillRegistry
+    if (!registry) throw new Error('skills-unavailable')
+    const entry = registry.getEntry(name)
+    if (!entry) throw new Error(`skill-not-found: ${name}`)
+    await refreshShellEnvironment()
+    await installRuntime({ name: entry.name, dir: entry.dir })
+    applySkillRuntimeHints(registry)
+    this.invalidatePromptCache()
+    return this.settingsResult()
+  }
+
+  async clearSkillRuntime(name: string): Promise<SettingsActionResult> {
+    this.assertIdle()
+    const registry = this.requireBootstrap().skillRegistry
+    if (!registry) throw new Error('skills-unavailable')
+    const entry = registry.getEntry(name)
+    if (!entry) throw new Error(`skill-not-found: ${name}`)
+    clearRuntime({ name: entry.name, dir: entry.dir })
+    applySkillRuntimeHints(registry)
+    return this.settingsResult()
+  }
+
+  /** Remove legacy dependency folders created inside the skill directory. */
+  async clearLegacySkillRuntime(name: string): Promise<SettingsActionResult> {
+    this.assertIdle()
+    const registry = this.requireBootstrap().skillRegistry
+    if (!registry) throw new Error('skills-unavailable')
+    const entry = registry.getEntry(name)
+    if (!entry) throw new Error(`skill-not-found: ${name}`)
+    const removed = clearLegacyRuntime({ name: entry.name, dir: entry.dir })
+    applySkillRuntimeHints(registry)
+    if (removed.length > 0) {
+      this.send({ type: 'runtime:log', level: 'info', message: `cleaned legacy skill runtime: ${removed.join(', ')}` })
+    }
+    return this.settingsResult()
+  }
+
   /** Re-read the login shell environment, then rebuild plugins/MCP/skills so
    *  newly exported variables and installed CLIs take effect immediately. */
   async refreshEnvironment(): Promise<EnvironmentRefreshResult> {
@@ -2558,10 +2606,18 @@ export class AgentHost {
     return { ...(await this.settingsResult()), environment }
   }
 
+  private async reloadSkillsRegistry(
+    registry: NonNullable<RuntimeBootstrap['skillRegistry']>,
+    extraDirs: RuntimeBootstrap['skillExtraDirs'],
+  ): Promise<void> {
+    await reloadSkillRegistry(registry, { extraDirs })
+    applySkillRuntimeHints(registry)
+  }
+
   private async reloadSkillsNow(): Promise<void> {
     const bootstrap = this.requireBootstrap()
     if (!bootstrap.skillRegistry) return
-    await reloadSkillRegistry(bootstrap.skillRegistry, { extraDirs: bootstrap.skillExtraDirs })
+    await this.reloadSkillsRegistry(bootstrap.skillRegistry, bootstrap.skillExtraDirs)
     this.invalidatePromptCache()
   }
 
@@ -2718,7 +2774,7 @@ export class AgentHost {
     const registry = bootstrap.skillRegistry
     const before = new Set(registry?.listAll().map((skill) => skill.name) ?? [])
     const { dir, sourceName } = await importSkillIntoUserDir(sourcePath)
-    if (registry) await reloadSkillRegistry(registry, { extraDirs: bootstrap.skillExtraDirs })
+    if (registry) await this.reloadSkillsRegistry(registry, bootstrap.skillExtraDirs)
     if (!registry?.getEntry(sourceName)) {
       await fs.promises.rm(dir, { recursive: true, force: true })
       throw new Error('未能加载技能，请检查 SKILL.md 的 frontmatter（至少需要 name 和 description）')
@@ -2787,7 +2843,7 @@ export class AgentHost {
   private async finishSkillInstall(copied: CopiedSkill[], before: Set<string>): Promise<SkillImportResult> {
     const bootstrap = this.requireBootstrap()
     const registry = bootstrap.skillRegistry
-    if (registry) await reloadSkillRegistry(registry, { extraDirs: bootstrap.skillExtraDirs })
+    if (registry) await this.reloadSkillsRegistry(registry, bootstrap.skillExtraDirs)
 
     const loaded = copied.filter((item) => registry?.getEntry(item.sourceName))
     for (const item of copied) {
@@ -2941,7 +2997,7 @@ export class AgentHost {
     }
     await fs.promises.rm(resolved, { recursive: true, force: true })
     if (bootstrap.skillRegistry) {
-      await reloadSkillRegistry(bootstrap.skillRegistry, { extraDirs: bootstrap.skillExtraDirs })
+      await this.reloadSkillsRegistry(bootstrap.skillRegistry, bootstrap.skillExtraDirs)
     }
     this.invalidatePromptCache()
     return this.settingsResult()

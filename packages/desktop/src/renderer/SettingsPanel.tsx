@@ -26,6 +26,7 @@ import type {
   SkillMarketEntryView,
   SkillMarketListView,
   SkillMarketProvider,
+  SkillRuntimeView,
   TestConnectionResult,
   UpdateCheckResult,
   UpdateDownloadView,
@@ -203,6 +204,7 @@ export function SettingsPanel({
   } | null>(null)
   const [uninstallId, setUninstallId] = useState<string | null>(null)
   const [removeSkillName, setRemoveSkillName] = useState<string | null>(null)
+  const [runtimeConfirm, setRuntimeConfirm] = useState<string | null>(null)
   const [library, setLibrary] = useState<LibraryStatsView | null>(null)
   const [libraryBusy, setLibraryBusy] = useState<string | null>(null)
   const [libraryProgress, setLibraryProgress] = useState<string | null>(null)
@@ -422,6 +424,14 @@ export function SettingsPanel({
     if (result) setNotice(t('首选搜索服务已更新'))
   }
 
+  const skillRuntimeLabel = (runtime: SkillRuntimeView): string => {
+    if (runtime.status === 'ready') return t('依赖已就绪')
+    if (runtime.status === 'stale') return t('依赖需更新')
+    if (runtime.status === 'error') return t('依赖安装失败')
+    if (runtime.status === 'unsupported') return t('不支持的依赖类型')
+    return runtime.manifests.length > 0 ? t('依赖未安装') : t('无依赖清单')
+  }
+
   const renderSearchTest = (provider: string): ReactNode => {
     const result = searchTestResults[provider]
     if (!result) return null
@@ -518,6 +528,26 @@ export function SettingsPanel({
   const reloadSkills = async (): Promise<void> => {
     const result = await apply('skills:reload', {}, 'skills-reload')
     if (result) setNotice(t('技能列表已重新扫描'))
+  }
+
+  const installSkillRuntime = async (name: string): Promise<void> => {
+    const result = await apply('skills:runtime-install', { name }, `skill-runtime:${name}`)
+    if (result) setNotice(t('技能依赖已安装'))
+  }
+
+  const clearSkillRuntime = async (name: string): Promise<void> => {
+    const result = await apply('skills:runtime-clear', { name }, `skill-runtime:${name}`)
+    if (result) setNotice(t('技能运行时已清除'))
+  }
+
+  const clearLegacySkillRuntime = async (name: string): Promise<void> => {
+    if (runtimeConfirm !== name) {
+      setRuntimeConfirm(name)
+      return
+    }
+    setRuntimeConfirm(null)
+    const result = await apply('skills:runtime-clear-legacy', { name }, `skill-runtime:${name}`)
+    if (result) setNotice(t('技能目录内的旧运行时已清理'))
   }
 
   const refreshEnvironment = async (): Promise<void> => {
@@ -1369,6 +1399,7 @@ export function SettingsPanel({
               <p className="settings-note">
                 {t('技能来自用户目录、项目目录和插件贡献。启用状态写入用户设置，下一轮对话生效。')}
               </p>
+              <p className="settings-hint">{t('依赖会安装到 ~/.x-code/skill-runtime，不会写入项目。')}</p>
               <div className="settings-actions">
                 <button
                   className="btn"
@@ -1423,6 +1454,59 @@ export function SettingsPanel({
                     <div className="setting-meta">
                       {skill.source === 'user' ? t('用户级') : t('项目级')}
                       {skill.pluginId ? t(' · 插件 {{id}}', { id: skill.pluginId }) : ''}
+                    </div>
+                    <div className="skill-runtime" data-testid={`skill-runtime-${skill.name}`}>
+                      <span
+                        className={`settings-badge ${skill.runtime.status === 'ready' ? 'on' : ''}`}
+                        title={skill.runtime.message ?? ''}
+                      >
+                        {skillRuntimeLabel(skill.runtime)}
+                      </span>
+                      {skill.runtime.manifests.length > 0 ? (
+                        <span className="provider-meta">{skill.runtime.manifests.join(', ')}</span>
+                      ) : null}
+                      {skill.runtime.legacy ? (
+                        <span className="settings-badge skill-runtime-legacy">{t('技能目录内有旧运行时')}</span>
+                      ) : null}
+                      {skill.runtime.message ? <span className="provider-hint">{skill.runtime.message}</span> : null}
+                      {skill.runtime.manifests.length > 0 || skill.runtime.legacy ? (
+                        <code className="skill-runtime-dir" title={skill.runtime.dir}>
+                          {skill.runtime.dir}
+                        </code>
+                      ) : null}
+                      <div className="skill-runtime-actions">
+                        {skill.runtime.manifests.length > 0 && skill.runtime.status !== 'unsupported' ? (
+                          <button
+                            className="btn"
+                            disabled={busy !== null}
+                            onClick={() => void installSkillRuntime(skill.name)}
+                          >
+                            {busy === `skill-runtime:${skill.name}`
+                              ? t('安装中…')
+                              : skill.runtime.status === 'ready'
+                                ? t('重新安装依赖')
+                                : t('安装依赖')}
+                          </button>
+                        ) : null}
+                        {skill.runtime.status !== 'none' ? (
+                          <button
+                            className="btn btn-quiet"
+                            disabled={busy !== null}
+                            onClick={() => void clearSkillRuntime(skill.name)}
+                          >
+                            {t('清除运行时')}
+                          </button>
+                        ) : null}
+                        {skill.runtime.legacy ? (
+                          <button
+                            className={`btn ${runtimeConfirm === skill.name ? 'danger' : 'btn-quiet'}`}
+                            disabled={busy !== null}
+                            onClick={() => void clearLegacySkillRuntime(skill.name)}
+                          >
+                            {runtimeConfirm === skill.name ? t('确认清理旧运行时') : t('清理旧运行时')}
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                   <div className="setting-actions-col">

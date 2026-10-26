@@ -27,6 +27,7 @@ describe('macOS shell sandbox profile', () => {
     expect(profile).toContain('(deny network*)')
     expect(profile).toContain('(subpath "/tmp/work space")')
     expect(profile).toContain('/private/tmp')
+    expect(profile).toContain('skill-runtime')
     expect(profile).toContain('.ssh')
     expect(profile).toContain('desktop-secrets.json')
   })

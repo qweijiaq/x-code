@@ -132,6 +132,24 @@ function terminationDisposition(result: ProcessTerminationResult): ShellTerminat
   return result.failure ? 'failed' : 'still-running'
 }
 
+/** A non-zero exit is a normal command result (`grep` with no match,
+ *  `command -v` not found, a failing test). Only transport/spawn/timeout/
+ *  signal failures are tool errors; the exit code stays in the payload. */
+export function shellTransportError(session: {
+  spawnOutcome?: string
+  timedOut?: boolean
+  failure?: unknown
+  signal?: string
+  exitCode?: number
+}): boolean {
+  return (
+    session.spawnOutcome === 'failed' ||
+    session.timedOut === true ||
+    session.failure !== undefined ||
+    session.signal !== undefined
+  )
+}
+
 export class UnifiedShellSessionManager implements ShellSessionController {
   readonly managerInstanceId: string
   readonly ownerSessionId: string
@@ -1293,13 +1311,7 @@ export class UnifiedShellSessionManager implements ShellSessionController {
   }
 
   private terminalIsError(session: ShellSession): boolean {
-    return (
-      session.spawnOutcome === 'failed' ||
-      session.timedOut ||
-      session.failure !== undefined ||
-      session.signal !== undefined ||
-      (session.exitCode !== undefined && session.exitCode !== 0)
-    )
+    return shellTransportError(session)
   }
 
   private summary(session: ShellSession): ShellSessionSummary {

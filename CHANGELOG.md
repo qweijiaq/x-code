@@ -1,3 +1,15 @@
+## v1.0.2 (2026-10-26)
+
+### Features
+
+- add an isolated per-skill runtime (`~/.x-code/skill-runtime`) with dependency detection, install, clear and legacy-runtime cleanup
+- append runtime paths to skill activation so scripts use the isolated Python/Node environment instead of the project
+
+### Bug Fixes
+
+- treat non-zero shell exits as normal command results; only spawn, timeout, signal and sandbox failures are tool errors
+- allow the macOS shell sandbox to write inside the app-managed skill runtime directory
+
 ## v1.0.1 (2026-10-26)
 
 ### Features

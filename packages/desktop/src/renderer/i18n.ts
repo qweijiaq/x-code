@@ -424,6 +424,23 @@ export const EN: Record<string, string> = {
   '，更新 {{names}}': ', updated {{names}}',
   '环境刷新失败：{{message}}': 'Environment refresh failed: {{message}}',
   未知错误: 'Unknown error',
+  依赖已就绪: 'Dependencies ready',
+  依赖需更新: 'Dependencies outdated',
+  依赖安装失败: 'Dependency install failed',
+  不支持的依赖类型: 'Unsupported dependency type',
+  依赖未安装: 'Dependencies not installed',
+  无依赖清单: 'No dependency manifest',
+  技能目录内有旧运行时: 'Legacy runtime inside skill folder',
+  重新安装依赖: 'Reinstall dependencies',
+  安装依赖: 'Install dependencies',
+  清除运行时: 'Clear runtime',
+  确认清理旧运行时: 'Confirm legacy cleanup',
+  清理旧运行时: 'Clean legacy runtime',
+  技能依赖已安装: 'Skill dependencies installed',
+  技能运行时已清除: 'Skill runtime cleared',
+  '依赖会安装到 ~/.x-code/skill-runtime，不会写入项目。':
+    'Dependencies are installed under ~/.x-code/skill-runtime, never in the project.',
+  技能目录内的旧运行时已清理: 'Legacy skill runtime cleaned',
   '技能来自用户目录、项目目录和插件贡献。启用状态写入用户设置，下一轮对话生效。':
     'Skills come from the user directory, the project, and plugins. Toggles are saved to user settings and apply on the next turn.',
   '支持粘贴 npx skills add / add-skill / xc plugin install 命令；只解析参数，不会执行 shell。':

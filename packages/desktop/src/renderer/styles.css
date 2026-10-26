@@ -1492,6 +1492,36 @@ body::before {
   overflow-wrap: anywhere;
 }
 
+.skill-runtime {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.skill-runtime-dir {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink-45);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-runtime-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.skill-runtime-legacy {
+  color: var(--cinnabar);
+}
+
 .settings-toggle {
   flex: none;
   padding: 6px 12px;

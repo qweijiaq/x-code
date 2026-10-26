@@ -76,6 +76,8 @@ function sensitivePaths(): string[] {
 export function sandboxProfileText(config: ShellSandboxConfig = current): string {
   const workspace = path.resolve(config.workspace)
   const temp = os.tmpdir()
+  const xcodeRoot = process.env.X_CODE_HOME?.trim() || path.join(os.homedir(), '.x-code')
+  const skillRuntime = path.join(xcodeRoot, 'skill-runtime')
   const lines = ['(version 1)', '(allow default)']
   if (!config.allowNetwork) lines.push('(deny network*)')
   lines.push(
@@ -83,6 +85,9 @@ export function sandboxProfileText(config: ShellSandboxConfig = current): string
     '(allow file-write*',
     `  (subpath ${sbplString(workspace)})`,
     `  (subpath ${sbplString(temp)})`,
+    // Skill scripts may download models/dependencies into their isolated
+    // runtime; it is app-managed and contains no credentials.
+    `  (subpath ${sbplString(skillRuntime)})`,
     '  (subpath "/private/tmp")',
     '  (subpath "/private/var/folders")',
     '  (literal "/dev/null")',

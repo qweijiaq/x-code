@@ -230,6 +230,17 @@ export interface ProviderSettingsView {
   modelId?: string
 }
 
+export type SkillRuntimeStatus = 'none' | 'ready' | 'stale' | 'error' | 'unsupported'
+
+export interface SkillRuntimeView {
+  dir: string
+  status: SkillRuntimeStatus
+  manifests: string[]
+  /** Dependency folders left inside the skill directory by older installers. */
+  legacy: boolean
+  message?: string
+}
+
 export interface SkillSettingsView {
   name: string
   description: string
@@ -237,6 +248,7 @@ export interface SkillSettingsView {
   pluginId?: string
   enabled: boolean
   removable: boolean
+  runtime: SkillRuntimeView
 }
 
 export type McpServerStatusView =
@@ -1039,6 +1051,9 @@ export interface RequestMap {
   'skills:import': { params: { path: string }; result: SkillImportResult }
   'skills:install-command': { params: { command: string }; result: SkillImportResult }
   'skills:reload': { params: Record<string, never>; result: SettingsActionResult }
+  'skills:runtime-install': { params: { name: string }; result: SettingsActionResult }
+  'skills:runtime-clear': { params: { name: string }; result: SettingsActionResult }
+  'skills:runtime-clear-legacy': { params: { name: string }; result: SettingsActionResult }
   'settings:refresh-environment': { params: Record<string, never>; result: EnvironmentRefreshResult }
   'skill-market:search': {
     params: { provider: SkillMarketProvider; query: string; limit?: number }

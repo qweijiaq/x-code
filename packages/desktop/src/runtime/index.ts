@@ -625,6 +625,18 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.reloadSkills())
       }
+      case 'skills:runtime-install': {
+        await ensureInitialized()
+        return ok(request.id, await host.installSkillRuntime(request.params.name))
+      }
+      case 'skills:runtime-clear': {
+        await ensureInitialized()
+        return ok(request.id, await host.clearSkillRuntime(request.params.name))
+      }
+      case 'skills:runtime-clear-legacy': {
+        await ensureInitialized()
+        return ok(request.id, await host.clearLegacySkillRuntime(request.params.name))
+      }
       case 'settings:refresh-environment': {
         await ensureInitialized()
         return ok(request.id, await host.refreshEnvironment())
