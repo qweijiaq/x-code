@@ -1,3 +1,12 @@
+## v1.0.3 (2026-10-26)
+
+### Bug Fixes
+
+- show update download progress (bytes, total, speed, percentage) instead of an indefinite "downloading" label
+- replace the fixed 10-minute download cap with a 60-second idle timeout so slow but healthy 245 MB downloads can finish
+- download updates to the system Downloads folder by default, let users choose another path, and show/reveal the saved file
+- remove the partial file when a checksum or download fails
+
 ## v1.0.2 (2026-10-26)
 
 ### Features
