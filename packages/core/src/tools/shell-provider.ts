@@ -47,7 +47,7 @@ function baseSpawnOptions(opts: ShellSpawnOptions) {
     cwd: opts.cwd,
     reject: false,
     cancelSignal: opts.signal,
-    env: { ...sanitizeShellEnv(opts.env ?? process.env), PYTHONIOENCODING: 'utf-8' },
+    env: { ...sanitizeShellEnv(opts.env ?? process.env), PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
   } as const
 }
 

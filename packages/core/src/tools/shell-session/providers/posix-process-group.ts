@@ -285,7 +285,7 @@ export class PosixProcessGroupProvider implements ManagedShellProvider {
     const wrapped = wrapShellSpawn(this.executable, ['-c', command])
     const child = spawn(wrapped.executable, wrapped.args, {
       cwd: options.cwd,
-      env: { ...sanitizeShellEnv(options.env ?? process.env), PYTHONIOENCODING: 'utf-8' },
+      env: { ...sanitizeShellEnv(options.env ?? process.env), PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
       detached: true,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,

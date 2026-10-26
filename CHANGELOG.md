@@ -12,6 +12,7 @@
 - add a cancel button for in-flight update downloads
 - use Chromium's network stack (system proxy) and a longer timeout for update checks instead of Node fetch, which aborted with “operation timed out” behind a proxy
 - fix background task elapsed time showing 00:00 (session timestamps use Date.now)
+- set `PYTHONUNBUFFERED=1` for agent shells so long-running Python tasks stream output to the background panel
 - add a “stop waiting” action that aborts a turn stuck on a background shell and immediately runs queued prompts
 - remove the partial file when a checksum or download fails
 

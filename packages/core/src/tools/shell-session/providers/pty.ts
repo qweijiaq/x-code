@@ -74,6 +74,7 @@ function stringEnvironment(env: NodeJS.ProcessEnv | undefined): Record<string, s
   values.TERM ??= 'xterm-256color'
   values.COLORTERM ??= 'truecolor'
   values.PYTHONIOENCODING = 'utf-8'
+  values.PYTHONUNBUFFERED = '1'
   return values
 }
 
