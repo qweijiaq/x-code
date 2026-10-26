@@ -93,7 +93,7 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 
 ![Skill marketplace](shot:skills)
 
-- **Skills**: Settings → Skills lists installed skills, enables/disables them, imports files or folders, or runs an `npx skills add ...` command.
+- **Skills**: Settings → Skills lists installed skills, enables/disables them, imports files or folders, or runs an `npx skills add ...` command. The list hot-reloads after installs; use **Rescan** for an immediate refresh, or **Refresh environment** after installing a CLI dependency outside the app.
 - **Skill marketplace**: Settings → Skill marketplace embeds SkillHub and SkillsMP.
   - SkillHub: China-first catalog, no login; installs validate zip paths, size and structure.
   - SkillsMP: read-only community catalog with an anonymous hourly allowance; set `SKILLSMP_API_KEY` for account allowance. Skills install from the GitHub repository in each result.
@@ -109,7 +109,7 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **Three levels**: always allow / ask / deny. Destructive shell commands, path checks and plan mode are evaluated before allow rules.
 - **Permission rules**: Settings → Permissions lists persisted "don't ask again" rules; add or remove them. Shell supports prefix, exact and whole-tool rules; other tools are whole-tool only.
 - **Always allow**: Settings → Tools enables it per tool or globally. Global always-allow is equivalent to trust mode; use only when fully trusted.
-- **Shell sandbox (macOS)**: agent shell commands run in a workspace-write sandbox; writes are limited to the workspace and temp dirs, sensitive paths are unreadable, and the network is off by default. The built-in terminal is not sandboxed; Hooks and stdio MCP can opt in.
+- **Shell sandbox (macOS)**: agent shell commands run in a workspace-write sandbox; writes are limited to the workspace and temp dirs, sensitive paths are unreadable, and the network is off by default. The built-in terminal is not sandboxed; Hooks and stdio MCP can opt in. Terminal tabs start as login shells, and the agent refreshes PATH from your login shell before each turn (cached for 30s), so tools installed in another terminal usually need no app restart.
 - **Project trust**: project hooks and project MCP servers do not run before trust; plugin installs have their own consent preview.
 - **Secrets**: provider API keys use OS secure storage or a `0600` file and never cross into the renderer. ChatGPT tokens are a plaintext file; protect `~/.x-code/auth/`.
 - **Web search**: `webSearch` needs a search-service key (Tavily's free tier is recommended). Configure it in Settings → Tools → Search service. Without a key the model cannot search the web and is told how to configure one; `webFetch` still fetches pages directly. Search keys are stored separately from model keys and stay on this device. With several services configured, pick one under "Preferred search service"; "Test connection" verifies a key before you rely on it.
@@ -129,7 +129,7 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 
 - **Models and keys**: providers, keys, base URLs, custom models, connection tests, context limits.
 - **Project**: model / task mode / automatic-check overrides for the current workspace.
-- **Skills**: import, install command, enablement.
+- **Skills**: import, install command, enablement, rescan and environment refresh.
 - **Skill marketplace**: SkillHub / SkillsMP search and install, MCP registration.
 - **Commands**: user and project slash commands.
 - **Hooks**: lifecycle scripts and project trust.

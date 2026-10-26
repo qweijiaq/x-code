@@ -1,3 +1,13 @@
+## v1.0.1 (2026-10-26)
+
+### Bug Fixes
+
+- keep IME candidate selection (Enter while composing) from submitting the composer
+- refresh PATH and environment variables from the login shell, and open the built-in terminal as a login shell
+- rescan skill directories when SKILL.md files change and discover nested `@scope/<name>` layouts
+- add Settings → Skills actions to rescan skills and refresh the environment
+- give the app icon transparent macOS margins instead of a white square
+
 ## v1.0.0 (2026-10-25)
 
 首个桌面版正式发布（macOS arm64）。桌面端与 CLI 共用同一运行时、工具和
