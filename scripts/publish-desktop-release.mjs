@@ -111,9 +111,18 @@ process.on('exit', () => {
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 
 function api(method, url, bodyPath, options = {}) {
-  const args = ['--config', configPath, '--silent', '--show-error', '--fail-with-body', '--max-time', '1800']
+  const isUpload = url.includes('uploads.github.com')
+  const args = [
+    '--config',
+    configPath,
+    isUpload ? '--progress-bar' : '--silent',
+    '--show-error',
+    '--fail-with-body',
+    '--max-time',
+    '1800',
+  ]
   args.push('-X', method, '-H', 'Accept: application/vnd.github+json', '-H', 'X-GitHub-Api-Version: 2022-11-28')
-  if (url.includes('uploads.github.com')) {
+  if (isUpload) {
     // HTTP/2 uploads intermittently reset behind proxies; HTTP/1.1 is slower
     // but reliable for 200 MB+ assets.
     args.push('--http1.1', '-H', 'Content-Type: application/octet-stream')
@@ -122,11 +131,17 @@ function api(method, url, bodyPath, options = {}) {
   args.push(url)
   const attempts = options.retries ?? 1
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    const result = spawnSync('curl', args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 })
+    const result = spawnSync(
+      'curl',
+      args,
+      isUpload
+        ? { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 10 * 1024 * 1024 }
+        : { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 },
+    )
     if (result.status === 0) return result.stdout ? JSON.parse(result.stdout) : null
     const body = (result.stdout || '').trim()
     if (options.allow404 && /"status"\s*:\s*"404"/.test(body)) return null
-    const detail = (body || result.stderr).trim().slice(0, 400)
+    const detail = (body || result.stderr || '').trim().slice(0, 400)
     if (attempt < attempts) {
       console.log(`upload attempt ${attempt}/${attempts} failed (${detail}); retrying in 5s`)
       sleepSync(5_000)
@@ -148,14 +163,15 @@ fs.writeFileSync(
   }),
 )
 
-let release = api('GET', `https://api.github.com/repos/${repo}/releases/tags/${tag}`, undefined, {
-  allow404: true,
-})
-if (release) {
-  if (!release.draft) {
-    console.log(`release ${tag} is already published: ${release.html_url}`)
-    process.exit(0)
-  }
+const releases = api('GET', `https://api.github.com/repos/${repo}/releases?per_page=100`)
+const existingRelease = releases.find((entry) => entry.tag_name === tag)
+let release = null
+if (existingRelease && !existingRelease.draft) {
+  console.log(`release ${tag} is already published: ${existingRelease.html_url}`)
+  process.exit(0)
+}
+if (existingRelease?.draft) {
+  release = existingRelease
   console.log(`reusing draft release ${release.id}`)
 } else {
   release = api('POST', `https://api.github.com/repos/${repo}/releases`, payloadPath)
