@@ -1071,6 +1071,19 @@ function installIpc(): void {
         },
       }
     }
+    if (request?.method === 'app:pick-update-path') {
+      const suggested = String((request.params as { suggestedName?: string }).suggestedName ?? '').trim()
+      const safeName = path.basename(suggested || `X-Code-${currentAppVersion()}-arm64.dmg`)
+      const options: Electron.SaveDialogOptions = {
+        title: '选择更新安装包保存位置',
+        defaultPath: path.join(app.getPath('downloads'), safeName),
+        filters: [{ name: 'Installer', extensions: ['dmg', 'zip', 'exe', 'AppImage'] }],
+      }
+      const result = senderWindow
+        ? await dialog.showSaveDialog(senderWindow, options)
+        : await dialog.showSaveDialog(options)
+      return { id: request.id, ok: true, result: { path: result.canceled ? null : (result.filePath ?? null) } }
+    }
     if (request?.method === 'app:open-in-editor') {
       const params = request.params as { filePath?: string; line?: number; column?: number }
       const filePath = typeof params.filePath === 'string' ? params.filePath : ''
@@ -1249,6 +1262,8 @@ function installIpc(): void {
     }
     if (request?.method === 'app:download-update') {
       const feed = (request.params as { feed?: string }).feed?.trim() ?? ''
+      const requestedPath = (request.params as { destPath?: string }).destPath?.trim()
+      const destPath = requestedPath ? path.resolve(requestedPath) : undefined
       try {
         if (!feed.startsWith('https://')) throw new Error('更新源必须是 https URL')
         const response = await fetch(feed, {
@@ -1262,7 +1277,8 @@ function installIpc(): void {
           release,
           platform: process.platform,
           arch: process.arch,
-          destDir: path.join(app.getPath('temp'), 'xcode-updates'),
+          destDir: destPath ? path.dirname(destPath) : app.getPath('downloads'),
+          ...(destPath ? { destPath } : {}),
           onProgress: (progress) => {
             if (!senderWindow || senderWindow.isDestroyed()) return
             senderWindow.webContents.send('runtime:event', {

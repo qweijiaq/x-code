@@ -196,6 +196,7 @@ export function SettingsPanel({
     totalBytes?: number
     bytesPerSecond?: number
   } | null>(null)
+  const [updateDestPath, setUpdateDestPath] = useState('')
   const [updateBusy, setUpdateBusy] = useState(false)
   const [installCommand, setInstallCommand] = useState('')
   const [skillCommand, setSkillCommand] = useState('')
@@ -904,6 +905,18 @@ export function SettingsPanel({
     }
   }
 
+  const pickUpdateDestination = async (): Promise<void> => {
+    const response = await request('app:pick-update-path', {
+      suggestedName: updateResult?.artifact,
+    })
+    if (!response.ok) {
+      setError(response.error.message)
+      return
+    }
+    const picked = (response.result as { path: string | null }).path
+    if (picked) setUpdateDestPath(picked)
+  }
+
   const downloadUpdate = async (): Promise<void> => {
     setUpdateBusy(true)
     setUpdateDownload(null)
@@ -911,7 +924,10 @@ export function SettingsPanel({
     setError(null)
     setNotice(null)
     try {
-      const response = await request('app:download-update', { feed: updateFeedDraft.trim() })
+      const response = await request('app:download-update', {
+        feed: updateFeedDraft.trim(),
+        ...(updateDestPath.trim() ? { destPath: updateDestPath.trim() } : {}),
+      })
       if (!response.ok) {
         setError(response.error.message)
         return
@@ -1209,6 +1225,16 @@ export function SettingsPanel({
                   {updateResult.notes ? ` · ${updateResult.notes}` : ''}
                 </div>
               ) : null}
+              <div className="update-destination">
+                <span className="provider-meta">
+                  {t('下载位置：{{path}}', {
+                    path: updateDestPath || t('系统下载文件夹'),
+                  })}
+                </span>
+                <button className="btn btn-quiet" disabled={updateBusy} onClick={() => void pickUpdateDestination()}>
+                  {t('选择位置')}
+                </button>
+              </div>
               {updateBusy && updateProgress ? (
                 <div className="update-progress-wrap" data-testid="update-progress">
                   <div className="update-progress">
@@ -1238,6 +1264,13 @@ export function SettingsPanel({
                     file: updateDownload.fileName,
                     size: (updateDownload.bytes / 1024 / 1024).toFixed(1),
                   })}
+                  <div className="update-download-path">{updateDownload.filePath}</div>
+                  <button
+                    className="btn btn-quiet"
+                    onClick={() => void request('app:reveal-path', { path: updateDownload.filePath })}
+                  >
+                    {t('在 Finder 中显示')}
+                  </button>
                 </div>
               ) : null}
             </div>

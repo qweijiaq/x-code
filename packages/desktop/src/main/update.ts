@@ -94,6 +94,8 @@ export interface DownloadUpdateOptions {
   /** Injectable for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch
   maxBytes?: number
+  /** Exact destination chosen by the user; defaults to destDir/<artifact name>. */
+  destPath?: string
   onProgress?: (progress: { receivedBytes: number; totalBytes?: number; bytesPerSecond?: number }) => void
 }
 
@@ -127,10 +129,12 @@ export async function downloadUpdateArtifact(options: DownloadUpdateOptions): Pr
     if (!response.body) throw new Error('下载响应为空')
     const totalBytes = Number.isFinite(declared) && declared > 0 ? declared : undefined
 
-    const fileName = path.basename(artifact.file)
-    await fs.promises.mkdir(options.destDir, { recursive: true })
-    const tempPath = path.join(options.destDir, `${fileName}.part`)
-    const finalPath = path.join(options.destDir, fileName)
+    const finalPath = options.destPath
+      ? path.resolve(options.destPath)
+      : path.join(options.destDir, path.basename(artifact.file))
+    const fileName = path.basename(finalPath)
+    await fs.promises.mkdir(path.dirname(finalPath), { recursive: true })
+    const tempPath = `${finalPath}.part`
     const hash = createHash('sha256')
     let bytes = 0
     const startedAt = Date.now()

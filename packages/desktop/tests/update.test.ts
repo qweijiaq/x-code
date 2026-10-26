@@ -100,6 +100,22 @@ describe('downloadUpdateArtifact', () => {
     expect(events.at(-1)).toMatchObject({ receivedBytes: payload.length, totalBytes: payload.length })
   })
 
+  it('writes to an explicit destination path', async () => {
+    const custom = path.join(dir, 'nested', 'my-installer.dmg')
+    const result = await downloadUpdateArtifact({
+      feed: 'https://example.com/x-code/RELEASE.json',
+      release: release(),
+      platform: 'darwin',
+      arch: 'arm64',
+      destDir: dir,
+      destPath: custom,
+      fetchImpl: async () => new Response(payload),
+    })
+    expect(result.filePath).toBe(custom)
+    expect(result.fileName).toBe('my-installer.dmg')
+    expect(fs.readFileSync(custom)).toEqual(payload)
+  })
+
   it('deletes the partial file when the checksum does not match', async () => {
     await expect(
       downloadUpdateArtifact({

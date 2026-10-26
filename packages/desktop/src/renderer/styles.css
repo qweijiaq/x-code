@@ -7067,6 +7067,22 @@ iframe.file-preview {
   width: 100%;
 }
 
+.update-destination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.update-download-path {
+  margin: 4px 0;
+  color: var(--ink-45);
+  font-family: var(--mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
 .update-progress {
   height: 4px;
   overflow: hidden;

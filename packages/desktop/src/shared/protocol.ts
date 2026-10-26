@@ -1038,7 +1038,14 @@ export interface RequestMap {
     result: { deletedFiles: number; freedBytes: number; usage: StorageUsageView }
   }
   'app:check-update': { params: { feed: string }; result: UpdateCheckResult }
-  'app:download-update': { params: { feed: string }; result: UpdateDownloadView }
+  'app:download-update': {
+    params: { feed: string; destPath?: string }
+    result: UpdateDownloadView
+  }
+  'app:pick-update-path': {
+    params: { suggestedName?: string }
+    result: { path: string | null }
+  }
   'app:open-update': { params: { filePath: string }; result: null }
   'settings:set-shell-sandbox': {
     params: { enabled?: boolean; allowNetwork?: boolean; extensions?: boolean }
