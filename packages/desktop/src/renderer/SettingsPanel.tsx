@@ -2090,13 +2090,50 @@ export function SettingsPanel({
                   '禁用后，下一轮对话不再向模型提供该工具。禁用任意工具会切换到受限工具面（内置工具直接注入、不再按需加载），并可能增加提示体积；全部恢复后回到默认工具面。',
                 )}
               </p>
+              {settings.shellSandbox.supported &&
+              settings.shellSandbox.enabled &&
+              !settings.shellSandbox.allowNetwork ? (
+                <div className="settings-callout" data-testid="sandbox-network-callout">
+                  <div>
+                    <strong>{t('Shell 沙箱正在阻止网络访问')}</strong>
+                    <p>
+                      {t(
+                        'Agent 执行的 npm install、git clone、curl、pip install 等联网命令会直接失败。需要联网时允许网络；也可以关闭沙箱，但会失去工作区写入限制。',
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    className="btn"
+                    disabled={busy !== null}
+                    onClick={() => void apply('settings:set-shell-sandbox', { allowNetwork: true }, 'sandbox-net')}
+                  >
+                    {busy === 'sandbox-net' ? t('设置中…') : t('允许网络')}
+                  </button>
+                </div>
+              ) : null}
+              {settings.searchProviders.every((provider) => !provider.configured) ? (
+                <div className="settings-callout" data-testid="search-missing-callout">
+                  <div>
+                    <strong>{t('还没有配置联网搜索')}</strong>
+                    <p>{t('webSearch 暂时不可用；webFetch 仍可直接打开已知网址。Tavily 提供免费额度。')}</p>
+                  </div>
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      document.getElementById('search-service')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }
+                  >
+                    {t('去配置')}
+                  </button>
+                </div>
+              ) : null}
               <div className="setting-row" data-testid="shell-sandbox">
                 <div className="setting-main">
                   <div className="setting-name">{t('Shell 沙箱（macOS）')}</div>
                   <div className="setting-desc">
                     {settings.shellSandbox.supported
                       ? t(
-                          'Agent 执行的 shell 命令运行在 workspace-write 沙箱中：仅可写入工作区与临时目录，敏感目录不可读写，网络默认禁用，密钥类环境变量会被清理。右侧终端始终不受限制；Hooks 与 MCP 可通过下方开关一并纳入沙箱。',
+                          'Agent 执行的 shell 命令运行在 workspace-write 沙箱中：仅可写入工作区与临时目录，敏感目录不可读写，网络默认禁用，密钥类环境变量会被清理。需要凭证或联网的命令可在右侧终端执行；Hooks 与 MCP 可通过下方开关一并纳入沙箱。',
                         )
                       : t('当前平台暂不支持该沙箱（仅 macOS）。')}
                   </div>
@@ -2219,7 +2256,9 @@ export function SettingsPanel({
                   </button>
                 </div>
               </div>
-              <div className="settings-section-title">{t('搜索服务')}</div>
+              <div className="settings-section-title" id="search-service">
+                {t('搜索服务')}
+              </div>
               <div className="settings-note">
                 {t(
                   'webSearch 需要联网搜索服务的 API Key。未配置时模型无法调用联网搜索（会提示配置），webFetch 直接抓取网页不受影响。密钥只保存在本机，并注入当前应用进程。',

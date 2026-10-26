@@ -288,6 +288,26 @@ export const EN: Record<string, string> = {
   'Agent 执行的 shell 命令运行在 workspace-write 沙箱中：仅可写入工作区与临时目录，敏感目录不可读写，网络默认禁用，密钥类环境变量会被清理。MCP、插件子进程与右侧终端不受此限制。':
     'Agent shell commands run in a workspace-write sandbox: writes are limited to the workspace and temp directories, credential locations are blocked, network access is off by default, and secret-looking environment variables are stripped. MCP servers, plugin subprocesses, and the interactive terminal are not covered.',
   '当前平台暂不支持该沙箱（仅 macOS）。': 'This sandbox is only available on macOS.',
+  'Agent 执行的 shell 命令运行在 workspace-write 沙箱中：仅可写入工作区与临时目录，敏感目录不可读写，网络默认禁用，密钥类环境变量会被清理。需要凭证或联网的命令可在右侧终端执行；Hooks 与 MCP 可通过下方开关一并纳入沙箱。':
+    'Agent shell commands run in a workspace-write sandbox: writes are limited to the workspace and temp directories, credential locations are blocked, network access is off by default, and secret-looking environment variables are stripped. Run commands needing credentials or network in the right-hand terminal; Hooks and MCP can be included with the switches below.',
+  'Shell 沙箱正在阻止网络访问': 'The shell sandbox is blocking network access',
+  'Agent 执行的 npm install、git clone、curl、pip install 等联网命令会直接失败。需要联网时允许网络；也可以关闭沙箱，但会失去工作区写入限制。':
+    'Network commands run by the agent — npm install, git clone, curl, pip install and the like — fail immediately. Allow network when needed, or turn the sandbox off; turning it off also removes the workspace write restriction.',
+  '沙箱 · 网络关闭': 'Sandbox · network off',
+  还没有配置联网搜索: 'No web search service configured',
+  'webSearch 暂时不可用；webFetch 仍可直接打开已知网址。Tavily 提供免费额度。':
+    'webSearch is unavailable for now; webFetch can still open known URLs. Tavily offers a free tier.',
+  去配置: 'Configure',
+  'Agent 的 Shell 正在沙箱中运行，网络访问已关闭：npm install、git clone、curl 等联网命令会失败。点击调整。':
+    'The agent shell is sandboxed with network access off: npm install, git clone, curl and similar commands will fail. Click to adjust.',
+  沙箱设置: 'Sandbox settings',
+  '命令没能联网。Shell 沙箱当前禁止网络访问；如果本机网络正常，允许网络后重试。':
+    'The command could not reach the network. The shell sandbox currently blocks network access; if this machine is online, allow network and retry.',
+  '命令没能联网；如果本机网络正常，请检查命令使用的代理或地址。':
+    'The command could not reach the network; if this machine is online, check the proxy or address used by the command.',
+  '命令被 Shell 沙箱拦截：只能写入工作区和临时目录。':
+    'The shell sandbox blocked this command: writes are only allowed in the workspace and temp directories.',
+  '设置中…': 'Applying…',
   允许网络: 'Allow network',
   '允许网络（点击禁用）': 'Network allowed (click to disable)',
   插件配置: 'Plugin configuration',
@@ -418,6 +438,10 @@ export const EN: Record<string, string> = {
   重新扫描: 'Rescan',
   技能列表已重新扫描: 'Skill list rescanned',
   刷新环境: 'Refresh environment',
+  '命令找不到。如果刚在电脑终端安装了它，刷新登录 shell 环境后重试。':
+    'Command not found. If you just installed it in another terminal, refresh the login-shell environment and retry.',
+  '已刷新 {{shell}} 环境，重新运行命令即可。': 'Refreshed the {{shell}} environment. Run the command again.',
+  '刷新环境失败：{{error}}': 'Environment refresh failed: {{error}}',
   '重新读取登录 shell 的 PATH 和环境变量，并重载插件与 MCP':
     'Reload PATH and environment variables from your login shell, then reload plugins and MCP',
   '环境已刷新（{{shell}}）：新增 {{added}} 个变量{{updated}}':

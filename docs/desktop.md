@@ -97,7 +97,9 @@ worktree 窗口有独立的工作区路径和 `.x-code/sessions`，不会覆盖�
   runtime 启动时加载，重启后仍然生效。
 - **设置 → 工具 → Shell 沙箱** 在 macOS 上把 agent 的 shell 限制在 workspace-write
   沙箱：只能写工作区和临时目录，敏感目录不可读写，网络默认关闭；内置终端不受
-  此限制。Hooks / stdio MCP 可以选择一并纳入沙箱。
+  此限制。Hooks / stdio MCP 可以选择一并纳入沙箱。沙箱开启且网络关闭时，输入框
+  下方常驻“沙箱 · 网络关闭”标签；联网命令失败后工具卡片会给出“允许网络”入口，
+  设置页顶部也会提示。终端强制使用 UTF-8 locale，中文输出不会乱码。
 - 项目级 Hooks 在信任项目之前不会执行；插件安装前显示权限预览。
 - 渲染进程启用 `sandbox`、`contextIsolation`，只通过 preload 暴露白名单方法；
   API Key 不会回传给渲染进程。

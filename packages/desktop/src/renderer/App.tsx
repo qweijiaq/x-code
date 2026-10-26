@@ -98,6 +98,19 @@ function formatContextTokens(count: number): string {
   return String(count)
 }
 
+const SANDBOX_NETWORK_DENIAL =
+  /(Could not resolve host|getaddrinfo (?:ENOTFOUND|EAI_AGAIN)|Network is unreachable|Failed to connect|Couldn't connect to server|ENOTFOUND|EAI_AGAIN|connect: operation not permitted)/i
+const SANDBOX_WRITE_DENIAL = /(sandbox-exec|Operation not permitted|Read-only file system)/i
+const COMMAND_NOT_FOUND =
+  /(command not found|not recognized as an internal or external command|(?:sh|bash|zsh): .*: not found)/i
+
+function toolEnvironmentHint(text: string, sandboxEnabled: boolean): 'network' | 'write' | 'command' | null {
+  if (sandboxEnabled && SANDBOX_NETWORK_DENIAL.test(text)) return 'network'
+  if (sandboxEnabled && SANDBOX_WRITE_DENIAL.test(text)) return 'write'
+  if (COMMAND_NOT_FOUND.test(text)) return 'command'
+  return null
+}
+
 const imagePreviewCache = new Map<string, string>()
 
 function attachmentName(filePath: string): string {
@@ -2107,6 +2120,54 @@ export function App(): React.JSX.Element {
     setSettingsTab(tab ?? null)
     setSettingsOpen(true)
     await refreshSettings()
+  }
+
+  const allowSandboxNetwork = async (): Promise<void> => {
+    // The runtime applies sandbox changes between turns; opening Settings is
+    // clearer than reporting an idle-only error while a reply is still running.
+    if (busy) {
+      await openSettings('tools')
+      return
+    }
+    const response = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'settings:set-shell-sandbox',
+      params: { allowNetwork: true },
+    })
+    if (!response.ok) {
+      append({ role: 'error', text: response.error.message })
+      return
+    }
+    const result = response.result as { settings?: SettingsSnapshot }
+    if (result.settings) setSettings(result.settings)
+  }
+
+  const refreshAgentEnvironment = async (): Promise<void> => {
+    if (busy) {
+      await openSettings('skills')
+      return
+    }
+    const response = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'settings:refresh-environment',
+      params: {},
+    })
+    if (!response.ok) {
+      append({ role: 'error', text: response.error.message })
+      return
+    }
+    const result = response.result as {
+      settings?: SettingsSnapshot
+      environment?: { refreshed: boolean; shell: string; error?: string }
+    }
+    if (result.settings) setSettings(result.settings)
+    const environment = result.environment
+    append({
+      role: 'system',
+      text: environment?.refreshed
+        ? t('已刷新 {{shell}} 环境，重新运行命令即可。', { shell: environment.shell })
+        : t('刷新环境失败：{{error}}', { error: environment?.error ?? t('未知错误') }),
+    })
   }
 
   const loadSession = async (item: SessionListItem): Promise<void> => {
@@ -4140,6 +4201,10 @@ export function App(): React.JSX.Element {
               )
             }
             const entry = item.entry
+            const toolGuidance =
+              entry.role === 'tool' && entry.toolOutput
+                ? toolEnvironmentHint(entry.toolOutput, settings?.shellSandbox.enabled === true)
+                : null
             return entry.role === 'tool' ? (
               <article key={entry.id} className={`tool-card ${entry.toolStatus ?? 'running'}`}>
                 <div className="tool-head">
@@ -4177,6 +4242,35 @@ export function App(): React.JSX.Element {
                     <summary>{t('结果')}</summary>
                     <pre>{entry.toolOutput}</pre>
                   </details>
+                ) : null}
+                {toolGuidance ? (
+                  <div className="tool-guidance" data-testid="tool-environment-hint">
+                    <span>
+                      {toolGuidance === 'network'
+                        ? settings?.shellSandbox.allowNetwork
+                          ? t('命令没能联网；如果本机网络正常，请检查命令使用的代理或地址。')
+                          : t('命令没能联网。Shell 沙箱当前禁止网络访问；如果本机网络正常，允许网络后重试。')
+                        : toolGuidance === 'write'
+                          ? t('命令被 Shell 沙箱拦截：只能写入工作区和临时目录。')
+                          : t('命令找不到。如果刚在电脑终端安装了它，刷新登录 shell 环境后重试。')}
+                    </span>
+                    <span className="spacer" />
+                    {toolGuidance === 'network' && !settings?.shellSandbox.allowNetwork ? (
+                      <button className="btn btn-quiet" onClick={() => void allowSandboxNetwork()}>
+                        {t('允许网络')}
+                      </button>
+                    ) : null}
+                    {toolGuidance === 'command' ? (
+                      <button className="btn btn-quiet" onClick={() => void refreshAgentEnvironment()}>
+                        {t('刷新环境')}
+                      </button>
+                    ) : null}
+                    {toolGuidance !== 'command' ? (
+                      <button className="btn btn-quiet" onClick={() => void openSettings('tools')}>
+                        {t('沙箱设置')}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
                 {entry.toolOutput && (entry.toolName === 'webSearch' || entry.toolName === 'webFetch') ? (
                   <SourceList text={entry.toolOutput} />
@@ -4712,6 +4806,21 @@ export function App(): React.JSX.Element {
             <button type="button" className="capability-hint" onClick={() => setPaletteOpen(true)}>
               {window.xcode.platform === 'darwin' ? '⌘K' : 'Ctrl+K'} {t('全部能力')}
             </button>
+            {settings?.shellSandbox.supported &&
+            settings.shellSandbox.enabled &&
+            !settings.shellSandbox.allowNetwork ? (
+              <button
+                type="button"
+                className="sandbox-hint"
+                data-testid="sandbox-network-hint"
+                title={t(
+                  'Agent 的 Shell 正在沙箱中运行，网络访问已关闭：npm install、git clone、curl 等联网命令会失败。点击调整。',
+                )}
+                onClick={() => void openSettings('tools')}
+              >
+                {t('沙箱 · 网络关闭')}
+              </button>
+            ) : null}
             {contextPercent !== null ? (
               <span
                 className={`context-meter ${contextPercent >= 85 ? 'danger' : contextPercent >= 65 ? 'warn' : ''}`}

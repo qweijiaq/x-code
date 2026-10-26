@@ -1221,6 +1221,38 @@ body::before {
   color: var(--cinnabar);
 }
 
+.sandbox-hint {
+  padding: 0 6px;
+  border: 1px solid rgba(168, 115, 47, 0.35);
+  border-radius: 999px;
+  background: rgba(168, 115, 47, 0.08);
+  color: var(--ochre);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sandbox-hint:hover {
+  border-color: var(--ochre);
+  background: rgba(168, 115, 47, 0.14);
+}
+
+.tool-guidance {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--ochre);
+  background: rgba(168, 115, 47, 0.07);
+  color: var(--ink-70);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.tool-guidance .spacer {
+  flex: 1;
+}
+
 /* ── Settings drawer ─────────────────────────────────────────────────── */
 
 .settings-drawer {
@@ -1334,6 +1366,37 @@ body::before {
   border-left-color: var(--ochre);
   background: rgba(168, 115, 47, 0.08);
   color: var(--ochre);
+}
+
+.settings-callout {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 8px 0 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(168, 115, 47, 0.28);
+  border-radius: 8px;
+  background: rgba(168, 115, 47, 0.08);
+}
+
+.settings-callout strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ochre);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.settings-callout p {
+  margin: 0;
+  color: var(--ink-70);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.settings-callout .btn {
+  flex: none;
 }
 
 .settings-empty {

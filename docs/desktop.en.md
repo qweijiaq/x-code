@@ -123,7 +123,11 @@ terminal while continuing the conversation.
 - **Settings → Tools → Shell sandbox** (macOS) runs agent shell commands in a
   workspace-write sandbox: writes are limited to the workspace and temp
   directories, sensitive paths are unreadable, and the network is off by default.
-  The built-in terminal is not sandboxed. Hooks and stdio MCP can opt in.
+  The built-in terminal is not sandboxed. Hooks and stdio MCP can opt in. While
+  the sandbox is on and network is off, the composer shows a **Sandbox · network
+  off** chip; a failed network command offers **Allow network**, and the Tools
+  settings page shows the same banner. The terminal forces a UTF-8 locale so
+  Chinese output renders correctly.
 - Project-level hooks do not run until the project is trusted; plugin installs
   show a consent preview.
 - The renderer is sandboxed with `contextIsolation`; preload exposes an explicit
