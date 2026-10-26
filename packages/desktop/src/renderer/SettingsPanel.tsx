@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -197,6 +197,7 @@ export function SettingsPanel({
     bytesPerSecond?: number
   } | null>(null)
   const [updateDestPath, setUpdateDestPath] = useState('')
+  const updateCancelledRef = useRef(false)
   const [updateBusy, setUpdateBusy] = useState(false)
   const [installCommand, setInstallCommand] = useState('')
   const [skillCommand, setSkillCommand] = useState('')
@@ -918,6 +919,7 @@ export function SettingsPanel({
   }
 
   const downloadUpdate = async (): Promise<void> => {
+    updateCancelledRef.current = false
     setUpdateBusy(true)
     setUpdateDownload(null)
     setUpdateProgress(null)
@@ -929,7 +931,8 @@ export function SettingsPanel({
         ...(updateDestPath.trim() ? { destPath: updateDestPath.trim() } : {}),
       })
       if (!response.ok) {
-        setError(response.error.message)
+        if (updateCancelledRef.current) setNotice(t('下载已取消'))
+        else setError(response.error.message)
         return
       }
       setUpdateDownload(response.result as UpdateDownloadView)
@@ -938,6 +941,11 @@ export function SettingsPanel({
       setUpdateBusy(false)
       setUpdateProgress(null)
     }
+  }
+
+  const cancelUpdateDownload = async (): Promise<void> => {
+    updateCancelledRef.current = true
+    await request('app:cancel-update-download', {})
   }
 
   const openDownloadedUpdate = async (): Promise<void> => {
@@ -1304,6 +1312,11 @@ export function SettingsPanel({
                           })
                         : t('下载中…')
                       : t('下载更新')}
+                  </button>
+                ) : null}
+                {updateBusy ? (
+                  <button className="btn btn-quiet" onClick={() => void cancelUpdateDownload()}>
+                    {t('取消下载')}
                   </button>
                 ) : null}
                 {updateDownload ? (

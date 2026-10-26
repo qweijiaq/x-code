@@ -10,6 +10,7 @@ import {
   globalShortcut,
   ipcMain,
   nativeImage,
+  net,
   safeStorage,
   screen,
   session,
@@ -225,6 +226,7 @@ const runtimeContexts = new Map<number, RuntimeContext>()
 /** Installers downloaded and checksum-verified in this process; the renderer
  *  may only ask the main process to open paths from this set. */
 const downloadedUpdateFiles = new Set<string>()
+let activeUpdateDownload: AbortController | null = null
 
 function contextForWindow(window: BrowserWindow | null | undefined): RuntimeContext | null {
   if (!window || window.isDestroyed()) return null
@@ -1229,8 +1231,8 @@ function installIpc(): void {
         }
       }
       try {
-        const response = await fetch(feed, {
-          signal: AbortSignal.timeout(8_000),
+        const response = await net.fetch(feed, {
+          signal: AbortSignal.timeout(20_000),
           headers: { Accept: 'application/json' },
         })
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
@@ -1264,10 +1266,15 @@ function installIpc(): void {
       const feed = (request.params as { feed?: string }).feed?.trim() ?? ''
       const requestedPath = (request.params as { destPath?: string }).destPath?.trim()
       const destPath = requestedPath ? path.resolve(requestedPath) : undefined
+      activeUpdateDownload?.abort()
+      const controller = new AbortController()
+      activeUpdateDownload = controller
       try {
         if (!feed.startsWith('https://')) throw new Error('更新源必须是 https URL')
-        const response = await fetch(feed, {
-          signal: AbortSignal.timeout(15_000),
+        // net.fetch uses Chromium's network stack, so the system proxy works
+        // even though Node's global fetch ignores it.
+        const response = await net.fetch(feed, {
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
           headers: { Accept: 'application/json' },
         })
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
@@ -1279,6 +1286,8 @@ function installIpc(): void {
           arch: process.arch,
           destDir: destPath ? path.dirname(destPath) : app.getPath('downloads'),
           ...(destPath ? { destPath } : {}),
+          signal: controller.signal,
+          fetchImpl: net.fetch as typeof fetch,
           onProgress: (progress) => {
             if (!senderWindow || senderWindow.isDestroyed()) return
             senderWindow.webContents.send('runtime:event', {
@@ -1303,11 +1312,18 @@ function installIpc(): void {
           id: request.id,
           ok: false,
           error: {
-            code: 'update-download',
-            message: error instanceof Error ? error.message : String(error),
+            code: controller.signal.aborted ? 'update-cancelled' : 'update-download',
+            message: controller.signal.aborted ? '下载已取消' : error instanceof Error ? error.message : String(error),
           },
         }
+      } finally {
+        if (activeUpdateDownload === controller) activeUpdateDownload = null
       }
+    }
+    if (request?.method === 'app:cancel-update-download') {
+      const cancelled = activeUpdateDownload !== null
+      activeUpdateDownload?.abort()
+      return { id: request.id, ok: true, result: { cancelled } }
     }
     if (request?.method === 'app:open-update') {
       const target = path.resolve((request.params as { filePath?: string }).filePath ?? '')

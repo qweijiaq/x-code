@@ -96,6 +96,8 @@ export interface DownloadUpdateOptions {
   maxBytes?: number
   /** Exact destination chosen by the user; defaults to destDir/<artifact name>. */
   destPath?: string
+  /** User cancellation; aborts the feed request and the stream. */
+  signal?: AbortSignal
   onProgress?: (progress: { receivedBytes: number; totalBytes?: number; bytesPerSecond?: number }) => void
 }
 
@@ -121,7 +123,10 @@ export async function downloadUpdateArtifact(options: DownloadUpdateOptions): Pr
   resetIdle()
 
   try {
-    const response = await fetchImpl(url, { signal: controller.signal })
+    const signals = options.signal ? [controller.signal, options.signal] : [controller.signal]
+    const response = await fetchImpl(url, {
+      signal: signals.length > 1 ? AbortSignal.any(signals) : controller.signal,
+    })
     resetIdle()
     if (!response.ok) throw new Error(`下载安装包失败：HTTP ${response.status}`)
     const declared = Number(response.headers.get('content-length') ?? 0)
@@ -187,6 +192,7 @@ export async function downloadUpdateArtifact(options: DownloadUpdateOptions): Pr
     await fs.promises.rename(tempPath, finalPath)
     return { version: options.release.version, filePath: finalPath, fileName, bytes, sha256 }
   } catch (error) {
+    if (options.signal?.aborted) throw new Error('下载已取消')
     if (idleTimedOut) throw new Error(`下载超时：${DOWNLOAD_IDLE_TIMEOUT_MS / 1000} 秒内没有收到新数据`)
     throw error
   } finally {

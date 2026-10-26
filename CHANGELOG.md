@@ -5,6 +5,8 @@
 - show update download progress (bytes, total, speed, percentage) instead of an indefinite "downloading" label
 - replace the fixed 10-minute download cap with a 60-second idle timeout so slow but healthy 245 MB downloads can finish
 - download updates to the system Downloads folder by default, let users choose another path, and show/reveal the saved file
+- add a cancel button for in-flight update downloads
+- use Chromium's network stack (system proxy) and a longer timeout for update checks instead of Node fetch, which aborted with “operation timed out” behind a proxy
 - remove the partial file when a checksum or download fails
 
 ## v1.0.2 (2026-10-26)

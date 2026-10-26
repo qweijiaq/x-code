@@ -975,6 +975,8 @@ export const EN: Record<string, string> = {
   下载更新: 'Download update',
   '下载中…': 'Downloading…',
   '下载中 {{percent}}%…': 'Downloading {{percent}}%…',
+  取消下载: 'Cancel download',
+  下载已取消: 'Download cancelled',
   '已下载 {{done}} / {{total}} · {{speed}}/s': 'Downloaded {{done}} / {{total}} · {{speed}}/s',
   未知大小: 'unknown size',
   '下载位置：{{path}}': 'Download location: {{path}}',

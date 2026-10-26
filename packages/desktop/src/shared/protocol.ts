@@ -1046,6 +1046,7 @@ export interface RequestMap {
     params: { suggestedName?: string }
     result: { path: string | null }
   }
+  'app:cancel-update-download': { params: Record<string, never>; result: { cancelled: boolean } }
   'app:open-update': { params: { filePath: string }; result: null }
   'settings:set-shell-sandbox': {
     params: { enabled?: boolean; allowNetwork?: boolean; extensions?: boolean }
