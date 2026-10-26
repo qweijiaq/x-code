@@ -1,376 +1,197 @@
 <div align="center">
 
-# X-Code CLI
+# X-Code
 
-**不绑定模型、兼容 Claude Code 扩展生态的开源编程 Agent CLI。**
+**本地优先、模型无关的 AI 编程助手，提供桌面端和命令行两种形态。**
 
-使用 Claude、GPT、Gemini、DeepSeek、Qwen、Kimi 或任意 OpenAI 兼容接口，复用同一套 Skills、Plugins、MCP 和 Agent 工作流。
+自带模型和 Key。桌面端与 CLI 共用同一套会话、记忆、技能、MCP、插件和 Hooks。
 
-[![npm version](https://img.shields.io/npm/v/@x-code-cli/cli)](https://www.npmjs.com/package/@x-code-cli/cli)
-[![license](https://img.shields.io/github/license/woai3c/x-code-cli)](./LICENSE)
+[![license](https://img.shields.io/github/license/qweijiaq/x-code)](./LICENSE)
+[![release](https://img.shields.io/github/v/release/qweijiaq/x-code)](https://github.com/qweijiaq/x-code/releases)
+![platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 
-[English](./README.md) · 简体中文
-
-![](./assets/hello.png)
+[下载 macOS 版](https://github.com/qweijiaq/x-code/releases/latest) ·
+[桌面端指南](./docs/desktop.md) ·
+[用户手册](./docs/desktop-manual.md) ·
+[English](./README.md)
 
 </div>
 
-## 为什么选 X-Code CLI？
+## 为什么选 X-Code
 
-**不绑定模型** — 通过 `/model` 随时切换提供商，也可以接入任意 OpenAI 兼容接口。同一套工作流，任意模型。
+- **本地优先。** 会话、文档、附件和凭据都留在本机。Agent 只访问你配置的模型、
+  搜索和 MCP 服务。
+- **不绑定模型。** Claude、GPT、Gemini、DeepSeek、Qwen、Grok、GLM、Kimi、本地
+  Ollama / LM Studio，以及任意 OpenAI 兼容接口。在顶栏切换模型，不用改变工作方式。
+- **一套运行时，两种界面。** 桌面端和 CLI 共享 `~/.x-code`：终端里开始的任务可以
+  在窗口里继续，工具、权限规则和上下文完全一致。
+- **每一步可审查。** 文件修改有 diff，shell 命令和下载有确认卡片；三级权限模型和
+  macOS shell 沙箱把 Agent 限制在你设定的边界内。
 
-**兼容 Claude Code 扩展生态** — 直接复用为 Claude Code 构建的插件、Skills、子 Agent、MCP 服务器和 Hooks。插件加载器同时识别 `.x-code-plugin/` 和 `.claude-plugin/` 格式。
+## 下载与安装
 
-**开源可控** — 开源、BYOK、本地执行、三级权限模型可配置。你决定 Agent 能做什么。
+桌面端当前提供 **macOS arm64** 版本：
 
-**完整的 Agent 运行时** — 不只是对话封装，而是覆盖规划、执行、记忆、上下文管理和任务验证的完整开发工作流。
+1. 打开 [GitHub Releases](https://github.com/qweijiaq/x-code/releases/latest)，下载
+   `X-Code-<version>-arm64.dmg`。
+2. 用 `SHA256SUMS` 校验后，把 **X-Code** 拖进 Applications，首次打开时按提示放行。
 
-> X-Code CLI 是独立的开源项目，与 Anthropic 无关。
+社区版是 ad-hoc 签名、未公证，所以 macOS 首次会要求手动批准。完整步骤、以及
+遇到“应用已损坏”时的 `xattr` 处理方式见
+[未签名版安装指南](./docs/desktop-install-unsigned.md)。
 
-## 安装
-
-> 需要 **Node.js >= 22**（不支持 Node 20）。
+CLI 通过 npm 安装：
 
 ```bash
 npm install -g @x-code-cli/cli
-
-# 或
-pnpm add -g @x-code-cli/cli
 ```
 
-安装完成后，使用 `xc` 或 `x-code` 命令启动。
+Windows / Linux 桌面版暂不在 1.0 的支持范围内。
 
-## 配置模型访问方式
+## 桌面端能做什么
 
-使用 OpenAI 模型时，可以登录 ChatGPT 使用订阅权益：
+### 会话与窗口
 
-```bash
-xc login                    # 浏览器登录，成功后直接进入交互产品
-xc login --device-auth      # 设备码登录，成功后直接进入交互产品
-xc login status             # 查看当前 OpenAI 认证方式
-xc logout                   # 退出并删除本地 ChatGPT 凭据
-```
+- 多窗口、多标签会话；`Cmd/Ctrl+T` 新建标签，`Cmd/Ctrl+Shift+N` 新建窗口。
+- 分支 **worktree 窗口**：任意本地分支或 `origin/*` 远程分支都可以在独立窗口打开，
+  拥有自己的工作区和会话目录。
+- 会话搜索、置顶、归档、重命名、草稿保留，以及 Markdown / JSON / PDF 导出。
+- 检查点、回退、分叉、编辑重发、重新生成、运行中插入消息。
+- 异常中断后的崩溃恢复和 transcript 抢救。
 
-在交互式终端中，`xc login`（包括 `--device-auth`）登录成功后会直接进入 X-Code CLI，无需再次执行 `xc`。进入产品后，也可以使用 `/login`、`/login --device-auth`、`/login status` 和 `/logout` 完成同一套认证操作。
+### 一个 Inspector 覆盖整个工作区
 
-对于 `openai` provider，ChatGPT 登录和 `OPENAI_API_KEY` 严格互斥。ChatGPT 已登录时，请求使用 ChatGPT 订阅权益，API key 处于停用状态，认证失败也不会回退到 API key；执行 `xc logout` 后，已有的 `OPENAI_API_KEY` 才会恢复生效，其请求按 OpenAI Platform 账户用量计费。其他 provider 的 API key 不受影响。
+文档、Git 改动、项目检查、终端和文件浏览器共用一个可调整宽度的右侧 Inspector，
+聊天内容始终可见。
 
-当前版本将 ChatGPT token 以明文凭据文件保存在 `~/.x-code/auth/`（或 `X_CODE_HOME`）下。请像保护密码一样保护该文件：保持目录私有，不要提交到版本库、分享给他人或同步到不可信位置。当前尚未实现系统凭据库（keyring）存储。
+- **文档** — 打开 PDF、Word、Excel、CSV、Markdown 和源码文件；按页阅读、审查
+  修改建议，最近文档一键切回。
+- **文档库** — 本地索引，支持关键词和可选语义检索。添加目录、重建索引、直接搜索，
+  文件不会被上传。
+- **Git** — 状态、diff、按检查点撤销、切换分支和 worktree 管理。
+- **项目检查** — 自动识别 test / lint / typecheck 命令，运行后让 Agent 修复失败项。
+- **终端** — 完整的 PTY 终端，切换标签不中断，和 Agent 的沙箱命令相互独立。
 
-也可以配置至少一个厂商的 API Key：
+### 面向真实工作的输入方式
 
-> **推荐 [DeepSeek](https://platform.deepseek.com/)**：价格低、国内访问稳定，适合首次试用。赠送额度与价格可能变化，请以官方控制台为准。
->
-> DeepSeek 默认模型为 V4.1 Flash（`deepseek-flash`）。它会原生接收支持的图片附件和工具截图，X-Code 不会将它们发送给其他视觉模型。
+Markdown 输入与预览、`@` 引用工作区文件、拖拽附件、粘贴图片、区域/全屏截图、
+本地 Whisper 语音输入。PDF、Office 文档、表格、图片和音频都在本地解析，只有提取
+出的内容或页面图片会发送给你选择的模型。
 
-| 环境变量                       | 厂商                | 注册地址                                                                    |
-| ------------------------------ | ------------------- | --------------------------------------------------------------------------- |
-| `ANTHROPIC_API_KEY`            | Anthropic（Claude） | [console.anthropic.com](https://console.anthropic.com/)                     |
-| `OPENAI_API_KEY`               | OpenAI（GPT）       | [platform.openai.com/api-keys](https://platform.openai.com/api-keys)        |
-| `DEEPSEEK_API_KEY`             | DeepSeek            | [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)    |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | Google（Gemini）    | [aistudio.google.com/apikey](https://aistudio.google.com/apikey)            |
-| `ALIBABA_API_KEY`              | 阿里通义（Qwen）    | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com/apiKey) |
-| `XAI_API_KEY`                  | xAI（Grok）         | [console.x.ai](https://console.x.ai/)                                       |
-| `ZHIPU_API_KEY`                | 智谱（GLM）         | [open.bigmodel.cn](https://open.bigmodel.cn/usercenter/apikeys)             |
-| `MOONSHOT_API_KEY`             | Moonshot（Kimi）    | [按服务选择](#moonshot-kimi-endpoints)                                      |
+### 扩展
 
-内置 `/model` 目录已跟进以下当前 API 型号；仍可用的旧型号继续保留。
+- **Skills** — 可复用的 `SKILL.md` 工作流，用 `/<名称>` 触发。
+- **SkillHub / SkillsMP 技能市场** — 在设置里浏览、安装，并可注册 MCP 服务器。
+- **插件** — 打包 skills、子 Agent、命令、MCP 和 Hooks，安装前显示权限与配置预览。
+- **MCP** — 支持 stdio 和 HTTP（含 OAuth），服务器工具自动并入 Agent。
+- **Hooks 与自定义命令** — 用户级和项目级生命周期自动化。
+- **权限** — 持久化允许规则、按工具始终允许，或为整个会话开启信任模式。
 
-| 厂商      | 当前目录重点型号                                       | 智能默认值          |
-| --------- | ------------------------------------------------------ | ------------------- |
-| Anthropic | Claude Fable 5.1、Opus 5、Sonnet 5、Haiku 4.5          | Claude Sonnet 5     |
-| OpenAI    | GPT-6 Astra、GPT-5.6 Sol / Terra / Luna                | GPT-5.6 Sol         |
-| DeepSeek  | DeepSeek V4.1 Flash（原生视觉）、V4 Pro（仅文本）      | DeepSeek V4.1 Flash |
-| 阿里通义  | Qwen3.8 Max / Flash（原生视觉）、Qwen3.7 与 Qwen3 系列 | Qwen3.8 Max         |
-| Google    | Gemini 3.8 / 3.7 / 3.6 / 3.5 Flash、Gemini 2.5         | Gemini 3.8 Flash    |
-| xAI       | Grok 4.6、Grok 4.20 推理版 / 非推理版                  | Grok 4.6            |
-| 智谱      | GLM-5.3、GLM-5.3 Flash（原生视觉）及较早 GLM 型号      | GLM-5.3             |
-| Moonshot  | Kimi K3、K2.7 Code / Highspeed、K2.6                   | Kimi K3             |
+### 搜索由你控制
 
-GPT-6 Astra 不会自动成为 OpenAI 智能默认值：保留 GPT-5.6 Sol 可以兼顾 ChatGPT 订阅兼容性，并降低误用高价 API 的风险。对于不能关闭推理的型号，`/thinking off` 会自动降到该型号支持的最低推理档位。
+`webSearch` 默认不可用，配置 Tavily、Brave、Exa、Perplexity 或 Firecrawl 任一
+服务后才启用。可以指定首选服务、测试 Key；`webFetch` 不依赖搜索 Key。使用
+DeepSeek 模型时，也可以直接用模型 Key 走内置搜索。
 
-**OpenAI 兼容接入**（vLLM / OpenRouter / 代理网关等）：同时设置 `OPENAI_COMPATIBLE_API_KEY` 与 `OPENAI_COMPATIBLE_BASE_URL`，模型 ID 写成 `custom:<your-model-id>`。
+### 日常体验
 
-<details>
-<summary><b>各 Shell 配置方式</b>（点击展开）</summary>
+主题、中英文界面、缩放、命令面板（`Cmd/Ctrl+K`）、带深链的桌面通知、安全的
+备份/恢复、脱敏诊断导出、本地模型发现，以及带校验的手动更新检查。
 
-以下示例使用 `DEEPSEEK_API_KEY`，请替换为实际厂商变量名。
+## 首次运行
 
-**bash（Linux / Git Bash / WSL）**
+1. **配置模型。** 打开 **设置 → 模型与密钥**，填写任一家厂商的 Key，或者连接
+   Ollama / LM Studio。密钥通过 macOS Keychain（`safeStorage`）或 `0600` 文件保存，
+   不会回传到渲染进程。
+2. **可选：配置搜索。** **设置 → 工具 → 搜索服务** 粘贴 Tavily Key（有免费额度），
+   选为首选并点 **测试连接**。
+3. **打开手册。** 顶栏 **?** 可以随时打开完整的内置[用户手册](./docs/desktop-manual.md)。
 
-```bash
-echo 'export DEEPSEEK_API_KEY=sk-...' >> ~/.bashrc
-source ~/.bashrc
-```
+没有配置 Key 时，应用会使用本地演示模型，方便先体验界面，不会消耗真实额度。
 
-**zsh（macOS 默认）**
+## 终端形态
 
-```bash
-echo 'export DEEPSEEK_API_KEY=sk-...' >> ~/.zshrc
-source ~/.zshrc
-```
-
-**fish**
-
-```fish
-set -Ux DEEPSEEK_API_KEY sk-...
-```
-
-**Windows PowerShell（用户级，永久生效）**
-
-```powershell
-[Environment]::SetEnvironmentVariable('DEEPSEEK_API_KEY', 'sk-...', 'User')
-# 重启 PowerShell 后生效
-```
-
-**Windows CMD（用户级，永久生效）**
-
-```cmd
-setx DEEPSEEK_API_KEY "sk-..."
-:: 重启 CMD 后生效
-```
-
-> 临时使用：`export X=...`（bash）或 `$env:X = '...'`（PowerShell），终端关闭后失效。
->
-> 项目级配置：放置 `.env` 文件后，`xc` 会从当前目录向上查找并只加载找到的第一个文件。
-
-</details>
-
-<details>
-<summary><b>网页搜索 Key（可选）</b></summary>
-
-启用 `webSearch` 工具需任选一项配置：
-
-| 环境变量             | 提供方                                                     | 当前免费额度           | 注册门槛         |
-| -------------------- | ---------------------------------------------------------- | ---------------------- | ---------------- |
-| `TAVILY_API_KEY`     | [Tavily](https://tavily.com)                               | 每月 1,000 API credits | 邮箱，无需信用卡 |
-| `BRAVE_API_KEY`      | [Brave Search](https://brave.com/search/api/)              | —（付费）              | 需绑定信用卡     |
-| `EXA_API_KEY`        | [Exa](https://exa.ai)                                      | 每月 1,000 次请求      | 邮箱，无需信用卡 |
-| `PERPLEXITY_API_KEY` | [Perplexity Sonar](https://www.perplexity.ai/settings/api) | —（付费）              | 需绑定信用卡     |
-| `FIRECRAWL_API_KEY`  | [Firecrawl](https://firecrawl.dev)                         | 免费 credits 额度      | 邮箱，无需信用卡 |
-
-> 推荐首次配 Tavily：注册简便，返回格式针对 LLM 优化。配置多个 key 时按上表顺序取第一个；也可通过 `X_CODE_WEB_SEARCH_PROVIDER` 显式指定（可选值：`tavily`、`brave`、`exa`、`perplexity`、`firecrawl`、`deepseek`）。
->
-> **DeepSeek 用户无需额外 key**：当前模型为 DeepSeek 且已配置 `DEEPSEEK_API_KEY` 时，`webSearch` 自动使用 DeepSeek 内置的服务端联网搜索。注意每次搜索按一次模型调用计费（默认 `deepseek-flash`），而非按搜索次数计费。
-
-</details>
-
-<details id="moonshot-kimi-endpoints">
-<summary><b>Moonshot（Kimi）端点说明</b></summary>
-
-Moonshot/Kimi 提供三套独立的凭证与端点，API Key 只能用于签发它的服务：
-
-- Kimi Code 订阅计划：[Kimi Code 控制台](https://www.kimi.com/code/console) → `https://api.kimi.com/coding/v1`
-- 国内开放平台：[platform.kimi.com](https://platform.kimi.com/console/api-keys) → `https://api.moonshot.cn/v1`
-- 国际开放平台：[platform.kimi.ai](https://platform.kimi.ai/console/api-keys) → `https://api.moonshot.ai/v1`
-
-通过 `/model` 选择 Kimi 模型后，X-Code CLI 会自动显示端点选择器。Coding Plan 的稳定 wire id `kimi-for-coding` 当前会自动路由到 K2.8 Preview；Moonshot 开放平台的模型 ID 不变。
-
-</details>
-
-## 快速上手
+CLI 是同一个 Agent 的命令行界面，适合 SSH、脚本、`--print` 自动化和管道。
 
 ```bash
 cd your-project
-
-xc                                   # 启动交互式会话
-xc "解释项目的整体架构"                # 带提示词运行
-xc -m sonnet "重构 formatDate 函数"    # 指定模型
+xc                                      # 交互式会话
+xc "解释项目的整体架构"                  # 单次提示
+xc -p "总结失败的测试"                   # 非交互输出
+xc --plan "把构建迁移到 ESM"             # 先只读规划
 ```
 
-## 桌面应用
+会话、记忆、技能、插件、MCP 和权限规则与桌面端共享。完整参数见 `xc --help`。
 
-`packages/desktop` 是同一套 runtime、同一份 `~/.x-code` 数据的 Electron 界面：
-会话、记忆、插件、MCP、技能和 Hooks 与 CLI 完全共享。
+## 支持的模型
 
-从 [GitHub Releases](https://github.com/qweijiaq/x-code/releases/latest) 下载
-macOS arm64 安装包；也可以从源码构建：
+Anthropic Claude、OpenAI（API Key 或 ChatGPT 登录）、DeepSeek、Google Gemini、
+阿里 Qwen、xAI Grok、智谱 GLM、Moonshot Kimi、本地 Ollama / LM Studio，以及通过
+`OPENAI_COMPATIBLE_API_KEY` + `OPENAI_COMPATIBLE_BASE_URL` 接入的任意 OpenAI
+兼容网关（模型 ID 写成 `custom:<id>`）。
 
-```bash
-pnpm dev:desktop                    # 构建并启动桌面端
-pnpm release:desktop --arch arm64   # macOS dmg + zip（默认未签名）
-```
+应用内模型选择器会显示每个模型的上下文上限，并支持按模型覆盖。图片附件只会发给
+当前视觉模型；纯文本模型改用本地 OCR，不会转发给其他厂商。
 
-提供多窗口会话标签、分支 **worktree 窗口**、图片粘贴与区域截图、Markdown 输入、
-按模型的上下文上限、文档面板与文档库、Git/项目检查面板、沙箱 shell、持久化权限
-规则、**SkillHub / SkillsMP 技能市场**、主题与中英文界面。完整说明见
-[桌面端指南](./docs/desktop.md)；应用内顶栏的 **?** 入口可直接打开
-[用户手册](./docs/desktop-manual.md)。社区版未签名，首次打开被 macOS 拦截时见
-[未签名版安装指南](./docs/desktop-install-unsigned.md)。
+## 隐私与安全
 
-## 核心功能
+- 没有遥测。会话、文档、附件、记忆和密钥都保存在 `~/.x-code`（或 `X_CODE_HOME`）。
+- 只有你选择的模型厂商、配置的搜索服务、显式添加的 MCP 服务器、技能市场以及
+  更新检查会发生网络请求。
+- macOS 上 Agent 的 shell 运行在 workspace-write 沙箱中，敏感路径不可读写，网络
+  默认关闭；你自己的终端不受限制。
+- API Key 优先使用系统钥匙串，不可用时退化为 `0600` 文件，设置页会明确提示存储类型。
 
-### 智能开发
+## 快捷键
 
-- **内置工具** — 文件读写、Shell 执行、代码搜索（Grep / Glob）、网页抓取、子 Agent 委派、Todo 追踪等
-- **子 Agent** — 内置 5 个（explore / general-purpose / plan / code-reviewer / goal-verifier），支持自定义
-- **Plan 模式** — `--plan` 或 `/plan` 进入只读探索，Agent 先制定方案、批准后再执行
-- **持续目标循环** — `/goal` 自动执行→验证→修复，直到验证通过或触发停止条件
-- **模型自主 Git worktree** — 当仓库状态和验证风险确有需要时，Agent 可自主使用普通 Git 命令创建并清理临时 worktree，避免冒险改动当前工作区
-- **跨会话消息** — 命名后的本机 Session 可以互相发现，并在权限边界内移交工作（macOS / Linux / Windows x64；Windows arm64 artifact 已随包提供，但在完成 arm64 真机验收前属于预览支持；详见[文档](./docs/peer-messaging.md)）
-- **文件附件** — `@path` 或裸绝对路径引用文件，自动识别 text / code / PDF / Office 文档（docx / xlsx / pptx / odt / ods / odp）/ 图片 / 音频
-- **本地 PDF 处理** — 按页提取可选文本；扫描页或视觉页交给当前视觉模型，纯文本模型则使用本地 OCR。大型视觉 PDF 通过 `readFile` 页范围渐进读取，原始 PDF 字节不会上传
-- **本地音频转写** — MP3 / WAV / FLAC / OGG Vorbis 附件（最大 25 MiB、20 分钟）始终由隔离进程中的 Whisper（whisper.cpp）在本地转写，只有带时间戳的文字会交给模型。模型下载前会探测 native runtime，并由隔离进程中的流式解码器按实际 PCM 帧执行硬上限；排队等待与转写共用总超时。首次模型下载固定 revision 并通过 SHA-256 校验后才缓存于 `~/.x-code/whisper-models/`（默认 `tiny`，可通过 `X_CODE_WHISPER_MODEL` 换成其他型号，如 `base`）
-- **图片附件隐私回退** — 本地图片附件只会交给当前视觉模型；纯文本模型使用本地 OCR，不会自动把附件转发给另一个已配置厂商
-
-### 上下文管理
-
-- **知识库系统** — 分层加载 `AGENTS.md`（兼容 `CLAUDE.md`），子包可覆盖根级约定
-- **自动记忆** — 每次根 Agent 完整结束后提取长期事实，并在相关请求中按需召回
-- **会话恢复** — `--continue` 恢复最近会话，`--resume` 打开选择器或按 ID / 分叉名称直达
-- **会话分叉** — `/fork [名称]` 把已完成的上下文复制成独立对话，当前请求运行中也可执行；分叉后仍共享同一个工作区
-- **上下文压缩** — 长对话自动压缩；loop-guard 检测循环调用；prompt cache 复用前缀
-- **三级权限模型** — 默认安全，按工具与命令风险请求确认；`--trust` 跳过普通工具确认，也适用于 Peer 触发的工作
-
-### 扩展生态
-
-- **MCP 集成** — 支持 stdio + HTTP（含 OAuth），`/mcp` 管理，服务器工具自动并入 Agent 工具集
-- **插件系统** — skill / sub-agent / 命令 / MCP / hooks 打包分发；与 Claude Code 插件格式兼容
-- **Skills** — `SKILL.md` 描述可复用工作流模板，`/<skill-name>` 触发
-- **自定义斜杠命令** — markdown 文件放进 `~/.x-code/commands/` 或项目级目录，`/<name>` 直接使用
-- **Hooks** — 10 个生命周期事件回调，用 shell 命令拦截/改写 Agent 行为
-- **浏览器自动化** — 默认可对本地 UI 做一次性截图检查（`/browser check-off` 可关闭）；`/browser on` 另行开启交互式浏览器子 Agent
-
-### 终端体验
-
-- **流式输出** — 边生成边显示
-- **主题切换** — `/theme` 控制 diff 配色和语法高亮风格
-- **统一思考模式** — `/thinking on|off` 将各厂商的 thinking 参数统一为单一开关
-- **多行输入** — `Alt+Enter` 或行尾 `\` 插入换行
-- **历史回溯** — 空输入框时 `↑`/`↓` 召回已提交的提示词
-- **中途转向（steering）** — Agent 运行中也能继续输入：消息先排队显示在 spinner 上方，在下一个工具边界自动注入
-- **实时页脚** — 输入框下方常驻当前模型与上下文用量（如 `Kimi K3 · 6.6k / 200k · 3%`）
-- **后台终端** — 长命令自动转为可管理的 Shell Session；`/ps` 查看，`/stop [shell-id]` 停止（详见[文档](./docs/shell-sessions.md)）
-- **跨平台** — Windows、macOS、Linux
-
-## 命令行参数
-
-```text
-xc [options] [prompt]
-
---model, -m <id>      指定模型（如 sonnet、deepseek、openai:gpt-5.6-sol）
---trust, -t           信任模式：跳过普通工具确认（含 Peer 触发的工作）
---print, -p           非交互模式：输出结果后退出
---plan                Plan 模式（只读探索，批准后才执行）
---name <名称>         为交互式 Session 命名并启用本机跨会话消息
---continue, -c        恢复最近一次会话
---resume, -r [id|名称] 恢复会话：无参数打开选择器，指定 ID 或分叉名称直达
---max-turns <n>       Agent 循环轮次上限（默认无上限）
---no-plugins          禁用插件系统（排障用）
---no-hooks            跳过所有 hook 执行
---plugin-debug        把 plugin/hook 调试日志镜像到 stderr
---version, -v         显示版本号
---help, -h            显示帮助信息
-```
-
-### 命令行子命令
-
-```text
-xc login [--device-auth]           登录 ChatGPT
-xc login status                    查看当前 OpenAI 认证方式
-xc logout                          退出 ChatGPT 登录
-xc plugin <subcommand>            管理插件（list / install / uninstall / enable / disable / search / update / info / doctor / marketplace）
-xc plugin install [--yes] <src>   安装插件；非 TTY 默认拒绝，--yes 跳过确认
-xc plugin marketplace <sub>       管理插件市场订阅（list / add / remove / refresh / info）
-```
-
-## 斜杠命令
-
-| 命令                             | 说明                                                                                |
-| -------------------------------- | ----------------------------------------------------------------------------------- |
-| `/help`                          | 查看所有可用命令                                                                    |
-| `/login [--device-auth\|status]` | 登录 ChatGPT 或查看认证状态                                                         |
-| `/logout`                        | 退出 ChatGPT 登录                                                                   |
-| `/model [model-id\|refresh]`     | 选择已预加载的模型，或显式刷新 ChatGPT 模型目录                                     |
-| `/thinking [on\|off]`            | 启用 / 禁用思考模式                                                                 |
-| `/theme [name]`                  | 切换 UI 主题                                                                        |
-| `/plan [on\|off]`                | 启用 / 禁用 Plan 模式                                                               |
-| `/goal [目标]`                   | 启动持续目标循环（详见 [docs/goal.md](./docs/goal.md)）                             |
-| `/usage`                         | 查看 Token 用量：上下文构成分解、分步明细、归因与缓存命中                           |
-| `/usage-history`                 | 列出历史会话用量                                                                    |
-| `/clear`                         | 清空当前会话                                                                        |
-| `/ps`                            | 列出正在运行的后台终端及最近输出                                                    |
-| `/stop [shell-id]`               | 停止指定后台终端；不带 ID 时停止全部                                                |
-| `/clear-peer-context`            | 确认后删除受 Peer 影响的对话后缀                                                    |
-| `/list-agents`                   | 列出可访问的命名 X-Code Session                                                     |
-| `/compact`                       | 手动压缩上下文                                                                      |
-| `/resume`                        | 从历史会话中选择恢复                                                                |
-| `/fork [名称]`                   | 分叉已完成的上下文，可选命名（仍共享当前工作区）                                    |
-| `/rewind`                        | 回到某条用户消息之前（还原文件 + 截断历史）                                         |
-| `/init`                          | 分析代码库后创建或更新 `AGENTS.md`                                                  |
-| `/review [PR号]`                 | 评审 GitHub PR（需本地装好 `gh`）                                                   |
-| `/memory [子命令]`               | 查看、搜索、解释或重载全局长期记忆（详见 [docs/knowledge.md](./docs/knowledge.md)） |
-| `/skill <sub>`                   | 管理 Skills                                                                         |
-| `/mcp <sub>`                     | 管理 MCP 服务器                                                                     |
-| `/plugin <sub>`                  | 管理插件与 marketplace                                                              |
-| `/browser <sub>`                 | 配置交互式 Browser Use 与本地 UI 自动截图检查                                       |
-| `/doctor`                        | 一键诊断运行环境                                                                    |
-| `/exit`                          | 保存会话并退出                                                                      |
-
-## 详细文档
-
-README 是入门视图，每个功能的完整用法在 [`docs/`](./docs/) 下（中文 `*.md`，英文 `*.en.md`）：
-
-| 文档                                                     | 内容                                 |
-| -------------------------------------------------------- | ------------------------------------ |
-| [`docs/skills.md`](./docs/skills.md)                     | 可复用工作流模板                     |
-| [`docs/goal.md`](./docs/goal.md)                         | 持续目标循环（`/goal`）              |
-| [`docs/peer-messaging.md`](./docs/peer-messaging.md)     | 跨会话 Agent 消息                    |
-| [`docs/shell-sessions.md`](./docs/shell-sessions.md)     | 后台 Shell Session 与交互式终端      |
-| [`docs/sub-agents.md`](./docs/sub-agents.md)             | 内置 / 自定义子 Agent（`task` 工具） |
-| [`docs/mcp.md`](./docs/mcp.md)                           | MCP 服务器配置                       |
-| [`docs/knowledge.md`](./docs/knowledge.md)               | 分层知识库与自动记忆                 |
-| [`docs/plugins.md`](./docs/plugins.md)                   | 插件安装 / 管理                      |
-| [`docs/marketplace.md`](./docs/marketplace.md)           | 插件市场订阅 / 自建                  |
-| [`docs/hooks.md`](./docs/hooks.md)                       | Agent 生命周期 Hook                  |
-| [`docs/plugin-authoring.md`](./docs/plugin-authoring.md) | 插件开发指南                         |
-| [`docs/desktop.md`](./docs/desktop.md)                   | 桌面端指南                           |
-
-## 故障排查
-
-临时设置 `DEBUG_STDOUT=1` 启动即可捕获调试日志：
-
-```bash
-# bash / zsh
-DEBUG_STDOUT=1 xc
-
-# fish
-env DEBUG_STDOUT=1 xc
-
-# PowerShell
-$env:DEBUG_STDOUT=1; xc
-
-# CMD
-set DEBUG_STDOUT=1 && xc
-```
-
-日志路径：`~/.x-code/logs/debug.log`（Windows: `%USERPROFILE%\.x-code\logs\debug.log`），单文件 10 MB，滚动备份 ~20 MB。
+| 快捷键                      | 操作                  |
+| --------------------------- | --------------------- |
+| `Cmd/Ctrl+K`                | 命令面板              |
+| `Cmd/Ctrl+N` / `Cmd/Ctrl+T` | 新建会话 / 标签       |
+| `Cmd/Ctrl+Shift+N`          | 新建窗口              |
+| `Cmd/Ctrl+Shift+F`          | 搜索会话              |
+| `Cmd/Ctrl+F`                | 当前会话内查找        |
+| `Cmd/Ctrl+,`                | 设置                  |
+| `Cmd/Ctrl+Shift+D`          | 文档面板              |
+| `Esc`                       | 关闭 Inspector / 弹窗 |
 
 ## 从源码运行
 
-需要 Node.js 22+ 和 pnpm 10.x。
-
-仓库通过 `packageManager` 固定使用 pnpm 10.28.2。如果全局安装的是 pnpm 11，请先运行 `corepack enable`，再在仓库内使用 `pnpm`（或直接使用 `corepack pnpm`）；`engines.pnpm` 会有意拒绝 pnpm 11 直接执行。
+需要 Node.js 22+ 和 pnpm 10.x。仓库通过 `packageManager` 固定 pnpm 版本
+（10.28.2）；如果全局装的是更新版本，先执行 `corepack enable`。
 
 ```bash
 git clone https://github.com/qweijiaq/x-code.git
-cd x-code-cli
+cd x-code
 pnpm install
-pnpm dev
+
+pnpm dev:desktop     # 构建并启动桌面端
+pnpm dev             # 从源码构建并运行 CLI
 ```
 
-> 修改源码后需 `pnpm build` 或 `pnpm dev`。自动监听可在 `packages/core` 下运行 `pnpm dev`（`tsc -b --watch`）。
+打包、签名和更新源说明见
+[`docs/development/desktop-release.md`](./docs/development/desktop-release.md)。
 
-## 配套小册
+## 文档
 
-想深入了解实现原理，可参考掘金配套小册：[**《从零打造一个 AI Agent CLI》**](https://juejin.cn/book/7639017024882278440?suid=1433418893103645&source=h5)，以本仓库源码为参照，逐章拆解 Agent Loop、多厂商适配、终端渲染、权限模型等。
+| 文档                                                      | 内容                             |
+| --------------------------------------------------------- | -------------------------------- |
+| [桌面端指南](./docs/desktop.md)                           | 窗口、Inspector、文档、Git、权限 |
+| [用户手册](./docs/desktop-manual.md)                      | 完整的应用内手册                 |
+| [未签名安装指南](./docs/desktop-install-unsigned.md)      | Gatekeeper 与校验步骤            |
+| [Skills](./docs/skills.md)                                | 可复用工作流模板                 |
+| [子 Agent](./docs/sub-agents.md)                          | 内置与自定义 Agent               |
+| [MCP](./docs/mcp.md)                                      | 服务器配置                       |
+| [知识库与记忆](./docs/knowledge.md)                       | `AGENTS.md` 分层与自动记忆       |
+| [插件](./docs/plugins.md) / [市场](./docs/marketplace.md) | 扩展打包与来源                   |
+| [Hooks](./docs/hooks.md)                                  | 生命周期自动化                   |
+| [后台 Shell](./docs/shell-sessions.md)                    | 后台终端                         |
+| [桌面端发布](./docs/development/desktop-release.md)       | 构建、签名、验证、更新源         |
 
-- **QQ 交流群：455053594**
-- **微信：fullstack-xf**
+## 反馈
 
-## 反馈与贡献
-
-欢迎通过 Issue 和 Pull Request 反馈：<https://github.com/qweijiaq/x-code>
+欢迎通过 Issue 和 Pull Request 反馈：
+<https://github.com/qweijiaq/x-code/issues>
 
 ## License
 
