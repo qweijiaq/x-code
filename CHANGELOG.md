@@ -3,6 +3,8 @@
 ### Features
 
 - warn before sending a prompt that references absolute paths outside the current workspace, with a per-session “don’t warn again” option
+- move session pin/archive/rename/delete behind a three-dot menu to prevent misclicks
+- generate a short AI session title after the first completed turn, stored locally and used by tabs and the sidebar
 
 ### Bug Fixes
 

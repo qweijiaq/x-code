@@ -35,6 +35,7 @@ export const EN: Record<string, string> = {
   确认: 'Confirm',
   取消: 'Cancel',
   确认删除: 'Confirm delete',
+  更多操作: 'More actions',
   重命名: 'Rename',
   目录: 'Folder',
   用户级: 'User scope',

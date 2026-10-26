@@ -1126,10 +1126,10 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     let renamed = false
     let deleted = false
     const firstRow = document.querySelector('.sidebar-session-row') as HTMLElement | null
-    const renameButton = Array.from(firstRow?.querySelectorAll<HTMLButtonElement>('.session-action') ?? []).find(
-      (button) => button.title === '重命名' || button.textContent?.trim() === '改',
-    )
+    const renameButton = firstRow?.querySelector<HTMLButtonElement>('[data-testid="session-menu-toggle"]')
     renameButton?.click()
+    await waitFor(() => document.querySelector('[data-testid="session-menu"]') !== null, 2_000)
+    document.querySelector<HTMLButtonElement>('[data-testid="session-menu-rename"]')?.click()
     await waitFor(() => document.querySelector('.sidebar-rename') !== null, 2_000)
     const renameInput = document.querySelector('.sidebar-rename') as HTMLInputElement | null
     if (renameInput) {
@@ -1143,17 +1143,16 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       row.textContent?.includes('smoke-renamed'),
     )
     if (renamedRow) {
-      const deleteButton = Array.from(renamedRow.querySelectorAll<HTMLButtonElement>('.session-action')).find(
-        (button) => button.title === '删除' || button.textContent?.trim() === '删',
-      )
-      deleteButton?.click()
+      renamedRow.querySelector<HTMLButtonElement>('[data-testid="session-menu-toggle"]')?.click()
+      await waitFor(() => document.querySelector('[data-testid="session-menu"]') !== null, 2_000)
+      document.querySelector<HTMLButtonElement>('[data-testid="session-menu-delete"]')?.click()
       await waitFor(() => document.querySelector('.session-action.danger') !== null, 1_500)
       document.querySelector<HTMLButtonElement>('.session-action.danger')?.click()
       deleted = await waitFor(() => !(document.body.textContent ?? '').includes('smoke-renamed'), 2_000)
     }
     checks.sessionManagement = {
       ok: searchFiltered && renamed && deleted,
-      detail: `search=${searchFiltered} row=${Boolean(firstRow)} button=${Boolean(renameButton)} input=${Boolean(renameInput)} rename=${renamed} delete=${deleted}`,
+      detail: `search=${searchFiltered} row=${Boolean(firstRow)} menu=${Boolean(renameButton)} input=${Boolean(renameInput)} rename=${renamed} delete=${deleted}`,
     }
     document.querySelector<HTMLButtonElement>('.sidebar-sessions-section .sidebar-add')?.click()
     const placeholderReady = await waitFor(() => document.querySelector('.sidebar-session-placeholder') !== null, 2_000)

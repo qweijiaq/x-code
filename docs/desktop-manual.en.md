@@ -27,8 +27,8 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **New session**: sidebar `＋`, `Cmd/Ctrl+N` or `Cmd/Ctrl+T`. The first prompt immediately becomes the tab and sidebar title; messages are flushed during the turn, so the sidebar updates even while a long turn is still running.
 - **Switch**: click a sidebar row or a tab; the current draft survives the switch.
 - **Search**: sidebar search filters by title and first prompt; `Cmd/Ctrl+Shift+F` focuses it.
-- **Pin / archive**: session row menu. Archived sessions are available under "Show archived".
-- **Rename / delete**: session row menu; deletion cannot be undone.
+- **Pin / archive / rename / delete**: the **⋯** menu on each session row (fewer misclicks); delete asks for confirmation. Archived sessions are available under "Show archived".
+- **Session titles**: after the first completed turn the active model generates a very short title (one small request); tabs and the sidebar prefer it. A manual rename always wins, and a failed generation falls back to the first prompt.
 - **Export**: session menu to Markdown, JSON or PDF.
 - **Edit and resend**: edit a user message to rewrite the previous turn. File changes from that turn remain and can be reverted from the diff.
 - **Regenerate**: regenerate the last answer; turns with attachments must be edited to text first.

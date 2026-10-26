@@ -266,7 +266,7 @@ function summarizeInput(input: Record<string, unknown> | undefined): string {
 }
 
 function sessionTitle(item: SessionListItem): string {
-  return item.name || item.firstPrompt || item.sessionId
+  return item.name || item.title || item.firstPrompt || item.sessionId
 }
 
 function sessionTime(item: SessionListItem): string {
@@ -598,6 +598,7 @@ export function App(): React.JSX.Element {
   const [searchingSessions, setSearchingSessions] = useState(false)
   const [renaming, setRenaming] = useState<{ filePath: string; value: string } | null>(null)
   const [deletingSession, setDeletingSession] = useState<string | null>(null)
+  const [sessionMenu, setSessionMenu] = useState<{ filePath: string; x: number; y: number } | null>(null)
   const [salvageTarget, setSalvageTarget] = useState<SessionListItem | null>(null)
   const [salvageBusy, setSalvageBusy] = useState(false)
   const [documentView, setDocumentView] = useState<DocumentView | null>(null)
@@ -1336,7 +1337,7 @@ export function App(): React.JSX.Element {
           setSessions((prev) => [event.item, ...prev.filter((item) => item.sessionId !== event.item.sessionId)])
           setActiveSessionId(event.item.sessionId)
           setTabTitles((prev) => {
-            const title = (event.item.name || event.item.firstPrompt || '').trim()
+            const title = (event.item.name || event.item.title || event.item.firstPrompt || '').trim()
             return title ? { ...prev, [event.item.sessionId]: title.slice(0, 80) } : prev
           })
           emptyTabsRef.current.delete(event.item.sessionId)
@@ -1344,6 +1345,12 @@ export function App(): React.JSX.Element {
             pendingSessionRef.current = null
             setPendingSession(null)
           }
+          break
+        case 'session:title':
+          setSessions((prev) =>
+            prev.map((item) => (item.sessionId === event.sessionId ? { ...item, title: event.title } : item)),
+          )
+          setTabTitles((prev) => ({ ...prev, [event.sessionId]: event.title }))
           break
         case 'checks:finished': {
           setCheckResults(event.results)
@@ -3323,6 +3330,7 @@ export function App(): React.JSX.Element {
     )
     .slice()
     .sort((left, right) => Number(right.pinned === true) - Number(left.pinned === true) || right.mtime - left.mtime)
+  const sessionMenuItem = sessionMenu ? (sessions.find((item) => item.filePath === sessionMenu.filePath) ?? null) : null
   const extraSearchResults =
     sessionQuery.trim().length >= 2
       ? searchResults.filter((result) => !visibleSessions.some((item) => item.filePath === result.filePath))
@@ -3580,36 +3588,22 @@ export function App(): React.JSX.Element {
                             </button>
                           </>
                         ) : (
-                          <>
-                            <button
-                              className={`session-action ${item.pinned ? 'active' : ''}`}
-                              title={item.pinned ? t('取消置顶') : t('置顶')}
-                              onClick={() => void toggleSessionPinned(item)}
-                            >
-                              {item.pinned ? '★' : '☆'}
-                            </button>
-                            <button
-                              className="session-action"
-                              title={item.archived ? t('取消归档') : t('归档')}
-                              onClick={() => void toggleSessionArchived(item)}
-                            >
-                              {item.archived ? t('复') : t('档')}
-                            </button>
-                            <button
-                              className="session-action"
-                              title={t('重命名')}
-                              onClick={() => setRenaming({ filePath: item.filePath, value: sessionTitle(item) })}
-                            >
-                              {t('改')}
-                            </button>
-                            <button
-                              className="session-action"
-                              title={t('删除')}
-                              onClick={() => setDeletingSession(item.filePath)}
-                            >
-                              {t('删')}
-                            </button>
-                          </>
+                          <button
+                            className="session-action"
+                            data-testid="session-menu-toggle"
+                            title={t('更多操作')}
+                            aria-label={t('更多操作')}
+                            onClick={(event) => {
+                              const rect = event.currentTarget.getBoundingClientRect()
+                              setSessionMenu({
+                                filePath: item.filePath,
+                                x: Math.max(8, Math.min(window.innerWidth - 188, rect.right - 180)),
+                                y: Math.max(8, Math.min(window.innerHeight - 190, rect.bottom + 4)),
+                              })
+                            }}
+                          >
+                            ⋯
+                          </button>
                         )}
                       </span>
                     </>
@@ -4982,6 +4976,59 @@ export function App(): React.JSX.Element {
         onSession={(item) => void loadSession(item)}
         onClose={() => setPaletteOpen(false)}
       />
+      {sessionMenu && sessionMenuItem ? (
+        <>
+          <div className="session-menu-scrim" onClick={() => setSessionMenu(null)} />
+          <div
+            className="session-menu"
+            data-testid="session-menu"
+            role="menu"
+            style={{ left: sessionMenu.x, top: sessionMenu.y }}
+          >
+            <button
+              type="button"
+              data-testid="session-menu-pin"
+              onClick={() => {
+                setSessionMenu(null)
+                void toggleSessionPinned(sessionMenuItem)
+              }}
+            >
+              {sessionMenuItem.pinned ? t('取消置顶') : t('置顶')}
+            </button>
+            <button
+              type="button"
+              data-testid="session-menu-archive"
+              onClick={() => {
+                setSessionMenu(null)
+                void toggleSessionArchived(sessionMenuItem)
+              }}
+            >
+              {sessionMenuItem.archived ? t('取消归档') : t('归档')}
+            </button>
+            <button
+              type="button"
+              data-testid="session-menu-rename"
+              onClick={() => {
+                setSessionMenu(null)
+                setRenaming({ filePath: sessionMenuItem.filePath, value: sessionTitle(sessionMenuItem) })
+              }}
+            >
+              {t('重命名')}
+            </button>
+            <button
+              type="button"
+              className="danger"
+              data-testid="session-menu-delete"
+              onClick={() => {
+                setSessionMenu(null)
+                setDeletingSession(sessionMenuItem.filePath)
+              }}
+            >
+              {t('删除')}
+            </button>
+          </div>
+        </>
+      ) : null}
       {workspaceGuard ? (
         <div className="modal-scrim" onClick={cancelWorkspaceGuard}>
           <div

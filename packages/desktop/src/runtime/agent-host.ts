@@ -3,6 +3,8 @@ import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 
+import { generateText } from 'ai'
+
 import {
   KEEP_RECENT_TOKENS,
   MIN_CONTEXT_WINDOW_OVERRIDE,
@@ -192,6 +194,7 @@ import {
   searchSecretStatus,
   secretStorageKind,
 } from './secrets.js'
+import { cleanSessionTitle } from './session-title.js'
 import { listSessionItems, loadSessionView, searchSessionItems, toSessionMessages, usageView } from './sessions.js'
 import { refreshShellEnvironment } from './shell-env.js'
 import { importSkillIntoUserDir } from './skill-import.js'
@@ -457,6 +460,7 @@ export class AgentHost {
   private approvalSeq = 0
   private skillPollTimer: ReturnType<typeof setInterval> | null = null
   private skillSignature = ''
+  private titleGenerating = new Set<string>()
 
   constructor(
     private readonly send: (event: RuntimeEvent) => void,
@@ -539,9 +543,11 @@ export class AgentHost {
     const settings = loadDesktopSettings()
     const pinned = new Set(settings.pinnedSessions ?? [])
     const archived = new Set(settings.archivedSessions ?? [])
+    const titles = settings.sessionTitles ?? {}
     const items = await listSessionItems(this.requireBootstrap().workspace)
     return items.map((item) => ({
       ...item,
+      ...(titles[item.sessionId] ? { title: titles[item.sessionId] } : {}),
       pinned: pinned.has(item.filePath),
       archived: archived.has(item.filePath),
     }))
@@ -1007,6 +1013,12 @@ export class AgentHost {
     const fileId = path.basename(filePath, '.jsonl')
     const resetActive = this.loopState?.sessionId === fileId
     await deleteSessionFile(filePath)
+    const settings = loadDesktopSettings()
+    if (settings.sessionTitles?.[fileId]) {
+      const titles = { ...settings.sessionTitles }
+      delete titles[fileId]
+      saveDesktopSettings({ sessionTitles: titles })
+    }
     if (resetActive) {
       this.cancelAllApprovals()
       this.shellUnsubscribe?.()
@@ -1566,6 +1578,7 @@ export class AgentHost {
           // A failed session flush must not hide the completed turn.
         }
         this.emitSessionSaved(this.loopState)
+        if (reason === 'completed') void this.generateSessionTitle(this.loopState)
       }
       this.send({
         type: 'agent:turn-end',
@@ -3407,17 +3420,57 @@ export class AgentHost {
     if (!state.sessionFilePath) return
     const firstUser = state.messages.find((message) => message.role === 'user')
     const firstPrompt = firstUser ? extractText(firstUser.content).slice(0, 120) : ''
+    const title = loadDesktopSettings().sessionTitles?.[state.sessionId]
     this.send({
       type: 'session:saved',
       item: {
         filePath: state.sessionFilePath,
         sessionId: state.sessionId,
         firstPrompt,
+        ...(title ? { title } : {}),
         startedAt: state.startedAt,
         modelId: this.modelId,
         mtime: Date.now(),
       },
     })
+  }
+
+  /** One small model call per new session. Runs after the turn so it never
+   *  delays the answer; failures simply leave the first-prompt fallback. */
+  private async generateSessionTitle(state: LoopState): Promise<void> {
+    if (this.demo) return
+    const model = this.model
+    if (!model) return
+    if (loadDesktopSettings().sessionTitles?.[state.sessionId]) return
+    if (this.titleGenerating.has(state.sessionId)) return
+    const firstUser = state.messages.find((message) => message.role === 'user')
+    if (!firstUser) return
+    const userText = extractText(firstUser.content).trim().slice(0, 1200)
+    if (!userText) return
+    const assistant = [...state.messages].reverse().find((message) => message.role === 'assistant')
+    const assistantText = assistant ? extractText(assistant.content).trim().slice(0, 800) : ''
+    this.titleGenerating.add(state.sessionId)
+    try {
+      const { text } = await generateText({
+        model,
+        abortSignal: AbortSignal.timeout(15_000),
+        instructions:
+          'Create a very short conversation title. Reply with only the title: at most 8 Chinese characters or 6 English words. No quotes and no trailing punctuation.',
+        messages: [{ role: 'user', content: `User: ${userText}\n\nAssistant: ${assistantText}` }],
+        maxOutputTokens: 32,
+      })
+      const title = cleanSessionTitle(text)
+      if (!title) return
+      const current = loadDesktopSettings()
+      saveDesktopSettings({
+        sessionTitles: { ...(current.sessionTitles ?? {}), [state.sessionId]: title },
+      })
+      this.send({ type: 'session:title', sessionId: state.sessionId, title })
+    } catch {
+      // Title generation is best effort.
+    } finally {
+      this.titleGenerating.delete(state.sessionId)
+    }
   }
 
   private requireBootstrap(): RuntimeBootstrap {

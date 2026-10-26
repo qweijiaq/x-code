@@ -28,6 +28,7 @@ interface DesktopSettingsFile {
   updateFeed?: string
   pinnedSessions?: string[]
   archivedSessions?: string[]
+  sessionTitles?: Record<string, string>
   projectSettings?: Record<string, ProjectOverrides>
   trustedProjectHooks?: string[]
   contextWindowOverrides?: Record<string, number>
@@ -42,6 +43,17 @@ function normalizeSearchProvider(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined
   const id = raw.trim().toLowerCase()
   return STANDALONE_SEARCH_IDS.has(id) ? id : undefined
+}
+
+function normalizeSessionTitles(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, string> = {}
+  for (const [sessionId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!sessionId.trim() || typeof value !== 'string') continue
+    const title = value.replace(/\s+/g, ' ').trim().slice(0, 80)
+    if (title) out[sessionId] = title
+  }
+  return out
 }
 
 function normalizeContextWindowOverrides(raw: unknown): Record<string, number> {
@@ -109,6 +121,7 @@ export function loadDesktopSettings(): DesktopSettingsFile {
         archivedSessions: Array.isArray(data.archivedSessions)
           ? data.archivedSessions.filter((entry): entry is string => typeof entry === 'string')
           : [],
+        sessionTitles: normalizeSessionTitles(data.sessionTitles),
         projectSettings: normalizeProjectSettings(data.projectSettings),
         trustedProjectHooks: Array.isArray(data.trustedProjectHooks)
           ? data.trustedProjectHooks

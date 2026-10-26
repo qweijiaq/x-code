@@ -693,6 +693,8 @@ export interface SessionListItem {
   filePath: string
   sessionId: string
   name?: string
+  /** AI-generated short title (display fallback between name and firstPrompt). */
+  title?: string
   firstPrompt: string
   startedAt: string
   modelId: string
@@ -1241,6 +1243,7 @@ export type RuntimeEvent =
   | { type: 'session:saved'; item: SessionListItem }
   | { type: 'settings:changed'; settings: SettingsSnapshot }
   | { type: 'app:settings-changed' }
+  | { type: 'session:title'; sessionId: string; title: string }
   | { type: 'commands:changed' }
   | { type: 'audio:progress'; message: string }
   | { type: 'app:open-session'; sessionId: string }
