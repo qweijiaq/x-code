@@ -92,6 +92,22 @@ A production sign-off needs `--require-signed`, a completed notarization
 ticket, and a real-LLM E2E run. The Windows/Linux installers still require
 manual acceptance on those platforms.
 
+## Publishing
+
+After verification, publish the artifacts to GitHub:
+
+```bash
+pnpm publish:desktop
+```
+
+The script reads the GitHub credential already stored by the git credential
+helper, creates a draft release for tag `v<version>`, uploads the dmg, zip,
+blockmaps, `SHA256SUMS`, `RELEASE.json` and `latest-mac.yml`, checks that every
+asset arrived, then publishes the release. Use
+`pnpm publish:desktop -- --draft` to stop at the draft stage. The tag must point
+at the commit recorded in `RELEASE.json`. Set `HTTPS_PROXY` when GitHub is only
+reachable through a proxy.
+
 ## Update feed
 
 The app defaults to
