@@ -136,6 +136,7 @@ import type {
   SkillMarketProvider,
   SkillSettingsView,
   StorageUsageView,
+  TempDeliverableMoveResult,
   TestConnectionResult,
   TextReport,
   ToolSettingsView,
@@ -210,6 +211,7 @@ import {
 } from './skill-runtime.js'
 import { DEFAULT_TASK_MODE, isTaskMode, taskModeInstruction } from './task-modes.js'
 import type { TaskMode } from './task-modes.js'
+import { moveTempFilesIntoWorkspace } from './temp-files.js'
 import { exportUserBackup, importUserBackup } from './user-backup.js'
 
 interface ActiveTurn {
@@ -565,6 +567,11 @@ export class AgentHost {
         current: path.resolve(entry) === path.resolve(current),
       })),
     }
+  }
+
+  /** 把 Agent 落在系统临时目录里的交付物复制回工作区，再删除源文件。 */
+  async moveTempFilesToWorkspace(paths: string[]): Promise<TempDeliverableMoveResult> {
+    return moveTempFilesIntoWorkspace(paths, this.requireBootstrap().workspace)
   }
 
   /** Backs the renderer's `@` menu. The scan is cached briefly per workspace:

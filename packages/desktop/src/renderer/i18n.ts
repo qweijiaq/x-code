@@ -308,6 +308,13 @@ export const EN: Record<string, string> = {
   '命令被 Shell 沙箱拦截：只能写入工作区和临时目录。':
     'The shell sandbox blocked this command: writes are only allowed in the workspace and temp directories.',
   '设置中…': 'Applying…',
+  '交付物写到了系统临时目录：{{files}}': 'Deliverables were written to the system temp directory: {{files}}',
+  移动到工作区: 'Move to workspace',
+  当前回复结束后可以移动: 'You can move it after the current reply finishes',
+  '移动中…': 'Moving…',
+  '已移动到工作区：{{files}}': 'Moved to workspace: {{files}}',
+  '已移动到工作区：\n{{paths}}': 'Moved to workspace:\n{{paths}}',
+  '移动失败：{{path}} — {{error}}': 'Move failed: {{path}} — {{error}}',
   允许网络: 'Allow network',
   '允许网络（点击禁用）': 'Network allowed (click to disable)',
   插件配置: 'Plugin configuration',

@@ -322,6 +322,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, host.listWorkspaces())
       }
+      case 'workspace:move-temp-files': {
+        await ensureInitialized()
+        return ok(request.id, await host.moveTempFilesToWorkspace(request.params.paths))
+      }
       case 'document:open': {
         await ensureInitialized()
         return ok(

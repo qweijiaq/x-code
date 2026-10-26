@@ -1,9 +1,21 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { isSystemTempPath, workspaceOutputNote } from '../src/utils/output-location.js'
+import {
+  isSystemTempPath,
+  noteForRecentTempFiles,
+  tempPathsInText,
+  workspaceOutputNote,
+} from '../src/utils/output-location.js'
+
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'xcode-output-location-'))
+
+afterAll(() => {
+  fs.rmSync(scratch, { recursive: true, force: true })
+})
 
 describe('workspace output location', () => {
   it('detects the OS temp directory and its common macOS aliases', () => {
@@ -25,5 +37,27 @@ describe('workspace output location', () => {
     expect(note).toContain('/Users/someone/project')
     expect(note).toContain('temporary directory')
     expect(workspaceOutputNote('/Users/someone/project/transcript.txt', '/Users/someone/project')).toBe('')
+  })
+
+  it('extracts temp paths from shell commands, including $TMPDIR', () => {
+    const paths = tempPathsInText(
+      `ffmpeg -i in.wav -t 300 /tmp/first5min.wav && echo "\$TMPDIR/out.txt" && cat /tmp/old.log`,
+    )
+    expect(paths).toContain('/tmp/first5min.wav')
+    expect(paths).toContain(path.join(os.tmpdir(), 'out.txt'))
+    expect(paths).toContain('/tmp/old.log')
+  })
+
+  it('only reminds about temp files created during the command', async () => {
+    const recent = path.join(scratch, 'recent.txt')
+    const old = path.join(scratch, 'old.txt')
+    fs.writeFileSync(recent, 'new')
+    fs.writeFileSync(old, 'old')
+    fs.utimesSync(old, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000))
+
+    const note = await noteForRecentTempFiles(`write ${recent} and read ${old}`, 0, scratch)
+
+    expect(note).toContain(recent)
+    expect(note).not.toContain(old)
   })
 })

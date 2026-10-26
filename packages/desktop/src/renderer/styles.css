@@ -1253,6 +1253,12 @@ body::before {
   flex: 1;
 }
 
+.tool-guidance.success {
+  border-left-color: var(--green, #5f7a61);
+  background: rgba(95, 122, 97, 0.08);
+  color: var(--ink-70);
+}
+
 /* ── Settings drawer ─────────────────────────────────────────────────── */
 
 .settings-drawer {

@@ -342,6 +342,44 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       checks.editRevert = { ok: false, detail: 'no file-edit event captured' }
     }
 
+    let tempHint = false
+    let tempMoved = false
+    const offTemp = window.xcode.onEvent((event) => {
+      if (event.type === 'approval:request' && event.kind === 'permission') {
+        void window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'approval:respond',
+          params: { requestId: event.requestId, kind: 'permission', decision: 'yes' },
+        })
+      }
+    })
+    const hintsBefore = document.querySelectorAll('[data-testid="temp-deliverable-hint"]').length
+    await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'agent:submit',
+      params: { prompt: '[temp-deliverable-demo]' },
+    })
+    offTemp()
+    tempHint = await waitFor(
+      () => document.querySelectorAll('[data-testid="temp-deliverable-hint"]').length > hintsBefore,
+      10_000,
+    )
+    const tempHintNodes = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="temp-deliverable-hint"]'))
+    const tempHintNode = tempHintNodes.at(-1) ?? null
+    if (tempHintNode) {
+      await waitFor(() => {
+        const moveButton = tempHintNode.querySelector<HTMLButtonElement>('button')
+        return Boolean(moveButton && !moveButton.disabled)
+      }, 10_000)
+      tempHintNode.querySelector<HTMLButtonElement>('button')?.click()
+      tempMoved = await waitFor(() => document.querySelector('[data-testid="temp-deliverable-moved"]') !== null, 5_000)
+    }
+    const tempError = Array.from(document.querySelectorAll('.message.error')).pop()?.textContent ?? ''
+    checks.tempDeliverable = {
+      ok: tempHint && tempMoved,
+      detail: `hint=${tempHint} moved=${tempMoved}${tempError ? ` error=${tempError.slice(0, 120)}` : ''}`,
+    }
+
     let subagentStart = false
     let subagentEnd = false
     const offSubagent = window.xcode.onEvent((event) => {

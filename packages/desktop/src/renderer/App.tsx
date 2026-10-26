@@ -27,6 +27,7 @@ import type {
   SettingsSnapshot,
   SmokeReport,
   SubAgentView,
+  TempDeliverableMoveResult,
   TextReport,
   TodoView,
   UsageView,
@@ -109,6 +110,18 @@ function toolEnvironmentHint(text: string, sandboxEnabled: boolean): 'network' |
   if (sandboxEnabled && SANDBOX_WRITE_DENIAL.test(text)) return 'write'
   if (COMMAND_NOT_FOUND.test(text)) return 'command'
   return null
+}
+
+const OUTPUT_LOCATION_PATTERN = /\[Output location\]\s+(.+?)\s+is in the system temporary directory/g
+
+function tempDeliverables(text: string | undefined): string[] {
+  if (!text) return []
+  const paths = new Set<string>()
+  for (const match of text.matchAll(OUTPUT_LOCATION_PATTERN)) {
+    const candidate = match[1]?.trim()
+    if (candidate) paths.add(candidate)
+  }
+  return [...paths]
 }
 
 const imagePreviewCache = new Map<string, string>()
@@ -197,6 +210,7 @@ interface Entry {
   subagent?: SubAgentView
   attachments?: string[]
   attachmentViews?: SessionAttachmentView[]
+  movedDeliverables?: string[]
 }
 
 type TurnRenderItem =
@@ -653,6 +667,7 @@ export function App(): React.JSX.Element {
   const [todos, setTodos] = useState<TodoView[]>([])
   const [usage, setUsage] = useState<UsageView | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [movingTempEntry, setMovingTempEntry] = useState<string | null>(null)
   const [queued, setQueued] = useState(0)
   const [queuedItems, setQueuedItems] = useState<Array<{ prompt: string; attachments: string[] }>>([])
   const [editArmed, setEditArmed] = useState(false)
@@ -2168,6 +2183,49 @@ export function App(): React.JSX.Element {
         ? t('已刷新 {{shell}} 环境，重新运行命令即可。', { shell: environment.shell })
         : t('刷新环境失败：{{error}}', { error: environment?.error ?? t('未知错误') }),
     })
+  }
+
+  const moveTempDeliverables = async (entryId: string, paths: string[]): Promise<void> => {
+    if (paths.length === 0) return
+    setMovingTempEntry(entryId)
+    try {
+      const response = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'workspace:move-temp-files',
+        params: { paths },
+      })
+      if (!response.ok) {
+        append({ role: 'error', text: response.error.message })
+        return
+      }
+      const result = response.result as TempDeliverableMoveResult
+      if (result.moved.length > 0) {
+        setEntries((prev) =>
+          prev.map((entry) => {
+            if (entry.id !== entryId) return entry
+            let output = entry.toolOutput
+            for (const item of result.moved) output = output?.split(item.from).join(item.to)
+            return {
+              ...entry,
+              toolOutput: output,
+              movedDeliverables: [...(entry.movedDeliverables ?? []), ...result.moved.map((item) => item.to)],
+            }
+          }),
+        )
+        append({
+          role: 'system',
+          text: t('已移动到工作区：\n{{paths}}', { paths: result.moved.map((item) => item.to).join('\n') }),
+        })
+      }
+      for (const failure of result.errors) {
+        append({
+          role: 'error',
+          text: t('移动失败：{{path}} — {{error}}', { path: failure.path, error: failure.error }),
+        })
+      }
+    } finally {
+      setMovingTempEntry(null)
+    }
   }
 
   const loadSession = async (item: SessionListItem): Promise<void> => {
@@ -4205,6 +4263,10 @@ export function App(): React.JSX.Element {
               entry.role === 'tool' && entry.toolOutput
                 ? toolEnvironmentHint(entry.toolOutput, settings?.shellSandbox.enabled === true)
                 : null
+            const tempOutputs =
+              entry.role === 'tool' && !entry.reverted && !entry.movedDeliverables?.length
+                ? tempDeliverables(entry.toolOutput)
+                : []
             return entry.role === 'tool' ? (
               <article key={entry.id} className={`tool-card ${entry.toolStatus ?? 'running'}`}>
                 <div className="tool-head">
@@ -4270,6 +4332,33 @@ export function App(): React.JSX.Element {
                         {t('沙箱设置')}
                       </button>
                     ) : null}
+                  </div>
+                ) : null}
+                {tempOutputs.length > 0 ? (
+                  <div className="tool-guidance" data-testid="temp-deliverable-hint">
+                    <span>
+                      {t('交付物写到了系统临时目录：{{files}}', {
+                        files: tempOutputs.map((item) => item.split(/[\\/]/).pop() || item).join('、'),
+                      })}
+                    </span>
+                    <span className="spacer" />
+                    <button
+                      className="btn btn-quiet"
+                      disabled={busy || movingTempEntry === entry.id}
+                      title={busy ? t('当前回复结束后可以移动') : undefined}
+                      onClick={() => void moveTempDeliverables(entry.id, tempOutputs)}
+                    >
+                      {movingTempEntry === entry.id ? t('移动中…') : t('移动到工作区')}
+                    </button>
+                  </div>
+                ) : null}
+                {entry.movedDeliverables?.length ? (
+                  <div className="tool-guidance success" data-testid="temp-deliverable-moved">
+                    <span>
+                      {t('已移动到工作区：{{files}}', {
+                        files: entry.movedDeliverables.map((item) => item.split(/[\\/]/).pop() || item).join('、'),
+                      })}
+                    </span>
                   </div>
                 ) : null}
                 {entry.toolOutput && (entry.toolName === 'webSearch' || entry.toolName === 'webFetch') ? (

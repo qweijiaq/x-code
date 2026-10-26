@@ -37,7 +37,7 @@ import type {
 import { isReadOnly, splitShellCommands } from '../tools/shell-utils.js'
 import type { AgentCallbacks, AgentOptions, LanguageModel, PermissionDecision } from '../types/index.js'
 import { XCODE_DIR, debugLog, isAbortError } from '../utils.js'
-import { workspaceOutputNote } from '../utils/output-location.js'
+import { noteForRecentTempFiles, workspaceOutputNote } from '../utils/output-location.js'
 import { runBrowserVisualCheck } from './browser/visual-check.js'
 import { createBuiltInToolHandlers } from './built-in-tool-handlers.js'
 import { computeEditDiff } from './diff.js'
@@ -582,6 +582,9 @@ async function commitShellObservation(ctx: HandlerCtx, observation: ShellObserva
     } catch (error) {
       if (!isAbortError(error, ctx.options.abortSignal)) throw error
       debugLog('agent.shell-post-aborted', observation.lease.claimId)
+    }
+    if (!observation.result.isError && ctx.toolName === 'shell' && typeof ctx.input.command === 'string') {
+      output += await noteForRecentTempFiles(ctx.input.command, observation.result.wallTimeMs, ctx.state.projectCwd)
     }
     appendAndNotifyShellResult(ctx, output, observation.result.isError, observation.lease)
     settled = true

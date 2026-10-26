@@ -189,6 +189,29 @@ export function createDemoModel(): MockLanguageModelV3 {
         return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
       }
 
+      if (lastUserText.includes('[temp-deliverable-demo]') && !pendingCallId) {
+        pendingCallId = `demo-temp-${Date.now()}`
+        const target = path.join(os.tmpdir(), `x-code-desktop-deliverable-${Date.now()}.md`)
+        const parts: LanguageModelV3StreamPart[] = [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 'demo-text' },
+          { type: 'text-delta', id: 'demo-text', delta: '演示模式：把一个交付物写入临时目录。\n' },
+          { type: 'text-end', id: 'demo-text' },
+          {
+            type: 'tool-call',
+            toolCallId: pendingCallId,
+            toolName: 'writeFile',
+            input: JSON.stringify({ filePath: target, content: '# Temp deliverable\n' }),
+          },
+          {
+            type: 'finish',
+            finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' },
+            usage: usage(),
+          },
+        ]
+        return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
+      }
+
       const text =
         '这是演示模型（未配置 API Key）。在项目 .env 中配置任意受支持的 API Key 后重启，即可使用真实模型。\n\n输入包含 [tool-demo] 时，会触发一次写入工具调用，用来验证权限与 diff。'
       return textStream(text)

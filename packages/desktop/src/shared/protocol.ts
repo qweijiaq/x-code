@@ -596,6 +596,11 @@ export interface WorkspaceList {
   current: string
 }
 
+export interface TempDeliverableMoveResult {
+  moved: Array<{ from: string; to: string }>
+  errors: Array<{ path: string; error: string }>
+}
+
 export interface TestConnectionResult {
   ok: boolean
   modelId: string
@@ -1110,6 +1115,10 @@ export interface RequestMap {
     result: { path: string | null; paths?: string[] }
   }
   'workspace:list': { params: Record<string, never>; result: WorkspaceList }
+  'workspace:move-temp-files': {
+    params: { paths: string[] }
+    result: TempDeliverableMoveResult
+  }
   'document:open': {
     params: { path: string; start?: number; count?: number }
     result: DocumentView

@@ -66,6 +66,7 @@ The **Outline** tab in the right-hand inspector (also the top-bar outline button
 
 - Files the agent creates for you to keep — reports, transcripts, exported documents, generated images/audio/video — go into the **current workspace**; relative paths resolve from the workspace root.
 - `/tmp` is for disposable intermediates only (audio chunks, conversion staging) and should be cleaned up when the task ends. If a tool writes into the system temp directory, its result includes an `[Output location]` reminder so the agent moves the deliverable into the workspace.
+- The tool card also shows **Deliverables were written to the system temp directory** with a **Move to workspace** button. Once the current reply finishes, click it to copy the file into the workspace and remove the temp source. Existing files are never overwritten; a `(1)` suffix is added when the name is taken.
 - Skill dependencies and managed runtimes live in `~/.x-code/skill-runtime`; marketplace skills live in `~/.x-code/skills`. Neither is written into the workspace. Legacy `runtime/` or `venv/` folders inside a project skill can be cleared from Settings → Skills.
 - To deliberately put an output outside the workspace (for example `~/Documents`), give the target path in your prompt; the agent writes exactly there.
 
