@@ -109,10 +109,10 @@ describe('stdout writer spacing', () => {
       },
     )
 
-    // Command text survives verbatim once the SGR color runs are stripped…
+    // 剥离 SGR 颜色序列后，命令文本原样保留……
     expect(output.replace(/\x1b\[[0-9;]*m/g, '')).toContain('git log --oneline && echo "done"')
-    // …and the flag + string carry syntax colors (one-dark palette:
-    // storage #c678dd, string #98c379) instead of the flat primary blue.
+    // ……而 flag 与字符串带有语法高亮色（one-dark 调色板：
+    // storage #c678dd、string #98c379），而非单一的主蓝色。
     expect(output).toContain('\x1b[38;2;198;120;221m--oneline')
     expect(output).toContain('\x1b[38;2;152;195;121m"done"')
   })

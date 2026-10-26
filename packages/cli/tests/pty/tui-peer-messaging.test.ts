@@ -277,8 +277,8 @@ describe('TUI cross-session messaging', () => {
         if (decision === 'Accept') {
           const [request] = await betaProvider.waitForMainRequests(1, 10_000)
           expect(request?.rawBody).toContain('<peer_message')
-          // exitTui's first Ctrl+C must land on an idle beta — otherwise it
-          // interrupts the in-flight turn instead of arming the exit hint.
+          // exitTui 的第一次 Ctrl+C 必须落在空闲的 beta 上 — 否则它
+          // 会中断正在进行的回合，而不是触发退出提示。
           await beta.waitForScreen(
             (screen) => screen.includes('accepted held payload') && !screen.includes('esc to interrupt'),
             'idle beta after accepted held payload',

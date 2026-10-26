@@ -1,17 +1,15 @@
-// @x-code-cli/core — Per-server MCP client wrapper
+// @x-code-cli/core — 每服务器 MCP 客户端封装
 //
-// One McpClient instance == one server connection. The class hides the
-// SDK's slightly awkward two-object setup (`new Client(...)` +
-// `new XxxTransport(...)` + `client.connect(transport)`) behind one
-// `connect()` method, owns transport teardown on `close()`, and exposes a
-// narrow surface (listTools / callTool / listResources / readResource /
-// close) that the registry actually needs.
+// 一个 McpClient 实例 == 一条服务器连接。这个类把 SDK 略显别扭的双对象
+// 组装（`new Client(...)` + `new XxxTransport(...)` +
+// `client.connect(transport)`）隐藏在一个 `connect()` 方法之后，在
+// `close()` 时负责 transport 的拆卸，并暴露 registry 实际需要的窄接口
+// （listTools / callTool / listResources / readResource / close）。
 //
-// abortSignal threading: every server-bound RPC method takes an optional
-// AbortSignal and forwards it via `RequestOptions.signal`. When the user
-// hits Esc mid-tool-call the agent loop's signal aborts the SDK request,
-// which closes the JSON-RPC future without killing the underlying
-// connection — the next call can reuse the same transport.
+// abortSignal 贯穿：每个面向服务器的 RPC 方法都接受可选的 AbortSignal
+// 并通过 `RequestOptions.signal` 转发。当用户在工具调用中途按下 Esc 时，
+// agent loop 的信号会中止 SDK 请求，关闭 JSON-RPC future 而不会杀掉底层
+// 连接——下一次调用可以复用同一条 transport。
 import { type OAuthClientProvider, UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
@@ -32,18 +30,16 @@ import {
   isStdioConfig,
 } from './types.js'
 
-/** How many tail lines of stderr to keep around for diagnostics.
- *  When a stdio server dies on startup or fails mid-call, surfacing the
- *  last bit of its stderr in `/mcp list` is the difference between a
- *  meaningful error and a useless "exit code 1". */
+/** 为诊断保留多少行 stderr 尾部。
+ *  当 stdio 服务器在启动时死亡或调用中途失败时，在 `/mcp list` 中展示其
+ *  stderr 的最后几行，是有意义错误与无用的 "exit code 1" 之间的区别。 */
 const STDERR_TAIL_LINES = 20
 
 const CLIENT_INFO = { name: 'x-code-cli', version: VERSION }
 
-/** Default first-connect timeout (ms). Overridable per-server via the
- *  config's `timeout` field. 30s is generous — community stdio servers
- *  are usually up in 100-500ms; the budget is for slow npx installs on
- *  cold cache, not normal operation. */
+/** 默认首次连接超时（毫秒）。可通过配置的 `timeout` 字段按服务器覆盖。
+ *  30 秒很宽裕——社区 stdio 服务器通常在 100-500ms 内启动；这个预算
+ *  是留给冷缓存下缓慢的 npx 安装的，不是给正常运行用的。 */
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000
 const DISCOVERY_TIMEOUT_MS = 15_000
 const MAX_DISCOVERED_TOOLS = 256
@@ -63,13 +59,13 @@ export interface ConnectInfo {
 }
 
 export class McpClient {
-  /** SDK client. Only present after a successful connect. */
+  /** SDK 客户端。仅在成功连接后才存在。 */
   private client: Client | null = null
-  /** SDK transport. Owned by us so we can `close()` it cleanly. */
+  /** SDK transport。由我们持有，以便能干净地 `close()` 它。 */
   private transport: Transport | null = null
-  /** Rolling tail of stderr (stdio servers only). */
+  /** stderr 的滚动尾部（仅 stdio 服务器）。 */
   private stderrTail: string[] = []
-  /** Cached results from the last connect, served to the registry. */
+  /** 上次连接的缓存结果，提供给 registry。 */
   private cachedTools: Array<{
     name: string
     description?: string
@@ -77,22 +73,21 @@ export class McpClient {
     annotations?: Record<string, unknown>
   }> = []
   private cachedResources: McpResourceEntry[] = []
-  /** The SDK does not replay an onclose event to listeners registered after
-   *  the transport has already dropped. Keep our own lifecycle state so a
-   *  late observer cannot mistake a dead connection for a live one. */
+  /** SDK 不会把 onclose 事件重放给在 transport 已断开后才注册的监听器。
+   *  维护我们自己的生命周期状态，使迟到的观察者不会把死连接误认为活连接。 */
   private connectionState: 'idle' | 'open' | 'closed' = 'idle'
   private closeHandlers = new Set<() => void | Promise<void>>()
 
   constructor(
     public readonly serverName: string,
     private readonly config: McpServerConfig,
-    /** Optional OAuth provider for HTTP servers. Stdio servers ignore this. */
+    /** HTTP 服务器可选 OAuth provider。stdio 服务器忽略它。 */
     private readonly authProvider?: OAuthClientProvider,
   ) {}
 
-  /** Spawn / dial the server and complete the MCP initialize handshake.
-   *  On success, populates internal tool + resource caches. On failure,
-   *  cleans up the transport (no zombie subprocess) and re-throws. */
+  /** 启动 / 拨号服务器并完成 MCP initialize 握手。
+   *  成功时填充内部 tool + resource 缓存。失败时清理 transport
+   *  （不留僵尸子进程）并重新抛出。 */
   async connect(abortSignal?: AbortSignal): Promise<ConnectInfo> {
     const timeout = this.config.timeout ?? DEFAULT_CONNECT_TIMEOUT_MS
 
@@ -101,24 +96,21 @@ export class McpClient {
     this.connectionState = 'open'
     this.client.onclose = () => this.notifyClosed()
 
-    // SDK's connect() runs the initialize roundtrip and resolves once the
-    // server has acknowledged. Race it against an explicit timer because
-    // a stuck stdio child (e.g. npx hanging on registry fetch) wouldn't
-    // surface as an error otherwise — it'd just sit there.
+    // SDK 的 connect() 执行 initialize 往返，并在服务器确认后 resolve。
+    // 用一个显式定时器与它竞速，因为卡住的 stdio 子进程（例如 npx 卡在
+    // registry 拉取上）否则不会表现为错误——只会一直挂在那里。
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), timeout)
     const signal = abortSignal ? AbortSignal.any([ctrl.signal, abortSignal]) : ctrl.signal
     try {
       await this.client.connect(this.transport, { signal })
     } catch (err) {
-      // UnauthorizedError is the expected throw during an OAuth flow:
-      // the SDK has called redirectToAuthorization and now wants the
-      // caller to finishAuth(code) on the SAME transport. If we tear
-      // down here, runOAuthDance loses its handle and can't complete
-      // the exchange. Leave transport + client alive; the caller
-      // (runOAuthDance) or finally-shutdown path will clean up. For
-      // any other error we still safeClose to avoid leaking a child
-      // process / dangling HTTP connection.
+      // UnauthorizedError 是 OAuth 流程中预期的抛出：SDK 已调用
+      // redirectToAuthorization，现在希望调用方在*同一条* transport 上
+      // 执行 finishAuth(code)。如果在这里拆掉，runOAuthDance 会失去句柄
+      // 而无法完成交换。让 transport + client 保持存活；调用方
+      // （runOAuthDance）或 finally 关闭路径会清理。对于其他任何错误，
+      // 我们仍会 safeClose，以避免泄漏子进程 / 悬挂的 HTTP 连接。
       if (!isUnauthorizedError(err)) {
         await this.safeClose()
       }
@@ -127,9 +119,9 @@ export class McpClient {
       clearTimeout(timer)
     }
 
-    // Discover capabilities. Tools/resources are independent — a server
-    // can offer one without the other — and we tolerate either listing
-    // throwing (some servers reject `listResources` if they have none).
+    // 发现能力。Tools/resources 相互独立——服务器可以只提供其一——
+    // 并且我们容忍任一列举抛错（有些服务器在没有 resources 时会拒绝
+    // `listResources`）。
     try {
       const discoverySignal = AbortSignal.timeout(Math.min(timeout, DISCOVERY_TIMEOUT_MS))
       const signal = abortSignal ? AbortSignal.any([discoverySignal, abortSignal]) : discoverySignal
@@ -186,9 +178,9 @@ export class McpClient {
         await this.safeClose()
         throw err
       }
-      // JSON-RPC -32601 (Method not found) just means the server doesn't
-      // implement the resources capability — normal for tools-only servers
-      // (e.g. @playwright/mcp), not a failure worth logging. Anything else is.
+      // JSON-RPC -32601（Method not found）只表示服务器没有实现 resources
+      // 能力——对只提供工具的服务器（如 @playwright/mcp）是正常的，
+      // 不值得记录日志的失败。其他错误才需要记录。
       const code = (err as { code?: number } | null)?.code
       if (code !== -32601) debugLog('mcp.listResources-failed', `${this.serverName}: ${String(err)}`)
       this.cachedResources = []
@@ -200,8 +192,8 @@ export class McpClient {
     }
   }
 
-  /** Tools discovered at connect time. Stable for the connection lifetime;
-   *  refresh by calling connect() again on a fresh McpClient. */
+  /** 连接时发现的工具。在连接生命周期内稳定；在新的 McpClient 上再次调用
+   *  connect() 即可刷新。 */
   tools(): ReadonlyArray<{
     name: string
     description?: string
@@ -215,55 +207,50 @@ export class McpClient {
     return this.cachedResources
   }
 
-  /** Connect with a full interactive OAuth round-trip.
+  /** 以完整的交互式 OAuth 往返进行连接。
    *
-   *  The MCP SDK's StreamableHTTP transport handles auth lazily: a fresh
-   *  connect with no stored token calls `authProvider.redirectToAuthorization`
-   *  and then throws `UnauthorizedError` because the token-exchange step
-   *  has to wait for the user. The caller is expected to wait for the
-   *  redirect callback to land, hand the authorization code to
-   *  `transport.finishAuth(code)`, then retry connect — at which point
-   *  tokens are saved and the next attempt succeeds.
+   *  MCP SDK 的 StreamableHTTP transport 惰性处理认证：没有存储 token 的
+   *  新连接会调用 `authProvider.redirectToAuthorization`，然后因为 token
+   *  交换步骤必须等待用户而抛出 `UnauthorizedError`。调用方应等待重定向
+   *  回调落地，把授权码交给 `transport.finishAuth(code)`，然后重试连接——
+   *  此时 token 已保存，下一次尝试就会成功。
    *
-   *  We encapsulate that dance here so that the `/mcp auth` handler can
-   *  opt into "drive OAuth to completion" without knowing about
-   *  `finishAuth`. The default `connect()` path keeps the OAuth provider
-   *  PASSIVE — `redirectToAuthorization` is a no-op until we flip
-   *  `setInteractive(true)` here, so CLI boot doesn't accidentally pop a
-   *  browser window for servers in `needs_auth`. */
+   *  我们在这里封装这段流程，使 `/mcp auth` 处理器可以在不了解
+   *  `finishAuth` 的情况下选择"把 OAuth 驱动到完成"。默认的 `connect()`
+   *  路径让 OAuth provider 保持被动——在我们于此处翻转
+   *  `setInteractive(true)` 之前，`redirectToAuthorization` 都是 no-op，
+   *  因此 CLI 启动不会为处于 `needs_auth` 的服务器意外弹出浏览器窗口。 */
   async connectWithOAuth(hooks: { onBrowserOpen?: (url: string) => void } = {}): Promise<ConnectInfo> {
     if (!this.authProvider) {
       throw new Error(`MCP server "${this.serverName}" has no OAuth provider configured`)
     }
     if (!(this.authProvider instanceof McpOAuthProvider)) {
-      // Allow third-party providers but skip our `waitForAuthCode` hook —
-      // they're expected to handle the flow themselves.
+      // 允许第三方 provider，但跳过我们的 `waitForAuthCode` 钩子——
+      // 它们应自行处理流程。
       return this.connect()
     }
 
     const provider = this.authProvider
 
-    // Eagerly start the callback server so the real loopback port is
-    // bound to `clientMetadata.redirect_uris` and `redirectUrl` BEFORE
-    // the SDK builds the dynamic-registration request. Otherwise we
-    // register with a port-less placeholder and Sentry (and any other
-    // auth server that doesn't honour RFC 8252 §7.3 loopback any-port)
-    // rejects the auth URL's real-port redirect_uri as "Invalid".
+    // 提前启动 callback server，使真实的 loopback 端口在 SDK 构建
+    // 动态注册请求*之前*就绑定到 `clientMetadata.redirect_uris` 和
+    // `redirectUrl`。否则我们会以一个无端口的占位符注册，Sentry（以及
+    // 任何不遵守 RFC 8252 §7.3 loopback 任意端口规则的其他认证服务器）
+    // 会把认证 URL 里带真实端口的 redirect_uri 判为 "Invalid"。
     await provider.prepareForAuth()
 
-    // Tee the browser-open notification through the caller's hook so the
-    // /mcp auth handler can print into the CLI scrollback alongside the
-    // provider's own onOpenBrowser callback. We monkey-patch the method
-    // for the lifetime of THIS call (try/finally restores it). The
-    // provider doesn't expose an event API, but patching one method on
-    // one instance for one flow is bounded enough to be safe.
+    // 把浏览器打开通知分接到调用方的钩子，使 /mcp auth 处理器能连同 provider
+    // 自己的 onOpenBrowser 回调一起打印到 CLI 回滚区。我们只在此次调用的
+    // 生命周期内 monkey-patch 该方法（try/finally 会恢复它）。provider 没有
+    // 暴露事件 API，但在一个实例上、为一次流程 patch 一个方法，影响范围
+    // 足够小，是安全的。
     const originalRedirect = provider.redirectToAuthorization.bind(provider)
     if (hooks.onBrowserOpen) {
       provider.redirectToAuthorization = async (url: URL) => {
         try {
           hooks.onBrowserOpen?.(url.toString())
         } catch {
-          // Hook failures must not abort the OAuth flow.
+          // 钩子失败绝不能中止 OAuth 流程。
         }
         return originalRedirect(url)
       }
@@ -278,28 +265,26 @@ export class McpClient {
     }
   }
 
-  /** The actual two-phase connect: attempt-1 fires redirect, then we
-   *  wait for the user, finish the auth, attempt-2 lands a real
-   *  session. Both attempts share `cachedTools` / `cachedResources`. */
+  /** 实际的两阶段连接：第一次尝试触发重定向，然后我们等待用户、完成认证，
+   *  第二次尝试建立真正的会话。两次尝试共享 `cachedTools` /
+   *  `cachedResources`。 */
   private async runOAuthDance(): Promise<ConnectInfo> {
     const provider = this.authProvider as McpOAuthProvider
 
-    // First attempt: most likely throws UnauthorizedError after the
-    // browser has been launched. If tokens were somehow already valid
-    // (stale state on disk) this succeeds and we short-circuit out.
+    // 第一次尝试：大概率在浏览器启动后抛出 UnauthorizedError。如果 token
+    // 碰巧仍然有效（磁盘上的旧状态），这里会成功并直接短路返回。
     try {
       return await this.connect()
     } catch (err) {
-      // Anything that isn't "we need to wait for the user" propagates.
+      // 任何不属于"需要等待用户"的错误都会向上传播。
       if (!isUnauthorizedError(err)) {
         provider.cancel()
         throw err
       }
     }
 
-    // The provider has already called redirectToAuthorization (the SDK
-    // does that internally before throwing). Now wait for the user to
-    // come back via the callback server, then complete the exchange.
+    // provider 已调用 redirectToAuthorization（SDK 在抛出前内部会这么做）。
+    // 现在等待用户通过 callback server 返回，然后完成交换。
     const { code } = await provider.waitForAuthCode()
     const transport = this.transport
     if (!(transport instanceof StreamableHTTPClientTransport)) {
@@ -307,11 +292,10 @@ export class McpClient {
     }
     await transport.finishAuth(code)
 
-    // Tokens are now saved. The first attempt left the client + transport
-    // in a half-open state (the SDK's connect threw mid-handshake); we
-    // need a clean transport for the retry, so close and rebuild. This
-    // also means the SDK's initialize roundtrip happens against a fresh
-    // socket, avoiding any "already connected" / state-leak surprises.
+    // token 现已保存。第一次尝试把 client + transport 留在半开状态
+    // （SDK 的 connect 在握手途中抛出）；重试需要一条干净的 transport，
+    // 所以先关闭再重建。这也意味着 SDK 的 initialize 往返是在全新 socket 上
+    // 进行的，避免了任何 "already connected" / 状态泄漏的意外。
     await this.safeClose()
     return this.connect()
   }
@@ -329,8 +313,8 @@ export class McpClient {
   async readResource(uri: string, signal?: AbortSignal): Promise<{ text: string; mimeType?: string }> {
     if (!this.client) throw new Error(`MCP server "${this.serverName}" is not connected`)
     const result = await this.client.readResource({ uri }, { signal })
-    // Resources return an array of content blocks; concatenate text
-    // representations, preserving the first mimeType for the caller.
+    // Resources 返回一个 content block 数组；拼接文本表示，
+    // 为调用方保留第一个 mimeType。
     const parts: string[] = []
     let remainingBytes = MAX_RESOURCE_TEXT_BYTES
     let mimeType: string | undefined
@@ -350,7 +334,7 @@ export class McpClient {
     return { text: parts.join('\n'), mimeType }
   }
 
-  /** Snapshot the last N stderr lines for diagnostics. Empty for HTTP. */
+  /** 快照最后 N 行 stderr 用于诊断。HTTP 服务器为空。 */
   stderr(): string {
     return this.stderrTail.join('\n')
   }
@@ -359,12 +343,10 @@ export class McpClient {
     await this.safeClose()
   }
 
-  /** Register a handler fired when the connection drops (stdio subprocess
-   *  exit, transport close). The browser registry uses this to invalidate a
-   *  cached connection when the user closes the browser or the server dies,
-   *  so the next acquire reconnects instead of reusing a dead client.
-   *  Returns false and invokes the handler immediately when the close event
-   *  happened before registration, allowing callers to refuse a stale cache. */
+  /** 注册一个在连接断开（stdio 子进程退出、transport 关闭）时触发的处理器。
+   *  browser registry 用它在用户关闭浏览器或服务器死亡时使缓存连接失效，
+   *  使下一次 acquire 重新连接而不是复用死掉的 client。若关闭事件发生在
+   *  注册之前，则返回 false 并立即调用该处理器，使调用方可以拒绝过期缓存。 */
   onClose(handler: () => void | Promise<void>): boolean {
     if (this.connectionState === 'closed') {
       this.invokeCloseHandler(handler)
@@ -374,13 +356,12 @@ export class McpClient {
     return true
   }
 
-  // ── internals ──────────────────────────────────────────────────────────
+  // ── 内部实现 ──────────────────────────────────────────────────────────
 
   private buildTransport(): Transport {
     if (isStdioConfig(this.config)) {
-      // Optional extension sandbox: stdio servers keep network access (their
-      // upstream APIs live outside the sandbox) but lose write access outside
-      // the workspace/temp and cannot read credential paths.
+      // 可选的扩展沙箱：stdio 服务器保留网络访问（其上游 API 在沙箱之外），
+      // 但失去工作区/temp 之外的写权限，且无法读取凭据路径。
       const sandbox = isExtensionSandboxActive() ? { ...getShellSandbox(), allowNetwork: true } : null
       const wrapped = sandbox ? wrapShellSpawn(this.config.command, this.config.args ?? [], sandbox) : null
       const t = new StdioClientTransport({
@@ -388,9 +369,8 @@ export class McpClient {
         args: wrapped?.args ?? this.config.args,
         env: this.config.env,
         cwd: this.config.cwd,
-        // Pipe stderr so we can capture diagnostics. Default "inherit"
-        // would dump the child's noise into the parent CLI's terminal,
-        // scrambling our cell-buffer UI.
+        // 以 pipe 方式接 stderr 以便捕获诊断信息。默认的 "inherit" 会把
+        // 子进程的噪声倒进父 CLI 的终端，打乱我们的 cell-buffer UI。
         stderr: 'pipe',
       })
       const stderr: Stream | null = t.stderr
@@ -414,15 +394,14 @@ export class McpClient {
       })
     }
 
-    // Schema validation upstream should prevent this, but be defensive.
+    // 上游的 schema 校验本应防住这种情况，这里只是防御性兜底。
     throw new Error(`mcp server "${this.serverName}": unrecognised config shape`)
   }
 
   private async safeClose(): Promise<void> {
-    // SDK's Client.close() also closes the transport. We try client first
-    // because it sends a proper shutdown notification; falling back to
-    // transport.close() if the client was never built (e.g. constructor
-    // threw before assignment).
+    // SDK 的 Client.close() 也会关闭 transport。我们先尝试 client，因为它会
+    // 发送规范的 shutdown 通知；如果 client 从未构建（例如构造函数在赋值前
+    // 抛出），则回退到 transport.close()。
     try {
       if (this.client) {
         await this.client.close()
@@ -456,8 +435,8 @@ export class McpClient {
     }
   }
 
-  /** Attach stderr tail (if any) to a connect error so /mcp list shows
-   *  something more useful than "Connection closed". */
+  /** 把 stderr 尾部（如有）附加到连接错误上，使 /mcp list 显示的信息比
+   *  "Connection closed" 更有用。 */
   private enrichError(err: unknown): Error {
     const base = err instanceof Error ? err : new Error(String(err))
     if (this.stderrTail.length === 0) return base
@@ -468,10 +447,9 @@ export class McpClient {
   }
 }
 
-/** Pattern-match an UnauthorizedError from the SDK without depending
- *  on instanceof (which can be fragile across bundling boundaries when
- *  the SDK is duplicated under different esm/cjs roots). The SDK exports
- *  the class directly though, so we use both checks. */
+/** 从 SDK 模式匹配 UnauthorizedError，而不依赖 instanceof（当 SDK 在不同
+ *  esm/cjs 根下被复制时，跨打包边界的 instanceof 可能很脆弱）。不过 SDK
+ *  直接导出了该类，所以我们两种检查都用。 */
 function isUnauthorizedError(err: unknown): boolean {
   if (err instanceof UnauthorizedError) return true
   if (err instanceof Error) {
@@ -497,13 +475,11 @@ function boundedJsonRecord(value: unknown, maxBytes: number): Record<string, unk
   return value as Record<string, unknown>
 }
 
-/** Flatten MCP call result content blocks. MCP responses are an array of
- *  `{ type: "text" | "image" | ... }` blocks. Text blocks join into a single
- *  string; image blocks are pulled out onto `images` (base64 + media type) so
- *  the tool_result can carry them as real media parts to a vision model
- *  (browser screenshots). A short text marker is kept inline so the text path
- *  (and text-only providers, which OCR the image downstream) still has a hint
- *  that an image was returned. */
+/** 展平 MCP 调用结果的 content block。MCP 响应是 `{ type: "text" | "image" |
+ *  ... }` 块的数组。文本块拼接成单个字符串；图片块被提到 `images` 上
+ *  （base64 + 媒体类型），使 tool_result 能把它们作为真正的媒体部件传给
+ *  视觉模型（浏览器截图）。内联保留一段简短的文本标记，使文本路径（以及
+ *  会在下游对图片做 OCR 的纯文本 provider）仍能得知有图片被返回。 */
 function flattenCallResult(result: unknown): McpCallResult {
   const r = result as { content?: Array<unknown>; isError?: boolean }
   const blocks = Array.isArray(r.content) ? r.content.slice(0, MAX_CONTENT_BLOCKS) : []
@@ -532,7 +508,7 @@ function flattenCallResult(result: unknown): McpCallResult {
         parts.push(`[image content omitted, mimeType=${mediaType}]`)
       }
     } else if (block.type === 'resource') {
-      // Embedded resource — surface a one-line marker + any nested text.
+      // 内嵌 resource——展示一行标记 + 任何嵌套文本。
       const nested = (block as { resource?: { text?: string; uri?: string } }).resource
       if (nested?.text) {
         const text = truncateText(nested.text, remainingTextBytes)

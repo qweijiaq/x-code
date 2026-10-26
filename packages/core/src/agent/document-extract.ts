@@ -1,7 +1,6 @@
-// @x-code-cli/core — deterministic document/media extraction for the
-// readDocument tool. Every supported format is parsed locally; no document
-// bytes are sent to a model. Text is capped so a large book cannot flood the
-// context window.
+// @x-code-cli/core — readDocument 工具的确定性文档/媒体提取。
+// 每种受支持的格式都在本地解析；不会有文档字节被发送给模型。
+// 文本有上限，避免一本大书灌满上下文窗口。
 import * as cheerio from 'cheerio'
 import { unzipSync } from 'fflate'
 
@@ -31,9 +30,9 @@ const MAX_CSV_ROWS = 500
 const MAX_CSV_COLUMNS = 50
 const MAX_EPUB_CHAPTERS = 300
 const MAX_PDF_PAGES = 200
-/** Scanned-PDF fallback: render pages without a text layer and OCR them
- *  locally. Bounded because each page costs seconds of CPU and tokens stay
- *  at zero but wall-clock time does not. */
+/** 扫描版 PDF 回退：渲染没有文本层的页面并在本地 OCR。
+ *  有上限是因为每页都要花数秒 CPU，且 token 恒为零但
+ *  墙钟时间并非如此。 */
 const MAX_PDF_OCR_PAGES = 10
 const MAX_PDF_OCR_PAGES_PER_CALL = 4
 const MAX_VIDEO_FRAMES = 10
@@ -48,13 +47,13 @@ const MOBI_EXTENSIONS = new Set(['.mobi', '.azw', '.azw3'])
 
 export interface DocumentReadOptions {
   maxChars?: number
-  /** PDF page range such as "1-5,8". */
+  /** PDF 页码范围，如 "1-5,8"。 */
   pages?: string
-  /** Set false to skip local OCR for PDF pages without a text layer. */
+  /** 设为 false 可跳过对无文本层 PDF 页面的本地 OCR。 */
   ocr?: boolean
-  /** Set false to skip local audio transcription. */
+  /** 设为 false 可跳过本地音频转录。 */
   transcribe?: boolean
-  /** Extract up to this many video frames to temp files (requires ffmpeg). */
+  /** 最多提取这么多视频帧到临时文件（需要 ffmpeg）。 */
   extractFrames?: number
   abortSignal?: AbortSignal
   onProgress?: (message: string) => void
@@ -288,7 +287,7 @@ async function readEpub(filePath: string, maxChars: number): Promise<DocumentRea
 
 // ─── MOBI / PalmDOC ─────────────────────────────────────────────────────────
 
-/** PalmDOC LZ77 decompression. Exported for tests. */
+/** PalmDOC LZ77 解压缩。为测试而导出。 */
 export function palmDocDecompress(input: Uint8Array): Uint8Array {
   const output: number[] = []
   let index = 0
@@ -316,7 +315,7 @@ export function palmDocDecompress(input: Uint8Array): Uint8Array {
       for (let i = 0; i < length; i++) output.push(output[start + i] ?? 0)
       continue
     }
-    // 0xC0-0xFF: a space followed by (byte - 0xC0) literal bytes.
+    // 0xC0-0xFF：一个空格后跟 (byte - 0xC0) 个字面字节。
     output.push(0x20)
     const count = byte - 0xc0
     for (let i = 0; i < count; i++) output.push(input[index++] ?? 0)
@@ -325,8 +324,8 @@ export function palmDocDecompress(input: Uint8Array): Uint8Array {
 }
 
 function findMobiEncoding(record0: Buffer): 'utf8' | 'latin1' {
-  // MOBI header starts after the 16-byte PalmDOC header; text encoding is at
-  // offset 28 from the start of record 0 (65001 = UTF-8, 1252 = cp1252).
+  // MOBI 头部从 16 字节 PalmDOC 头之后开始；文本编码在
+  // record 0 起始处偏移 28 的位置（65001 = UTF-8，1252 = cp1252）。
   if (record0.length < 30) return 'utf8'
   try {
     return record0.readUInt32BE(28) === 65001 ? 'utf8' : 'latin1'
@@ -379,7 +378,7 @@ async function readMobi(filePath: string, maxChars: number): Promise<DocumentRea
   }
 }
 
-// ─── Video metadata / frames ────────────────────────────────────────────────
+// ─── 视频元数据 / 帧 ────────────────────────────────────────────────────────
 
 interface Mp4Box {
   start: number
@@ -421,7 +420,7 @@ function mp4Metadata(buffer: Buffer): { durationSeconds?: number; width?: number
         metadata.durationSeconds = Math.round((duration / timescale) * 10) / 10
       }
     } catch {
-      // Ignore malformed mvhd.
+      // 忽略格式损坏的 mvhd。
     }
   }
   let offset = moov.start + 8
@@ -531,7 +530,7 @@ async function ensurePdfGlobals(): Promise<void> {
     const DomMatrix = canvas.DOMMatrix ?? canvas.default?.DOMMatrix
     if (DomMatrix) (globalThis as { DOMMatrix?: unknown }).DOMMatrix = DomMatrix
   } catch {
-    // pdfjs may still polyfill in a plain Node process.
+    // 在纯 Node 进程中，pdfjs 可能仍会自行 polyfill。
   }
 }
 
@@ -650,10 +649,10 @@ function nonSpaceLength(text: string): number {
   return text.replace(/\s/g, '').length
 }
 
-/** Group sorted page numbers into contiguous ranges of at most
- *  MAX_PDF_OCR_PAGES_PER_CALL pages each. Every processPdf call re-renders and
- *  re-parses the file and has its own 120s budget, so very wide runs are
- *  split rather than risking a single timeout. */
+/** 把排好序的页码分组为连续区间，每组最多
+ *  MAX_PDF_OCR_PAGES_PER_CALL 页。每次 processPdf 调用都会重新渲染并
+ *  重新解析文件，且有自己 120s 的预算，因此非常宽的区间会被拆分，
+ *  而不是冒着单次超时的风险。 */
 export function pdfOcrRuns(pages: number[]): Array<{ first: number; last: number }> {
   const runs: Array<{ first: number; last: number }> = []
   for (let index = 0; index < pages.length; index++) {
@@ -667,7 +666,7 @@ export function pdfOcrRuns(pages: number[]): Array<{ first: number; last: number
   return runs
 }
 
-// ─── Images / audio / office ────────────────────────────────────────────────
+// ─── 图片 / 音频 / Office ───────────────────────────────────────────────────
 
 async function readImage(
   filePath: string,
@@ -693,8 +692,8 @@ async function readImage(
     metadata.width = image.width
     metadata.height = image.height
 
-    // OCR cost grows with pixel count; an 8192x4608 photo can take minutes.
-    // Downscale the OCR copy while keeping original dimensions in metadata.
+    // OCR 成本随像素数增长；一张 8192x4608 的照片可能要好几分钟。
+    // 对 OCR 副本降采样，同时把原始尺寸保留在元数据里。
     const maxEdge = 1_800
     const longest = Math.max(image.width, image.height)
     if (longest > maxEdge) {
@@ -708,7 +707,7 @@ async function readImage(
       options.onProgress?.(`Downscaled image to ${width}x${height} for OCR`)
     }
   } catch {
-    // Dimensions and downscaling are best-effort; OCR can still use the file.
+    // 尺寸与降采样都是尽力而为；OCR 仍可使用该文件。
   }
   options.onProgress?.('Running local OCR on image…')
   const ocr = await ocrImage(ocrInput, { abortSignal: options.abortSignal })
@@ -792,7 +791,7 @@ async function readOffice(
   }
 }
 
-// ─── Entry point ────────────────────────────────────────────────────────────
+// ─── 入口点 ────────────────────────────────────────────────────────────────
 
 export async function readDocument(filePath: string, options: DocumentReadOptions = {}): Promise<DocumentReadResult> {
   const resolved = path.resolve(filePath)

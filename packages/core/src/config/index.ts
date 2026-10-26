@@ -1,18 +1,17 @@
-// @x-code-cli/core — Configuration resolution
+// @x-code-cli/core — 配置解析
 //
-// API keys always come from environment variables (provider-specific keys
-// like ANTHROPIC_API_KEY / ALIBABA_API_KEY — never stored on disk).
+// API key 始终来自环境变量（各提供商的专属 key，
+// 如 ANTHROPIC_API_KEY / ALIBABA_API_KEY —— 绝不落盘存储）。
 //
-// The default **model** can come from four sources, in precedence order:
-//   1. `--model` CLI flag (explicit `input` arg)
-//   2. `~/.x-code/config.json` `model` field — written by `/model` picker
-//   3. `X_CODE_MODEL` environment variable
-//   4. Smart default: first provider (by PROVIDER_DETECTION_ORDER) with a key
+// 默认 **model** 可来自四个来源，按优先级排序：
+//   1. `--model` CLI 标志（显式 `input` 参数）
+//   2. `~/.x-code/config.json` 的 `model` 字段 —— 由 `/model` 选择器写入
+//   3. `X_CODE_MODEL` 环境变量
+//   4. 智能默认：按 PROVIDER_DETECTION_ORDER 第一个有 key 的提供商
 //
-// The picker's choice beats the env var so that `/model` "sticks" across
-// restarts — otherwise a user who had `X_CODE_MODEL` set in their shell /
-// .env file would see their `/model` selection silently reverted next
-// launch (reported bug).
+// 选择器的选择优先于环境变量，这样 `/model` 才能在重启后“固定”下来 ——
+// 否则在 shell / .env 里设置了 `X_CODE_MODEL` 的用户会发现下次启动时
+// 自己的 `/model` 选择被静默回退（已报告的 bug）。
 import fsSync from 'node:fs'
 import path from 'node:path'
 
@@ -20,10 +19,10 @@ import { getOpenAIAuthContext } from '../auth/openai-chatgpt/auth-resolver.js'
 import { MODEL_ALIASES, PROVIDERS, PROVIDER_DETECTION_ORDER } from '../providers/catalog.js'
 import { userXcodeDir } from '../utils.js'
 
-/** Provider → environment variable mapping, derived from the catalog. */
+/** 提供商 → 环境变量的映射，由目录派生。 */
 const ENV_MAP: Record<string, string> = Object.fromEntries(PROVIDERS.map((p) => [p.name, p.envKey]))
 
-/** Get API key for a provider — reads from environment variables only */
+/** 获取某个提供商的 API key —— 只从环境变量读取 */
 function getApiKey(provider: string): string | undefined {
   if (provider === 'openai') {
     const auth = getOpenAIAuthContext()
@@ -33,12 +32,12 @@ function getApiKey(provider: string): string | undefined {
   return envKey ? process.env[envKey] : undefined
 }
 
-/** Get the env var name for a provider */
+/** 获取某个提供商的环境变量名 */
 export function getEnvVarName(provider: string): string | undefined {
   return ENV_MAP[provider]
 }
 
-/** Check which providers have API keys configured (env vars only) */
+/** 检查哪些提供商已配置 API key（仅环境变量） */
 export function getAvailableProviders(): string[] {
   const openAIAuth = getOpenAIAuthContext()
   const providers = Object.keys(ENV_MAP).filter((provider) =>
@@ -51,14 +50,14 @@ export function getAvailableProviders(): string[] {
 }
 
 /**
- * Resolve a model ID with four levels of precedence:
- *   1. Explicit `input` (e.g. --model CLI flag)
- *   2. `~/.x-code/config.json` `model` field (written by the /model picker)
- *   3. `X_CODE_MODEL` environment variable
- *   4. Smart default: first provider (by PROVIDER_DETECTION_ORDER) with an API key
+ * 按四级优先级解析模型 ID：
+ *   1. 显式 `input`（例如 --model CLI 标志）
+ *   2. `~/.x-code/config.json` 的 `model` 字段（由 /model 选择器写入）
+ *   3. `X_CODE_MODEL` 环境变量
+ *   4. 智能默认：按 PROVIDER_DETECTION_ORDER 第一个有 API key 的提供商
  *
- * Aliases in MODEL_ALIASES (e.g. "sonnet" → "anthropic:claude-sonnet-4-5")
- * are expanded at all levels. Returns null if no provider is configured.
+ * MODEL_ALIASES 里的别名（如 "sonnet" → "anthropic:claude-sonnet-4-5"）
+ * 会在所有层级展开。未配置任何提供商时返回 null。
  */
 export function resolveModelId(input?: string): string | null {
   const explicit = input ?? loadUserConfig().model ?? process.env.X_CODE_MODEL
@@ -75,50 +74,48 @@ export function resolveModelId(input?: string): string | null {
   return null
 }
 
-// ── User config file (~/.x-code/config.json) ────────────────────────────
+// ── 用户配置文件（~/.x-code/config.json）────────────────────────────
 //
-// Persistent preferences:
-//   model    — id the /model picker most recently committed
-//   thinking — extended-thinking / reasoning toggle written by /thinking.
-//              Applied uniformly across providers that expose a thinking
-//              switch (see providers/thinking.ts). Default is undefined
-//              (treated as off) so naive launches don't silently incur the
-//              2-10× latency on providers whose default is off (Sonnet,
-//              DeepSeek, Qwen) — same as the pre-feature baseline.
+// 持久化偏好：
+//   model    — /model 选择器最近一次提交的 id
+//   thinking — 由 /thinking 写入的扩展思考 / 推理开关。
+//              对暴露 thinking 开关的提供商统一生效
+//              （见 providers/thinking.ts）。默认是 undefined
+//              （视为关闭），这样朴素的启动不会在默认关闭的提供商
+//              （Sonnet、DeepSeek、Qwen）上悄悄引入 2-10 倍延迟 ——
+//              与功能上线前的基线一致。
 //
-// API keys are deliberately NOT stored here (env-var only, see header
-// comment).
+// API key 特意不存储在这里（仅环境变量，见文件头注释）。
 
-/** Settings shared by the default-enabled one-shot visual check and the
- *  interactive `browser` sub-agent. `enabled` controls only the sub-agent;
- *  headless/channel/viewport settings apply to their shared lazily spawned
- *  @playwright/mcp browser process. */
+/** 默认启用的一次性视觉检查与交互式 `browser` 子代理共享的设置。
+ *  `enabled` 只控制子代理；headless/channel/viewport 设置作用于它们共享的、
+ *  惰性启动的 @playwright/mcp 浏览器进程。 */
 export interface BrowserConfig {
-  /** Enable the interactive browser sub-agent. One-shot local visual checks do
-   *  not require this switch. */
+  /** 启用交互式浏览器子代理。一次性本地视觉检查
+   *  不需要这个开关。 */
   enabled?: boolean
-  /** Enable automatic one-shot visual checks for local web UIs. Default true;
-   *  independent from the interactive browser agent switch. */
+  /** 为本地 Web UI 启用自动一次性视觉检查。默认 true；
+   *  与交互式浏览器代理开关相互独立。 */
   visualCheck?: boolean
-  /** Run headless (no visible window). Default: visible, so the user can watch
-   *  the agent drive the browser. */
+  /** 无头运行（无可见窗口）。默认：可见，这样用户能看到
+   *  代理驱动浏览器。 */
   headless?: boolean
-  /** Browser channel @playwright/mcp drives. Default 'chrome' — the user's
-   *  installed Google Chrome (no Chromium download). */
+  /** @playwright/mcp 驱动的浏览器渠道。默认 'chrome' —— 用户
+   *  已安装的 Google Chrome（无需下载 Chromium）。 */
   browser?: 'chrome' | 'chromium' | 'msedge' | 'firefox' | 'webkit'
-  /** Browser viewport size as "width,height" (px). Default '1280,800'. Caps
-   *  screenshot resolution — vision token cost scales with image dimensions, so
-   *  a smaller viewport means cheaper screenshots. Raise it only if a site needs
-   *  a wider layout to render correctly. */
+  /** 浏览器视口尺寸，形如 "width,height"（px）。默认 '1280,800'。它限制
+   *  截图分辨率 —— 视觉 token 成本随图像尺寸增长，因此
+   *  更小的视口意味着更便宜的截图。仅当某网站需要
+   *  更宽布局才能正确渲染时才调大它。 */
   viewport?: string
-  /** Additional coordinate-based browser controls. Unless explicitly false,
-   *  the managed server launches with a stable visual-capability superset so a
-   *  later model switch does not require restarting Chrome and losing tabs.
-   *  The browser agent only receives those controls when an active or borrowed
-   *  vision model can actually interpret screenshots. */
+  /** 额外的基于坐标的浏览器控制。除非显式为 false，
+   *  托管服务器都会以稳定的视觉能力超集启动，这样之后切换模型
+   *  就不必重启 Chrome 并丢失标签页。
+   *  只有当当前或借用的视觉模型确实能解读截图时，浏览器代理
+   *  才会收到这些控制。 */
   vision?: boolean
-  /** Override the launch command entirely (advanced: offline, pinned version,
-   *  custom server). When set, `args` is passed verbatim. */
+  /** 完全覆盖启动命令（高级用法：离线、固定版本、
+   *  自定义服务器）。设置后，`args` 原样传入。 */
   command?: string
   args?: string[]
 }
@@ -132,9 +129,9 @@ const BROWSER_CHANNELS = new Set<NonNullable<BrowserConfig['browser']>>([
 ])
 const BROWSER_VIEWPORT_RE = /^(\d{3,4})\s*[,x]\s*(\d{3,4})$/i
 
-/** Sanitize hand-edited browser settings before constructing an MCP command.
- *  Invalid optional fields fall back to managed defaults; a command override
- *  is kept only when its argv is a plain string array. */
+/** 在构造 MCP 命令前清洗手工编辑的浏览器设置。
+ *  非法的可选字段回退到托管默认值；仅当其 argv 是纯字符串数组时
+ *  才保留命令覆盖。 */
 export function resolveBrowserConfig(value: unknown): BrowserConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   const raw = value as Record<string, unknown>
@@ -192,11 +189,11 @@ export interface MemoryConfig {
 }
 
 export interface StreamConfig {
-  /** Number of application-level reconnect attempts after the provider stream
-   *  drops. Separate from the AI SDK's request-establishment retries. */
+  /** 提供商流断开后的应用层重连尝试次数。
+   *  与 AI SDK 的建连重试相互独立。 */
   maxRetries: number
-  /** Maximum silence between stream chunks. A value of 0 disables the
-   *  watchdog; the default also covers sockets made stale by system sleep. */
+  /** 流块之间允许的最长静默时间。0 表示关闭
+   *  看门狗；默认值也覆盖了因系统休眠而失效的 socket。 */
   idleTimeoutMs: number
 }
 
@@ -349,51 +346,49 @@ export function resolveStreamConfig(config: UserConfig = loadUserConfig()): Stre
 export interface UserConfig {
   model?: string
   thinking?: boolean
-  /** User-forced context window in tokens. Overrides model/provider metadata
-   *  uniformly until cleared with `/context reset`. */
+  /** 用户强制的上下文窗口（token 数）。统一覆盖模型/提供商元数据，
+   *  直到用 `/context reset` 清除。 */
   contextWindow?: number
-  /** Explicit opt-in for the smaller standard tool surface. */
+  /** 显式选择更小的标准工具集。 */
   experimentalToolProfile?: 'full' | 'standard'
-  /** Persisted UI theme name. Drives both diff bg colors and the
-   *  associated syntax-highlight palette. Validated at load time by
-   *  `parseThemeName` in the CLI; the type stays loose `string` here
-   *  because core doesn't depend on the CLI's theme list. Unknown
-   *  values fall back to the default ('dark') silently. */
+  /** 持久化的 UI 主题名。既驱动 diff 背景色，也驱动
+   *  对应的语法高亮配色。加载时由 CLI 的 `parseThemeName` 校验；
+   *  这里类型保持宽松的 `string`，因为 core 不依赖 CLI 的主题列表。
+   *  未知值静默回退到默认值（'dark'）。 */
   theme?: string
-  /** MCP server declarations. Loose-typed here because the schema is
-   *  validated in `mcp/config-schema.ts` — we don't want to drag a Zod
-   *  type into the config module's surface. Loader uses
-   *  `parseServersBlock` to validate before constructing clients. */
+  /** MCP 服务器声明。这里保持宽松类型，因为模式在
+   *  `mcp/config-schema.ts` 中校验 —— 我们不想把 Zod 类型
+   *  拖进 config 模块的接口。加载器在构造客户端前用
+   *  `parseServersBlock` 校验。 */
   mcpServers?: Record<string, unknown>
-  /** Managed-browser settings. `enabled === true` registers interactive
-   *  Browser Use; visual checks remain default-on unless explicitly false. */
+  /** 托管浏览器设置。`enabled === true` 注册交互式
+   *  Browser Use；视觉检查保持默认开启，除非显式为 false。 */
   browser?: BrowserConfig
-  /** Per-model reasoning effort levels chosen via the /model tier picker.
-   *  Key = full model id (e.g. "openai:gpt-5.6-sol"), value = effort label
-   *  (e.g. "medium"). When present, it overrides the /thinking toggle for
-   *  that model — tier knows what the user actually wants; /thinking is a
-   *  coarse fallback for models without an explicit tier. */
+  /** 通过 /model tier 选择器为各模型选择的推理努力等级。
+   *  Key = 完整模型 id（如 "openai:gpt-5.6-sol"），value = 努力标签
+   *  （如 "medium"）。存在时，它覆盖该模型的 /thinking 开关 ——
+   *  tier 知道用户真正想要什么；/thinking 是给没有显式 tier 的
+   *  模型用的粗略回退。 */
   modelReasoningEffort?: Record<string, string>
-  /** Base URLs for multi-endpoint providers, chosen via the /model base-URL
-   *  picker. Key = provider key (e.g. "moonshotai"), value = full base URL
-   *  (e.g. "https://api.moonshot.cn/v1"). */
+  /** 多端点提供商的 base URL，通过 /model base-URL
+   *  选择器选择。Key = 提供商 key（如 "moonshotai"），value = 完整 base URL
+   *  （如 "https://api.moonshot.cn/v1"）。 */
   baseUrls?: Record<string, string>
-  /** Provider-stream recovery. Defaults to five reconnect attempts and a
-   *  five-minute inactivity watchdog. */
+  /** 提供商流恢复。默认五次重连尝试和一个
+   *  五分钟无活动看门狗。 */
   stream?: Partial<StreamConfig>
   memory?: Partial<Omit<MemoryConfig, 'recall'>> & { recall?: Partial<MemoryRecallConfig> }
   peerMessaging?: Partial<PeerMessagingConfig>
 }
 
-/** Path to the user config file. Exposed so other modules that want to
- *  read the same JSON (e.g. the MCP loader for the `mcpServers` field)
- *  honour the X_CODE_HOME override automatically. */
+/** 用户配置文件的路径。暴露出来是为了让其他想读取同一份 JSON 的模块
+ *  （例如 MCP 加载器读 `mcpServers` 字段）能自动遵循 X_CODE_HOME 覆盖。 */
 export function getUserConfigPath(): string {
   return path.join(userXcodeDir(), 'config.json')
 }
 
-/** Read the user config. Returns empty object on any failure (missing file,
- *  parse error, wrong shape) so callers don't have to null-check. */
+/** 读取用户配置。任何失败（文件缺失、解析错误、形状不对）都返回空对象，
+ *  这样调用方无需判空。 */
 export function loadUserConfig(): UserConfig {
   try {
     const raw = fsSync.readFileSync(getUserConfigPath(), 'utf-8')
@@ -405,29 +400,29 @@ export function loadUserConfig(): UserConfig {
       return config
     }
   } catch {
-    // File may not exist yet, or is malformed — either way fall through to {}
+    // 文件可能尚不存在，或格式损坏 —— 两种情况都回退到 {}
   }
   return {}
 }
 
-/** Write a partial update into the user config, preserving other keys. Returns
- *  whether the new config reached disk so interactive commands can report failures. */
+/** 把一次部分更新写入用户配置，保留其他键。返回
+ *  新配置是否已落盘，以便交互式命令能报告失败。 */
 export function saveUserConfig(update: Partial<UserConfig>): boolean {
   const merged: UserConfig = { ...loadUserConfig(), ...update }
   try {
-    // mkdir the SAME root getUserConfigPath() points at — otherwise an
-    // X_CODE_HOME override creates `~/.x-code/` but writes to the override
-    // and the write silently fails on a missing parent.
+    // mkdir 的根目录与 getUserConfigPath() 指向的根一致 —— 否则
+    // X_CODE_HOME 覆盖会创建 `~/.x-code/` 却写到覆盖目录，
+    // 写操作会因父目录缺失而静默失败。
     fsSync.mkdirSync(userXcodeDir(), { recursive: true })
     fsSync.writeFileSync(getUserConfigPath(), JSON.stringify(merged, null, 2) + '\n', 'utf-8')
     return true
   } catch {
-    // Best-effort: don't crash the UI if the config dir is read-only.
+    // 尽力而为：配置目录只读时也不要让 UI 崩溃。
     return false
   }
 }
 
-/** Build provider options with API keys from env vars */
+/** 用来自环境变量的 API key 构建提供商选项 */
 export function getProviderOptions() {
   return {
     anthropic: getApiKey('anthropic'),

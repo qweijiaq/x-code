@@ -1,5 +1,5 @@
-// Tests for provider/model capability lookups — in particular the per-model
-// vision flag that gates the browser agent's visual mode.
+// 测试 provider/model 能力查询 —— 特别是每个模型的
+// vision 标志，它决定了浏览器智能体的视觉模式。
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -30,8 +30,8 @@ describe('modelSupportsVision', () => {
   })
 
   it('returns false for listed text-only models even on image-capable providers', () => {
-    // alibaba / zhipu providers accept image parts at the API level, but these
-    // specific models are text-only — the per-model flag must win.
+    // alibaba / zhipu 提供方在 API 层面接受图片部分，但这些
+    // 特定模型是纯文本的 —— 每个模型的标志必须胜出。
     expect(modelSupportsVision('alibaba:qwen3.7-max')).toBe(false)
     expect(modelSupportsVision('zhipu:glm-5.2')).toBe(false)
     expect(modelSupportsVision('deepseek:deepseek-v4-pro')).toBe(false)
@@ -43,15 +43,15 @@ describe('modelSupportsVision', () => {
   })
 
   it('falls back to provider-level capability for unlisted ids', () => {
-    // Not in the catalog → defer to the provider's image capability.
+    // 不在 catalog 中 → 退回到提供方的图片能力。
     expect(modelSupportsVision('anthropic:claude-some-future-model')).toBe(true)
     expect(modelSupportsVision('deepseek:some-future-model')).toBe(true)
     expect(modelSupportsVision('unknownprovider:whatever')).toBe(false)
   })
 
   it('provider-level capabilitiesOf stays coarse (provider, not model)', () => {
-    // capabilitiesOf is intentionally provider-level; both Qwen models report
-    // image:true there, and only modelSupportsVision distinguishes them.
+    // capabilitiesOf 有意保持 provider 级别；两个 Qwen 模型在那里都报告
+    // image:true，只有 modelSupportsVision 能区分它们。
     expect(capabilitiesOf('alibaba:qwen3.7-max').image).toBe(true)
     expect(capabilitiesOf('alibaba:qwen3-vl-flash').image).toBe(true)
     expect(modelSupportsVision('alibaba:qwen3.7-max')).toBe(false)

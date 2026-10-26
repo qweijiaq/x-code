@@ -1,8 +1,7 @@
-// @x-code-cli/core — Explicit vision compatibility helper
+// @x-code-cli/core — 显式视觉兼容辅助
 //
-// Used by product surfaces that explicitly request a caption, such as tool
-// image delivery. Ordinary local attachments never call this helper: they go
-// only to the active vision model or stay local for OCR.
+// 供明确请求字幕的产品面使用，例如工具图片投递。普通本地附件从不调用这个辅助函数：
+// 它们要么只去当前视觉模型，要么留在本地做 OCR。
 import { generateText } from 'ai'
 import type { LanguageModel, LanguageModelUsage } from 'ai'
 
@@ -28,11 +27,11 @@ import { knownMediaTypeFor } from '../utils/media-type.js'
 import { attributedModelId } from './usage.js'
 
 export interface VisionProvider {
-  /** Provider id, e.g. "google" / "zhipu". */
+  /** 提供方 id，如 "google" / "zhipu"。 */
   provider: string
-  /** Full <provider>:<model> id passed to the AI SDK registry. */
+  /** 传给 AI SDK registry 的完整 <provider>:<model> id。 */
   modelId: string
-  /** Short label for UI notices ("Gemini 2.5 Flash"). */
+  /** 用于 UI 提示的短标签（"Gemini 2.5 Flash"）。 */
   label: string
 }
 
@@ -41,9 +40,8 @@ export interface VisionUsageEvent {
   usage: LanguageModelUsage
 }
 
-/** Vision-capable model id + display label per provider. Models picked to
- *  favor cheap / free-tier offerings — the goal is a quick caption, not
- *  deep analysis. */
+/** 每个提供方的视觉模型 id + 显示标签。模型选择偏向便宜 / 免费档——目标是快速字幕，
+ *  而非深度分析。 */
 const VISION_MODELS: Record<string, { modelId: string; label: string }> = {
   google: { modelId: 'google:gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   zhipu: { modelId: 'zhipu:glm-4.6v', label: 'GLM-4.6V' },
@@ -55,19 +53,15 @@ const VISION_MODELS: Record<string, { modelId: string; label: string }> = {
   xai: { modelId: 'xai:grok-4.3', label: 'Grok 4.3' },
 }
 
-/** Order in which we try providers when picking a vision sub-agent.
- *  Free tiers and cheap-per-image models go first; heavier flagships
- *  last. Gemini 2.5 Flash leads because its free tier is the most
- *  generous (1500/day) and the model is also the strongest at the
- *  free price point. GLM-4.6V is second because it's cheap/free
- *  and reachable from China without a proxy. DeepSeek V4.1 Flash follows as
- *  the cheapest configured paid fallback with native vision. */
+/** 挑选视觉子 agent 时尝试提供方的顺序。免费档与单图便宜的模型在前；较重的旗舰在后。
+ *  Gemini 2.5 Flash 打头，因为它的免费档最慷慨（1500/天），且在该免费价位上模型也最强。
+ *  GLM-4.6V 排第二，因为它便宜/免费，且在中国无需代理即可访问。
+ *  DeepSeek V4.1 Flash 紧随其后，作为已配置的、具备原生视觉的最便宜付费回退。 */
 const VISION_PRIORITY = ['google', 'zhipu', 'deepseek', 'alibaba', 'openai', 'anthropic', 'moonshotai', 'xai']
 
 /**
- * Pick the best available vision sub-agent given the keys the user has
- * configured. Returns null if no vision-capable provider has a key —
- * caller should fall back to local OCR.
+ * 根据用户已配置的密钥挑选最佳可用视觉子 agent。若没有任何视觉提供方配有密钥
+ * 则返回 null——调用方应回退到本地 OCR。
  */
 export function pickVisionProvider(): VisionProvider | null {
   const available = new Set(getAvailableProviders())
@@ -80,15 +74,13 @@ export function pickVisionProvider(): VisionProvider | null {
   return null
 }
 
-/** In-memory cache so re-attaching the same image (or the same image across
- *  multiple submits in one session) doesn't re-burn tokens on the sub-agent.
- *  The complete image SHA-256 is namespaced by model and prompt. */
+/** 内存缓存，使重复附加同一图片（或同一会话多次提交里的同一图片）不会在子 agent 上
+ *  重复烧 token。完整图片 SHA-256 按模型与提示词做命名空间隔离。 */
 const captionCache = new LruCache<string>({ maxEntries: 50 })
 
-/** Cached registry + resolved model instances. The registry is expensive to
- *  create (initializes all configured provider SDK instances); caching it
- *  avoids re-allocation on every caption call in a browser-agent session
- *  where screenshots arrive every few seconds. */
+/** 缓存的 registry + 已解析的模型实例。创建 registry 很昂贵（会初始化所有已配置的
+ *  提供方 SDK 实例）；缓存它能避免浏览器 agent 会话里每隔几秒就来一张截图时，
+ *  每次字幕调用都重新分配。 */
 let cachedRegistry: ReturnType<typeof createModelRegistry> | null = null
 const resolvedModels = new Map<string, LanguageModel>()
 
@@ -106,7 +98,7 @@ export function resetVisionModelProviders(): void {
   resolvedModels.clear()
 }
 
-/** Default caption prompt asks for both verbatim text and visual elements. */
+/** 默认字幕提示词同时要求逐字文本与视觉元素。 */
 const DEFAULT_CAPTION_PROMPT =
   'Describe this image in detail so a text-only AI can act on it. ' +
   'Include: (1) any visible text transcribed verbatim, ' +
@@ -116,12 +108,10 @@ const DEFAULT_CAPTION_PROMPT =
   'Be thorough and specific. Output plain text only — no markdown formatting.'
 
 /**
- * Caption an in-memory image buffer via the chosen vision model. Lower-level
- * sibling of `captionImage` (which reads a file then delegates here). Used by
- * the MCP tool-result path to turn browser screenshots into text for providers
- * whose tool-result channel can't carry a real image (see
- * capabilities.toolImageTransport). `prompt` overrides the default caption
- * instruction so callers can ask for, e.g., pixel coordinates.
+ * 通过选定的视觉模型为内存中的图片 buffer 生成字幕。是 `captionImage`（先读文件、
+ * 再委托到这里）的更低层兄弟。MCP 工具结果路径用它把浏览器截图转成文本，
+ * 供那些 tool-result 通道无法携带真实图片的提供方使用（见 capabilities.toolImageTransport）。
+ * `prompt` 覆盖默认字幕指令，这样调用方可以索要例如像素坐标。
  */
 export async function captionImageBuffer(
   buffer: Buffer,
@@ -145,9 +135,8 @@ export async function captionImageBuffer(
     return cached
   }
 
-  // Compress before sending to the vision sub-agent — same budget as
-  // user-attached images. The sub-agent is a cheap caption model; there's
-  // no point pushing multi-MB originals through it.
+  // 发送给视觉子 agent 之前先压缩——与用户附加图片使用同一预算。子 agent 是廉价的
+  // 字幕模型；把数 MB 的原图塞给它毫无意义。
   const compressed = await compressImage(buffer, mediaType, {
     byteBudget: ATTACH_BYTE_BUDGET,
     abortSignal: opts.abortSignal,
@@ -194,10 +183,9 @@ export async function captionImageBuffer(
 }
 
 /**
- * Generate a textual description of an image FILE via the chosen sub-agent.
- * Thin wrapper over `captionImageBuffer` that reads the file and derives the
- * media type from its extension; keeps the existing file-ingest call site
- * (and its cache key by file content) working unchanged.
+ * 通过选定的子 agent 为图片文件生成文字描述。是 `captionImageBuffer` 的薄封装，
+ * 负责读文件并按扩展名推导媒体类型；让现有的 file-ingest 调用点（及其按文件内容的
+ * 缓存键）保持不变地工作。
  */
 export async function captionImage(
   filePath: string,

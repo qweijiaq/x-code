@@ -1,4 +1,4 @@
-// Tests for tools/truncate.ts
+// tools/truncate.ts 的测试
 import { describe, expect, it } from 'vitest'
 
 import { MAX_TOOL_RESULT_BYTES, MAX_TOOL_RESULT_LINES, truncateToolResult } from '../src/tools/truncate.js'
@@ -50,7 +50,7 @@ describe('truncateToolResult', () => {
     })
 
     it('truncates non-ASCII (CJK) content to the byte budget', () => {
-      // 20k CJK chars ≈ 60 kB UTF-8, over the 50 kB default
+      // 20k 个 CJK 字符 ≈ 60 kB UTF-8，超过 50 kB 默认值
       const cjk = '你好世界'.repeat(5000)
       const out = truncateToolResult(cjk)
       expect(Buffer.byteLength(out, 'utf-8')).toBeLessThanOrEqual(MAX_TOOL_RESULT_BYTES + 500)

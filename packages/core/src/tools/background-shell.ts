@@ -30,7 +30,7 @@ export const shellOutput = tool({
     block: z.boolean().optional().describe('Legacy wait flag. Explicit false reads immediately; true waits.'),
     timeout: z.number().int().nonnegative().optional().describe('Legacy wait duration used with block: true.'),
   }),
-  // Session-aware execution is routed through tool-execution.ts.
+  // 会话感知的执行在 tool-execution.ts 里分发。
 })
 
 export const killShell = tool({
@@ -38,5 +38,5 @@ export const killShell = tool({
   inputSchema: z.object({
     shellId: z.string().describe('The opaque background shell id returned by shell.'),
   }),
-  // Session-aware execution is routed through tool-execution.ts.
+  // 会话感知的执行在 tool-execution.ts 里分发。
 })

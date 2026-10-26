@@ -26,8 +26,8 @@ describe('TUI input and lifecycle', () => {
         expect(config.theme).toBe('dark')
 
         await exitTui(harness)
-        // ConPTY broadcasts Ctrl+C to the host PowerShell as well as the CLI,
-        // so only POSIX harnesses can probe the same parent shell afterward.
+        // ConPTY 会把 Ctrl+C 同时广播给宿主 PowerShell 和 CLI，
+        // 所以之后只有 POSIX 环境能探测同一个父 shell。
         if (process.platform !== 'win32') {
           const shellOutput = await harness.shellProbe()
           expect(shellOutput).toMatch(/__X_CODE_SHELL_OK_\d+__/)
@@ -142,12 +142,12 @@ describe('TUI input and lifecycle', () => {
         await submitInput(harness, 'generate document A')
         await provider.waitForMainRequests(2)
         await harness.waitForText('Working')
-        // Named fork: multi-word name exercises the `/fork <name...>` arg
-        // reassembly; unnamed fork right after covers the no-arg path.
+        // 具名 fork：多词名称覆盖 `/fork <name...>` 的参数重组；
+        // 紧随其后的匿名 fork 覆盖无参数路径。
         await submitInput(harness, '/fork doc branch')
         await harness.waitForText('xc --resume "doc branch"')
         await submitInput(harness, '/fork')
-        // Both forks race the stalled turn; wait for both branch files.
+        // 两个 fork 都与停滞的回合竞争；等待两个分支文件出现。
         const sessionDirectory = path.join(workspace.cwd, '.x-code', 'sessions')
         let files: string[] = []
         for (let attempt = 0; attempt < 50; attempt++) {

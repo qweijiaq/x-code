@@ -19,9 +19,8 @@ function visibleEscape(codePoint: number): string | undefined {
 }
 
 /**
- * Convert untrusted authority-viewer text into terminal-inert, auditable
- * lines. Line endings become application-owned row boundaries; every other
- * terminal or bidi control remains visible as a fixed-width Unicode escape.
+ * 把不受信任的权限查看器文本转成终端惰性、可审计的行。行尾变成应用拥有的行边界；
+ * 其他所有终端或双向控制符都以固定宽度 Unicode 转义保持可见。
  */
 export function authorityVisibleLines(value: string): string[] {
   const lines = ['']

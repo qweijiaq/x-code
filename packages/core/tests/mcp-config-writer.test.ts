@@ -13,8 +13,8 @@ import {
   writeServerToConfig,
 } from '../src/mcp/config-writer.js'
 
-/** Each test gets its own scratch ~/.x-code under tmpdir, plus a scratch
- *  project dir. We never touch the developer's real config.json. */
+/** 每个测试在 tmpdir 下获得自己的临时 ~/.x-code，外加一个临时
+ *  项目目录。我们从不碰开发者的真实 config.json。 */
 function isolate(): { home: string; project: string } {
   const home = path.join(os.tmpdir(), 'mcp-writer-home-' + Math.random().toString(36).slice(2))
   const project = path.join(os.tmpdir(), 'mcp-writer-proj-' + Math.random().toString(36).slice(2))
@@ -74,7 +74,7 @@ describe('config-writer: user scope', () => {
     await expect(
       writeServerToConfig('s', { command: 'node', url: 'https://x.com' } as never, 'user', ctx.project),
     ).rejects.toThrow(/both.*command.*url/)
-    // And no file should have been created.
+    // 而且不应创建任何文件。
     await expect(fs.stat(getConfigPath('user', ctx.project))).rejects.toBeTruthy()
   })
 

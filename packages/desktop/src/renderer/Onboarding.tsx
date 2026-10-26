@@ -94,7 +94,7 @@ export function Onboarding({
         return
       }
     } else if (!keyDraft.trim()) {
-      // An already stored/env key needs no re-entry: advancing is the save.
+      // 已存储/环境中的 key 无需重新输入：继续即保存。
       if (provider.source !== 'none') {
         setStep(2)
         return
@@ -177,7 +177,7 @@ export function Onboarding({
     try {
       await request('settings:set-onboarded', { value: true })
     } catch {
-      // Onboarding state is only a local preference; never block entry on it.
+      // onboarding 状态只是本地偏好；绝不因它阻塞进入。
     } finally {
       setBusy(null)
       onDone()

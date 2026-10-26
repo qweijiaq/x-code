@@ -15,7 +15,7 @@ const scenario: Scenario = {
       !exists,
       'expected blocked.txt NOT to be written (no --trust → onAskPermission returns no), but the file exists',
     )
-    // print.ts writes this marker to stderr when it denies a tool call.
+    // print.ts 拒绝工具调用时会把该标记写到 stderr。
     ctx.expect.truthy(
       /permission denied/i.test(r.stderr),
       `expected stderr to contain "permission denied"; got:\n${r.stderr.slice(0, 300)}`,

@@ -1,9 +1,8 @@
-// 16-bit PCM WAV encoding for the voice-input recorder.
+// 语音输入录音器的 16 位 PCM WAV 编码。
 //
-// Chromium's MediaRecorder only emits WebM/Opus, which the bundled whisper
-// decoder does not accept. Recording raw Float32 samples from the Web Audio
-// graph and wrapping them in a WAV container keeps the transcription path
-// identical to normal audio files.
+// Chromium 的 MediaRecorder 只输出 WebM/Opus，而内置的 whisper
+// 解码器不接受该格式。从 Web Audio 图录制原始 Float32 采样，
+// 再包成 WAV 容器，使转写路径与普通音频文件保持一致。
 
 export function encodeWav(chunks: readonly Float32Array[], sampleRate: number): ArrayBuffer {
   const sampleCount = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
@@ -21,7 +20,7 @@ export function encodeWav(chunks: readonly Float32Array[], sampleRate: number): 
   writeString(12, 'fmt ')
   view.setUint32(16, 16, true)
   view.setUint16(20, 1, true) // PCM
-  view.setUint16(22, 1, true) // mono
+  view.setUint16(22, 1, true) // 单声道
   view.setUint32(24, sampleRate, true)
   view.setUint32(28, sampleRate * bytesPerSample, true)
   view.setUint16(32, bytesPerSample, true)

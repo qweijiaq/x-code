@@ -55,7 +55,7 @@ Key systems and the files that define them:
 - **ESM only** (`"type": "module"`); `.js` extensions on relative imports even in `.ts` files (NodeNext).
 - No semicolons, single quotes, trailing commas, print width 120.
 - Import order enforced by `prettier-plugin-sort-imports`: `node:` → `react` → `ink` → `ai`/`@ai-sdk` → `zod` → `@x-code-cli/` → `./` relative.
-- Comments reserved for _why_ (terminal-protocol workarounds, provider quirks), not what the next line does.
+- Comments are written in Simplified Chinese and reserved for _why_ (terminal-protocol workarounds, provider quirks), not what the next line does. Keep machine directives and code examples verbatim.
 - Conventional commits (`feat:`, `fix:`, `refactor:`, …; plus `release`, `wip`) enforced by commitlint.
 - `.x-code/` at repo root is gitignored (session summaries, auto-memory, local prefs, custom sub-agents). Tests redirect via `X_CODE_HOME`.
 - `DEBUG_STDOUT=1 xc` writes to `~/.x-code/logs/debug.log` (10 MB rolling); `debugLog()` in core is a no-op without it.

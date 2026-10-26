@@ -48,14 +48,14 @@ describe('scanWorkspaceFiles', () => {
 
   beforeAll(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'xcc-scan-'))
-    // Layout:
+    // 目录布局：
     //   top.ts
     //   src/ChatInput.tsx
     //   src/foo.ts
-    //   node_modules/some-pkg/index.js   (must be skipped — hard blacklist)
-    //   .git/HEAD                         (must be skipped — hard blacklist)
-    //   build.log                         (only skipped if *.log gitignore'd)
-    //   .hidden                           (kept; menu's score layer hides)
+    //   node_modules/some-pkg/index.js   （必须跳过 — 硬黑名单）
+    //   .git/HEAD                         （必须跳过 — 硬黑名单）
+    //   build.log                         （仅当 *.log 被 gitignore 时跳过）
+    //   .hidden                           （保留；菜单的评分层负责隐藏）
     await fs.writeFile(path.join(root, 'top.ts'), '')
     await fs.mkdir(path.join(root, 'src'))
     await fs.writeFile(path.join(root, 'src', 'ChatInput.tsx'), '')

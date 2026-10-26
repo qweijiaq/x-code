@@ -1,15 +1,15 @@
 import { Worker } from 'node:worker_threads'
 
-/** Longest edge accepted by the model-facing image adapter. */
+/** 面向模型的图像适配器所接受的最长边。 */
 export const MAX_EDGE_PX = 2000
 
-/** 3.75 MB raw stays below the common 5 MB Base64 request ceiling. */
+/** 3.75 MB 原始数据低于常见的 5 MB Base64 请求上限。 */
 export const ATTACH_BYTE_BUDGET = 3.75 * 1024 * 1024
 
-/** Maximum source bytes read before image validation moves to a worker. */
+/** 图像校验移交到 worker 前读取的最大源字节数。 */
 export const MAX_IMAGE_SOURCE_BYTES = 25 * 1024 * 1024
 
-/** Decode guard, checked from headers before allocating the full bitmap. */
+/** 解码保护，在分配完整位图前先依据头部检查。 */
 export const MAX_DECODE_PIXELS = 100_000_000
 
 const IMAGE_WORKER_TIMEOUT_MS = 30_000
@@ -18,9 +18,9 @@ const FALLBACK_EDGES = [2000, 1000, 768, 512, 384, 256] as const
 const PNG_RESCALE_FLOOR = 1000
 const STANDARD_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 
-// Jimp 1.6 ships PNG/JPEG/GIF/BMP/TIFF codecs, but not WebP. Keep this list
-// tied to the codecs that are actually installed instead of assuming every
-// provider-supported input can also be re-encoded locally.
+// Jimp 1.6 自带 PNG/JPEG/GIF/BMP/TIFF 编解码器，但不含 WebP。让这份列表
+// 与实际安装的编解码器保持一致，而不要假设每个提供商支持的输入都能在本地
+// 重新编码。
 const JIMP_DECODABLE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/bmp', 'image/tiff'])
 
 export type ImageCompressionFailure =
@@ -404,7 +404,7 @@ async function encodeWithinBudget(
   return smallest!
 }
 
-/** Worker entrypoint. Call `compressImage()` from application code. */
+/** Worker 入口。应用代码应调用 `compressImage()`。 */
 export async function compressImageInProcess(
   bytes: Buffer,
   mimeType: string,
@@ -553,9 +553,9 @@ async function runCompressionWorker(
 }
 
 /**
- * Validate, normalize and compress an image for model delivery. Header-only
- * rejection stays on the caller thread; every accepted standard image is
- * decoded in a task-owned worker before its original bytes may pass through.
+ * 校验、归一化并压缩图像以供模型投递。仅依据头部的拒绝停留在调用方线程；
+ * 每个被接受的标准图像都会在任务专属 worker 中先解码，其原始字节才可能被
+ * 放行。
  */
 export async function compressImage(
   bytes: Buffer,

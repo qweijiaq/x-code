@@ -15,9 +15,8 @@ export interface StreamAttemptControl {
   didIdleTimeout: () => boolean
 }
 
-/** Activity watchdog for one provider stream. Wall-clock activity tracking
- *  catches an overdue stream after system resume without treating shorter
- *  event-loop stalls as a disconnect. */
+/** 单个提供方流的活动看门狗。基于墙钟的活动跟踪能在系统恢复后抓住超期的流，
+ *  而不把较短的事件循环卡顿误判为断连。 */
 export function createStreamAttemptControl(
   externalSignal: AbortSignal | undefined,
   idleTimeoutMs: number,
@@ -68,7 +67,7 @@ export function streamRetryDelayMs(attempt: number): number {
   return Math.min(INITIAL_STREAM_RETRY_DELAY_MS * 2 ** exponent, MAX_STREAM_RETRY_DELAY_MS)
 }
 
-/** Wait for a reconnect backoff without making Esc/Ctrl+C wait for the timer. */
+/** 等待重连退避，同时不让 Esc/Ctrl+C 一起等计时器。 */
 export function waitForStreamRetry(delayMs: number, signal?: AbortSignal): Promise<boolean> {
   if (signal?.aborted) return Promise.resolve(false)
   if (delayMs <= 0) return Promise.resolve(true)
@@ -89,9 +88,8 @@ export function waitForStreamRetry(delayMs: number, signal?: AbortSignal): Promi
   })
 }
 
-/** The AI SDK already retries HTTP statuses such as 429/5xx. The outer
- *  reconnect loop is deliberately limited to transport failures so an
- *  exhausted rate limit does not multiply the SDK's request budget. */
+/** AI SDK 已经会重试 429/5xx 之类的 HTTP 状态。外层重连循环有意只处理传输失败，
+ *  这样被耗尽的速率限制不会成倍放大 SDK 的请求预算。 */
 export function isRetryableStreamTransportError(error: unknown): boolean {
   const classified = classifyApiError(error)
   return classified.retryable && classified.message.startsWith('Network connection failed')
@@ -100,17 +98,15 @@ export function isRetryableStreamTransportError(error: unknown): boolean {
 const RECOVERY_PROMPT =
   'The previous assistant response was interrupted by a network disconnect. Continue directly from the exact point where it stopped. Do not repeat any text already emitted, do not mention the interruption, and preserve the original task and formatting.'
 
-/** Add request-only recovery context. These messages are never committed to
- *  LoopState, so aborting another attempt cannot leave an unmatched synthetic
- *  user turn in the canonical conversation. */
+/** 添加仅用于请求的恢复上下文。这些消息绝不会提交到 LoopState，
+ *  因此中止另一次尝试也不会在规范会话里留下不成对的合成用户轮次。 */
 export function appendStreamRecoveryContext(messages: ModelMessage[], visibleText: string): ModelMessage[] {
   if (!visibleText) return messages
   return [...messages, { role: 'assistant', content: visibleText }, { role: 'user', content: RECOVERY_PROMPT }]
 }
 
-/** Fold text already shown before a reconnect into the successful response
- *  before it is persisted. The UI only receives the continuation, while the
- *  next model turn sees one complete assistant answer. */
+/** 在持久化之前，把重连之前已显示过的文本并入成功响应。UI 只收到续写部分，
+ *  而下一轮模型看到的是一个完整的 assistant 回答。 */
 export function prependRecoveredText(messages: ModelMessage[], visibleText: string): void {
   if (!visibleText) return
   const assistant = messages.find((message) => message.role === 'assistant')
@@ -139,9 +135,8 @@ export function prependRecoveredText(messages: ModelMessage[], visibleText: stri
   })
 }
 
-/** Providers occasionally ignore the continuation instruction and replay the
- *  full prefix. Hold only the ambiguous initial bytes: an exact replay is
- *  discarded, while a genuine continuation is released as soon as it differs. */
+/** 提供方偶尔会忽略续写指令，重放完整前缀。只保留有歧义的开头字节：
+ *  完全重放会被丢弃，而真正的续写一旦出现差异就立即放行。 */
 export class StreamReplayFilter {
   private candidate = ''
   private decided = false

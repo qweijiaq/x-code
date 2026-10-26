@@ -1,7 +1,7 @@
-// @x-code-cli/core — Stream result helpers
+// @x-code-cli/core — 流结果辅助
 import type { ModelMessage } from 'ai'
 
-/** Minimal shape of what we use from streamText() result — avoids complex generic propagation. */
+/** 我们从 streamText() 结果里用到的最小形态——避免复杂的泛型传播。 */
 export interface StreamResult {
   stream: AsyncIterable<{
     type: string
@@ -10,10 +10,9 @@ export interface StreamResult {
     input?: unknown
     output?: unknown
     toolCallId?: string
-    /** When `type === 'error'`, the SDK's wrapped provider error. The SDK
-     *  does NOT throw from stream iteration on request failure — it
-     *  enqueues this chunk and closes the stream.
-     *  Our streamChunksToUI re-throws so the outer try/catch can classify. */
+    /** 当 `type === 'error'` 时，是 SDK 包装后的提供方错误。SDK 在请求失败时
+     *  不会从流迭代中抛出——它把这个 chunk 入队并关闭流。
+     *  我们的 streamChunksToUI 会重新抛出，好让外层 try/catch 做分类。 */
     error?: unknown
   }>
   response: Promise<{ messages: ModelMessage[]; modelId?: string }>
@@ -40,10 +39,9 @@ export interface StreamResult {
 }
 
 /**
- * Silently consume all pending promises on a StreamResult to prevent
- * unhandled rejections after a stream error. The AI SDK's internal
- * flush() rejects these with NoOutputGeneratedError when no steps
- * completed — without draining them Node.js dumps the full error to stderr.
+ * 静默消费 StreamResult 上所有挂起的 promise，以防流错误后出现未处理的拒绝。
+ * 当没有完成任何 step 时，AI SDK 内部的 flush() 会用 NoOutputGeneratedError
+ * 拒绝它们——若不清空，Node.js 会把完整错误倾倒到 stderr。
  */
 export function drainStreamResult(result: StreamResult): void {
   const noop = () => {}

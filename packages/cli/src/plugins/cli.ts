@@ -1,14 +1,11 @@
-// @x-code-cli/cli — Non-interactive plugin subcommands
+// @x-code-cli/cli — 非交互式插件子命令
 //
-// `xc plugin <subcommand> ...` entry point — runs without mounting the
-// Ink UI, prints to stdout/stderr, exits with a status code suitable
-// for scripts. Mirrors the slash-command family in `App.tsx`'s
-// `handlePlugin` so users can drive the same operations from either
-// surface.
+// `xc plugin <subcommand> ...` 入口点——不挂载 Ink UI 就运行，打印到
+// stdout/stderr，并以适合脚本的退出码结束。镜像 `App.tsx` 里 `handlePlugin`
+// 的斜杠命令族，这样用户可以从两个界面驱动同样的操作。
 //
-// Routed from `index.ts`'s main() before yargs sees the args — that
-// way `xc plugin install ./foo` doesn't get treated as a prompt the
-// agent should answer.
+// 在 yargs 看到参数之前，由 `index.ts` 的 main() 路由——这样
+// `xc plugin install ./foo` 就不会被当成 agent 应当回答的提示词。
 import { Chalk } from 'chalk'
 
 import {
@@ -38,13 +35,11 @@ export async function runPluginCli(args: string[]): Promise<number> {
   const sub = (args[0] ?? '').toLowerCase()
   const rest = args.slice(1)
 
-  // First-run seed: identical to the main interactive entry in
-  // packages/cli/src/index.ts. Without this, a fresh user running
-  // `xc plugin marketplace list` (or `search`) before ever launching
-  // the interactive CLI sees an empty subscription list — the product
-  // promise of "first run has the Anthropic marketplace ready" needs
-  // to hold on every first-contact surface, not just the TUI entry.
-  // Idempotent for the named entry; a removed default is restored here.
+  // 首次运行播种：与 packages/cli/src/index.ts 中主交互入口相同。没有它，
+  // 一个从未启动过交互式 CLI 的新用户运行 `xc plugin marketplace list`（或
+  // `search`）时会看到空的订阅列表——“首次运行就有 Anthropic marketplace
+  // 就绪”这一产品承诺需要在每个首次接触的界面上都成立，而不仅是 TUI 入口。
+  // 对已命名的条目幂等；被移除的默认订阅会在这里恢复。
   await ensureDefaultMarketplaces().catch((err) => debugLog('plugins.ensure-defaults-failed', String(err)))
 
   try {
@@ -109,17 +104,16 @@ function printUsage(): void {
 // ── list / info ────────────────────────────────────────────────────────
 
 async function cliList(args: string[] = []): Promise<number> {
-  // Optional filters mirror the slash command: --enabled / --disabled.
-  // No flag = list every installed plugin (default).
+  // 可选过滤器镜像斜杠命令：--enabled / --disabled。无标志 = 列出每个已安装
+  // 插件（默认）。
   let filter: 'all' | 'enabled' | 'disabled' = 'all'
   for (const a of args) {
     if (a === '--enabled') filter = 'enabled'
     else if (a === '--disabled') filter = 'disabled'
   }
 
-  // For 'all' we can stay cheap and just read the bookkeeping file. For
-  // filtered views we need the enabled state, which only loadAllPlugins
-  // resolves (settings.json merge across scopes).
+  // 对 'all' 我们可以保持廉价，只读取记账文件。对过滤视图我们需要启用状态，
+  // 而这只有 loadAllPlugins 才能解析（跨作用域合并 settings.json）。
   if (filter === 'all') {
     const installed = await listInstalledPlugins()
     if (installed.length === 0) {
@@ -160,8 +154,7 @@ async function cliInfo(args: string[]): Promise<number> {
     console.error('Usage: xc plugin info <id>')
     return 1
   }
-  // Use loadAllPlugins to get the actual manifest + enable state, not
-  // just the bookkeeping record.
+  // 用 loadAllPlugins 获取实际的 manifest + 启用状态，而不只是记账记录。
   const load = await loadAllPlugins({ cwd: process.cwd() })
   const plugin = load.registry.getEntry(id)
   if (!plugin) {
@@ -192,9 +185,8 @@ async function cliInfo(args: string[]): Promise<number> {
 // ── install / uninstall / update ───────────────────────────────────────
 
 async function cliInstall(args: string[]): Promise<number> {
-  // Strip --yes / -y from args before reading the source. Order-
-  // independent so users can write either `--yes <src>` or
-  // `<src> --yes`.
+  // 在读取源之前先剥离 --yes / -y。与顺序无关，这样用户既可以写 `--yes <src>`
+  // 也可以写 `<src> --yes`。
   const skipConsent = args.includes('--yes') || args.includes('-y')
   const sourceArgs = args.filter((a) => a !== '--yes' && a !== '-y')
   const raw = sourceArgs.join(' ').trim()
@@ -214,17 +206,16 @@ async function cliInstall(args: string[]): Promise<number> {
       marketplace: parsed.marketplace,
       expectedName: parsed.expectedName,
       consent: skipConsent ? undefined : promptConsent,
-      // userConfig prompt only runs when manifest declares fields AND
-      // not in `--yes` non-interactive mode (scripts can pre-seed
-      // values by editing ~/.x-code/plugins/user-config.json directly
-      // or by writing them via the future `xc plugin configure` cmd).
+      // userConfig 提示只在 manifest 声明了字段且不处于 `--yes` 非交互模式时
+      // 运行（脚本可以通过直接编辑 ~/.x-code/plugins/user-config.json 或通过
+      // 未来的 `xc plugin configure` 命令写这些值来预填）。
       userConfigPrompt: skipConsent ? undefined : promptUserConfig,
     })
     console.log(chalk.green(`Installed ${result.pluginId} v${result.manifest.version}`))
     console.log(`Cache: ${result.rootDir}`)
-    // No "restart xc" hint — this subcommand is a one-shot from the
-    // shell, not running inside a live session. A user with an active
-    // xc TUI elsewhere can run `/plugin refresh` there to pick this up.
+    // 不打印 "restart xc" 提示——这个子命令是从 shell 一次性运行的，而不是在
+    // 活跃会话内运行。别处有活跃 xc TUI 的用户可以在那里运行 `/plugin refresh`
+    // 来获取这个变更。
     return 0
   } catch (err) {
     console.error(chalk.red(`Install failed: ${err instanceof Error ? err.message : String(err)}`))
@@ -232,9 +223,8 @@ async function cliInstall(args: string[]): Promise<number> {
   }
 }
 
-/** Render the consent preview to stderr and read a y/n from stdin.
- *  Defaults to NO when run without a TTY (CI environments, piped
- *  install scripts) — those callers should pass `--yes` explicitly. */
+/** 把同意预览渲染到 stderr，并从 stdin 读取一个 y/n。在没有 TTY 时
+ *  （CI 环境、管道安装脚本）默认拒绝——那些调用方应显式传 `--yes`。 */
 async function promptConsent(preview: ConsentPreview): Promise<boolean> {
   const lines: string[] = []
   lines.push('')
@@ -280,7 +270,7 @@ async function promptConsent(preview: ConsentPreview): Promise<boolean> {
 
   process.stderr.write(lines.join('\n'))
 
-  // No TTY → default deny. Scripts should pass `--yes`.
+  // 无 TTY → 默认拒绝。脚本应传 `--yes`。
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     process.stderr.write(chalk.yellow('No TTY — declining install. Use --yes to skip the prompt in scripts.\n'))
     return false
@@ -296,17 +286,15 @@ async function promptConsent(preview: ConsentPreview): Promise<boolean> {
   }
 }
 
-/** Walk the manifest's userConfig list and prompt for each field. Mirrors
- *  the consent prompt's TTY-only stance: scripts piping into install
- *  should pre-seed values or use `--yes` (which skips this entirely).
- *  Sensitive fields are NOT echoed during typing — we toggle the tty
- *  to raw mode for the duration of the question, mirroring how `git`
- *  prompts for credentials. */
+/** 遍历 manifest 的 userConfig 列表并为每个字段提示。镜像同意提示的 TTY-only
+ *  立场：管道输入安装脚本应预填值或使用 `--yes`（它会完全跳过这里）。敏感字段
+ *  在输入时不会被回显——我们在提问期间把 tty 切到 raw 模式，镜像 `git` 提示
+ *  凭据的方式。 */
 async function promptUserConfig(
   fields: Parameters<NonNullable<Parameters<typeof installPlugin>[0]['userConfigPrompt']>>[0],
 ): Promise<Record<string, string | number | boolean> | null> {
-  // installer only calls us when fields.length > 0, but TypeScript can't
-  // see that from the call site — guard explicitly.
+  // installer 只在 fields.length > 0 时才调用我们，但 TypeScript 从调用点
+  // 看不到这一点——显式防护。
   if (!fields) return {}
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     process.stderr.write(
@@ -327,21 +315,18 @@ async function promptUserConfig(
       const required = f.required ? ' (required)' : ''
       const defaultNote = f.default !== undefined ? ` [default: ${f.default}]` : ''
       const sensitive = f.sensitive === true
-      // When the manifest provides neither `prompt` nor `description`, the
-      // older code fell through to `f.key`, producing labels like
-      // `MY_URL: MY_URL [default: ...]` — the key duplicated as both the
-      // label *and* the human description. Just show the key alone in
-      // that case.
+      // 当 manifest 既没提供 `prompt` 也没提供 `description` 时，旧代码会落到
+      // `f.key`，产生像 `MY_URL: MY_URL [default: ...]` 这样的标签——键被同时
+      // 用作标签*和*人类可读描述。那种情况下只显示键本身。
       const promptText = label
         ? `  ${chalk.cyan(f.key)}: ${label}${required}${defaultNote}\n  > `
         : `  ${chalk.cyan(f.key)}${required}${defaultNote}\n  > `
 
       let answer: string
       if (sensitive) {
-        // Suppress local echo for the duration of the read. Node's readline
-        // doesn't expose this directly, so we monkey-patch the output stream's
-        // write to drop everything except a one-off '*' per keystroke. Same
-        // technique inquirer uses for its `password` prompt.
+        // 在读取期间抑制本地回显。Node 的 readline 不直接暴露这一点，因此我们
+        // 给输出流的 write 打补丁，丢弃除了每次击键一个 '*' 之外的所有内容。
+        // 与 inquirer 用于其 `password` 提示的技术相同。
         const out = process.stderr
         const originalWrite = out.write.bind(out)
         process.stderr.write(promptText)
@@ -442,8 +427,8 @@ async function cliUninstall(args: string[]): Promise<number> {
 }
 
 async function cliToggle(args: string[], enable: boolean): Promise<number> {
-  // Pull out the optional --scope flag before the positional id, matching
-  // the shape of /skill enable|disable. Default scope = 'user'.
+  // 在位置参数 id 之前先取出可选的 --scope 标志，匹配 /skill enable|disable
+  // 的形式。默认 scope = 'user'。
   let scope: PluginScope = 'user'
   const positional: string[] = []
   for (const a of args) {
@@ -471,14 +456,13 @@ async function cliToggle(args: string[], enable: boolean): Promise<number> {
 }
 
 async function cliUpdate(args: string[]): Promise<number> {
-  // Two modes — explicit:
-  //   xc plugin update <id>   single plugin (existing behavior)
-  //   xc plugin update --all  every installed plugin, sequential, skip-on-error
+  // 两种模式——显式：
+  //   xc plugin update <id>   单个插件（既有行为）
+  //   xc plugin update --all  每个已安装插件，顺序执行，出错跳过
   //
-  // Bare `xc plugin update` is rejected on purpose. npm makes bare = all but
-  // that's exactly what bites users on typo / mid-session experimentation;
-  // Gemini CLI takes the same defensive stance. The error message offers
-  // both forms so the right choice is one keypress away.
+  // 裸 `xc plugin update` 被刻意拒绝。npm 把裸命令当作全部，但那正是会在
+  // 打错字 / 会话中途试验时咬到用户的东西；Gemini CLI 采取同样的防御立场。
+  // 错误消息同时提供两种形式，这样正确的选择只差一次按键。
   const all = args.includes('--all') || args.includes('-a')
   const skipConsent = args.includes('--yes') || args.includes('-y')
   const positional = args.filter((a) => !['--all', '-a', '--yes', '-y'].includes(a))
@@ -531,11 +515,9 @@ async function cliUpdate(args: string[]): Promise<number> {
 
 type UpdateOutcome = 'updated' | 'unchanged' | 'failed'
 
-/** Reinstall one plugin from its recorded source and report what happened.
- *  Designed to be called from both single-id and `--all` paths; per-line
- *  output is concise (just the outcome) so a bulk update reads as a clean
- *  list. Never throws — failures become `'failed'` so the caller's loop
- *  can keep going. */
+/** 从其记录的源重装一个插件并报告发生了什么。设计为可从单个 id 和 `--all`
+ *  两条路径调用；逐行输出简洁（只输出结果），让批量更新读起来像干净的列表。
+ *  从不抛错——失败变成 `'failed'`，让调用方的循环可以继续。 */
 async function updateOnePlugin(
   rec: Awaited<ReturnType<typeof listInstalledPlugins>>[number],
   skipConsent: boolean,
@@ -569,9 +551,8 @@ async function cliSearch(args: string[]): Promise<number> {
   }
   const marketplaces = await readAllCachedMarketplaces()
   if (marketplaces.length === 0) {
-    // Distinguish "you haven't subscribed to any marketplace yet" from
-    // "you're subscribed but the cached index file is missing / unreadable".
-    // The fix is different — one needs `add`, the other needs `refresh`.
+    // 区分“你还没有订阅任何 marketplace”和“你已订阅但缓存的索引文件缺失 /
+    // 不可读”。修复方式不同——前者需要 `add`，后者需要 `refresh`。
     const km = await readKnownMarketplaces()
     if (km.marketplaces.length === 0) {
       console.error('No subscribed marketplaces. Add one with `xc plugin marketplace add`.')

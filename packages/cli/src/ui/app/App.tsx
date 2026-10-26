@@ -1,4 +1,4 @@
-// @x-code-cli/cli — Root App component
+// @x-code-cli/cli — 根 App 组件
 import path from 'node:path'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -95,20 +95,17 @@ interface AppProps {
   model: LanguageModel
   options: AgentOptions
   initialPrompt?: string
-  /** Pre-loaded session from `xc --continue`. Hydrates the agent on
-   *  first render so messages appear in scrollback before the user
-   *  sends anything. Null when starting fresh. */
+  /** 来自 `xc --continue` 的预加载会话。在首次渲染时水合 agent，让消息在用户
+   *  发送任何内容之前就出现在 scrollback 中。全新启动时为 null。 */
   initialSession?: LoadedSession | null
-  /** When 'pick', App pops the resume picker on mount — the
-   *  `xc --resume` flag path. Once Ink is ready (so askQuestion can
-   *  render), the same code path as `/resume` runs. */
+  /** 当为 'pick' 时，App 在挂载时弹出 resume 选择器——`xc --resume` 标志路径。
+   *  一旦 Ink 就绪（这样 askQuestion 才能渲染），就会运行与 `/resume` 相同的
+   *  代码路径。 */
   resumeIntent?: 'pick' | null
   onCleanupReady?: (controller: CliCleanupController) => void
-  /** Hand the post-Ink resume hint a live snapshot of the session.
-   *  Wired in app.tsx — the registered getter is called from
-   *  index.ts's gracefulShutdown after the terminal is reset, so the
-   *  hint lands in the user's shell prompt area where they can copy
-   *  the `xc --resume <id>` command. */
+  /** 把会话的实时快照交给 post-Ink resume 提示。在 app.tsx 中接线——注册的
+   *  getter 在终端重置后由 index.ts 的 gracefulShutdown 调用，这样提示会落在
+   *  用户的 shell 提示符区域，方便他们复制 `xc --resume <id>` 命令。 */
   onSessionInfoReady?: (getter: () => SessionExitInfo | null) => void
 }
 
@@ -184,11 +181,10 @@ export function App({
     askQuestion,
   })
 
-  // Bumped whenever /skill refresh mutates the registry in place. The
-  // registry's object identity is stable across refresh (reload() rewrites
-  // the internal map), so React needs an explicit dependency to know the
-  // visible skill list changed — without this counter the memoized
-  // skillCommands array would stay stale.
+  // 每当 /skill refresh 原地变更 registry 时自增。registry 的对象身份在 refresh
+  // 前后保持稳定（reload() 重写内部 map），所以 React 需要一个显式依赖才能知道
+  // 可见技能列表已变化——没有这个计数器，memo 化的 skillCommands 数组会一直
+  // 保持过期。
   const [skillRegistryVersion, setSkillRegistryVersion] = useState(0)
   const [authOperation, setAuthOperation] = useState<'login' | 'logout' | null>(null)
   const authControllerRef = useRef<AbortController | null>(null)
@@ -197,34 +193,30 @@ export function App({
   const openAIAuthTransitionRef = useRef(createOpenAIAuthTransitionState(getOpenAIAuthSnapshot()))
   const checkedOpenAIEntitlementKeyRef = useRef<string | null>(null)
 
-  // Reasoning-effort tier label for the current model (e.g. "High", "Max"),
-  // shown in the footer next to the model name. Kept in state instead of
-  // recomputed on every render because resolveReasoningTierLabel does a sync
-  // config-file read; refreshed on /model switches and tier picks.
+  // 当前模型的 reasoning-effort 层级标签（如 "High"、"Max"），显示在 footer 里
+  // 模型名旁边。放在 state 里而不是每次渲染都重算，因为 resolveReasoningTierLabel
+  // 会同步读配置文件；在 /model 切换和层级选择时刷新。
   const [reasoningTierLabel, setReasoningTierLabel] = useState<string | null>(() =>
     resolveReasoningTierLabel(state.modelId),
   )
 
-  // Derived from options.skillRegistry. Recomputed when the registry
-  // version bumps (via /skill refresh) so tab completion + /help reflect
-  // the new skill set without restart.
+  // 派生自 options.skillRegistry。当 registry 版本自增（通过 /skill refresh）时
+  // 重算，这样 tab 补全 + /help 无需重启就能反映新的技能集。
   const skillCommands = useMemo(
     () => (options.skillRegistry ? options.skillRegistry.list() : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [skillRegistryVersion],
   )
 
-  // File-based slash commands (user / project / plugin markdown files).
-  // Recomputed off the same version counter as skills — /plugin refresh
-  // bumps it after reloading both registries.
+  // 基于文件的斜杠命令（用户 / 项目 / 插件 markdown 文件）。与技能使用同一个
+  // 版本计数器重算——/plugin refresh 在重载两个 registry 后自增它。
   const fileCommands = useMemo(
     () => (options.commandRegistry ? options.commandRegistry.list() : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [skillRegistryVersion],
   )
 
-  // Combined command list: built-ins + loaded skills + file commands
-  // (for tab completion).
+  // 合并的命令列表：内置 + 已加载技能 + 文件命令（用于 tab 补全）。
   const allCommands = useMemo(
     () => [
       ...SLASH_COMMANDS,
@@ -234,32 +226,29 @@ export function App({
     [skillCommands, fileCommands],
   )
 
-  /** Skill pending injection: set when the user types `/skillname` with no
-   *  argument (so we don't trigger an immediate AI response just to the skill
-   *  XML). The skill content is prepended to the NEXT non-slash-command user
-   *  message. Cleared on /clear or when consumed. */
+  /** 技能待注入：当用户只输入 `/skillname` 而不带参数时设置（这样我们不会仅仅
+   *  因为技能 XML 就立即触发 AI 响应）。技能内容会被前置到 NEXT 条非斜杠命令的
+   *  用户消息。在 /clear 或消费后清除。 */
   const pendingSkillRef = useRef<SkillDefinition | null>(null)
 
-  // Transient one-line hint shown below the input box (in ChatInput's
-  // footer slot, alongside the plan-mode / accept-edits indicators). Today
-  // only used for the "Press Ctrl+C again to exit" double-press prompt —
-  // kept narrow on purpose so future use-cases have a single rendering
-  // slot to share. Mirrors Claude Code's PromptInputFooter placement.
+  // 显示在输入框下方（ChatInput 的 footer 槽位，与 plan 模式 / accept-edits
+  // 指示器并列）的瞬态单行提示。目前只用于 "Press Ctrl+C again to exit" 双击
+  // 提示——刻意保持窄，这样未来的用例可以共享同一个渲染槽位。镜像 Claude Code
+  // 的 PromptInputFooter 布局。
   const [notice, setNotice] = useState<string | null>(null)
-  // Track whether the current notice is an update hint (vs Ctrl+C notice).
-  // Needed because the update hint string contains ANSI escape codes and
-  // can't be distinguished from plain-text notices via startsWith.
+  // 追踪当前 notice 是否是更新提示（相对 Ctrl+C 提示而言）。需要它是因为更新
+  // 提示字符串包含 ANSI 转义码，无法通过 startsWith 与纯文本提示区分。
   const isUpdateNoticeRef = useRef(false)
-  // Timestamp of the most recent Ctrl+C. While inside the arm window the
-  // next Ctrl+C exits; outside it, Ctrl+C just re-arms (and cancels the
-  // running turn if any). Mirrors Claude Code's `useExitOnCtrlCD` 2s window.
+  // 最近一次 Ctrl+C 的时间戳。在 arm 窗口内，下一次 Ctrl+C 就退出；窗口外，
+  // Ctrl+C 只是重新 arm（并取消进行中的回合，如果有的话）。镜像 Claude Code 的
+  // `useExitOnCtrlCD` 2 秒窗口。
   const ctrlCArmedAtRef = useRef(0)
   const ctrlCArmWindowMs = 2000
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Auto-clear the notice after the arm window expires.
-  // Skip for update hints — they persist until the user sends their first
-  // message (cleared in handleSubmit via isUpdateNoticeRef).
+  // arm 窗口过期后自动清除 notice。
+  // 对更新提示跳过——它们持续到用户发送第一条消息为止（在 handleSubmit 中通过
+  // isUpdateNoticeRef 清除）。
   useEffect(() => {
     if (!notice) return
     if (isUpdateNoticeRef.current) return
@@ -273,21 +262,21 @@ export function App({
     }
   }, [notice])
 
-  /** Ctrl+C handler — double-press to exit, single-press cancels in-flight
-   *  turn (if any) and arms the exit hint. Mirrors Claude Code's behavior:
+  /** Ctrl+C 处理器——双击退出，单击取消进行中的回合（如果有的话）并 arm 退出
+   *  提示。镜像 Claude Code 的行为：
    *
-   *    Idle   + 1st press → show "Press Ctrl+C again to exit", arm 2s window
-   *    Idle   + 2nd press → exit
-   *    Loading + 1st press → abort current turn, show hint, arm 2s window
-   *    Loading + 2nd press → exit
+   *    Idle   + 第 1 次按下 → 显示 "Press Ctrl+C again to exit"，arm 2 秒窗口
+   *    Idle   + 第 2 次按下 → 退出
+   *    Loading + 第 1 次按下 → 中止当前回合，显示提示，arm 2 秒窗口
+   *    Loading + 第 2 次按下 → 退出
    *
-   *  The arm window auto-expires (notice clears via the effect above). */
+   *  arm 窗口自动过期（notice 通过上面的 effect 清除）。 */
   const handleCtrlC = useCallback(() => {
     const now = Date.now()
     const armed = now - ctrlCArmedAtRef.current < ctrlCArmWindowMs
     if (armed) {
-      // Second press within the window — user really means it. Exit cleanly
-      // (Ink unmount → gracefulShutdown via onCleanupReady).
+      // 窗口内的第二次按下——用户是认真的。干净地退出（Ink 卸载 → 通过
+      // onCleanupReady 触发 gracefulShutdown）。
       exit()
       return
     }
@@ -305,7 +294,7 @@ export function App({
     else abort()
   }, [abort])
 
-  // Register cleanup function for graceful exit (SIGINT)
+  // 注册用于优雅退出（SIGINT）的清理函数
   useEffect(() => {
     onCleanupReady?.({ quiesce, terminateShells: cleanupShells, drain: cleanup })
   }, [cleanup, cleanupShells, quiesce]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -317,22 +306,20 @@ export function App({
     [],
   )
 
-  // Register the post-exit session-info getter. Index.ts uses it after
-  // resetTerminal to print "Resume: xc --resume <id>" to the shell.
-  // Stable across renders since getSessionInfo reads loopStateRef
-  // directly — registering once on mount is sufficient.
+  // 注册退出后的 session-info getter。Index.ts 在 resetTerminal 之后用它向 shell
+  // 打印 "Resume: xc --resume <id>"。由于 getSessionInfo 直接读 loopStateRef，
+  // 它在各次渲染间保持稳定——挂载时注册一次就够了。
   useEffect(() => {
     onSessionInfoReady?.(getSessionInfo)
   }, [getSessionInfo]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Wire the update-hint callback (from startup-prints) into ChatInput's
-  // footer `notice` slot, below the input box. This avoids the stderr
-  // vs cell-grid rendering conflict that caused the leading character
-  // ("U" in "Update") to be eaten.
+  // 把更新提示回调（来自 startup-prints）接入 ChatInput 输入框下方的 footer
+  // `notice` 槽位。这避免了 stderr 与 cell-grid 渲染冲突——该冲突曾导致前导字符
+  // （"Update" 里的 "U"）被吞掉。
   //
-  // Two cases:
-  //   a) cache-hit: hint arrived before mount → drainPendingUpdateHint now
-  //   b) network-fetch: hint arrives later → registerUpdateHintHandler
+  // 两种情况：
+  //   a) cache 命中：提示在挂载前到达 → 现在 drainPendingUpdateHint
+  //   b) 网络获取：提示稍后到达 → registerUpdateHintHandler
   useEffect(() => {
     registerUpdateHintHandler((msg) => {
       isUpdateNoticeRef.current = true
@@ -346,21 +333,16 @@ export function App({
     return () => registerUpdateHintHandler(null)
   }, [])
 
-  /** /resume — list every past session in this project and let the user
-   *  pick one to load. Reuses the askQuestion picker (same dialog as
-   *  /model and the askUser tool) so we get consistent keyboard
-   *  navigation, "Other"-as-freeform escape hatch, and Esc-to-cancel
-   *  for free.
+  /** /resume——列出本项目里所有历史会话，让用户挑一个加载。复用 askQuestion
+   *  选择器（与 /model 和 askUser 工具同一个对话框），这样我们免费获得一致的
+   *  键盘导航、"Other"-作为自由形式的逃生通道、以及 Esc 取消。
    *
-   *  Picker label format: `[<short prompt>] <relative time> · N msgs`
-   *  Each option carries the absolute file path in its description so
-   *  the user can verify which session they're picking. After the user
-   *  selects, we call `loadSession` (full file read this time, not the
-   *  head/tail enrich pass) and pass it to `useAgent.resume` which
-   *  hot-swaps the agent state. Wrapped in useCallback so the on-mount
-   *  effect can reference it without tripping the react-hooks linter
-   *  (function declarations defined later in the component body get
-   *  flagged for closure-freshness even though JS hoists them). */
+   *  选择器标签格式：`[<短提示词>] <相对时间> · N msgs`
+   *  每个选项在其 description 里携带绝对文件路径，让用户可以核实自己选的是哪个
+   *  会话。用户选择后，我们调用 `loadSession`（这次是完整文件读取，不是 head/tail
+   *  增强扫描）并把它传给 `useAgent.resume`，由其热切换 agent 状态。包在 useCallback
+   *  里，这样挂载时的 effect 就能引用它而不会触发 react-hooks linter（即便 JS
+   *  会提升，定义在组件体靠后位置的函数声明仍会被标记闭包新鲜度问题）。 */
   const handleResume = useCallback(async () => {
     const sessions = await listSessions()
     if (sessions.length === 0) {
@@ -390,9 +372,8 @@ export function App({
     )
     const picked = choices.find((c) => c.label === answer)
     if (!picked) {
-      // User typed a free-form value into "Other". Treat as cancelled —
-      // we don't try to fuzzy-match against session ids; the picker is
-      // the supported way to pick.
+      // 用户在 "Other" 里输入了自由格式的值。按取消处理——我们不尝试对 session
+      // id 做模糊匹配；选择器才是受支持的挑选方式。
       addInfoMessage('Resume cancelled.')
       return
     }
@@ -419,7 +400,7 @@ export function App({
     )
   }, [addInfoMessage, askQuestion, resume])
 
-  /** Format a DiffStats object into a compact string like "+42 -18 in main.ts". */
+  /** 把 DiffStats 对象格式化成 "+42 -18 in main.ts" 这样的紧凑字符串。 */
   function formatDiffStats(stats: DiffStats | null): string {
     if (!stats || stats.filesChanged.length === 0) return 'no code changes'
     const ins = `+${stats.insertions}`
@@ -430,12 +411,10 @@ export function App({
     return `${ins} ${del} in ${stats.filesChanged.length} files`
   }
 
-  /** Picker + executor for `/rewind`. With an arg, jumps straight to the
-   *  named checkpoint (full or sha1-style prefix). Without, lists every
-   *  checkpoint in this session newest-first with the user prompt that
-   *  triggered it as the preview. The picker silently no-ops when nothing
-   *  has been checkpointed (e.g. on the first turn before any user
-   *  message has landed). */
+  /** `/rewind` 的选择器 + 执行器。带参数时，直接跳到命名的 checkpoint（完整或
+   *  sha1 风格前缀）。不带参数时，按最新优先列出本会话每个 checkpoint，用触发它的
+   *  用户提示词作为预览。当没有任何 checkpoint 时（例如在第一条用户消息落定前的
+   *  第一个回合），选择器静默 no-op。 */
   const handleRewind = useCallback(
     async (arg: string) => {
       const checkpoints = getCheckpoints()
@@ -446,8 +425,8 @@ export function App({
         return
       }
 
-      // Direct arg: exact ckptId match, then prefix. No fuzzy match —
-      // ambiguous prefixes would silently roll back the wrong point.
+      // 直接参数：先精确匹配 ckptId，再前缀匹配。不做模糊匹配——歧义前缀会
+      // 静默回滚到错误的点。
       let pickedId: string | null = null
       if (arg) {
         const exact = checkpoints.find((c) => c.ckptId === arg)
@@ -468,11 +447,10 @@ export function App({
       }
 
       if (!pickedId) {
-        // Newest first matches what users intuit when they think "go back
-        // a step or two" — the freshest decision points are at the top.
+        // 最新优先符合用户在想到 "回退一两步" 时的直觉——最新的决策点在最上面。
         const ordered = [...checkpoints].reverse()
 
-        // Compute diff stats for each checkpoint in parallel.
+        // 并行计算每个 checkpoint 的 diff 统计。
         const statsArr = await Promise.all(ordered.slice(0, 30).map((c) => getDiffStats(c.ckptId)))
 
         const choices = ordered.slice(0, 30).map((c, i) => {
@@ -503,7 +481,7 @@ export function App({
         pickedId = picked.ckptId
       }
 
-      // Step 2: confirmation — let the user choose what to restore.
+      // 第 2 步：确认——让用户选择要恢复什么。
       const stats = await getDiffStats(pickedId)
       const hasCodeChanges = stats !== null && stats.filesChanged.length > 0
 
@@ -551,16 +529,14 @@ export function App({
     [addInfoMessage, askQuestion, getCheckpoints, getDiffStats, rewind],
   )
 
-  /** Resolve a ThemeName back to its display label. */
+  /** 把 ThemeName 解析回它的显示标签。 */
   function themeLabel(name: ThemeName): string {
     return THEMES.find((t) => t.name === name)?.label ?? name
   }
 
-  /** Apply a theme: update the active UI-theme state AND switch the
-   *  syntax-highlight palette to the one bundled with the theme.
-   *  Centralized so /theme, the first-run picker, and the startup
-   *  loader all stay in sync — easy to forget one of the two and end
-   *  up with bg colors that don't match the code colors. */
+  /** 应用主题：更新活动的 UI 主题状态，并把语法高亮调色板切换为主题捆绑的那个。
+   *  集中在这里，让 /theme、首次运行选择器和启动加载器都保持同步——很容易忘记
+   *  两者之一，结果得到与代码颜色不匹配的背景色。 */
   function applyTheme(name: ThemeName) {
     setTheme(name)
     setSyntaxTheme(getThemeColors(name).syntaxPalette)
@@ -569,13 +545,10 @@ export function App({
   }
 
   /**
-   * First-run onboarding picker. Fires once when `config.json` has no
-   * `theme` key — i.e. brand-new users on their first interactive
-   * launch (resumes / `--print` / inline initial prompts skip it; see
-   * the launch-flow effect below). After the user picks (or dismisses)
-   * we persist the choice so the next launch never re-asks, even if
-   * they bailed without an explicit selection — that's also their
-   * answer ("default is fine").
+   * 首次运行引导选择器。当 `config.json` 没有 `theme` 键时触发一次——即全新用户
+   * 在首次交互式启动时（resume / `--print` / 行内初始提示词会跳过它；见下方的
+   * 启动流程 effect）。用户选择（或关闭）后，我们持久化这个选择，让下次启动不再
+   * 询问——即便他们没做显式选择就退出，那也算他们的答案（"默认就好"）。
    */
   async function runFirstRunThemePicker() {
     addInfoMessage(
@@ -587,9 +560,8 @@ export function App({
     )
 
     const cols = Math.max(40, process.stdout.columns ?? 100)
-    // Reserve room for the dialog's left margin (1 indent) + preview
-    // sub-indent (2). The preview helper does its own padding to fill
-    // the column, so being slightly generous on the budget is fine.
+    // 为对话框的左边距（1 个缩进）+ 预览子缩进（2）预留空间。预览辅助函数会自己
+    // 填充到该列，所以预算稍微放宽一点没关系。
     const previewWidth = Math.max(40, cols - 4)
     const choices = THEMES.map((t) => ({
       name: t.name,
@@ -617,21 +589,15 @@ export function App({
     }
   }
 
-  // On-mount resume handling. Three mutually-exclusive paths set up by
-  // the CLI entry:
-  //   - initialSession set: `xc -c` already loaded the most recent
-  //     session synchronously. useAgent has hydrated the scrollback
-  //     from it; we just need to drop a banner so the user knows they
-  //     resumed (rather than thinking the messages are mysteriously
-  //     pre-populated). No async work — just a visual hint.
-  //   - resumeIntent === 'pick': `xc -r` wants the picker. We pop the
-  //     same dialog as `/resume`.
-  //   - neither: regular launch, optionally with initialPrompt to
-  //     auto-submit.
-  // The picker awaits askQuestion, which only resolves once the user
-  // chooses, so we firewall it inside the effect and ignore the
-  // returned promise — Ink doesn't care about pending async work in
-  // effects.
+  // 挂载时的 resume 处理。由 CLI 入口设置的三条互斥路径：
+  //   - 设置了 initialSession：`xc -c` 已经同步加载了最近的会话。useAgent 已从它
+  //     水合 scrollback；我们只需丢一条横幅，让用户知道他们 resume 了（而不是
+  //     以为这些消息神秘地预填充了）。没有异步工作——只是一个视觉提示。
+  //   - resumeIntent === 'pick'：`xc -r` 想要选择器。我们弹出与 `/resume` 相同的
+  //     对话框。
+  //   - 两者皆非：常规启动，可选带 initialPrompt 来自动提交。
+  // 选择器 await askQuestion，它只在用户选择后才 resolve，所以我们把它隔离在
+  // effect 里并忽略返回的 promise——Ink 不关心 effect 里挂起的异步工作。
   useEffect(() => {
     if (initialSession) {
       const preview = initialSession.firstPrompt.slice(0, 80) || '(no first prompt)'
@@ -650,12 +616,10 @@ export function App({
       void handleResume()
       return
     }
-    // First-run theme picker — only on plain interactive launches (no
-    // resume, no auto-submitted initial prompt). Detected by absence of
-    // `theme` in the on-disk config. Once the user picks (or dismisses)
-    // we persist a value so this branch never re-fires. Resume / inline-
-    // prompt launches deliberately skip — those users came here to
-    // work, not to configure.
+    // 首次运行主题选择器——只在普通交互式启动时（无 resume、无自动提交的初始
+    // 提示词）。通过磁盘配置里缺少 `theme` 来检测。用户选择（或关闭）后，我们
+    // 持久化一个值，让这个分支不再触发。Resume / 行内提示词启动刻意跳过——那些
+    // 用户是来干活的，不是来配置的。
     if (!initialPrompt && loadUserConfig().theme === undefined) {
       void runFirstRunThemePicker()
       return
@@ -665,16 +629,14 @@ export function App({
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Print mode no longer flows through Ink — see packages/cli/src/print.ts.
-  // The earlier effect tried to `cleanup().then(exit)` here, but the raw-stdin
-  // ref from usePromptInput kept the event loop alive past unmount, so exit
-  // would hang until a keypress or terminal resize.
+  // Print 模式不再经过 Ink——见 packages/cli/src/print.ts。之前的 effect 曾试图
+  // 在这里 `cleanup().then(exit)`，但 usePromptInput 的 raw-stdin ref 让事件循环
+  // 在卸载后仍存活，于是 exit 会挂起直到有按键或终端 resize。
 
-  /** Echo a slash command to the message history (so the user can see what they typed) */
-  /** Handle user input (including slash commands) */
+  /** 处理用户输入（包括斜杠命令） */
   async function handleSubmit(text: string) {
-    // Clear any update hint on first user action — the user saw it,
-    // no need to keep it occupying the footer.
+    // 在第一次用户操作时清除任何更新提示——用户已经看到了，没必要让它继续占着
+    // footer。
     if (isUpdateNoticeRef.current) {
       isUpdateNoticeRef.current = false
       setNotice(null)
@@ -693,20 +655,17 @@ export function App({
       }
     }
 
-    // Mid-turn queue: while a turn is in flight, plain text doesn't start
-    // a competing agentLoop (concurrent loops would corrupt the shared
-    // message history) — it lands in the pending queue and gets injected
-    // at the next tool boundary (see consumeQueuedInputs in use-agent).
-    // Slash commands still route normally below; ChatInput and this handler
-    // share the same explicit busy-safe command policy.
+    // 中途队列：当回合进行中时，纯文本不会启动一个竞争的 agentLoop（并发循环会
+    // 破坏共享的消息历史）——它落入待处理队列，并在下一个工具边界被注入（见
+    // use-agent 里的 consumeQueuedInputs）。斜杠命令仍在下方正常路由；ChatInput 和
+    // 这个处理器共享同一个显式的 busy-safe 命令策略。
     const activeOwner = activeTurnOwner()
     if (activeOwner && !text.startsWith('/')) {
       const pendingSkill = pendingSkillRef.current
       if (pendingSkill) {
         pendingSkillRef.current = null
-        // Display/inject split: the pending list + scrollback show the
-        // user's own text; the model receives the skill envelope (same as
-        // the idle path's silent submit).
+        // 显示/注入分离：待处理列表 + scrollback 显示用户自己的文本；模型收到
+        // 技能信封（与空闲路径的 silent submit 相同）。
         queueMessage(text, `${wrapActivatedSkill(pendingSkill)}\n\n${text}`)
       } else {
         queueMessage(text)
@@ -765,7 +724,7 @@ export function App({
       return
     }
 
-    // Prepend any pending skill context to the user's message, then clear it.
+    // 把任何待注入的技能上下文前置到用户消息，然后清除它。
     const pendingSkill = pendingSkillRef.current
     if (pendingSkill) {
       pendingSkillRef.current = null
@@ -775,7 +734,7 @@ export function App({
     await submit(text)
   }
 
-  /** Look up a human-friendly label for a model id; falls back to the raw id. */
+  /** 为 model id 查找人类友好的标签；回退到原始 id。 */
   function renderModelLabel(modelId: string): string {
     for (const models of Object.values(getProviderModels())) {
       for (const m of models) if (m.id === modelId) return m.label
@@ -783,11 +742,10 @@ export function App({
     return modelId
   }
 
-  /** Resolve the reasoning-effort tier label for a model (e.g. "High", "Max")
-   *  from UserConfig.modelReasoningEffort, or null when the model has no tier
-   *  configured or doesn't honor tiers. Mirrors the agent loop's effort
-   *  resolution (getReasoningLevel) so the footer never shows a tier the
-   *  loop would ignore. */
+  /** 从 UserConfig.modelReasoningEffort 解析模型的 reasoning-effort 层级标签
+   *  （如 "High"、"Max"），当模型没有配置层级或不支持层级时返回 null。镜像 agent
+   *  循环的 effort 解析（getReasoningLevel），这样 footer 永远不会显示一个循环会
+   *  忽略的层级。 */
   function resolveReasoningTierLabel(modelId: string): string | null {
     if (!supportsReasoningTier(modelId)) return null
     const effort = loadUserConfig().modelReasoningEffort?.[modelId]
@@ -796,9 +754,9 @@ export function App({
   }
 
   /**
-   * Commit a model switch: rebuild the provider registry (so the new
-   * provider's env-var API key is picked up), swap the live language-model
-   * reference, persist to the user config, and echo a confirmation message.
+   * 提交一次模型切换：重建 provider registry（这样新 provider 的环境变量 API key
+   * 才被拾取）、交换实时的 language-model 引用、持久化到用户配置，并回显一条确认
+   * 消息。
    */
   function commitModelChange(commandText: string, newModelId: string) {
     if (getOpenAIAuthStatus().mode === 'chatgpt' && newModelId.startsWith('openai:')) {
@@ -1238,7 +1196,7 @@ export function App({
     }
 
     const requestedModel = arg ? resolveModelId(arg) : undefined
-    // With an explicit arg: keep the old scriptable path (alias or full id).
+    // 带显式参数：保留旧的脚本化路径（别名或完整 id）。
     if (arg) {
       const newModelId = requestedModel
       if (!newModelId) {
@@ -1249,8 +1207,8 @@ export function App({
       return
     }
 
-    // No arg → interactive picker. Enumerate models whose provider has an
-    // active authentication method so the list is actionable, not aspirational.
+    // 无参数 → 交互式选择器。枚举 provider 有活动认证方法的模型，这样列表是
+    // 可操作的，而不是空想。
     const availableProviders = new Set(getAvailableProviders())
     const chatGPTCatalog = getOpenAIChatGPTModelCatalogState()
     const openAIUnavailable =
@@ -1270,9 +1228,8 @@ export function App({
       return
     }
 
-    // askQuestion resolves to the chosen option's LABEL (not id). The
-    // SelectOptions dialog is designed for human-readable choices, so we
-    // look the id back up via the label we pushed.
+    // askQuestion 解析为所选选项的 LABEL（不是 id）。SelectOptions 对话框是为
+    // 人类可读的选择设计的，所以我们通过我们推入的 label 反查 id。
     const catalogHint =
       getOpenAIAuthStatus().mode === 'chatgpt' ? `\nChatGPT catalog: ${formatChatGPTCatalogStatus()}` : ''
     const answer = await askQuestion(
@@ -1282,17 +1239,15 @@ export function App({
     )
     const picked = choices.find((c) => c.label === answer)
     if (!picked) {
-      // Empty answer = Esc-dismissed dialog. Quiet cancel — don't run
-      // it through resolveModelId (which would print "Could not resolve
-      // model: " with a blank id).
+      // 空答案 = Esc 关闭的对话框。安静取消——不要把它跑一遍 resolveModelId
+      // （那会带着空 id 打印 "Could not resolve model: "）。
       if (!answer) {
         addCommandMessage(commandText, `Cancelled — model stays **${renderModelLabel(state.modelId)}**.`)
         return
       }
-      // User chose "Other" or typed something free-form. Treat it as a
-      // direct model id / alias so power users can still jump to exotic
-      // models the picker doesn't list. Skip tier/base-url dialogs for
-      // free-form entries — they're edge-case one-offs.
+      // 用户选择了 "Other" 或输入了自由格式的内容。把它当作直接的 model id /
+      // 别名，这样高级用户仍能跳到选择器没列出的冷门模型。对自由格式条目跳过
+      // 层级 / base-url 对话框——它们是边缘的一次性场景。
       const resolved = resolveModelId(answer)
       if (!resolved) {
         addCommandMessage(commandText, `Could not resolve model: ${answer}`)
@@ -1303,7 +1258,7 @@ export function App({
     }
     const modelId = picked.id
 
-    // ── Base URL picker (multi-endpoint providers) ──
+    // ── Base URL 选择器（多端点 provider）──
     const modelProvider = providerOf(modelId)
     const baseUrlConfig = PROVIDER_BASE_URLS[modelProvider]
     if (baseUrlConfig) {
@@ -1317,14 +1272,13 @@ export function App({
         const prev = loadUserConfig().baseUrls ?? {}
         saveUserConfig({ baseUrls: { ...prev, [modelProvider]: chosen.url } })
       }
-      // Esc cancel keeps working — config stays as-is (may be empty,
-      // may have a previous choice from an earlier picker session).
+      // Esc 取消仍有效——配置保持原样（可能是空，也可能带着之前选择器会话里的
+      // 选择）。
     }
 
-    // ── Reasoning-tier picker ──
-    // Only for models that actually honor a tier (e.g. thinkingLevel is
-    // Gemini 3-only, Kimi reasoningEffort is K3-only); others keep the
-    // binary /thinking toggle as their only knob.
+    // ── Reasoning 层级选择器 ──
+    // 只对真正支持层级的模型显示（例如 thinkingLevel 仅 Gemini 3 有，Kimi 的
+    // reasoningEffort 仅 K3 有）；其他模型保留二元的 /thinking 开关作为唯一旋钮。
     const tierOptions = getReasoningTierOptions(modelId)
     if (tierOptions?.length) {
       const tierAnswer = await askQuestion(
@@ -1337,15 +1291,14 @@ export function App({
         const prev = loadUserConfig().modelReasoningEffort ?? {}
         saveUserConfig({ modelReasoningEffort: { ...prev, [modelId]: chosen.value } })
       }
-      // Esc cancel = no tier saved; /thinking toggle fallback applies.
+      // Esc 取消 = 不保存层级；/thinking 开关回退适用。
     }
 
     commitModelChange(commandText, modelId)
   }
 
-  /** Commit a thinking-mode change: update the live ref so the next
-   *  agent turn uses it, persist to disk, and echo a Claude-style 2-line
-   *  command block. */
+  /** 提交一次 thinking 模式变更：更新实时 ref 让下一个 agent 回合使用它、持久化
+   *  到磁盘，并回显一个 Claude 风格的两行命令块。 */
   function commitThinkingChange(commandText: string, next: boolean) {
     setThinking(next)
     saveUserConfig({ thinking: next })
@@ -1353,32 +1306,29 @@ export function App({
   }
 
   /**
-   * `/thinking` — flip the extended-thinking toggle.
+   * `/thinking`——翻转扩展思考开关。
    *
-   * No arg → interactive picker. Same UX as `/model` no-arg: shows the
-   *   current state (`●` on the active option) and lets the user pick
-   *   the other one with arrow keys + Enter. Cancelling / picking the
-   *   already-active option results in no change.
-   * `on` / `off` (and aliases like `true`/`false`/`enable`/`disable`)
-   *   → direct switch, useful for scripting and muscle memory.
-   * Any other arg → reject with a hint, don't silently swallow.
+   * 无参数 → 交互式选择器。与 `/model` 无参数时的 UX 相同：显示当前状态（活动
+   *   选项上标 `●`），让用户用方向键 + Enter 选另一个。取消 / 选择已是活动状态的
+   *   选项都导致无变化。
+   * `on` / `off`（以及 `true`/`false`/`enable`/`disable` 等别名）
+   *   → 直接切换，便于脚本化和肌肉记忆。
+   * 任何其他参数 → 带提示拒绝，不静默吞掉。
    *
-   * The toggle is uniform across providers (see providers/thinking.ts):
-   *   ON  applies the maximum reasoning each provider supports;
-   *   OFF asks for minimum / disabled where exposed (Gemini 2.5 Pro
-   *       can't be fully disabled — it gets clamped to its 128-token
-   *       minimum).
+   * 该开关在各 provider 间是统一的（见 providers/thinking.ts）：
+   *   ON  应用每个 provider 支持的最大 reasoning；
+   *   OFF 请求最小值 / 在暴露处禁用（Gemini 2.5 Pro 无法完全禁用——它会被
+   *       钳制到 128 token 的最小值）。
    *
-   * Persisted to ~/.x-code/config.json so the choice survives restarts.
-   * The agent loop reads it on every turn via thinkingRef in useAgent,
-   * so the next message after toggling already uses the new mode (no
-   * model rebuild required, unlike /model).
+   * 持久化到 ~/.x-code/config.json，让选择在重启后仍保留。agent 循环每个回合都
+   * 通过 useAgent 里的 thinkingRef 读取它，所以切换后的下一条消息就已经使用新
+   * 模式（不需要像 /model 那样重建模型）。
    */
   async function handleThinkingToggle(commandText: string, arg: string) {
     const current = getThinking()
     const trimmed = arg.trim().toLowerCase()
 
-    // Direct-switch shortcut path.
+    // 直接切换的快捷路径。
     if (trimmed) {
       const next = parseBooleanArg(trimmed)
       if (next === null) {
@@ -1398,9 +1348,8 @@ export function App({
       return
     }
 
-    // No-arg → interactive picker. We always show BOTH options so the
-    // user sees the full state space, with `● ` marking the current
-    // choice (mirroring `/model`'s rendering).
+    // 无参数 → 交互式选择器。我们总是显示两个选项，让用户看到完整的状态空间，
+    // 用 `● ` 标记当前选择（镜像 `/model` 的渲染）。
     const onMarker = current ? `${GLYPH_BULLET} ` : '  '
     const offMarker = current ? '  ' : `${GLYPH_BULLET} `
     const choices = [
@@ -1421,8 +1370,8 @@ export function App({
     const wantOn = answer === choices[0].label
     const wantOff = answer === choices[1].label
     if (!wantOn && !wantOff) {
-      // User typed something free-form into the picker. Honour the
-      // standard aliases; otherwise no-op (user probably wanted out).
+      // 用户在选择器里输入了自由格式的内容。尊重标准别名；否则 no-op（用户
+      // 大概是想退出）。
       const free = (answer ?? '').trim().toLowerCase()
       if (free === 'on' || free === 'true' || free === '1' || free === 'enable' || free === 'enabled') {
         if (current) {
@@ -1451,19 +1400,16 @@ export function App({
     commitThinkingChange(commandText, next)
   }
 
-  // themeLabel + applyTheme + runFirstRunThemePicker live ABOVE the
-  // launch useEffect (the one at lines ~350) because that effect is what
-  // fires the first-run picker. `react-compiler` flags references-before-
-  // declaration inside effects with `[]` deps, so we hoist these helpers
-  // up there. The /theme handlers (commitThemeChange, handleThemeSwitch)
-  // stay near the other slash-command handlers since they're called from
-  // the regular handleSubmit path which has looser hoisting requirements.
+  // themeLabel + applyTheme + runFirstRunThemePicker 位于 launch useEffect（大约
+  // 350 行的那个）上方，因为那个 effect 正是触发首次运行选择器的地方。
+  // `react-compiler` 会标记 `[]` deps 的 effect 里"先引用后声明"的问题，所以我们
+  // 把这些辅助函数提升到那里。/theme 处理器（commitThemeChange、handleThemeSwitch）
+  // 则留在其他斜杠命令处理器附近，因为它们从常规 handleSubmit 路径调用，而那条
+  // 路径的提升要求更宽松。
 
-  /** Apply a theme switch: flip BOTH the active UI theme and its bundled
-   *  syntax palette so the very next diff render uses the new colors,
-   *  persist to user config, echo a confirmation. The agent loop /
-   *  scrollback writer don't cache colors, so the change is visible
-   *  immediately on the next tool result — no restart needed. */
+  /** 应用一次主题切换：翻转活动的 UI 主题及其捆绑的语法调色板，让紧接着的下一次
+   *  diff 渲染使用新颜色，持久化到用户配置，回显确认。agent 循环 / scrollback
+   *  写入器不缓存颜色，所以变更在下一次工具结果上立即可见——无需重启。 */
   function commitThemeChange(commandText: string, name: ThemeName) {
     applyTheme(name)
     saveUserConfig({ theme: name })
@@ -1471,18 +1417,15 @@ export function App({
   }
 
   /**
-   * `/theme` — pick the UI theme. Drives diff bg colors AND the
-   * associated syntax-highlight palette.
+   * `/theme`——挑选 UI 主题。驱动 diff 背景色以及关联的语法高亮调色板。
    *
-   * No arg → interactive picker showing all six themes with the current
-   *   selection marked `●` and a live preview that recolors as the user
-   *   arrows through. Same UX as `/model` and `/thinking`.
-   * `<theme-name>` → direct switch. Accepts the canonical kebab-case
-   *   names (`dark`, `light`, `dark-daltonized`, `light-daltonized`,
-   *   `dark-ansi`, `light-ansi`) plus aliases (`colorblind`, `ansi`,
-   *   etc.) — see `parseThemeName`.
+   * 无参数 → 交互式选择器，展示全部六个主题，当前选择标 `●`，并带一个实时预览，
+   *   用户用方向键浏览时预览会重新着色。与 `/model` 和 `/thinking` 相同的 UX。
+   * `<theme-name>` → 直接切换。接受规范的 kebab-case 名称（`dark`、`light`、
+   *   `dark-daltonized`、`light-daltonized`、`dark-ansi`、`light-ansi`）以及别名
+   *   （`colorblind`、`ansi` 等）——见 `parseThemeName`。
    *
-   * Persisted to ~/.x-code/config.json so the choice survives restarts.
+   * 持久化到 ~/.x-code/config.json，让选择在重启后仍保留。
    */
   async function handleThemeSwitch(commandText: string, arg: string) {
     const current = getTheme()
@@ -1502,9 +1445,8 @@ export function App({
       return
     }
 
-    // No arg → interactive picker. Show every theme; mark the current
-    // one with `●`. Same dialog component the model picker uses, plus
-    // a live preview pane that recolors as the user arrows through.
+    // 无参数 → 交互式选择器。展示每个主题；用 `●` 标记当前那个。使用与模型选择器
+    // 相同的对话框组件，外加一个实时预览窗格，随用户方向键浏览而重新着色。
     const cols = Math.max(40, process.stdout.columns ?? 100)
     const previewWidth = Math.max(40, cols - 4)
     const choices = THEMES.map((t) => ({
@@ -1520,8 +1462,8 @@ export function App({
     )
     const picked = choices.find((c) => c.label === answer)
     if (!picked) {
-      // Empty answer = Esc-dismissed dialog (noOther removes the
-      // free-form path, so a non-choice answer can only be Esc).
+      // 空答案 = Esc 关闭的对话框（noOther 移除了自由格式路径，所以非选择答案
+      // 只可能是 Esc）。
       addCommandMessage(commandText, `Cancelled — theme stays **${themeLabel(current)}**.`)
       return
     }
@@ -1532,11 +1474,10 @@ export function App({
     commitThemeChange(commandText, picked.name)
   }
 
-  /** Toggle plan mode via /plan. Direct enter/exit, no picker —
-   *  `/plan` is the user explicitly asking for plan mode, so we go
-   *  directly. `/plan` toggles plan ↔ whatever-was-before; `/plan on`
-   *  / `/plan off` are idempotent setters for scripted flows. Matches
-   *  Claude Code's `/plan` single-line confirmation output. */
+  /** 通过 /plan 切换 plan 模式。直接进入/退出，没有选择器——`/plan` 是用户明确
+   *  要求 plan 模式，所以我们直接执行。`/plan` 在 plan ↔ 之前的状态之间切换；
+   *  `/plan on` / `/plan off` 是脚本化流程的幂等设置器。匹配 Claude Code 的 `/plan`
+   *  单行确认输出。 */
   function handlePlanToggle(commandText: string, arg: string) {
     const current = state.permissionMode === 'plan'
     const trimmed = arg.trim().toLowerCase()
@@ -1558,9 +1499,9 @@ export function App({
       return
     }
 
-    // /plan jumps directly between plan and default. We apply the mode
-    // on loopState ourselves and let the existing onPlanModeChange
-    // callback path do the React state / UI sync via setPermissionMode.
+    // /plan 直接在 plan 和 default 之间跳转。我们自己把模式应用到 loopState 上，
+    // 并让已有的 onPlanModeChange 回调路径通过 setPermissionMode 完成 React state /
+    // UI 同步。
     setPermissionMode(next ? 'plan' : 'default')
     addCommandMessage(commandText, next ? 'Enabled plan mode' : 'Disabled plan mode')
   }
@@ -1905,10 +1846,9 @@ export function App({
     addInfoMessage('Usage: /memory [status|search [--semantic] <query>|explain|reload]')
   }
 
-  // Slash-command handlers live in ./commands/{skill,plugin,mcp}.ts. Each
-  // factory closes over the App-render-time deps and returns the handler
-  // the dispatcher above calls. Same per-render identity behaviour as
-  // when these were inline function declarations.
+  // 斜杠命令处理器位于 ./commands/{skill,plugin,mcp}.ts。每个工厂闭包捕获
+  // App 渲染时的依赖，并返回上方分发器调用的处理器。与这些曾是行内函数声明时的
+  // 逐渲染身份行为相同。
   const { handleSkill } = createSkillCommandHandler({
     options,
     addCommandMessage,
@@ -1952,21 +1892,18 @@ export function App({
     echoCommand,
   })
 
-  // RENDERING ARCHITECTURE
+  // 渲染架构
   //
-  // `ChatInput` owns the ENTIRE terminal region below the initial header:
-  //   - scrollback messages are committed via direct stdout writes
-  //   - spinner / input / separators / completions / errors / Permission
-  //     dialog / SelectOptions dialog all render into a single cell-level
-  //     diff buffer
+  // `ChatInput` 拥有初始 header 之下的整个终端区域：
+  //   - scrollback 消息通过直接写 stdout 提交
+  //   - spinner / 输入 / 分隔符 / 补全 / 错误 / Permission 对话框 /
+  //     SelectOptions 对话框全部渲染进一个单元级 diff 缓冲
   //
-  // Ink's dynamic region is ALWAYS empty — we don't render any children
-  // into Ink's own subtree. If Ink ever writes there, its internal use of
-  // `\x1b7`/`\x1b8` clobbers our cursor anchor and leaves zombie frames.
-  // Earlier versions kept SelectOptions as a direct Ink child, but when
-  // the dialog grew taller than ChatInput, its rendering caused terminal
-  // auto-scroll that left permanent blank rows in scrollback after the
-  // dialog closed — so it's been moved into ChatInput's cell buffer too.
+  // Ink 的动态区域始终为空——我们不在 Ink 自己的子树里渲染任何子元素。如果 Ink
+  // 在那里写入，它内部对 `\x1b7`/`\x1b8` 的使用会破坏我们的光标锚点并留下僵尸
+  // 帧。早期版本把 SelectOptions 作为直接 Ink 子元素保留，但当对话框变得比
+  // ChatInput 更高时，它的渲染触发终端自动滚动，在对话框关闭后在 scrollback 里
+  // 留下永久空行——所以它也被移进了 ChatInput 的 cell 缓冲。
   const permissionRequest = state.permissionQueue[0]
   const authorityRequest = state.authorityRequest
   const selectActive = !!state.pendingQuestion
@@ -1985,26 +1922,21 @@ export function App({
       peerInfluenced={state.peerInfluenced}
       trustMode={options.trustMode}
       pendingPeerCount={peerInbox.accepted + peerInbox.held}
-      // Suppress the spinner's "Working" line while a select dialog is up,
-      // but keep ChatInput itself visible — the dialog is rendered INSIDE
-      // its cell buffer now, not in Ink's top subtree.
+      // 当选择对话框打开时，抑制 spinner 的 "Working" 行，但保持 ChatInput 本身
+      // 可见——对话框现在渲染在它的 cell 缓冲内部，而不是 Ink 的顶层子树。
       //
-      // Permission dialogs must NOT suppress the spinner: the active-tool
-      // list is rendered inside the `if (spinner)` block in ChatInput, so
-      // nulling spinner hides those Running indicators — the user sees a
-      // frozen screen with no visible permission prompt.
+      // Permission 对话框绝不能抑制 spinner：活动工具列表渲染在 ChatInput 的
+      // `if (spinner)` 块内部，所以把 spinner 置 null 会隐藏那些 Running 指示器——
+      // 用户看到的是没有可见权限提示的冻结屏幕。
       spinner={
         (state.isLoading || authOperation !== null) && !selectActive
           ? {
-              // While a chain of collapsible read tools is in flight the
-              // per-tool live indicator is suppressed (would flash
-              // "appear → vanish" on every fast read), and the generic
-              // "Working…" label leaves a multi-second read chain
-              // looking stuck. `bufferingReads` is sticky across the
-              // 50-200ms gaps between consecutive reads — without it
-              // the label would flicker Reading-Working-Reading on
-              // every tool. Updated by useAgent on tool-call /
-              // text-delta / loop-end / abort.
+              // 当一连串可折叠的只读工具进行中时，逐工具的实时指示器被抑制
+              // （每次快速读取都会闪烁 "出现 → 消失"），而通用的 "Working…" 标签
+              // 会让持续数秒的读取链看起来卡住了。`bufferingReads` 在连续读取之间
+              // 50-200ms 的间隙里是粘性的——没有它，标签会在每个工具上闪烁
+              // Reading-Working-Reading。由 useAgent 在 tool-call / text-delta /
+              // loop-end / abort 时更新。
               label:
                 authOperation === 'login'
                   ? 'Signing in'
@@ -2026,20 +1958,17 @@ export function App({
       activeTurnOwner={activeTurnOwner()}
       hasStableForkBoundary={hasActiveForkBoundary()}
       contextUsage={
-        // Footer indicator (`6.6k / 200k · 3%`) — uses the snapshot from the
-        // most recent API response, NOT cumulative session counters.
-        // Cumulative double-counts the message history every turn (cache-
-        // served input still shows in `inputTokens`) so its numbers balloon
-        // far past actual billing. Hidden until the first turn lands.
+        // Footer 指示器（`6.6k / 200k · 3%`）——使用最近一次 API 响应的快照，而非
+        // 累积的会话计数器。累积计数每个回合都把消息历史重复计算一次（cache 命中
+        // 的输入仍会出现在 `inputTokens` 里），所以它的数字会远超实际计费。在第一个
+        // 回合落定之前隐藏。
         state.usage.currentContextTokens > 0
           ? { used: state.usage.currentContextTokens, window: getContextWindow(state.modelId) }
           : null
       }
-      // Footer right side: active model label, always shown. Re-renders
-      // automatically on /model switch since switchModel updates
-      // state.modelId. When the model has a reasoning-effort tier configured
-      // (via the /model tier picker), it appends next to the name — e.g.
-      // "deepseek-flash · High".
+      // Footer 右侧：活动的模型标签，始终显示。由于 switchModel 更新 state.modelId，
+      // 它在 /model 切换时自动重渲染。当模型配置了 reasoning-effort 层级（通过
+      // /model 层级选择器）时，它追加在名称旁——例如 "deepseek-flash · High"。
       modelLabel={
         reasoningTierLabel
           ? `${renderModelLabel(state.modelId)} · ${reasoningTierLabel}`

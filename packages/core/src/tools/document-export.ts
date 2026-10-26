@@ -1,8 +1,8 @@
-// @x-code-cli/core — documentExport tool
+// @x-code-cli/core — documentExport 工具
 //
-// Renders Markdown/HTML into PDF or DOCX locally. PDF rendering needs an
-// Electron renderer, which the desktop runtime registers; DOCX uses macOS
-// `textutil`. Nothing is uploaded, and an existing output is never overwritten.
+// 在本地把 Markdown/HTML 渲染成 PDF 或 DOCX。PDF 渲染需要一个 Electron
+// 渲染器（桌面运行时负责注册）；DOCX 用 macOS 的 `textutil`。不上传任何
+// 东西，且从不覆盖已有输出。
 import { marked } from 'marked'
 
 import { execFile } from 'node:child_process'
@@ -25,8 +25,8 @@ export type DocumentRenderer = (html: string, title: string) => Promise<Buffer>
 
 let pdfRenderer: DocumentRenderer | null = null
 
-/** The desktop runtime registers an Electron printToPDF renderer; CLI hosts
- *  leave it unset and get a clear message when asking for PDF output. */
+/** 桌面运行时注册一个 Electron printToPDF 渲染器；CLI 宿主保持未设置，在
+ *  请求 PDF 输出时会得到一条明确的提示消息。 */
 export function setDocumentRenderers(renderers: { pdf?: DocumentRenderer | null }): void {
   pdfRenderer = renderers.pdf ?? null
 }

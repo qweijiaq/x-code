@@ -1,22 +1,19 @@
-// @x-code-cli/core — Runtime-resolved package version.
+// @x-code-cli/core — 运行时解析的包版本。
 //
-// Core is built via `tsc -b` (no bundler) so we can't use a build-time
-// define like the CLI does. Instead we walk up from `import.meta.url`
-// looking for the nearest `@x-code-cli/*` package.json and read its
-// `version` field.
+// Core 通过 `tsc -b`（无打包器）构建，因此无法像 CLI 那样使用构建期定义。
+// 我们改从 `import.meta.url` 向上查找最近的 `@x-code-cli/*` package.json 并
+// 读取其 `version` 字段。
 //
-// Two cases this needs to handle:
+// 需要处理两种情况：
 //
-// 1. Dev / unbundled — core's compiled files live at
-//    `<core>/dist/**/*.js`; walking up finds `<core>/package.json`
-//    (name = `@x-code-cli/core`).
-// 2. Bundled CLI — the CLI esbuilds core's source into one
-//    `<cli>/dist/cli.js`. `import.meta.url` points into that bundle,
-//    so the nearest package.json is `<cli>/package.json`
-//    (name = `@x-code-cli/cli`).
+// 1. 开发/未打包——core 的编译产物位于 `<core>/dist/**/*.js`；向上查找会找到
+//    `<core>/package.json`（name = `@x-code-cli/core`）。
+// 2. 打包后的 CLI——CLI 用 esbuild 把 core 源码打成一个 `<cli>/dist/cli.js`。
+//    `import.meta.url` 指向该包内，因此最近的 package.json 是
+//    `<cli>/package.json`（name = `@x-code-cli/cli`）。
 //
-// `core` and `cli` are released in lockstep by `scripts/release.mjs`,
-// so either match yields the right version.
+// `core` 和 `cli` 由 `scripts/release.mjs` 同步发布，因此两种匹配都能得到
+// 正确版本。
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,7 +36,7 @@ function resolveVersion(): string {
       dir = parent
     }
   } catch {
-    // fall through
+    // 直接落到兜底
   }
   return FALLBACK_VERSION
 }

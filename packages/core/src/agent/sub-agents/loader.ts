@@ -1,8 +1,7 @@
-// @x-code-cli/core — Custom sub-agent loader
+// @x-code-cli/core — 自定义子代理加载器
 //
-// Scans ~/.x-code/agents/*.md and <repo-root>/.x-code/agents/*.md for
-// user-defined sub-agents with YAML frontmatter. Bad files are skipped
-// with a warning to stderr — one broken agent file must never crash the CLI.
+// 扫描 ~/.x-code/agents/*.md 和 <repo-root>/.x-code/agents/*.md，寻找带 YAML frontmatter 的
+// 用户自定义子代理。坏文件会被跳过并向 stderr 发警告——单个损坏的代理文件绝不能拖垮 CLI。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -78,15 +77,13 @@ async function loadAgentsFromDir(
 }
 
 export interface LoadCustomAgentsOptions {
-  /** Extra sub-agent directories to scan, with the owning plugin id.
-   *  See packages/core/src/plugins/integration.ts for how plugin
-   *  contributions get turned into this shape. */
+  /** 额外要扫描的子代理目录，连同所属 plugin id。
+   *  插件贡献如何变成这个形状，见 packages/core/src/plugins/integration.ts。 */
   extraDirs?: ReadonlyArray<{ dir: string; pluginId: string }>
 }
 
-/** Load custom sub-agents from user + project directories, plus any
- *  extra dirs (plugin-contributed). Environment variable `XC_AGENTS_DIR`
- *  overrides the built-in paths for testing (extras are still honoured). */
+/** 从用户 + 项目目录，以及任何额外目录（插件贡献）加载自定义子代理。
+ *  环境变量 `XC_AGENTS_DIR` 会覆盖内置路径（供测试用；额外目录仍会生效）。 */
 export async function loadCustomAgents(opts: LoadCustomAgentsOptions = {}): Promise<SubAgentDefinition[]> {
   const override = process.env.XC_AGENTS_DIR
   if (override) {
@@ -101,8 +98,8 @@ export async function loadCustomAgents(opts: LoadCustomAgentsOptions = {}): Prom
   const pluginAgents = await loadAgentsFromExtras(opts.extraDirs)
   const projectAgents = await loadAgentsFromDir(projectDir, 'project')
 
-  // user → plugin → project. SubAgentRegistry's Map.set overrides on
-  // duplicate names, so later entries win — same precedence as skills.
+  // user → plugin → project。SubAgentRegistry 的 Map.set 会覆盖重名项，
+  // 因此靠后的条目胜出——与 skills 的优先级一致。
   return [...userAgents, ...pluginAgents, ...projectAgents]
 }
 

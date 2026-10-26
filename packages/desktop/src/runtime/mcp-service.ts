@@ -116,9 +116,9 @@ export class McpService {
     await this.reload()
   }
 
-  /** Register the read-only SkillsMP MCP server at user scope. An existing
-   *  entry is only accepted when it is the exact remote HTTP shape; other
-   *  `skillsmp` configs are left untouched and reported as a conflict. */
+  /** 在用户作用域注册只读的 SkillsMP MCP 服务器。只有
+   *  精确匹配远程 HTTP 形状时才接受已有条目；其他
+   *  `skillsmp` 配置保持不变并上报为冲突。 */
   async registerSkillsMp(): Promise<void> {
     const existing = this.registry.getConfig('skillsmp')
     if (existing) {

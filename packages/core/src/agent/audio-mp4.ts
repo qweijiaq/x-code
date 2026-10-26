@@ -1,7 +1,7 @@
 import { MAX_AUDIO_DURATION_SECONDS } from './audio-limits.js'
 
-// The native API returns one aggregate Int16Array, so validate its maximum
-// backing allocation from mutually consistent codec and sample-table data.
+// 原生 API 只返回一个聚合的 Int16Array，因此要根据互相一致的
+// 编解码器数据与 sample 表数据，校验其最大的底层分配。
 const MAX_M4A_NATIVE_PCM_BYTES = 256 * 1024 * 1024
 const MAX_M4A_PACKET_COUNT = 300_000
 const MAX_M4A_PACKET_FRAMES = 8_192

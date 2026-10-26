@@ -6,8 +6,8 @@ import path from 'node:path'
 
 import { buildServerPreview, isProjectTrusted, promptForTrust, trustProject } from '../src/mcp/trust.js'
 
-/** Each test gets its own scratch ~/.x-code under tmpdir so we never touch
- *  the developer's real trusted-projects.json. */
+/** 每个测试在 tmpdir 下获得自己的临时 ~/.x-code，因此我们从不碰
+ *  开发者的真实 trusted-projects.json。 */
 function isolate(): string {
   const dir = path.join(os.tmpdir(), 'mcp-trust-test-' + Math.random().toString(36).slice(2))
   process.env.X_CODE_HOME = dir

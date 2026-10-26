@@ -1,19 +1,17 @@
-// ─── UI Theme system ──────────────────────────────────────────────────
+// ─── UI 主题系统 ──────────────────────────────────────────────────
 //
-// Mirrors Claude Code's `/theme` design: the user picks one of six UI
-// themes, and that choice drives BOTH the diff background colors AND
-// the syntax-highlight palette. Diff bg colors used to be static
-// constants — that meant /theme switching had no effect on the diff
-// surface, which is the most visible code-display element. Now the
-// constants are derived at render time from the active theme.
+// 对标 Claude Code 的 `/theme` 设计：用户从六个 UI 主题中选一个，这个选择
+// 同时驱动 diff 背景色和语法高亮调色板。diff 背景色曾经是静态常量——
+// 这意味着 /theme 切换对 diff 界面（最显眼的代码展示元素）毫无影响。现在
+// 这些常量在渲染时根据当前主题派生。
 //
-// Each theme also pins a syntax palette (e.g. dark → monokai,
-// dark-ansi → ansi). We expose the syntax-palette name on the theme
-// object so the startup wiring and `/theme` command stay in one place.
+// 每个主题还会绑定一个语法调色板（例如 dark → monokai，
+// dark-ansi → ansi）。我们把语法调色板名字暴露在主题对象上，这样启动接线
+// 和 `/theme` 命令就能放在同一处。
 //
-// UI chrome colors (spinner, borders, success/error, selection…) do NOT
-// live here — they're semantic tokens in `ui/tokens.ts`, which resolves
-// dark/light/ansi values from `getTheme()` at call time.
+// UI 镶边颜色（spinner、边框、success/error、选中项……）不在这里——
+// 它们是 `ui/tokens.ts` 里的语义 token，在调用时通过 `getTheme()`
+// 解析出 dark/light/ansi 值。
 import type { SyntaxThemeName } from './syntax-highlight.js'
 
 export type ThemeName = 'dark' | 'light' | 'dark-daltonized' | 'light-daltonized' | 'dark-ansi' | 'light-ansi'
@@ -22,42 +20,35 @@ export interface ThemeColors {
   name: ThemeName
   label: string
   description: string
-  /** `#rrggbb` for 24-bit colors, or `'ansi:default'` for the ANSI-only
-   *  themes (which leave the bg as terminal default and use dim styling/
-   *  decoration-fg to mark `-` lines). render-diff translates these
-   *  strings into the right chalk calls.
+  /** 24 位颜色用 `#rrggbb`，纯 ANSI 主题用 `'ansi:default'`（后者让背景
+   *  保持终端默认色，并用暗色样式 / 装饰前景色标记 `-` 行）。render-diff
+   *  会把这些字符串翻译成正确的 chalk 调用。
    *
-   *  Values match Claude Code's `native-ts/color-diff/index.ts buildTheme()`
-   *  — these are the colors actually painted onto the terminal. The
-   *  separate (lighter) values in CC's `utils/theme.ts` are just UI
-   *  indicator colors used in the picker preview, not what the diff
-   *  body looks like in scrollback. */
+   *  数值与 Claude Code 的 `native-ts/color-diff/index.ts buildTheme()` 一致
+   *  ——这些才是真正画到终端上的颜色。CC `utils/theme.ts` 里单独（更亮）的
+   *  数值只是选择器预览用的 UI 指示色，不是滚动区里 diff 正文的样子。 */
   diffAdded: string
   diffRemoved: string
-  /** Foreground color for the gutter (line number + `+`/`-` sigil) on
-   *  diff rows. CC paints the gutter in a saturated "decoration" color
-   *  that pops off the near-black bg — without this, the gutter is
-   *  invisible at the depths used for diffAdded/diffRemoved. */
+  /** diff 行侧槽（行号 + `+`/`-` 符号）的前景色。CC 用高饱和的「装饰」色
+   *  绘制侧槽，使其在接近黑色的背景上跳出来——没有它，侧槽在
+   *  diffAdded/diffRemoved 所用的深度下会看不见。 */
   diffAddedDecoration: string
   diffRemovedDecoration: string
-  /** Default fg for unhighlighted text inside diff rows. Mirrors CC's
-   *  `Theme.foreground` (color-diff/index.ts:303,334) — `#f8f8f2` on
-   *  dark, `#333333` on light. Without this, unmatched chars and
-   *  plain `-` lines fall back to the terminal's default white
-   *  (typically `#cccccc`), so CC's diff rows look noticeably
-   *  brighter. ANSI themes pass `null` — they should honor the user's
-   *  16-color terminal palette, not force a hex value. */
+  /** diff 行内未高亮文本的默认前景色。对标 CC 的 `Theme.foreground`
+   *  （color-diff/index.ts:303,334）——深色下是 `#f8f8f2`，浅色下是
+   *  `#333333`。没有它，未匹配字符和纯 `-` 行会回退到终端默认白色
+   *  （通常是 `#cccccc`），于是 CC 的 diff 行明显更亮。ANSI 主题传 `null`
+   *  ——它们应遵循用户的 16 色终端调色板，而不是强行指定 hex 值。 */
   defaultFg: string | null
-  /** Which syntax-highlighter palette this theme drives. Picked to
-   *  match the theme's overall vibe — daltonized themes use a low-
-   *  contrast palette, ANSI themes use the 16-color ansi palette. */
+  /** 该主题驱动哪个语法高亮调色板。根据主题整体观感挑选——色盲友好主题
+   *  用低对比调色板，ANSI 主题用 16 色 ansi 调色板。 */
   syntaxPalette: SyntaxThemeName
 }
 
-// Theme labels match CC's ThemePicker exactly (just the label string;
-// CC has no description field on theme rows). Syntax palette mapping
-// also mirrors CC's `defaultSyntaxThemeName` (color-diff/index.ts:182):
-// dark* → Monokai, light* → GitHub, *ansi → ansi.
+// 主题标签与 CC 的 ThemePicker 完全一致（只是 label 字符串；CC 的主题行
+// 没有 description 字段）。语法调色板映射也对标 CC 的
+// `defaultSyntaxThemeName`（color-diff/index.ts:182）：
+// dark* → Monokai，light* → GitHub，*ansi → ansi。
 export const THEMES: ThemeColors[] = [
   {
     name: 'dark',
@@ -111,11 +102,10 @@ export const THEMES: ThemeColors[] = [
     diffRemoved: 'ansi:default',
     diffAddedDecoration: 'ansi:green',
     diffRemovedDecoration: 'ansi:red',
-    // CC sets ansi `foreground: ansiIdx(7)` (color-diff/index.ts:296),
-    // i.e. it explicitly paints unmatched chars in white. Without
-    // this, our `+` row punctuation (`()`, `;`, `.`, `log`) inherits
-    // terminal default and reads as visibly less defined than CC's.
-    // Chalk `white` produces \e[37m which maps to ansiIdx(7) exactly.
+    // CC 设置 ansi 的 `foreground: ansiIdx(7)`（color-diff/index.ts:296），
+    // 即它显式把未匹配字符画成白色。没有这个，我们的 `+` 行标点
+    // （`()`、`;`、`.`、`log`）会继承终端默认色，看起来比 CC 的更淡。
+    // Chalk 的 `white` 生成 \e[37m，正好映射到 ansiIdx(7)。
     defaultFg: 'white',
     syntaxPalette: 'ansi',
   },

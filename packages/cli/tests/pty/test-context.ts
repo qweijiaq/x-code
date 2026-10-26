@@ -76,9 +76,8 @@ export async function withTui(
 }
 
 export function inputLine(harness: TuiHarness): string {
-  // promptContent() strips the input box's `│ …… │` rails and padding, so
-  // an empty live prompt reads as just the platform glyph and typed text
-  // compares without the frame around it.
+  // promptContent() 会剥离输入框的 `│ …… │` 边框与填充，所以空的实时提示
+  // 只剩平台字形，比较输入文本时不会带边框。
   return promptContent(lastPromptLine(harness.screen()))
 }
 
@@ -99,8 +98,8 @@ export async function submitInput(harness: TuiHarness, text: string): Promise<vo
 export async function exitTui(harness: TuiHarness): Promise<void> {
   harness.key('ctrl-c')
   await harness.waitForText('Press Ctrl+C again to exit')
-  // ConPTY can emit the terminal-restore sequence synchronously with the
-  // second Ctrl+C, so arm the output waiter before triggering that exit.
+  // ConPTY 可能在第二次 Ctrl+C 的同时同步发出终端恢复序列，
+  // 所以在触发退出之前先启动输出等待器。
   const cliExit = harness.waitForCliExit()
   harness.key('ctrl-c')
   const result = await cliExit

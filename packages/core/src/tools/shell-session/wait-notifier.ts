@@ -12,7 +12,7 @@ export interface VersionedSnapshot<T> {
   value: T
 }
 
-/** A reusable notification primitive that cannot lose a wake-up between a state check and listener registration. */
+/** 可复用的通知原语，不会在状态检查与监听器注册之间丢失一次唤醒。 */
 export class VersionedAsyncSignal<T = undefined> {
   private currentGeneration = 0
   private currentValue: T

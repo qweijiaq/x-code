@@ -1,8 +1,7 @@
-// @x-code-cli/core — Plan-mode and todoWrite tool handlers.
+// @x-code-cli/core — Plan 模式与 todoWrite 工具处理器。
 //
-// Extracted from tool-execution.ts to keep handleToolCall at a manageable
-// size. Each handler has the same contract: mutate state + push result via
-// pushToolResult, and return void.
+// 从 tool-execution.ts 抽出，以免 handleToolCall 体积失控。每个处理器遵循同一契约：
+// 修改 state + 通过 pushToolResult 推送结果，并返回 void。
 import type { AgentCallbacks, AgentOptions, TodoItem } from '../types/index.js'
 import { extractText } from '../utils/message-helpers.js'
 import { markExpectedCacheMiss } from './cache-stats.js'
@@ -66,10 +65,9 @@ export async function handleTodoWrite(
     dropped > 0
       ? ` ${dropped} entr${dropped === 1 ? 'y was' : 'ies were'} dropped because they had neither content nor activeForm — please include both fields next time so the user sees clean labels.`
       : ''
-  // Echo the resulting list state back to the model (Claude Code returns
-  // old/new todos for the same reason): a visible state summary turns the
-  // call from fire-and-forget bookkeeping into a feedback loop the model
-  // can check against its mental model of the checklist.
+  // 把结果清单状态回显给模型（Claude Code 出于同样原因返回 old/new todos）：
+  // 一份可见的状态摘要让这次调用从“发完即忘的记账”变成反馈回路，
+  // 模型可以据此核对它心中的清单。
   const counts = normalized.reduce(
     (acc, t) => {
       acc[t.status]++
@@ -212,7 +210,7 @@ export async function handleExitPlanMode(
       savedPath = await writePlan(planPath, planBody)
       state.currentPlanPath = savedPath
     } catch {
-      // Non-fatal — approval dialog uses the in-memory body.
+      // 非致命——批准对话框使用内存中的正文。
     }
   }
 

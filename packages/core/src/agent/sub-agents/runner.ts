@@ -1,8 +1,7 @@
-// @x-code-cli/core — Sub-agent runner
+// @x-code-cli/core — 子代理运行器
 //
-// Executes a sub-agent as a nested agentLoop with isolated context.
-// The parent agent receives only the final text result; intermediate
-// tool calls and messages stay inside the child loop.
+// 以隔离上下文把子代理作为嵌套 agentLoop 执行。父代理只收到最终文本结果；
+// 中间的工具调用和消息都留在子循环内部。
 import type { LanguageModel, UserContent } from 'ai'
 
 import { loadUserConfig, resolveModelId } from '../../config/index.js'
@@ -26,9 +25,8 @@ import { BROWSER_TREE_ONLY_NOTE, BROWSER_VISION_ADDENDUM, BROWSER_VISION_CAPTION
 import type { SubAgentRegistry } from './registry.js'
 import type { SubAgentDefinition } from './types.js'
 
-/** Fire a SubagentStart / SubagentStop hook. Best effort — sub-agent
- *  invocation is mandatory once the parent decides to delegate, so hook
- *  failures and aborts must never bubble. */
+/** 触发 SubagentStart / SubagentStop hook。尽力而为——父代理一旦决定委派，子代理调用
+ *  就是强制性的，因此 hook 失败和中止绝不能向上冒泡。 */
 function emitSubAgentHook(
   bus: HookBus | undefined,
   event: HookEvent & { name: 'SubagentStart' | 'SubagentStop' },
@@ -107,7 +105,7 @@ export async function cleanupSubAgentShellSessions(
   return { shellIds: visibleIds, message }
 }
 
-/** Extract the last assistant text from a message array (skipping tool-call parts). */
+/** 从消息数组中提取最后一段 assistant 文本（跳过 tool-call 部分）。 */
 function extractFinalText(messages: LoopState['messages']): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
@@ -147,21 +145,18 @@ function resolveSubModel(
 export function buildSubAgentToolFilter(agentDef: SubAgentDefinition, parentPermissionMode: string) {
   const deny = [...(agentDef.disallowedTools ?? []), 'task']
 
-  // In plan mode, deny write tools for ALL sub-agents — not just
-  // general-purpose. Plan mode's read-only invariant must hold regardless
-  // of which agent is running; shell is included because it can write
-  // files or execute destructive commands.
+  // 在 plan 模式下，对全部子代理——而不只是 general-purpose——拒绝写工具。plan 模式的
+  // 只读不变量无论运行哪个代理都必须成立；shell 也包含在内，因为它能写文件或执行
+  // 破坏性命令。
   if (parentPermissionMode === 'plan') {
     for (const t of ['writeFile', 'edit', 'shell']) {
       if (!deny.includes(t)) deny.push(t)
     }
   }
 
-  // `'*'` is a wildcard meaning "every tool" — matches Claude Code's
-  // `tools: ['*']` semantics for built-in/general-purpose agents. Pass
-  // `undefined` so `buildTools` skips the allowlist filter and only the
-  // explicit deny list applies. Without this, `['*']` would be treated
-  // as a literal tool name and every real tool would be filtered out.
+  // `'*'` 是表示“所有工具”的通配符——与 Claude Code 对内置/general-purpose 代理的
+  // `tools: ['*']` 语义一致。传入 `undefined`，让 `buildTools` 跳过 allowlist 过滤、
+  // 只应用显式 deny 列表。否则 `['*']` 会被当成字面工具名，所有真实工具都会被过滤掉。
   const allow = agentDef.tools?.includes('*') ? undefined : agentDef.tools
 
   return {
@@ -170,8 +165,7 @@ export function buildSubAgentToolFilter(agentDef: SubAgentDefinition, parentPerm
   }
 }
 
-/** Resolve the model to use for the sub-agent. Need the actual LanguageModel
- *  instance from the parent since we pass it to agentLoop. */
+/** 解析子代理要用的模型。需要父级实际的 LanguageModel 实例，因为要把它传给 agentLoop。 */
 export async function runSubAgent(
   args: RunSubAgentArgs,
   parentModel: LanguageModel,
@@ -192,9 +186,8 @@ export async function runSubAgent(
 
   const startTime = Date.now()
   try {
-    // Playwright MCP has one mutable current Page. Hold the transaction lock
-    // for the whole browser-agent run, not just individual MCP calls, so a
-    // visual check or second browser task cannot silently switch its tab.
+    // Playwright MCP 只有一个可变的当前 Page。为整个浏览器代理运行持有事务锁，
+    // 而不只是单次 MCP 调用，这样视觉检查或第二个浏览器任务就无法悄无声息地切换其标签页。
     return await withBrowserOperation(args.parentOptions.abortSignal, () =>
       runSubAgentUnlocked(args, parentModel, runLoop),
     )
@@ -259,17 +252,14 @@ async function runSubAgentUnlocked(
   const subModel = resolveSubModel(agentDef, parentOptions, parentModel)
   const subModelId = agentDef.model ? (resolveModelId(agentDef.model) ?? parentOptions.modelId) : parentOptions.modelId
 
-  // The `browser` agent gets a PRIVATE mcp registry (the @playwright/mcp
-  // server) in place of the parent's, so its browser tools never enter the
-  // main loop's tool surface or any other agent. Connect lazily; if the
-  // browser can't start, bail with a helpful message BEFORE announcing a
-  // start, rather than running a "browser" agent that has no browser.
+  // `browser` 代理拿到的是一份私有 mcp registry（@playwright/mcp server），替代父级的
+  // registry，这样它的浏览器工具就永远不会进入主循环的工具面或任何其他代理。惰性连接；
+  // 如果浏览器起不来，就在宣布启动之前用一个有用提示退出，而不是运行一个没有浏览器的
+  // "browser" 代理。
   //
-  // The server launches a stable capability superset, while this agent only
-  // receives visual guidance/tools when either its own model can see images or
-  // a configured caption model can interpret screenshots. That keeps model
-  // switches from restarting Chrome without making tree-only agents depend on
-  // an unavailable vision provider.
+  // server 启动的是稳定的能力超集，而该代理只有在自身模型能看图、或配置了 caption 模型
+  // 能解读截图时，才收到视觉指导/工具。这样既避免了切换模型时重启 Chrome，又不会让纯树形
+  // 代理依赖一个不可用的视觉 provider。
   let browserMcp: BrowserMcp | undefined
   let browserVision = false
   if (agentDef.name === 'browser') {
@@ -304,7 +294,6 @@ async function runSubAgentUnlocked(
     debugLog('browser.vision', browserVision ? `enabled for ${subModelId}` : 'tree-only')
   }
 
-  // Notify UI
   callbacks.onSubAgentEvent?.({
     kind: 'start',
     toolCallId,
@@ -313,8 +302,7 @@ async function runSubAgentUnlocked(
     prompt,
   })
 
-  // Plugin hook: SubagentStart — fires after the agent definition is
-  // resolved but before the nested agentLoop runs. Best-effort.
+  // 插件 hook：SubagentStart——在代理定义解析之后、嵌套 agentLoop 运行之前触发。尽力而为。
   emitSubAgentHook(
     parentOptions.hookBus,
     {
@@ -325,11 +313,10 @@ async function runSubAgentUnlocked(
     parentOptions.abortSignal,
   )
 
-  // Browser prompt is model-aware. A text-only model can't screenshot at all
-  // (explicit "don't screenshot" note). A vision model gets screenshot
-  // guidance. Native tool-result providers and Chat Completions providers
-  // that reattach media as a following user message both expose the raw image;
-  // only an unsupported transport needs the caption-mode addendum.
+  // 浏览器提示词与模型相关。纯文本模型根本不能截图（有显式的“不要截图”说明）。
+  // 视觉模型会拿到截图指导。原生 tool-result provider，以及把媒体作为后续用户消息
+  // 重新附上的 Chat Completions provider，都能暴露原始图像；只有不支持的传输方式才需要
+  // caption 模式的追加文案。
   const browserPromptSuffix =
     agentDef.name !== 'browser'
       ? ''
@@ -379,19 +366,18 @@ async function runSubAgentUnlocked(
     abortSignal: parentOptions.abortSignal,
     permissionMode: 'default',
     printMode: false,
-    // Sub-agents don't get their own sub-agent registry — recursion is forbidden
+    // 子代理不再拥有自己的子代理注册表——禁止递归
     subAgentRegistry: undefined,
     memoryService: undefined,
-    // The browser agent re-snapshots and re-screenshots across many turns; keep
-    // only the latest of each in context so the superseded ones stop re-billing.
+    // 浏览器代理会跨多轮反复快照/截图；上下文中只保留各自最新的一份，
+    // 让被取代的旧结果停止重复计费。
     collapseStaleToolResults: agentDef.name === 'browser' ? ['browser_snapshot', 'browser_take_screenshot'] : undefined,
-    // The browser agent swaps in its private registry (connected above); every
-    // other agent inherits the parent's MCP surface via the spread.
+    // 浏览器代理换入其私有 registry（在上面已连接）；其他代理都通过展开继承父级的 MCP 面。
     ...(browserMcp ? { mcpRegistry: browserMcp.registry, mcpPermissionStore: browserMcp.permissions } : {}),
   }
 
-  // Build sub-agent callbacks: forward events to the parent UI via onSubAgentEvent,
-  // but don't mix child state into parent state directly.
+  // 构造子代理回调：通过 onSubAgentEvent 把事件转发到父级 UI，
+  // 但不直接把子状态混入父状态。
   const subCallbacks: AgentCallbacks = {
     onTextDelta: (delta) => {
       callbacks.onSubAgentEvent?.({ kind: 'text-delta', toolCallId, delta })
@@ -403,7 +389,7 @@ async function runSubAgentUnlocked(
         subToolName,
         subInput,
       })
-      // Also forward to parent's onToolProgress so the live indicator updates
+      // 同时转发到父级的 onToolProgress，好让实时指示器更新
       callbacks.onToolProgress(toolCallId, `${subToolName}: ${previewInput(subInput)}`)
     },
     onToolProgress: (_subToolCallId, message) => {
@@ -455,9 +441,8 @@ async function runSubAgentUnlocked(
     completionOutcome = 'completed'
 
     if (turnCount >= agentDef.maxTurns && !finalText) {
-      // finalText is guaranteed empty here (the !finalText branch) and the
-      // messages array hasn't been mutated since line 246's call, so the
-      // partial-output value can only ever be 'none' on this path.
+      // 这里 finalText 必定为空（!finalText 分支），且自 line 246 的调用以来 messages 数组
+      // 未被改动，因此这条路径上的 partial-output 值只可能是 'none'。
       return (completedResult = {
         resultText: `[Sub-agent reached max turns (${agentDef.maxTurns}) without finishing. Partial output: none]`,
         tokenUsage: finalSubState.tokenUsage,
@@ -479,11 +464,9 @@ async function runSubAgentUnlocked(
   } catch (err) {
     const durationMs = Date.now() - startTime
 
-    // agentLoop catches abort/error internally and returns normally with
-    // an outcome marker, so this catch only fires when something throws
-    // past those guards (usually setup-phase code: knowledge load, slug
-    // generation, etc.). At that point the sub-agent hasn't really
-    // executed any turns, so reporting 0 is honest.
+    // agentLoop 会在内部捕获 abort/error 并带 outcome 标记正常返回，因此这个 catch 只在
+    // 有东西越过那些守卫抛出时触发（通常是 setup 阶段代码：知识加载、slug 生成等）。
+    // 到那时子代理还没真正执行过任何轮次，所以报 0 是诚实的。
     const fallbackTurnCount = 0
 
     if (isAbortError(err, parentOptions.abortSignal)) {

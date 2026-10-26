@@ -1,29 +1,26 @@
-// @x-code-cli/cli — Bottom dynamic region (spinner + input box) AND the
-// scrollback commit path for new messages.
+// @x-code-cli/cli — 底部动态区域（spinner + 输入框）以及新消息的滚动区提交路径。
 //
-// RENDERING STRATEGY — CELL-LEVEL DIFF, DIRECT STDOUT:
-//   Ink's Yoga layout and log-update both miscount CJK/IME widths. Even
-//   the @jrichman/ink fork doesn't fully eliminate jitter on Windows
-//   ConHost because terminal-level CJK rendering isn't atomic. To dodge
-//   both engines we render the entire bottom region ourselves:
+// 渲染策略 — 单元格级 diff，直接写 stdout：
+//   Ink 的 Yoga 布局和 log-update 都会算错 CJK/IME 宽度。即便是 @jrichman/ink
+//   分支也没能完全消除 Windows ConHost 上的抖动，因为终端级 CJK 渲染不是原子的。为
+//   了绕开这两个引擎，我们亲自渲染整个底部区域：
 //
-//     - Each frame = 2D grid of cells (char + style + visual width)
-//     - Diff against the previous frame cell-by-cell
-//     - Write ALL changes in a single process.stdout.write()
-//     - Unchanged CJK cells are NEVER re-emitted → no redraw jitter
+//     - 每帧 = 2D 单元格网格（字符 + 样式 + 视觉宽度）
+//     - 与上一帧逐单元格 diff
+//     - 在单次 process.stdout.write() 中写入全部变化
+//     - 未变化的 CJK 单元格从不重新发出 → 无重绘抖动
 //
-//   We return `null` to Ink so Ink's dynamic region is empty; we own
-//   everything below the scrollback the user has already seen.
+//   我们向 Ink 返回 `null`，让 Ink 的动态区域为空；用户已经看到过的滚动区下方的一切
+//   都由我们掌控。
 //
-// THINGS THIS COMPONENT OWNS (instead of Ink):
-//     - The loading spinner row (when `isLoading` is true)
-//     - Top/bottom separator lines
-//     - Input text with cursor
-//     - Slash-command completion menu
-//     - In-frame Permission and SelectOptions dialogs
-//     - Committing newly-arrived `messages` to scrollback above the frame
-//       (via writeMessageToStdout, collected into the same atomic payload
-//       as the frame redraw — see the flush effect)
+// 本组件（而不是 Ink）负责的东西：
+//     - 加载 spinner 行（`isLoading` 为 true 时）
+//     - 顶/底分隔线
+//     - 带光标的输入文本
+//     - 斜杠命令补全菜单
+//     - 帧内的 Permission 和 SelectOptions 对话框
+//     - 把新到达的 `messages` 提交到帧上方的滚动区（经 writeMessageToStdout，收集进
+//       与帧重绘相同的原子负载 — 见 flush effect）
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 
 import { useStdout } from 'ink'
@@ -113,11 +110,10 @@ import { usePromptInput } from './use-prompt-input.js'
 const PASTE_REF_MIN_LINES = 3
 const PASTE_REF_MIN_CHARS = 400
 const MAX_VISIBLE_LINES = 10
-// Shared by the render effect (frame layout) and Up/Down cursor movement
-// so both compute the soft-wrap viewport width identically.
+// 供 render effect（帧布局）和上/下光标移动共享，这样两者用同样的方式计算软折行视口宽度。
 const PROMPT_WIDTH = 2
-// The rounded prompt box wraps each input row in `│ ` … ` │`, consuming 4
-// cells around the prompt+content run inside the `termWidth - 1` box.
+// 圆角提示框把每个输入行包在 `│ ` … ` │` 里，在 `termWidth - 1` 宽的框内，围绕
+// prompt+content 一行消耗 4 个单元格。
 const BOX_INNER_PAD = 4
 const inputViewportWidth = (termWidth: number): number => Math.max(20, termWidth - PROMPT_WIDTH - BOX_INNER_PAD - 1)
 const MAX_AT_RESULTS = 50
@@ -159,22 +155,18 @@ export function ChatInput({
   const [{ text, cursor }, dispatch] = useReducer(inputReducer, { text: '', cursor: 0 })
   const textRef = useRef('')
   const cursorRef = useRef(0)
-  // Double-tap Esc to clear the input (idle mode only; loading mode uses
-  // single Esc to cancel the in-flight turn). Timestamp of the last Esc
-  // that didn't already clear; second press within DOUBLE_ESC_WINDOW_MS
-  // triggers RESET.
+  // 双击 Esc 清空输入（仅空闲模式；加载模式用单击 Esc 取消进行中的回合）。记录上一次
+  // 尚未清空的 Esc 时间戳；在 DOUBLE_ESC_WINDOW_MS 内的第二次按下会触发 RESET。
   const lastEscapeAtRef = useRef(0)
   useLayoutEffect(() => {
     textRef.current = text
     cursorRef.current = cursor
   }, [cursor, text])
 
-  // Insert text at the cursor, mirroring the transition into
-  // textRef/cursorRef synchronously. Those refs are otherwise refreshed
-  // only by the layout effect AFTER React commits, so a burst of inserts
-  // within one commit window (a paste split into rapid onPaste/onText
-  // calls on non-bracketed Windows terminals) would all read the stale
-  // cursor and splice later chunks in at position 0 — scrambling order.
+  // 在光标处插入文本，并同步镜像到 textRef/cursorRef。否则这些 ref 只在 React 提交之后
+  // 由 layout effect 刷新，所以一次提交窗口内的连续插入（在不支持括号粘贴的 Windows
+  // 终端上，一次粘贴被拆成快速的 onPaste/onText 调用）都会读到过期的光标，并把后面的
+  // 分块拼到位置 0 — 打乱顺序。
   const insertAtCursor = (chunk: string): void => {
     const pos = cursorRef.current
     dispatch({ type: 'INSERT', pos, chunk })
@@ -182,13 +174,10 @@ export function ChatInput({
     cursorRef.current = pos + chunk.length
   }
   const [pastedContents, setPastedContents] = useState<PastedContents>({})
-  // One-shot draft restore (Esc abort with un-injected queued messages).
-  // Keyed on `nonce` so consecutive restores with identical text still
-  // apply; identity changes from unrelated re-renders don't re-trigger.
-  // NOTE: deliberately does NOT touch the history-nav refs — capturing
-  // them in an effect trips react-hooks/immutability on their (pre-
-  // existing) mutations elsewhere, and a mid-nav restore is a harmless
-  // edge case.
+  // 一次性草稿恢复（Esc 中止时带着未注入的排队消息）。用 `nonce` 作键，这样文本相同的
+  // 连续恢复仍然生效；无关重渲染导致的身份变化不会重新触发。
+  // 注：刻意不触碰历史导航 ref —— 在 effect 里捕获它们会因它们在其他地方（已存在的）
+  // 变更而触发 react-hooks/immutability，而导航中途的恢复是一个无害的边界情况。
   const lastDraftNonceRef = useRef(0)
   useEffect(() => {
     if (!draftRestore || draftRestore.nonce === lastDraftNonceRef.current) return
@@ -199,166 +188,114 @@ export function ChatInput({
   }, [draftRestore])
   const [completionIndex, setCompletionIndex] = useState(0)
   const [atCompletionIndex, setAtCompletionIndex] = useState(0)
-  // Tracks the trigger-key (atIdx + query) the user dismissed via Esc.
-  // The menu hides while atTrigger.atIdx + query equals this; once the
-  // user types or backspaces the trigger naturally changes and the
-  // menu reopens — no need for an explicit "clear" path.
+  // 跟踪用户经 Esc 关闭的触发键（atIdx + query）。当 atTrigger.atIdx + query 等于该值时
+  // 菜单隐藏；一旦用户打字或退格，触发键自然变化，菜单重新打开 —— 无需显式的「清除」
+  // 路径。
   const [atDismissed, setAtDismissed] = useState<string | null>(null)
   const { entries: fileEntries } = useFileCompletion()
   const nextPasteIdRef = useRef(1)
   const activeRef = useRef(false)
   const prevFrameRef = useRef<Cell[][]>([])
-  /** Timestamp (ms) of the last stdout.write that actually hit the
-   *  terminal. Used to coalesce spinner-tick writes that would fire
-   *  immediately after a scrollback-commit write — see flush section. */
+  /** 最近一次真正写入终端的 stdout.write 的时间戳（毫秒）。用于合并那些会在滚动区提交
+   *  写入之后立即触发的 spinner-tick 写入 —— 见 flush 部分。 */
   const lastFlushTimeRef = useRef(0)
-  /** Pending deferred (non-commit) write that can be superseded by a commit. */
+  /** 待处理的延迟（非提交）写入，可被提交取代。 */
   const deferredFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** setImmediate queued by a fired deferred timer. The timer ref is already
-   *  null at that point, so this handle is required to cancel the final
-   *  callback during superseding renders and unmount. */
+  /** 由已触发的延迟定时器排队的 setImmediate。到那时定时器 ref 已经为 null，所以需要
+   *  这个句柄在取代渲染和卸载期间取消最终回调。 */
   const deferredImmediateRef = useRef<ReturnType<typeof setImmediate> | null>(null)
-  /** Pending throttled commit. Set when a commit fires within MIN_COMMIT_GAP_MS
-   *  of the previous write — the commit's payload waits just long enough that
-   *  it lands in a fresh terminal paint cycle instead of inside the same vsync
-   *  as the previous write. Distinct from `deferredFlushRef` because the
-   *  defer path must NOT cancel a throttled commit (cancelling would lose
-   *  the new scrollback content the commit's preBuf carries). */
+  /** 待处理的节流提交。当一次提交在上一次写入后的 MIN_COMMIT_GAP_MS 内触发时设置 ——
+   *  提交的负载会等待足够长的时间，让它落入一个全新的终端绘制周期，而不是与上一次写入
+   *  处在同一个 vsync 内。与 `deferredFlushRef` 区分开，因为 defer 路径绝不能取消一个
+   *  被节流的提交（取消会丢失该提交的 preBuf 所携带的新滚动区内容）。 */
   const commitThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** Monotonic counter incremented by every successful `doFlush`. The
-   *  deferred-write path captures this at SCHEDULE time and re-checks
-   *  at FIRE time: if the value has changed, a commit-path flush ran
-   *  in the interim and our spinner-only frame is stale (the commit
-   *  already repainted the cell). Closes the race the bare
-   *  `clearTimeout` cancellation can't catch — when the macrotask
-   *  for the deferred timer is already queued AND a commit's useEffect
-   *  also queues a flush in the same tick, both writes hit stdout
-   *  1-2ms apart and the user sees a visible flicker. */
+  /** 每次成功 `doFlush` 都会递增的单调计数器。延迟写入路径在调度时捕获它，在触发时再
+   *  次检查：如果值变了，说明期间运行过一次提交路径的 flush，我们只含 spinner 的帧已
+   *  过期（提交已经重绘了该单元格）。这堵住了单纯 `clearTimeout` 取消堵不住的竞态 ——
+   *  当延迟定时器的宏任务已经排队，同时某次提交的 useEffect 也在同一 tick 里排了一个
+   *  flush，两次写入会相隔 1-2ms 落到 stdout，用户就会看到可见的闪烁。 */
   const flushGenRef = useRef(0)
-  /** Last `spinnerFrame` value seen by the flush effect. We compare against
-   *  the current frame to distinguish "this render was triggered by a
-   *  spinner tick" (spinner glyph cycled) from "this render was triggered
-   *  by typing / content change" (spinner unchanged). The two cases want
-   *  different deferred-flush windows: spinner ticks should defer longer
-   *  (~24ms) so the next text-stream commit can absorb them, but typing
-   *  must defer briefly (~8ms) or it visibly stutters under a held key. */
+  /** flush effect 看到的上一个 `spinnerFrame` 值。我们拿它与当前帧比较，来区分「本次渲染
+   *  由 spinner tick 触发」（spinner 字形轮转）与「本次渲染由打字 / 内容变化触发」
+   *  （spinner 未变）。两种情况需要不同的延迟 flush 窗口：spinner tick 应延迟更久
+   *  （~24ms）以便下一次文本流提交吸收它们；但打字必须短暂延迟（~8ms），否则按住键时
+   *  会明显卡顿。 */
   const lastFlushedSpinnerFrameRef = useRef<number | null>(null)
-  /** Height of the frame currently sitting at the bottom of the terminal
-   *  (the value that prevFrameRef was last set to). Tracked separately
-   *  because prevFrameRef gets reset to [] on transitions (post-hidden,
-   *  frame-height change) while we still need to know where the PHYSICAL
-   *  frame on screen begins so the next DECSTBM scroll region doesn't
-   *  overlap it. */
+  /** 当前位于终端底部的帧的高度（即 prevFrameRef 最近一次被设成的值）。单独跟踪，因为
+   *  prevFrameRef 在过渡时（隐藏之后、帧高度变化）会被重置为 []，而我们仍需要知道屏幕
+   *  上物理帧从哪里开始，好让下一个 DECSTBM 滚动区域不与它重叠。 */
   const lastFrameHRef = useRef(0)
-  /** Last known terminal dimensions. Compared against current values in
-   *  the render effect to detect resize and compute where the OLD frame
-   *  was positioned so it can be erased before painting at the new spot. */
+  /** 最近已知的终端尺寸。在 render effect 里与当前值比较，以检测 resize 并计算旧帧原来
+   *  的位置，从而在新位置绘制之前先把它擦掉。 */
   const lastTermRowsRef = useRef(0)
   const lastTermWidthRef = useRef(0)
-  /** Printable length of each row of the frame that was on screen when a
-   *  resize arrived, captured in onResize BEFORE prevFrameRef is cleared.
-   *  The render effect's width-change branch uses these to compute the
-   *  EXACT number of terminal rows the old frame occupies after xterm.js
-   *  reflow (each hard line of length L becomes ceil(L/newW) rows), so the
-   *  erase covers every reflowed remnant — the old heuristic only counted
-   *  the 2 separator rows and missed wrapped input/spinner rows. */
+  /** resize 到达时屏幕上帧每一行的可打印长度，在 onResize 里、prevFrameRef 被清空之前
+   *  捕获。render effect 的宽度变化分支用它们来计算 xterm.js 重排后旧帧占用的精确终端
+   *  行数（每条长度 L 的硬行变成 ceil(L/newW) 行），这样擦除能覆盖每一处重排残留 —— 旧
+   *  的启发式只数了 2 个分隔行，漏掉了折行的输入 / spinner 行。 */
   const prevFrameRowLensRef = useRef<number[]>([])
-  /** Rows of blank space between the last on-screen content row and the
-   *  TERMINAL BOTTOM. Conceptually the same value as the original "blanks
-   *  above frame" — what changed is where we choose to draw the frame
-   *  inside that empty zone:
+  /** 最后一个屏幕内容行与终端底部之间的空白行数。概念上与原来的「帧上方空白」是同一个
+   *  值 —— 变化的是我们选择在那个空区域里把帧画在哪里：
    *
-   *    - When this is 0 the frame sits at the bottom of the terminal
-   *      (the original always-anchored-at-bottom behavior).
-   *    - When this is > 0 the frame floats UP so it sits immediately
-   *      below the last content row, and the freeBlanks become the
-   *      empty rows BELOW the input box. Mirrors Claude Code's flex-
-   *      layout behavior (Box flexGrow=1 spacer doesn't push to bottom
-   *      until messages fill the screen) and avoids the "tool block
-   *      anchored at bottom of empty terminal" gap users see when
-   *      starting a fresh conversation.
+   *    - 当它为 0 时，帧位于终端底部（原来始终锚定底部的行为）。
+   *    - 当它 > 0 时，帧上浮，紧挨最后一个内容行下方，freeBlanks 变成输入框下方的空行。
+   *      这模仿 Claude Code 的 flex 布局行为（Box flexGrow=1 的 spacer 在消息填满屏幕
+   *      之前不会把内容推到最底），并避免了用户开新对话时看到的「工具块锚定在空终端底
+   *      部」的空隙。
    *
-   *  Across the rest of the render code this still tracks "free row
-   *  budget that the next commit can write into without scrolling real
-   *  history" — that arithmetic is identical regardless of where the
-   *  frame is parked inside the empty zone. */
+   *  在渲染代码的其余部分，它仍跟踪「下一次提交可以在不滚动真实历史的情况下写入的空行
+   *  预算」 —— 无论帧停在该空区域的哪个位置，那个算术都是相同的。 */
   const freeBlanksAboveFrameRef = useRef(0)
-  /** Number of blank rows currently sitting DIRECTLY ABOVE the frame, left
-   *  there by a large-shrink (deltaH > 3) that snapped the frame to the
-   *  bottom and erased the old frame area without committing it to
-   *  scrollback. Without this counter, a subsequent grow would emit LFs
-   *  at termRows to "make room" — pushing those blank rows into terminal
-   *  scrollback as permanent empty lines (visible as the big blank gap
-   *  under a Task() result when sub-agents open multiple permission
-   *  dialogs in a row).
+  /** 当前紧贴帧上方的空白行数，由一次大收缩（deltaH > 3）留下 —— 那次收缩把帧吸附到底
+   *  部并擦除了旧帧区域，但没有把它提交进滚动区。没有这个计数器，随后的 grow 会在
+   *  termRows 发 LF 来「腾地方」—— 把那些空行推入终端滚动区变成永久空行（表现为子代理
+   *  连续打开多个权限对话框时 Task() 结果下方的大片空白）。
    *
-   *  Consumed by the grow path before deciding how many LFs to emit:
-   *  the frame extends UP into these blanks via cell-grid repositioning
-   *  (no scroll), so only the rows BEYOND the blank zone need to be
-   *  scrolled into history. Reset on commit (committed scrollback now
-   *  occupies the rows directly above the frame), resize, and /clear. */
+   *  grow 路径在决定发多少 LF 之前消耗它：帧通过单元格网格重新定位向上延伸进这些空白
+   *  （不滚动），所以只有空白区域之外的行才需要滚入历史。在提交（提交后的滚动区现在占
+   *  据帧正上方的行）、resize 和 /clear 时重置。 */
   const blankRowsAboveFrameRef = useRef(0)
-  /** Last actual frameTop row written to the terminal. Stored separately
-   *  because frameTop is no longer derivable from (termRows, frameH)
-   *  alone — it now also depends on freeBlanksAboveFrameRef. Read by
-   *  unmount cleanup (buildEraseRegion) and the resize handler so they
-   *  can erase the OLD on-screen frame at its actual position rather
-   *  than guessing it from termRows. */
+  /** 最近一次实际写入终端的 frameTop 行。单独存储，因为 frameTop 不再能仅由
+   *  (termRows, frameH) 推导 —— 它现在还依赖 freeBlanksAboveFrameRef。卸载清理
+   *  （buildEraseRegion）和 resize 处理器会读它，这样它们能在旧屏幕帧的真实位置把它擦
+   *  掉，而不是从 termRows 去猜。 */
   const lastFrameTopRef = useRef(0)
-  /** Reserves vertical space inside the tool-running frame when a permission
-   *  dialog just closed but its approved tool hasn't committed a result yet.
-   *  Without the reservation the frame snaps 14→5 rows (permission was 11
-   *  rows + 3 input, tool rows are 2) and the now-empty top rows of the old
-   *  permission region flash as blank lines between the last committed scrollback entry
-   *  and the running tool — for a beat the user sees "Running..." pinned to
-   *  the bottom with a gap above, until the tool finishes and its commit
-   *  backfills those rows. The reservation holds the frame at the old size
-   *  so the in-progress tool row stays painted WHERE the permission title
-   *  used to be; the blank rows move below the tool (between tool and
-   *  input), which the next commit / grow consumes cleanly. Cleared on any
-   *  commit (the tool result lands in the reserved slot) or when a new
-   *  permission arrives (that permission re-fills the slot itself). */
+  /** 当权限对话框刚关闭、但它批准的工具还没提交结果时，在工具运行帧内保留垂直空间。没
+   *  有这个保留，帧会从 14 行跳到 5 行（权限是 11 行 + 3 行输入，工具行是 2），旧权限区
+   *  域顶部现在空掉的行会作为最后一条已提交滚动区条目与运行中工具之间的空白行闪烁 ——
+   *  有那么一瞬间用户看到 "Running..." 钉在底部、上方留着一片空隙，直到工具结束、它的
+   *  提交回填那些行。保留让帧保持旧尺寸，这样进行中的工具行仍然画在权限标题原来所在的
+   *  位置；空行移到工具下方（工具与输入之间），由下一次提交 / grow 干净地消耗。在任何
+   *  提交（工具结果落到保留槽里）或新权限到来（该权限自己重新填满槽）时清除。 */
   const permissionSlotReserveRef = useRef(0)
   const prevHadPermissionRef = useRef(false)
-  /** True while a Permission/SelectOptions dialog was showing on the
-   *  previous render. When it disappears we need to erase the old frame
-   *  before redrawing — Ink's log.clear returns the cursor to the row
-   *  where the dialog started, which is exactly our frame's bottom row,
-   *  so a normal eraseRegion-by-prevFrame works cleanly. */
+  /** 上一次渲染时正在显示 Permission/SelectOptions 对话框则为 true。当它消失时，我们需
+   *  要在重绘前擦除旧帧 —— Ink 的 log.clear 会把光标送回对话框开始的那一行，那正是我们
+   *  帧的底部行，所以按 prevFrame 的常规 eraseRegion 能干净地工作。 */
   const wasHiddenRef = useRef(false)
-  /** Set by the shrink-detection path (a /clear emptied messages) so the
-   *  next first-paint seeds freeBlanks for an empty viewport instead of
-   *  reserving banner-sized space at the top — there is no banner left
-   *  on screen after the clear-screen ANSI write. Cleared once consumed. */
+  /** 由收缩检测路径（/clear 清空了 messages）设置，好让下一次首次绘制为空视口播种
+   *  freeBlanks，而不是在顶部保留 banner 大小的空间 —— 清屏 ANSI 写入之后屏幕上已没有
+   *  banner。消耗后清除。 */
   const justClearedRef = useRef(false)
-  /** How many messages we've already committed to scrollback. */
+  /** 我们已经提交到滚动区的消息数。 */
   const writtenMessageCountRef = useRef(0)
-  /** Scrollback bytes collected this render that haven't reached stdout yet.
-   *  Survives across renders so a cancelled commit-throttle doesn't drop
-   *  message bytes — `writtenMessageCountRef` is bumped synchronously when
-   *  we walk new messages, so a follow-up render won't re-collect them via
-   *  `writeMessageToStdout`. Without this ref, the only path that carried
-   *  the bytes was the local `scrollbackContent` of the render that
-   *  scheduled the throttle; if that throttle got superseded by a height
-   *  change 1ms later (`commit-throttle-superseded-by-height`), the bytes
-   *  vanished. Cleared inside `doFlush` once the write actually lands.
-   *  Symptom this cures: streamed multi-line replies whose final commit
-   *  shrinks the frame (end-of-turn spinner removal) silently lose the
-   *  last message — visible as a reply that stops mid-paragraph in the
-   *  scrollback even though the full text is in `state.messages`. */
+  /** 本次渲染收集的、尚未到达 stdout 的滚动区字节。跨渲染存活，这样被取消的提交节流不
+   *  会丢掉消息字节 —— 遍历新消息时 `writtenMessageCountRef` 会同步递增，所以后续渲染
+   *  不会再经 `writeMessageToStdout` 重新收集它们。没有这个 ref，携带字节的唯一路径就是
+   *  调度了节流的那次渲染的局部 `scrollbackContent`；如果 1ms 后那次节流被高度变化取代
+   *  （`commit-throttle-superseded-by-height`），字节就消失了。在写入真正落地时于
+   *  `doFlush` 内清除。它治好的症状：流式多行回复在最后一次提交收缩帧时（回合结束移除
+   *  spinner）悄悄丢掉最后一条消息 —— 表现为回复在滚动区里于段落中间戛然而止，尽管全文
+   *  都在 `state.messages` 里。 */
   const pendingScrollbackRef = useRef('')
-  // Permission dialog: selection index (0 = Yes, 1 = No). Rendered inside
-  // our cell buffer — not via Ink — so the dialog never fights our
-  // cursor management. Reset to 0 whenever the prompt changes (new tool
-  // call) using React's "adjust state during render" pattern — React
-  // throws away the first render and immediately re-renders, which is
-  // cheaper than a cascading setState-inside-effect and doesn't trip the
-  // react-hooks/set-state-in-effect lint.
+  // 权限对话框：选中索引（0 = Yes，1 = No）。在我们的单元格缓冲里渲染 —— 不经 Ink ——
+  // 这样对话框永远不会与我们的光标管理打架。每当提示变化（新工具调用）就用 React 的
+  // 「渲染期间调整状态」模式重置为 0 —— React 会丢掉第一次渲染并立即重新渲染，这比级联
+  // 的 setState-inside-effect 更便宜，也不会触发 react-hooks/set-state-in-effect lint。
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders
   const [permissionSelected, setPermissionSelected] = useState(0)
-  /** Non-null while the "No, and tell X-Code what to do instead" row is
-   *  in inline-edit mode (kimi-cli's reject-with-feedback): typed text
-   *  lands here instead of resolving the dialog. */
+  /** 当「No, and tell X-Code what to do instead」行处于内联编辑模式（kimi-cli 的
+   *  reject-with-feedback）时为非 null：输入的文本落到这里而不是解析对话框。 */
   const [permissionFeedback, setPermissionFeedback] = useState<{ text: string; cursor: number } | null>(null)
   const [authoritySelected, setAuthoritySelected] = useState(1)
   const [authorityPage, setAuthorityPage] = useState(0)
@@ -379,15 +316,13 @@ export function ChatInput({
     setAuthorityPage(0)
   }
 
-  // Selected index for the in-frame select-options dialog. Reset whenever a
-  // new dialog opens (keyed on the question string since that's what changes).
+  // 帧内 select-options 对话框的选中索引。每次新对话框打开时重置（以问题字符串为键，因
+  // 为变化的就是它）。
   const [selectIndex, setSelectIndex] = useState(0)
   const [lastSelectKey, setLastSelectKey] = useState<string | null>(null)
-  // Inline text buffer for the "Other" freeform option. Captured as
-  // {text, cursor} so the inverse-video cursor renders the same way as
-  // the main input. Preserved while navigating between options in the
-  // same dialog (so the user can re-enter "Other" without losing what
-  // they typed) but cleared when a new dialog opens.
+  // 「Other」自由文本选项的内联文本缓冲。以 {text, cursor} 捕获，让反色光标与主输入用
+  // 同样的方式渲染。在同一个对话框的选项之间导航时保留（这样用户重新进入「Other」不会
+  // 丢失已输入的内容），但新对话框打开时清空。
   const [freeform, setFreeform] = useState<{ text: string; cursor: number }>({ text: '', cursor: 0 })
   const selectKey = selectRequest ? selectRequest.question : null
   if (selectKey !== lastSelectKey) {
@@ -396,14 +331,11 @@ export function ChatInput({
     setFreeform({ text: '', cursor: 0 })
   }
 
-  // Spinner animation — self-contained so the parent doesn't have to
-  // re-render 12× per second. Only runs while `spinner` is truthy.
+  // Spinner 动画 —— 自包含，这样父组件不必每秒重渲染 12 次。只在 `spinner` 为真时运行。
   //
-  // We only keep ONE piece of React state (`spinnerFrame`) because its
-  // change is what triggers the re-render that redraws the cell frame.
-  // `elapsedMs` is derived at render time from `loadingStartRef` so we
-  // never do a synchronous setState inside the effect (would trigger
-  // cascading renders / the react-hooks/set-state-in-effect lint).
+  // 我们只保留一份 React state（`spinnerFrame`），因为它的变化才触发重绘单元格帧的重渲
+  // 染。`elapsedMs` 在渲染时从 `loadingStartRef` 推导，这样我们绝不会在 effect 里做同步
+  // 的 setState（那会触发级联渲染 / react-hooks/set-state-in-effect lint）。
   const [spinnerFrame, setSpinnerFrame] = useState(0)
   const loadingStartRef = useRef<number>(0)
 
@@ -415,13 +347,10 @@ export function ChatInput({
     if (loadingStartRef.current === 0) loadingStartRef.current = Date.now()
     const timer = setInterval(() => {
       setSpinnerFrame((f) => (f + 1) % SPINNER_FRAMES.length)
-    }, 200) // 200ms per frame (5 Hz). Below 8 Hz the asterisk-pulse
-    // breathe still reads as a smooth animation, but each cell write is
-    // 38% less frequent than at 120ms — measurably less visible
-    // residual flicker on weak terminals (VSCode xterm.js, ConHost)
-    // where every spinner-cell update kicks the renderer's state
-    // machine. A full breathe cycle is now 12 frames × 200ms = 2.4s,
-    // which still feels alive without feeling jittery.
+    }, 200) // 每帧 200ms（5 Hz）。低于 8 Hz 的星号脉冲呼吸仍读作流畅动画，但每次单元格
+    // 写入比 120ms 时少了 38% 的频率 —— 在弱终端（VSCode xterm.js、ConHost）上可测量的
+    // 残留闪烁更少，那些终端里每次 spinner-cell 更新都会踢一下渲染器的状态机。一个完整
+    // 呼吸周期现在是 12 帧 × 200ms = 2.4s，感觉仍然鲜活又不抖。
     return () => clearInterval(timer)
   }, [spinner])
 
@@ -438,21 +367,18 @@ export function ChatInput({
   }, [authorityRequest, termWidth])
   const authorityPageCount = Math.max(1, Math.ceil(authorityViewerRows.length / 8))
 
-  // ── Terminal resize handling ──
-  // Force a re-render tick on resize so termWidth/termRows pick up the new
-  // values. The cell matrix is invalidated but lastFrameHRef / lastTermRowsRef
-  // are kept intact — the render effect needs them to compute where the OLD
-  // frame sat so it can erase those rows before painting at the new position.
+  // ── 终端 resize 处理 ──
+  // resize 时强制一次重渲染 tick，好让 termWidth/termRows 取到新值。单元格矩阵失效，但
+  // lastFrameHRef / lastTermRowsRef 保持原样 —— render effect 需要它们来计算旧帧所在的
+  // 位置，从而在新位置绘制之前擦掉那些行。
   const [, forceRender] = useReducer((x: number) => x + 1, 0)
   useEffect(() => {
     if (!stdout) return
     const onResize = () => {
-      // Capture per-row printable lengths of the on-screen frame before
-      // dropping it (see prevFrameRowLensRef). A row's buffer length is the
-      // position after its last non-blank cell; wide (CJK) cells count 2.
-      // If prevFrameRef is already empty (two resizes before a render),
-      // keep the previously captured lens — they still describe the frame
-      // remnants on screen better than nothing.
+      // 在丢弃屏幕帧之前捕获它每一行的可打印长度（见 prevFrameRowLensRef）。一行的缓冲
+      // 长度是它最后一个非空单元格之后的位置；宽（CJK）单元格计 2。如果 prevFrameRef 已
+      // 经为空（一次渲染前发生了两次 resize），保留之前捕获的长度 —— 它们仍比空描述屏幕
+      // 上的帧残留更准确。
       if (prevFrameRef.current.length > 0) {
         prevFrameRowLensRef.current = prevFrameRef.current.map((row) => {
           let len = 0
@@ -472,47 +398,39 @@ export function ChatInput({
     }
   }, [stdout])
 
-  // ── Cursor visibility lifecycle (Claude-Code pattern). ──
-  // The terminal cursor is hidden for the entire lifetime of the TUI
-  // and shown again on unmount. We never toggle `?25h` / `?25l` per
-  // render, which on Windows Terminal / VSCode-xterm.js / ConHost
-  // resets the cursor blink phase each time it's processed and the
-  // user perceives that as flicker at the cursor's last position.
-  // The "input cursor" is rendered as an inverse-video cell on the
-  // input row by the cell-diff loop below — visually it's just a
-  // styled char that updates atomically with the rest of the frame.
-  // Reference: D:\res\claude-code\src\ink\components\App.tsx:184
-  // (HIDE_CURSOR write at componentDidMount) and :189 (SHOW_CURSOR
-  // at componentWillUnmount).
+  // ── 光标可见性生命周期（Claude-Code 模式）。──
+  // 终端光标在整个 TUI 生命周期内隐藏，卸载时重新显示。我们从不每次渲染切换 `?25h` /
+  // `?25l`，因为在 Windows Terminal / VSCode-xterm.js / ConHost 上每次处理它都会重置光
+  // 标闪烁相位，用户会在光标最后位置感知到闪烁。「输入光标」由下方 cell-diff 循环在输入
+  // 行上渲染成一个反色单元格 —— 视觉上它只是一个与帧其余部分一起原子更新的样式字符。
+  // 参考：D:\res\claude-code\src\ink\components\App.tsx:184
+  // （componentDidMount 时 HIDE_CURSOR 写入）和 :189（componentWillUnmount 时
+  // SHOW_CURSOR）。
   useEffect(() => {
     try {
       process.stdout.write('\x1b[?25l')
     } catch {
-      /* tty closed */
+      /* tty 已关闭 */
     }
     return () => {
       try {
         process.stdout.write('\x1b[?25h')
       } catch {
-        /* tty closed */
+        /* tty 已关闭 */
       }
     }
   }, [])
 
-  // ── Fuzzy matching ──
+  // ── 模糊匹配 ──
   //
-  // Two-stage menu: stage 1 completes the slash command name itself
-  // (`/mc` → `/mcp`); stage 2 fires after the user types a space and
-  // completes a subcommand for commands that declare one (`/mcp ` →
-  // `list / tools / auth / ...`). A third stage (server names, model
-  // ids) would need an async per-command `complete()` callback —
-  // intentionally not implemented; the second stage handles 80% of the
-  // pain (the 8-subcommand `/mcp` block) at a tenth the code.
+  // 两阶段菜单：阶段 1 补全斜杠命令名本身（`/mc` → `/mcp`）；阶段 2 在用户输入空格后触
+  // 发，为声明了子命令的命令补全子命令（`/mcp ` → `list / tools / auth / ...`）。第三阶
+  // 段（服务器名、模型 id）需要一个异步的逐命令 `complete()` 回调 —— 有意不实现；第二阶
+  // 段以十分之一的代码解决了 80% 的痛点（8 个子命令的 `/mcp` 块）。
   //
-  // Items carry `applyText` so the accept paths (Tab / Enter) can set
-  // the input to the full path (`/mcp auth`) regardless of which stage
-  // the user picked from. Display columns still use the bare `name`
-  // (stage 2 shows `auth`, not `/mcp auth`) so the menu stays scannable.
+  // 条目携带 `applyText`，这样接受路径（Tab / Enter）能把输入设为完整路径（`/mcp auth`），
+  // 不管用户是从哪个阶段选的。展示列仍用裸的 `name`（阶段 2 显示 `auth`，而不是
+  // `/mcp auth`），让菜单保持可扫读。
   const matches = useMemo<MenuItem[]>(() => {
     if (!text.startsWith('/')) return []
 
@@ -526,7 +444,7 @@ export function ChatInput({
 
     const firstSpace = text.indexOf(' ')
     if (firstSpace === -1) {
-      // Stage 1: typing the command name. Match against /-stripped names.
+      // 阶段 1：正在输入命令名。对去掉 / 的名字匹配。
       const query = text.slice(1).toLowerCase()
       const filtered = !query ? commands : commands.filter((c) => fuzzyMatches(c.name.slice(1).toLowerCase(), query))
       return filtered.map<MenuItem>((c) => ({
@@ -537,10 +455,9 @@ export function ChatInput({
       }))
     }
 
-    // Stage 2: typing the subcommand. `head` is the command (e.g. "/mcp"),
-    // `tail` is whatever follows the first space. A second space means the
-    // user has moved past the subcommand slot; we don't auto-complete
-    // beyond that (no third-stage callback yet).
+    // 阶段 2：正在输入子命令。`head` 是命令（例如 "/mcp"），`tail` 是第一个空格之后的任
+    // 何内容。第二个空格意味着用户已经越过子命令槽；我们不会越过它自动补全（还没有第三
+    // 阶段回调）。
     const head = text.slice(0, firstSpace)
     const tail = text.slice(firstSpace + 1)
     if (tail.includes(' ')) return []
@@ -560,9 +477,8 @@ export function ChatInput({
   const safeIndex = matches.length > 0 ? completionIndex % matches.length : 0
   const currentMatch = matches.length > 0 ? matches[safeIndex] : null
 
-  // ── @-mention file completion ──
-  // detectAtToken is cheap; recompute every render so it tracks cursor
-  // moves (left/right arrows) without explicit invalidation.
+  // ── @-mention 文件补全 ──
+  // detectAtToken 很便宜；每次渲染重算，这样它能跟踪光标移动（左/右箭头）而无需显式失效。
   const atTrigger = useMemo(() => detectAtToken(text, cursor), [text, cursor])
   const atMatches = useMemo(() => {
     if (!atTrigger.active) return [] as FileEntry[]
@@ -571,15 +487,13 @@ export function ChatInput({
   const safeAtIndex = atMatches.length > 0 ? atCompletionIndex % atMatches.length : 0
   const atDismissedKey = `${atTrigger.atIdx}:${atTrigger.query}`
   const atMenuVisible = atTrigger.active && atDismissed !== atDismissedKey
-  // Slash menu wins when both could fire (`/` only triggers at line start so
-  // they rarely collide — only via paste). Hard mutex prevents double-render.
+  // 当两者都可能触发时斜杠菜单胜出（`/` 只在行首触发，所以它们很少冲突 —— 只有粘贴时）。
+  // 硬互斥防止双重渲染。
   const activeMenu: 'slash' | 'at' | null = matches.length > 0 ? 'slash' : atMenuVisible ? 'at' : null
 
-  // Reset the @-menu cursor whenever the trigger token shifts so the
-  // highlight always starts at the top entry of the new result set.
-  // Uses the "store previous prop in state + setState during render"
-  // pattern from the React docs — preferred over useEffect because it
-  // avoids an extra commit and avoids react-hooks/set-state-in-effect.
+  // 每当触发 token 变化就重置 @-menu 光标，这样高亮总是从新结果集的顶部条目开始。使用
+  // React 文档的「把之前的 prop 存入 state + 渲染期间 setState」模式 —— 优于 useEffect，
+  // 因为它避免了一次额外提交，也避免了 react-hooks/set-state-in-effect。
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders
   const atTriggerKey = `${atTrigger.atIdx}:${atTrigger.query}:${atTrigger.active}`
   const [lastAtTriggerKey, setLastAtTriggerKey] = useState(atTriggerKey)
@@ -588,16 +502,12 @@ export function ChatInput({
     setAtCompletionIndex(0)
   }
 
-  /** Erase the frame region at its pinned location (last `lastFrameHRef`
-   *  rows of the terminal) and clear prevFrameRef. Returns the ANSI
-   *  sequence so callers can coalesce it with other writes into a single
-   *  process.stdout.write. Cursor ends at the top-left of the (now blank)
-   *  frame region.
+  /** 在帧的钉住位置（终端最后 `lastFrameHRef` 行）擦除帧区域，并清空 prevFrameRef。返回
+   *  ANSI 序列，让调用方能把它与其他写入合并成一次 process.stdout.write。光标停在（现在
+   *  已空白的）帧区域左上角。
    *
-   *  Only used for unmount cleanup now — the live render path keeps the
-   *  frame PINNED at the bottom and uses DECSTBM scroll regions to insert
-   *  scrollback above it (see the flush effect below), so erasing is only
-   *  needed when the TUI itself is tearing down. */
+   *  现在仅用于卸载清理 —— 实时渲染路径把帧钉在底部，并用 DECSTBM 滚动区域在其上方插入
+   *  滚动区（见下方 flush effect），所以只有在 TUI 本身拆除时才需要擦除。 */
   const buildEraseRegion = (): string => {
     const prevH = lastFrameHRef.current
     const prevTop = lastFrameTopRef.current
@@ -606,17 +516,15 @@ export function ChatInput({
     lastFrameTopRef.current = 0
     if (prevH <= 0) return ''
     const termRows = stdout?.rows ?? 25
-    // Use the actual last-rendered top, falling back to the bottom-anchor
-    // formula on the legacy path where lastFrameTopRef wasn't yet
-    // populated (would only matter for very early teardowns).
+    // 使用实际最后渲染的顶部；在 lastFrameTopRef 尚未被填充的遗留路径上回退到底部锚定公
+    // 式（这只会在非常早的拆除时发生）。
     const frameTop = prevTop > 0 ? prevTop : Math.max(1, termRows - prevH + 1)
-    // Jump to frame top, erase to end of display. One atomic wipe.
+    // 跳到帧顶，擦除到显示末尾。一次原子擦除。
     return `\x1b[${frameTop};1H\x1b[J`
   }
 
-  /** Synchronous erase used by unmount cleanup. Wrapped in BSU/ESU so the
-   *  terminal renders the erase atomically. Effect path does its own
-   *  composition (already BSU/ESU-wrapped by the outer render). */
+  /** 卸载清理使用的同步擦除。包在 BSU/ESU 里，让终端原子地渲染这次擦除。effect 路径做
+   *  自己的组装（已经被外层渲染包上 BSU/ESU）。 */
   const eraseRegion = () => {
     const s = buildEraseRegion()
     if (s) process.stdout.write(BSU + s + ESU_HIDE)
@@ -625,11 +533,9 @@ export function ChatInput({
   const handleSubmit = (override?: string) => {
     const raw = override ?? text
     if (!raw.trim()) return
-    // While the agent is still thinking, slash commands stay blocked —
-    // running /compact or /resume mid-turn would corrupt shared state.
-    // `/goal` controls the running goal; `/fork` is allowed only for owners
-    // whose submit path captured a stable pre-request prefix.
-    // Plain text still flows through to the normal steering queue.
+    // 当 agent 仍在思考时，斜杠命令保持阻塞 —— 在回合中途运行 /compact 或 /resume 会破坏
+    // 共享状态。`/goal` 控制运行中的目标；`/fork` 只允许提交路径捕获了稳定请求前前缀的
+    // owner 使用。纯文本仍然流向正常的 steering 队列。
     if (spinner) {
       const command = raw.trimStart().toLowerCase().split(/\s+/, 1)[0]
       if (
@@ -639,35 +545,28 @@ export function ChatInput({
         return
     }
     const expanded = override ? raw : expandPasteRefs(raw, pastedContents)
-    // Record the pre-expansion form in input history (Up/Down recall) so
-    // that restoring an entry doesn't unfold the entire paste block back
-    // into the input box — `[#N +M lines]` refs stay compact, just like
-    // they were on submit. `override` is the slash-completion path
-    // (`handleSubmit('/help')` etc.) where there are no paste refs.
+    // 把展开前的形式记入输入历史（上/下回忆），这样恢复一个条目时不会把整块粘贴又展开回
+    // 输入框 —— `[#N +M lines]` 引用保持紧凑，就像提交时一样。`override` 是斜杠补全路径
+    // （`handleSubmit('/help')` 等），那里没有粘贴引用。
     pushHistory(override ? raw : text, override ? {} : pastedContents)
     resetHistoryNav()
-    // Let the normal render useEffect handle the transition. The next
-    // render sees `messages.length > writtenMessageCountRef` (user-echo
-    // just got appended inside onSubmit) and emits a single atomic
-    // BSU/ESU-wrapped payload of: gap-clear + scrollback content + frame
-    // redraw. No synchronous pre-erase here — that used to exist to
-    // make room for a now-retired separate MessageList writer, and was
-    // a second non-atomic flash on every submit.
+    // 让正常的 render useEffect 处理这次过渡。下一次渲染会看到
+    // `messages.length > writtenMessageCountRef`（用户回显刚在 onSubmit 里被追加），并发出
+    // 一个 BSU/ESU 包裹的原子负载：间隙清除 + 滚动区内容 + 帧重绘。这里没有同步预擦除 ——
+    // 它过去存在是为了给现已退役的独立 MessageList 写入器腾地方，并且是每次提交时的第二
+    // 次非原子闪烁。
     onSubmit(expanded)
     dispatch({ type: 'RESET' })
     setPastedContents({})
     setCompletionIndex(0)
   }
 
-  /** Move the cursor up/down by `delta` VISUAL lines (soft-wrap aware, so a
-   *  long single logical line wrapped across terminal rows is navigable
-   *  row-by-row). Returns `true` if the cursor actually moved, `false` if it
-   *  was already at the top/bottom visual edge — the falsy return is what
-   *  lets the Up/Down handlers fall through to the history-navigation path
-   *  (same trick Claude Code's `upOrHistoryUp` uses). */
+  /** 让光标上下移动 `delta` 个视觉行（软折行感知，所以一条跨终端行折行的长逻辑行也能逐
+   *  行导航）。如果光标确实移动了返回 `true`，如果它已经在顶部/底部视觉边缘则返回
+   *  `false` —— 正是这个 falsy 返回值让上/下处理器落到历史导航路径（与 Claude Code 的
+   *  `upOrHistoryUp` 用的同一技巧）。 */
   const moveCursorVertically = (delta: number): boolean => {
-    // Computed at keypress time from the live terminal width — a resize
-    // re-wraps the input, and navigation must use the NEW geometry.
+    // 在按键时从实时终端宽度计算 —— resize 会重新折行输入，导航必须使用新的几何。
     const vpWidth = inputViewportWidth(termWidth)
     const newPos = moveCursorVisual(text, cursorRef.current, delta, vpWidth)
     if (newPos === null) return false
@@ -704,13 +603,10 @@ export function ChatInput({
     onText: (chunk) => {
       const dialogSlashDraft = textRef.current.trimStart().startsWith('/') || chunk.trimStart().startsWith('/')
       if (authorityRequest) return
-      // Route single-char y/n to the Permission resolver when a dialog is
-      // active. Slash commands remain editable so `/goal pause` /
-      // `/goal cancel` can interrupt a goal even while a tool approval is
-      // waiting.
+      // 当对话框活跃时，把单字符 y/n 路由到 Permission 解析器。斜杠命令保持可编辑，这样
+      // 即便工具审批还在等待，`/goal pause` / `/goal cancel` 也能打断目标。
       if (permission) {
-        // Feedback edit mode swallows ALL typed text into the inline
-        // buffer (kimi-cli's Reject-with-feedback row).
+        // 反馈编辑模式把所有输入文本吞进内联缓冲（kimi-cli 的 Reject-with-feedback 行）。
         if (permissionFeedback) {
           setPermissionFeedback((prev) =>
             prev
@@ -724,10 +620,8 @@ export function ChatInput({
         }
         const ch = chunk.toLowerCase()
         if (!dialogSlashDraft) {
-          // Codex/kimi-style single-key shortcuts: y/n always work, 'a'
-          // approves the always-rule when one is offered, 'f' opens the
-          // deny-with-feedback editor, and digits pick the numbered
-          // option directly.
+          // Codex/kimi 风格的单键快捷键：y/n 始终有效，'a' 在提供 always 规则时批准它，
+          // 'f' 打开带反馈拒绝编辑器，数字直接选中对应编号的选项。
           const hasAlways = suggestRuleLabel(permission.toolName, permission.input, !!permission.mcp) !== null
           const actions: ('yes' | 'always' | 'no' | 'feedback')[] = hasAlways
             ? ['yes', 'always', 'no', 'feedback']
@@ -774,9 +668,8 @@ export function ChatInput({
           setCompletionIndex(0)
           return
         }
-        // Typing on a freeform option ("Other") feeds the inline text
-        // buffer; on regular options it's still swallowed so the user
-        // can't type into the hidden input behind the dialog.
+        // 在 freeform 选项（"Other"）上打字会喂给内联文本缓冲；在常规选项上仍被吞掉，这样
+        // 用户无法打进对话框背后隐藏的输入。
         const opt = selectRequest.options[selectIndex]
         if (opt?.freeform) {
           setFreeform(({ text, cursor }) => ({
@@ -816,10 +709,8 @@ export function ChatInput({
           setCompletionIndex(0)
           return
         }
-        // Allow paste into the freeform buffer (e.g. pasting a long
-        // path or model id). Skip the large-paste reference machinery
-        // — it's a usability hit for free-text answers, which are
-        // expected to be short.
+        // 允许粘贴进 freeform 缓冲（例如粘贴一个长路径或模型 id）。跳过大型粘贴引用机制
+        // —— 对自由文本答案来说那是可用性负担，它们本来就该很短。
         const opt = selectRequest.options[selectIndex]
         if (opt?.freeform) {
           setFreeform(({ text, cursor }) => ({
@@ -865,14 +756,12 @@ export function ChatInput({
         }
         return
       }
-      // Permission dialog captures navigation + submit keys.
+      // 权限对话框捕获导航 + 提交键。
       if (permission && !dialogSlashMode) {
         const hasAlwaysOption = suggestRuleLabel(permission.toolName, permission.input, !!permission.mcp) !== null
         const maxIdx = hasAlwaysOption ? 3 : 2
-        // Inline feedback editing (same key set as the selectRequest
-        // freeform row). Esc exits back to option navigation without
-        // resolving; Enter submits the denial only when non-empty so a
-        // stray keypress can't send a blank explanation.
+        // 内联反馈编辑（与 selectRequest 的 freeform 行同一套键）。Esc 回到选项导航而不
+        // 解析；Enter 仅在非空时提交拒绝，这样一次误按键不会发送空说明。
         if (permissionFeedback) {
           if (key === 'escape') {
             setPermissionFeedback(null)
@@ -949,27 +838,23 @@ export function ChatInput({
           permission.onResolve(picked)
           return
         }
-        // Esc rejects, matching codex-cli's approval overlay (and the
-        // hint footer that advertises it).
+        // Esc 表示拒绝，与 codex-cli 的审批覆盖层一致（以及宣传它的提示脚注）。
         if (key === 'escape') {
           permission.onResolve('no')
           return
         }
         return
       }
-      // Select-options dialog captures navigation + submit keys. When
-      // the highlighted option is `freeform`, editing keys (backspace,
-      // delete, left, right, home, end) also feed its inline text
-      // buffer instead of being swallowed.
+      // Select-options 对话框捕获导航 + 提交键。当高亮选项是 `freeform` 时，编辑键
+      // （backspace、delete、left、right、home、end）也会喂给它的内联文本缓冲，而不是被
+      // 吞掉。
       if (selectRequest && !dialogSlashMode) {
         const len = selectRequest.options.length
         const opt = selectRequest.options[selectIndex]
         const isFreeform = !!opt?.freeform
-        // Esc dismisses user-initiated pickers (slash commands like
-        // /theme, /model) — the user may have just been browsing and
-        // shouldn't be forced to commit. AI-initiated dialogs leave
-        // `dismissible` falsy so Esc is swallowed; otherwise the model
-        // gets a silent empty answer back from its askUser call.
+        // Esc 关闭用户发起的选择器（像 /theme、/model 这样的斜杠命令）—— 用户可能只是在
+        // 浏览，不应被迫提交。AI 发起的对话框让 `dismissible` 为假，这样 Esc 被吞掉；否则
+        // 模型会从它的 askUser 调用拿到一个静默的空答案。
         if (key === 'escape' && selectRequest.dismissible) {
           debugLog('chatinput.select-dismiss', 'esc')
           selectRequest.onResolve('')
@@ -1026,10 +911,8 @@ export function ChatInput({
           if (!picked) return
           if (picked.freeform) {
             const trimmed = freeform.text.trim()
-            // Empty buffer on Enter: ignore so the user isn't bounced
-            // out of the dialog with an empty answer. The visible
-            // cursor + dialog hint already signal that typing is
-            // expected here.
+            // Enter 时缓冲为空：忽略，这样用户不会被一个空答案踢出对话框。可见光标 + 对话
+            // 框提示已经表明这里需要打字。
             if (!trimmed) return
             selectRequest.onResolve(trimmed)
           } else {
@@ -1040,12 +923,9 @@ export function ChatInput({
         return
       }
       if (key === 'return') {
-        // @-completion: Enter picks the highlighted file but DOES NOT
-        // submit — user is mid-prompt and likely wants to keep typing
-        // after the path lands. Falls through to slash/submit when the
-        // menu is empty (the "@xxx with no matches" case sends the
-        // text as-is, so the user can mention a npm package or a
-        // not-yet-existing file without an extra keystroke to dismiss).
+        // @-补全：Enter 选中高亮的文件但【不】提交 —— 用户还在提示词中途，路径落下后多半
+        // 还想继续打字。当菜单为空时落到斜杠/提交（「@xxx 无匹配」的情况原样发送文本，这
+        // 样用户无需额外按键去关闭就能提到一个 npm 包或不存在的文件）。
         if (activeMenu === 'at' && atMatches.length > 0) {
           const picked = atMatches[safeAtIndex]
           if (picked) {
@@ -1055,21 +935,16 @@ export function ChatInput({
             return
           }
         }
-        // Active slash-command completion: Enter picks the highlighted
-        // command directly instead of submitting whatever's in the input
-        // (usually just `/` or a prefix), matching Claude Code's behavior.
-        // Previously the user had to hit Tab first to materialize the
-        // selection, then Enter — redundant. `applyText` carries the full
-        // path so picking a stage-2 subcommand submits `/mcp auth`, not
-        // bare `auth`.
+        // 活跃的斜杠命令补全：Enter 直接选中高亮的命令，而不是提交输入框里的任何内容（通
+        // 常只有 `/` 或一个前缀），与 Claude Code 的行为一致。以前用户得先按 Tab 把选择实
+        // 体化，再按 Enter —— 冗余。`applyText` 携带完整路径，所以选中一个阶段 2 子命令会
+        // 提交 `/mcp auth`，而不是裸的 `auth`。
         if (currentMatch) {
           handleSubmit(currentMatch.applyText)
           return
         }
-        // Backslash continuation: `\` immediately before the cursor + Enter
-        // converts to a literal newline instead of submitting. Universal
-        // fallback for terminals that can't distinguish Ctrl+Enter from
-        // Enter (which is most of them — see use-prompt-input.ts).
+        // 反斜杠续行：光标紧前的 `\` + Enter 转为字面换行而不是提交。这是无法区分
+        // Ctrl+Enter 与 Enter 的终端的通用回退（多数终端都这样 —— 见 use-prompt-input.ts）。
         const cur = cursorRef.current
         if (cur > 0 && text[cur - 1] === '\\') {
           const next = text.slice(0, cur - 1) + '\n' + text.slice(cur)
@@ -1081,10 +956,8 @@ export function ChatInput({
         return
       }
       if (key === 'newline') {
-        // Alt/Option+Enter (or modifyOtherKeys / kitty Ctrl+Enter) — insert
-        // a literal newline at the cursor without submitting. Bypasses the
-        // @-menu and slash-completion intercepts on purpose: the user has
-        // explicitly asked for a line break.
+        // Alt/Option+Enter（或 modifyOtherKeys / kitty 的 Ctrl+Enter）—— 在光标处插入字面
+        // 换行而不提交。有意绕过 @-menu 和斜杠补全的拦截：用户明确要求换行。
         insertAtCursor('\n')
         setCompletionIndex(0)
         return
@@ -1094,21 +967,17 @@ export function ChatInput({
         return
       }
       if (key === 'escape') {
-        // @-menu open: Esc just dismisses the menu for the current
-        // trigger. Once the user types/backspaces the trigger key
-        // changes and the menu reopens automatically, so there's no
-        // explicit "re-arm" path.
+        // @-menu 打开：Esc 只是为当前触发键关闭菜单。一旦用户打字/退格，触发键变化，菜单
+        // 自动重新打开，所以没有显式的「重新武装」路径。
         if (activeMenu === 'at') {
           setAtDismissed(atDismissedKey)
           return
         }
-        // Modal dialogs (permission / selectRequest) gate above and
-        // already swallow Esc. Here we only see Esc that reached the
-        // input. Two distinct gestures:
-        //   - loading: single Esc cancels the in-flight turn.
-        //   - idle:    double-tap Esc clears input + pasted refs (matches
-        //     Claude Code). Single Esc is a no-op so a stray press
-        //     doesn't wipe a draft.
+        // 模态对话框（permission / selectRequest）在上方拦截，已经吞掉 Esc。这里我们只看
+        // 到到达输入的 Esc。两种不同的手势：
+        //   - loading：单击 Esc 取消进行中的回合。
+        //   - idle：双击 Esc 清空输入 + 粘贴引用（与 Claude Code 一致）。单击 Esc 是空操
+        //     作，这样一次误按不会抹掉草稿。
         if (isLoading && onEscapeCancel) {
           onEscapeCancel()
           return
@@ -1181,13 +1050,10 @@ export function ChatInput({
         return
       }
       if (key === 'up') {
-        // Suggestion menu wins over history nav when there's a real selection
-        // to make. The carve-out is the single-match-in-history-nav case: a
-        // restored `/model` entry auto-opens a 1-item slash menu, where
-        // cycling is a no-op — if we let the menu swallow Up the user is
-        // trapped with no way to keep scrolling back. With 2+ matches the
-        // menu's cycling is meaningful, so it wins even mid-history; with
-        // 0/1 matches we fall through to cursor + history nav.
+        // 当有真实选择可做时，建议菜单胜过历史导航。例外是历史导航中单匹配的情况：恢复的
+        // `/model` 条目会自动打开一个单条目的斜杠菜单，在那里循环是空操作 —— 如果我们让菜
+        // 单吞掉 Up，用户就被困住，无法继续往回滚。有 2+ 匹配时菜单的循环才有意义，所以即
+        // 便在历史中途它也胜出；0/1 匹配时我们落到光标 + 历史导航。
         const inHistoryNav = isNavigatingHistory()
         if (activeMenu === 'at' && atMatches.length > 0 && (!inHistoryNav || atMatches.length > 1)) {
           setAtCompletionIndex((p) => (p - 1 + atMatches.length) % atMatches.length)
@@ -1197,13 +1063,11 @@ export function ChatInput({
           setCompletionIndex((p) => (p - 1 + matches.length) % matches.length)
           return
         }
-        // Cursor first; fall through to history nav only when the cursor was
-        // already on the logical first line (so multi-line drafts and recalled
-        // entries can still be edited row-by-row).
+        // 光标优先；仅当光标已经在逻辑第一行时才落到历史导航（这样多行草稿和回忆的条目仍
+        // 能逐行编辑）。
         if (!moveCursorVertically(-1)) {
-          // Mid-turn queue pop wins over history recall on an empty input:
-          // the user most likely wants to edit what they just queued
-          // (LIFO — Codex's Alt+Up equivalent).
+          // 空输入上，回合中途的队列弹出胜过历史回忆：用户多半想编辑刚排队的内容
+          // （LIFO —— 相当于 Codex 的 Alt+Up）。
           const tail = text.length === 0 && queuedMessages?.length ? queuedMessages[queuedMessages.length - 1] : null
           if (tail) {
             dispatch({ type: 'SET_TEXT', text: tail.text, cursor: tail.text.length })
@@ -1238,43 +1102,33 @@ export function ChatInput({
     },
   })
 
-  // ── Frame rendering with cell-level diff ─────────────────────────────
+  // ── 带单元格级 diff 的帧渲染 ─────────────────────────────
 
   useEffect(() => {
     if (hidden) {
-      // KEEP prevFrameRef intact. Ink has written the dialog on top of
-      // our frame's bottom row (its onRender runs before useEffect) and
-      // moved the cursor beyond it — we can't safely erase anything NOW
-      // without corrupting the dialog. But when the dialog resolves,
-      // Ink's log.clear sends the cursor back to the row where the
-      // dialog started (= our frame's bottom row), and at THAT point we
-      // treat the next render as a fresh first-paint.
+      // 保持 prevFrameRef 原样。Ink 已经把对话框写在我们的帧底行之上（它的 onRender 在
+      // useEffect 之前运行），并把光标移到它之外 —— 我们现在无法在不破坏对话框的情况下安
+      // 全擦除任何东西。但当对话框解析时，Ink 的 log.clear 会把光标送回对话框开始的那一行
+      // （= 我们帧的底行），到那时我们把下一次渲染当作全新的首次绘制。
       wasHiddenRef.current = true
       return
     }
 
-    // Accumulate ALL writes for this render into a single string, flushed
-    // via one process.stdout.write at the bottom. Rationale: DEC 2026
-    // Synchronized Update Mode (BSU/ESU) only buffers inter-write state on
-    // terminals that support it — VS Code terminal and others paint every
-    // separate write() immediately. Coalescing into one write keeps each
-    // render a single atomic paint regardless of terminal support.
+    // 把本次渲染的所有写入累积成单个字符串，在底部经一次 process.stdout.write flush。理由：
+    // DEC 2026 Synchronized Update Mode（BSU/ESU）只在支持它的终端上缓冲写入之间的状态 ——
+    // VS Code 终端和其他终端会立即绘制每一次独立的 write()。合并成一次写入，让每次渲染无
+    // 论终端支持与否都是单次原子绘制。
     let preBuf = BSU
 
     if (wasHiddenRef.current) {
-      // Transitioning out of a dialog. We used to RESTORE_CURSOR (\x1b8)
-      // back to a position we'd previously DECSC'd — but that single
-      // terminal-level save register is ALSO used internally by Ink's
-      // own log-update cycle for its own cursor bookkeeping. Two
-      // writers, one register: every Ink render that cycled through its
-      // save/restore clobbered ours, so the restore here could land at
-      // Ink's saved position rather than our frame's bottom row.
+      // 正从对话框过渡出来。我们过去用 RESTORE_CURSOR (\x1b8) 回到之前 DECSC 保存的位置
+      // —— 但那个终端级单槽保存寄存器也被 Ink 自己的 log-update 循环内部用于它的光标簿
+      // 记。两个写入者，一个寄存器：每次 Ink 渲染经过它的保存/恢复都会覆盖我们的，所以这
+      // 里的恢复可能落到 Ink 保存的位置，而不是我们帧的底行。
       //
-      // Instead of fighting for the register, treat the post-dialog
-      // frame as a fresh first-paint: drop prevFrameRef (so the diff
-      // loop does full-row writes with \x1b[K, no stale assumptions)
-      // and the absolute-positioning below puts the frame back at the
-      // terminal's bottom rows regardless of where Ink parked the cursor.
+      // 与其争抢寄存器，不如把对话框之后的帧当作全新的首次绘制：丢掉 prevFrameRef（这样
+      // diff 循环用 \x1b[K 做整行写入，没有过期假设），下方的绝对定位把帧放回终端底部行，
+      // 不管 Ink 把光标停在哪里。
       wasHiddenRef.current = false
       prevFrameRef.current = []
       lastFrameHRef.current = 0
@@ -1284,26 +1138,20 @@ export function ChatInput({
       activeRef.current = false
     }
 
-    // ── Commit new scrollback messages ───────────────────────────────────
+    // ── 提交新的滚动区消息 ───────────────────────────────────
     //
-    // COLLECT-ONLY here. The actual write happens AFTER the frame cells
-    // have been built, so we can emit `content + frame` as one continuous
-    // stream that triggers the terminal's natural full-screen scroll at
-    // its bottom edge — the only mechanism xterm.js / VSCode honor for
-    // pushing rows into real scrollback (DECSTBM-restricted region scrolls
-    // are splice-discarded in xterm.js's InputHandler, confirmed in source).
+    // 这里只收集。真正的写入发生在帧单元格构建之后，这样我们能以一条连续流发出
+    // `content + frame`，触发终端在其底边自然的全屏滚动 —— 这是 xterm.js / VSCode 唯一
+    // 认可的把行推进真实滚动区的机制（DECSTBM 限定的区域滚动在 xterm.js 的 InputHandler
+    // 里被拼接丢弃，已在源码确认）。
     //
-    // /clear shrinks the message list back to empty. Push the current
-    // viewport into real terminal scrollback before repainting an empty
-    // viewport. CSI 3J must not be used here: unlike a shell `clear`, it
-    // destroys history that the user expects to reach by scrolling up.
+    // /clear 把消息列表缩回空。在重绘空视口之前把当前视口推进真实终端滚动区。这里不能
+    // 用 CSI 3J：与 shell `clear` 不同，它会破坏用户期望向上滚动能到达的历史。
     //
-    // `didClearScreen` forces the immediate-flush path below: the erase +
-    // scroll bytes built here are ONE-SHOT (the branch re-runs only when
-    // messages shrink again), so the cancellable deferred/throttle paths
-    // must never carry them — a superseded clear payload loses the bytes
-    // forever while justClearedRef still anchors the new frame at row 1,
-    // leaving the old conversation visible below it.
+    // `didClearScreen` 强制走下方的立即 flush 路径：这里构建的擦除 + 滚动字节是一次性的
+    // （该分支只在消息再次收缩时才重新运行），所以可取消的 deferred/throttle 路径绝不能携
+    // 带它们 —— 一个被取代的 clear 负载会永远丢失这些字节，而 justClearedRef 仍把新帧锚
+    // 定在第 1 行，让旧对话在其下方仍然可见。
     let didClearScreen = false
     if (messages.length < writtenMessageCountRef.current) {
       didClearScreen = true
@@ -1313,44 +1161,34 @@ export function ChatInput({
       const oldFrameTop = Math.max(1, lastFrameTopRef.current || clearRows - lastFrameHRef.current + 1)
       for (let row = oldFrameTop; row <= clearRows; row++) preBuf += `\x1b[${row};1H\x1b[K`
       preBuf += `\x1b[${clearRows};1H${'\n'.repeat(clearRows)}\x1b[H`
-      // A retained /clear echo is NOT written into the old viewport here.
-      // Leaving writtenMessageCountRef at 0 lets the normal message loop +
-      // commit path below render it as the first content of the fresh
-      // viewport — the same padded card every other command echo gets.
-      // (Writing it at the old viewport's bottom pushed it into scrollback,
-      // hiding it entirely and dropping its bg padding rows on terminals
-      // that trim bg-only rows when they enter history.)
+      // 保留的 /clear 回显在这里【不】写入旧视口。让 writtenMessageCountRef 保持 0，下方
+      // 正常的消息循环 + 提交路径会把它作为全新视口的第一条内容渲染 —— 与其他命令回显得
+      // 到同样的带 padding 卡片。（把它写在旧视口底部会推进滚动区，完全隐藏它，并在那些
+      // 进入历史时裁掉纯背景行的终端上丢掉它的背景 padding 行。）
       writtenMessageCountRef.current = retainedClearEcho ? 0 : messages.length
       prevFrameRef.current = []
       lastFrameHRef.current = 0
       lastFrameTopRef.current = 0
       freeBlanksAboveFrameRef.current = 0
       blankRowsAboveFrameRef.current = 0
-      // The clear wipes the scrollback we were about to write to. Any
-      // pending bytes from a prior cancelled throttle are now stale —
-      // they belong to messages that no longer exist (post-/clear,
-      // messages.length is 0).
+      // clear 抹掉了我们正要写入的滚动区。之前被取消的节流留下的任何待处理字节现在都过期
+      // 了 —— 它们属于已不存在的消息（/clear 之后，messages.length 是 0）。
       pendingScrollbackRef.current = ''
       activeRef.current = false
       justClearedRef.current = true
-      // Drops scrollback-spacing flags + buffered read-group entries
-      // (those summaries pointed at messages we just wiped — flushing
-      // them later would leave a phantom row above the empty history).
+      // 丢弃滚动区间距标志 + 缓冲的 read-group 条目（那些摘要指向我们刚抹掉的消息 —— 稍
+      // 后再 flush 它们会在空历史上方留下幽灵行）。
       resetScrollbackSpacing()
     }
     const termRows = stdout?.rows ?? 25
-    // `hasNewMessages` — we walked new entries this render (advanced
-    // `writtenMessageCountRef`). True even if every message got buffered
-    // by the read-group collapser and produced zero scrollback bytes.
-    // Used by the message-write loop and the permission-slot bookkeeping.
+    // `hasNewMessages` —— 本次渲染遍历了新条目（推进了 `writtenMessageCountRef`）。即使每
+    // 条消息都被 read-group 折叠器缓冲、产生了零滚动区字节，它也为 true。被消息写入循环
+    // 和权限槽簿记使用。
     //
-    // `didCommitMessages` — actual scrollback bytes were produced. ONLY
-    // this gates the geometry/scroll branches below: `countContentRows`
-    // returns 1 for an empty string (a single empty line), so treating
-    // a buffered-only render as if it scrolled 1 row drifted the frame
-    // down on every consecutive Read/Glob/Grep tool, accumulating real
-    // blank rows in terminal scrollback (the "lots of blank lines"
-    // symptom on multi-read chains).
+    // `didCommitMessages` —— 确实产生了滚动区字节。只有它才门控下方的几何/滚动分支：
+    // `countContentRows` 对空字符串返回 1（一条空行），所以把一个仅缓冲的渲染当作滚动 1
+    // 行会在每个连续的 Read/Glob/Grep 工具上把帧向下漂移，在终端滚动区累积真实的空行
+    // （多 read 链上的「大量空行」症状）。
     const hasNewMessages = messages.length > writtenMessageCountRef.current
     const collectWrite: (data: string) => void = (data) => {
       pendingScrollbackRef.current += data
@@ -1361,57 +1199,42 @@ export function ChatInput({
       }
       writtenMessageCountRef.current = messages.length
     }
-    // End-of-turn safety net: writeMessageToStdout buffers consecutive
-    // read-only tool messages (Read / Glob / Grep / ListDir) and flushes
-    // them inline when the next non-collapsible message arrives. If a
-    // chain ends without that closing message — user pressed Esc mid-chain,
-    // the model returned `finishReason='stop'` with no text, etc. — the
-    // buffer would otherwise sit until the user submits again. Flushing
-    // when isLoading drops to false commits the trailing summary so it
-    // lands on this same render's atomic write.
+    // 回合结束安全网：writeMessageToStdout 缓冲连续的只读工具消息（Read / Glob / Grep /
+    // ListDir），并在下一条不可折叠消息到达时内联 flush 它们。如果链条结束却没有那条收尾
+    // 消息 —— 用户在链条中途按了 Esc、模型返回 `finishReason='stop'` 却没有文本，等等 ——
+    // 缓冲本会一直坐着直到用户再次提交。在 isLoading 降到 false 时 flush，把尾部摘要提交
+    // 到同一次渲染的原子写入里。
     if (!isLoading) {
       flushPendingReadGroup(collectWrite)
     }
-    // Snapshot the cross-render ref into a local. The geometry path reads
-    // `scrollbackContent` multiple times and the snapshot keeps a single
-    // render's view consistent. The bytes stay in the ref until doFlush
-    // confirms they made it to stdout — see pendingScrollbackRef's docs.
+    // 把跨渲染的 ref 快照进一个局部变量。几何路径多次读取 `scrollbackContent`，快照让一次
+    // 渲染的视图保持一致。字节保留在 ref 里，直到 doFlush 确认它们到达 stdout —— 见
+    // pendingScrollbackRef 的文档。
     const scrollbackContent = pendingScrollbackRef.current
     const didCommitMessages = scrollbackContent.length > 0
 
-    // Capture "is this the first active paint?" BEFORE we flip activeRef.
-    // The freeBlanks-seeding check below needs to know this, but the old
-    // `!activeRef.current` guard down at the seeding site was always false
-    // by the time it ran (we set activeRef=true just below), so the banner's
-    // above-frame blank-row credit never got seeded — and the first commit
-    // would pre-scroll through the banner rows instead of consuming the
-    // unowned blanks between banner and frame. Symptom: starting with an
-    // initial prompt (`xc "hi"`) clipped the top half of the logo.
+    // 在翻转 activeRef 之前捕获「这是首次活跃绘制吗？」。下方播种 freeBlanks 的检查需要知
+    // 道这一点，但播种处旧的 `!activeRef.current` 守卫在运行时总是 false（我们就在下方设
+    // 置 activeRef=true），所以 banner 在帧上方的空行额度从未被播种 —— 第一次提交会预滚动
+    // 穿过 banner 行，而不是消耗 banner 与帧之间不属于任何人的空白。症状：以初始提示启动
+    // （`xc "hi"`）会裁掉 logo 的上半部分。
     const isFirstPaint = !activeRef.current
     activeRef.current = true
 
-    // Keep the permission-slot reservation alive only until the first commit
-    // after the permission closed (that commit carries the approved tool's
-    // result and overwrites the reserved rows). A fresh permission also
-    // clears the reservation — the new dialog owns the slot directly.
+    // 权限槽保留只在权限关闭后的第一次提交之前保持活跃（那次提交携带批准工具的结果并覆
+    // 盖保留的行）。新的权限也会清除保留 —— 新对话框直接拥有该槽。
     //
-    // Only reserve when one to three tools are pending. The boxed
-    // permission dialog is 11 rows (top rule + title + blank + content +
-    // blank + Yes + Always + No + feedback + blank + hint + bottom rule)
-    // + 3 input = 14; one running tool takes 2 rows so it needs 9 blanks
-    // to hold that height, two tools take 4 rows and need 7, three take
-    // 6 and need 5. Four or more tools make the frame LARGER than the
-    // dialog, which is a grow (handled correctly by the existing
-    // freeBlanks/preScroll path); zero tools means the approved tool was
-    // denied or hasn't produced an onToolCall yet — reserving blank rows
-    // there would just shift the gap around rather than eliminate it.
+    // 只在有 1 到 3 个工具待处理时保留。带框的权限对话框是 11 行（顶边 + 标题 + 空行 + 内
+    // 容 +
+    // 空行 + Yes + Always + No + feedback + 空行 + 提示 + 底边）
+    // + 3 行输入 = 14；一个运行中的工具占 2 行，所以需要 9 个空行来维持那个高度，两个工
+    // 具占 4 行需要 7，三个占 6 行需要 5。四个或更多工具让帧比对话框【更大】，那是一次
+    // grow（由现有的 freeBlanks/preScroll 路径正确处理）；零个工具意味着批准的工具被拒绝
+    // 或还没产生 onToolCall —— 在那里保留空行只是把空隙挪来挪去，而不是消除它。
     //
-    // The 11-row figure is the COMMON case: suggestRuleLabel only
-    // returns null for enterPlanMode (which runs no tools on approval),
-    // so the Always row is effectively always present. Rare 9-row
-    // dialogs (unknown tool with no content row) over-reserve by two —
-    // transient blank rows, cheaper than the stale residue an
-    // under-reserved shrink leaves behind.
+    // 11 行的数字是【常见】情况：suggestRuleLabel 只为 enterPlanMode 返回 null（批准时不
+    // 运行任何工具），所以 Always 行实际上总是存在。罕见的 9 行对话框（未知工具且无内容
+    // 行）会多保留两行 —— 短暂的空行，比保留不足的收缩留下的过期残留更便宜。
     const hadPermissionLastRender = prevHadPermissionRef.current
     const runningToolCount = activeToolCalls?.length ?? 0
     if (hasNewMessages || permission) {
@@ -1422,20 +1245,17 @@ export function ChatInput({
     prevHadPermissionRef.current = !!permission
 
     const vpWidth = inputViewportWidth(termWidth)
-    // Rounded prompt box (Crush-style): `╭╮╰╯` corners, `─` top/bottom
-    // rules, `│` side rails. All box-drawing chars sit in the CP437-safe
-    // U+2500–U+257F range, so legacy ConHost needs no glyph fallback.
+    // 圆角提示框（Crush 风格）：`╭╮╰╯` 四角，`─` 顶/底边，`│` 侧边。所有制表字符都落在
+    // CP437 安全的 U+2500–U+257F 范围内，所以旧式 ConHost 无需字形回退。
     const boxWidth = Math.max(2, termWidth - 1)
     const boxRule = '─'.repeat(Math.max(0, boxWidth - 2))
-    // Keep the frame neutral so persistent permission modes do not turn the
-    // whole composer into a warning banner. The footer label carries the mode.
+    // 让帧保持中性，这样持久的权限模式不会把整个 composer 变成警告横幅。模式由脚注标签
+    // 承载。
     const frameStyle = S_BORDER
 
-    // Wraps content cells in a full-width `│ … │` row: clips overflow,
-    // then pads with trailing spaces so the right rail lands on the box's
-    // last column. Rows this wide are safe mid-frame — only the frame's
-    // LAST row must stay narrow (xterm.js auto-wrap ghost-line issue,
-    // documented at the footer below).
+    // 把内容单元格包成一条全宽 `│ … │` 行：裁剪溢出，再用尾随空格填充，让右边落在框的最
+    // 后一列。这么宽的行在帧中部是安全的 —— 只有帧的【最后】一行必须保持窄（xterm.js 的
+    // 自动折行幽灵行问题，见下方脚注文档）。
     const boxContentWidth = Math.max(10, boxWidth - BOX_INNER_PAD)
     const boxedRow = (cells: Cell[], borderStyle: string): Cell[] => {
       const clipped = truncateCellRow(cells, boxContentWidth)
@@ -1451,14 +1271,11 @@ export function ChatInput({
       return row
     }
 
-    // ── Input display lines (with soft-wrap + viewport windowing) ──
-    // Raw lines are split by explicit `\n` only. Each raw line is then
-    // soft-wrapped at vpWidth columns into one or more visual lines, so
-    // the input doesn't run off the right edge of the terminal. The
-    // cursor's character offset is mapped into the matching (visualLine,
-    // visualCol) pair for the render/diff paths below. Both computations
-    // share their implementation with Up/Down cursor movement — see the
-    // module-level soft-wrap geometry helpers.
+    // ── 输入显示行（带软折行 + 视口窗口）──
+    // 原始行只按显式 `\n` 分割。每条原始行随后在 vpWidth 列处软折成一行或多行视觉行，这
+    // 样输入不会跑出终端右边缘。光标的字符偏移被映射到匹配的 (visualLine, visualCol)
+    // 对，供下方的渲染/diff 路径使用。两个计算与上/下光标移动共享实现 —— 见模块级软折行
+    // 几何辅助函数。
     const rawLines = text.length === 0 ? [''] : text.split('\n')
     const visualLines = buildVisualLines(rawLines, vpWidth)
     const { line: visCursorLine, col: visCursorCol } = locateVisualCursor(visualLines, rawLines, cursor)
@@ -1483,22 +1300,19 @@ export function ChatInput({
         if (cursorLine === displayLines.length - 1) cursorLine = -1
       }
     }
-    // `cursorCol` below refers to the visual column within the display
-    // line — preserve the existing name so the input-rendering block
-    // (cursor placement, long-line truncation) doesn't need changes.
+    // 下方的 `cursorCol` 指显示行内的视觉列 —— 保留现有名字，这样输入渲染块（光标放置、
+    // 长行截断）无需改动。
     const cursorCol = visCursorCol
 
-    // ── Build 2D cell frame ──
+    // ── 构建 2D 单元格帧 ──
     const frame: Cell[][] = []
 
-    // Frame-relative row of the input box's first display line, captured
-    // while pushing input rows below. Fallback park target for the hidden
-    // hardware cursor when no S_CURSOR caret cell exists in the frame
-    // (caret scrolled out of the visible window). See the cursor-park
-    // block further down for why the park position matters to IMEs.
+    // 输入框第一条显示行在帧内的行号，在下方推入输入行时捕获。当帧里没有 S_CURSOR 光标
+    // 单元格（光标滚出可见窗口）时，作为隐藏硬件光标的回退停靠目标。为什么停靠位置对
+    // IME 重要，见下方 cursor-park 块。
     let inputFirstLineRow = -1
 
-    // Error line (if any)
+    // 错误行（如有）
     if (errorMessage) {
       const cells: Cell[] = []
       cells.push({ char: ' ', style: S_NONE, width: 1 })
@@ -1506,24 +1320,21 @@ export function ChatInput({
       frame.push(cells)
     }
 
-    // (Streaming assistant text does NOT live here. Each complete line
-    // emitted by useStreamBuffer is committed as a `streamingChunk`
-    // message and written straight to scrollback above this cell buffer
-    // — see writeMessageToStdout. That keeps our frame's row count
-    // stable as output grows: spinner / separators / input never shift
-    // position, so there's no row-shift jitter.)
+    // （流式助手文本不在这里。useStreamBuffer 发出的每条完整行都作为 `streamingChunk` 消息
+    // 提交，直接写到这个单元格缓冲上方的滚动区 —— 见 writeMessageToStdout。这样随着输出
+    // 增长，我们帧的行数保持稳定：spinner / 分隔线 / 输入位置永不移位，所以没有行位移抖
+    // 动。）
 
-    // Spinner / tool-status line. Pinned just above the input box
-    // (below any permission dialog) so it always sits at the very bottom
-    // of the dynamic area — matches Claude Code's layout.
+    // Spinner / 工具状态行。钉在输入框正上方（任何权限对话框下方），让它总是位于动态区域
+    // 最底部 —— 与 Claude Code 的布局一致。
     //
-    // When tools are running we replace the generic "Working..." line with
-    // a live tool-status block, one 2-row group per in-flight tool call:
+    // 当工具运行时，我们把通用的 "Working..." 行替换成实时的工具状态块，每个在途工具调用
+    // 一个 2 行组：
     //    ● ToolName(preview)
-    //    ⎿ ⠋ progressText          (← replaced by onToolProgress stream)
-    // Mirrors Claude Code's AssistantToolUseMessage + renderToolUseProgress
-    // flow. Elapsed/token meta moves onto the LAST progress line so the
-    // block stays compact (no separate Working row competing for space).
+    //    ⎿ ⠋ progressText          （← 由 onToolProgress 流替换）
+    // 这模仿 Claude Code 的 AssistantToolUseMessage + renderToolUseProgress 流程。耗时/
+    // token 元信息移到【最后】一条进度行上，这样块保持紧凑（没有单独的 Working 行争抢空
+    // 间）。
     if (spinner && shellWaitStreak?.waiting) {
       const glyph = SPINNER_FRAMES[spinnerFrame]
       const elapsedMs = Math.max(0, Date.now() - shellWaitStreak.startedAt)
@@ -1540,78 +1351,53 @@ export function ChatInput({
 
     if (spinner && !shellWaitStreak?.waiting) {
       const glyph = SPINNER_FRAMES[spinnerFrame]
-      // Derive elapsed time at render time so we don't need a setState in
-      // the spinner effect. The setSpinnerFrame tick is what drives the
-      // ~80ms re-render that recomputes this value.
+      // 在渲染时推导耗时，这样我们无需在 spinner effect 里 setState。驱动重算该值的 ~80ms
+      // 重渲染由 setSpinnerFrame tick 驱动。
       const elapsedMs = loadingStartRef.current === 0 ? 0 : Date.now() - loadingStartRef.current
       const parts: string[] = []
       if (elapsedMs >= 2000) parts.push(formatElapsed(elapsedMs))
-      // Token count is no longer shown next to the spinner — it now lives
-      // in the footer below the input box (see contextUsage rendering)
-      // because cumulative session counts double-count cache-served history
-      // and "context size" snapshots only feel useful with a denominator.
-      // Only show the cancel hint when we're actually able to honor an Esc
-      // press (no modal open — the parent suppresses the spinner in that
-      // case anyway, but be defensive).
+      // 令牌计数不再显示在 spinner 旁边 —— 它现在住在输入框下方的脚注里（见 contextUsage
+      // 渲染），因为累计会话计数会把缓存服务的历史重复计算，而「上下文大小」快照只有在有
+      // 分母时才显得有用。只有当我们确实能响应 Esc 按键（没有模态打开 —— 父组件在那时本
+      // 来也会抑制 spinner，但以防万一）才显示取消提示。
       parts.push('esc to interrupt')
       const meta = parts.length > 0 ? ` (${parts.join(' · ')})` : ''
 
-      // Top margin ONLY when the permission dialog sits immediately above
-      // the spinner (they'd otherwise touch without breathing room).
-      // When Working sits directly below scrollback content, the last
-      // message already ends with `\n\n` → one blank row is ALREADY
-      // there, and adding another would make the gap look too large.
+      // 只有当权限对话框紧贴 spinner 上方时才加顶边距（否则它们会没有呼吸空间地贴在一起）。
+      // 当 Working 直接位于滚动区内容下方时，最后一条消息已经以 `\n\n` 结尾 → 已经有一条
+      // 空行，再加一条会让空隙显得太大。
       if (permission) frame.push([])
 
-      // Collapsible read-only tools (Read/Glob/Grep/ListDir) don't get a
-      // live `● Read(file) / ⎿ Running…` indicator row — their results are
-      // buffered into a single summary line that flushes at chain end, and
-      // showing per-tool live indicators while buffering causes a visible
-      // "appears then vanishes" flash on every fast read: the tool-call
-      // render commits a 7-row frame with the live indicator, the result
-      // arrives 1-5ms later, the post-result commit gets throttled 50ms,
-      // and during that window the user sees the indicator land — then the
-      // throttle releases, the frame shrinks back to 5 rows, and because
-      // the read message was buffered (no scrollback row to take its
-      // place) the indicator simply disappears. CC's batched-read flow
-      // does the same: spinner during the chain, summary after. Slow reads
-      // lose per-file visibility this way, but they're the rare case in
-      // chains and the chain-end summary lists every file by basename.
+      // 可折叠只读工具（Read/Glob/Grep/ListDir）没有实时的
+      // `● Read(file) / ⎿ Running…` 指示行 —— 它们的结果被缓冲成一条摘要行，在链条结束
+      // 时 flush；而在缓冲期间显示逐工具实时指示会在每次快速 read 上产生可见的「出现然后
+      // 消失」闪烁：工具调用渲染提交一个带实时指示的 7 行帧，结果 1-5ms 后到达，结果后的
+      // 提交被节流 50ms，在那段窗口里用户看到指示落下 —— 然后节流释放，帧缩回 5 行，而且
+      // 因为 read 消息被缓冲了（没有滚动区行来接替它），指示就消失了。CC 的批量 read 流程
+      // 也是这样：链条期间 spinner，之后摘要。慢速 read 因此失去逐文件可见性，但它们在链
+      // 条里是罕见情况，链条结束摘要会按 basename 列出每个文件。
       const tools = (activeToolCalls ?? []).filter((tc) => !isCollapsibleReadOnlyTool(tc.toolName))
       if (tools.length > 0) {
-        // IMPORTANT: the live tool bubble MUST use the same colour/weight
-        // scheme as `stdout-writer.formatToolCall` emits for committed
-        // scrollback — otherwise when the tool finishes and its line
-        // switches from live-area to scrollback, the user sees a visible
-        // colour flash (orange → default for label, orange → green for
-        // bullet, etc.). Claude Code avoids this by rendering in-flight
-        // and resolved through the SAME React component; we have two
-        // rendering paths (ink-like cells here vs chalk stdout there)
-        // so we align the styles by hand.
+        // 重要：实时工具气泡必须使用与 `stdout-writer.formatToolCall` 为已提交滚动区发出相
+        // 同的颜色/字重方案 —— 否则当工具结束、它的行从实时区切换到滚动区时，用户会看到可
+        // 见的颜色闪烁（标签 orange → default，圆点 orange → green，等等）。Claude Code 通
+        // 过用同一个 React 组件渲染在途和已解析状态来避免这一点；我们有两条渲染路径（这里
+        // 是 ink 风格的单元格，那里是 chalk stdout），所以手动对齐样式。
         //
-        // Same reasoning applies to the leading-blank row above the tool
-        // block: `stdout-writer.formatToolCall`'s commit path prepends a
-        // `\n` whenever the previous write didn't already end blank, so
-        // the committed tool sits one row below the preceding text. The
-        // live frame must mirror that decision RIGHT NOW — otherwise the
-        // user sees the blank row "appear" the instant the tool commits
-        // (live frame replaced by scrollback), which reads as a one-row
-        // downward jolt of every row below. Permission's own top-margin
-        // case is already handled above; this branch covers tool-only
-        // and tool+permission stacks.
+        // 同样的推理适用于工具块上方的空行：`stdout-writer.formatToolCall` 的提交路径在上
+        // 一次写入没有以空行结尾时前置一个 `\n`，这样已提交的工具位于其前面文本下方一行。
+        // 实时帧必须现在就镜像那个决定 —— 否则工具提交的瞬间（实时帧被滚动区替换）用户会
+        // 看到空行「出现」，读作下方每一行向下猛跳一行。Permission 自己的顶边距情况已在上
+        // 面处理；这个分支覆盖纯工具和工具+权限的堆叠。
         if (!permission && !lastWriteEndedWithBlankRow()) frame.push([])
         //
-        // Layout mirrors committed:
+        // 布局镜像已提交的形式：
         //    ` ● ToolName(preview)`
-        //      ⎿  ⠋ progress text               ← only live, vanishes at commit
+        //      ⎿  ⠋ progress text               ← 仅实时存在，提交时消失
         tools.forEach((tc, idx) => {
-          // Separator between adjacent live tools. The committed-tool
-          // path emits `\n\n` after each tool, so consecutive committed
-          // tools always have one blank row between them. Without the
-          // same blank in the live frame, parallel tool calls render
-          // glued together until one finishes and commits — at which
-          // point the spacing "pops in" (the user's "stuck then
-          // separate" jolt).
+          // 相邻实时工具之间的分隔。已提交工具路径在每个工具之后发出 `\n\n`，所以连续已提
+          // 交工具之间总是有一条空行。没有实时帧里同样的空行，并行工具调用会粘在一起渲染，
+          // 直到其中一个结束并提交 —— 那时间距「弹出」（用户感知的「先黏住再分开」的猛跳）。
           if (idx > 0) frame.push([])
 
           const label = authorityVisibleText(getToolLabel(tc.toolName))
@@ -1619,34 +1405,27 @@ export function ChatInput({
 
           const row1: Cell[] = []
           row1.push({ char: ' ', style: S_NONE, width: 1 })
-          // Pulse the bullet bright↔dim while the tool runs. Period of
-          // 6 frames per phase (= ~480ms at 80ms per spinner tick) reads
-          // as a heartbeat without being distracting. When the tool
-          // finishes and the row commits to scrollback,
-          // `stdout-writer.formatToolCall` paints a steady non-pulsing
-          // bullet — same hue, no dim — so the transition is just "stop
-          // pulsing", not a color change.
+          // 工具运行时让圆点亮↔暗地脉冲。每相位 6 帧（按每个 spinner tick 80ms 算约
+          // 480ms）读作心跳而不分心。当工具结束、该行提交到滚动区时，
+          // `stdout-writer.formatToolCall` 画一个稳定不脉冲的圆点 —— 相同色相，无 dim ——
+          // 所以过渡只是「停止脉冲」，而不是颜色变化。
           const dotStyle = spinnerFrame % 6 < 3 ? S_SUCCESS_DOT : S_SUCCESS_DOT_DIM
           row1.push(...textToCells(GLYPH_TOOL_BULLET, dotStyle))
           row1.push({ char: ' ', style: S_NONE, width: 1 })
           row1.push(...textToCells(label, S_BOLD))
           if (preview) {
-            // Mirror stdout-writer.formatToolCall's truncation budget so
-            // the live row and the committed scrollback row truncate at
-            // the same point — otherwise the visible text shifts at the
-            // moment the tool finishes (e.g. live shows "...rg)" but
-            // committed shows "...rgs.command)"). Reserve label.length+5
-            // for ` ● <label>(` and `)`, plus a safety margin.
+            // 镜像 stdout-writer.formatToolCall 的截断预算，让实时行和已提交滚动区行在同一
+            // 点截断 —— 否则工具结束的瞬间可见文本会移动（例如实时显示 "...rg)" 但已提交显
+            // 示 "...rgs.command)"）。为 ` ● <label>(` 和 `)` 保留 label.length+5，再加一个
+            // 安全边距。
             const decoration = label.length + 5
             const safetyMargin = 4
             const maxPreviewLen = Math.max(40, termWidth - decoration - safetyMargin)
             const trimmed =
               preview.length > maxPreviewLen ? preview.slice(0, maxPreviewLen - 1) + GLYPH_ELLIPSIS : preview
-            // Shell commands get codex-style syntax highlighting —
-            // mirrors the committed scrollback row in
-            // `stdout-writer.formatToolCall`, which must match this
-            // live row's coloring exactly (see the note above about
-            // the live→commit color-flash).
+            // Shell 命令获得 codex 风格的语法高亮 —— 镜像 `stdout-writer.formatToolCall`
+            // 里已提交的滚动区行，它必须与这个实时行的着色完全一致（见上方关于
+            // live→commit 颜色闪烁的说明）。
             if (isShellToolName(tc.toolName)) {
               row1.push(...textToCells('(', S_PRIMARY))
               row1.push(...ansiTextToCells(highlightShellCommand(trimmed)))
@@ -1657,9 +1436,8 @@ export function ChatInput({
           }
           frame.push(row1)
 
-          // Sub-tool history: for task (sub-agent) tools, show the last
-          // few tool calls as stacked `⎿` rows (like CC). Other tools
-          // keep a single progress row.
+          // 子工具历史：对 task（子代理）工具，把最后几个工具调用显示为堆叠的 `⎿` 行（像
+          // CC）。其他工具保持单条进度行。
           const history = tc.subToolHistory
           const isTask = tc.toolName.toLowerCase().replace(/[_-]/g, '') === 'task'
           if (isTask && history && history.length > 1) {
@@ -1703,28 +1481,21 @@ export function ChatInput({
           }
         })
       } else {
-        // Build the whole prefix (` ${glyph} ${label}...`) under ONE style
-        // (S_SPINNER) instead of alternating S_NONE / S_SPINNER per cell.
-        // Why: each cell with a different style emits an SGR escape in the
-        // diff loop, and on terminals that don't perfectly atomize DEC
-        // 2026 sync-update those escapes arrive with visible spacing —
-        // the user perceives the "Working" label flashing default-color
-        // → blue → default → blue as the spaces in between trigger
-        // resets. Keeping one continuous SGR run for the whole prefix
-        // makes the row paint as one solid blue stripe.
+        // 用单一风格（S_SPINNER）构建整个前缀（` ${glyph} ${label}...`），而不是逐单元格交替
+        // S_NONE / S_SPINNER。原因：diff 循环里每个不同风格的单元格都会发出一个 SGR 转义，
+        // 在不能完美原子化 DEC 2026 sync-update 的终端上，这些转义到达时带可见间距 —— 用
+        // 户会感知到 "Working" 标签在 default-color → blue → default → blue 之间闪烁，因为
+        // 中间的空格触发了重置。让整个前缀保持一段连续的 SGR run，使该行画成一条纯蓝条纹。
         const cells: Cell[] = textToCells(` ${glyph} ${spinner.label}...`, S_SPINNER)
         if (meta) cells.push(...textToCells(meta, S_DIM))
         frame.push(cells)
       }
     }
 
-    // Queued mid-turn user messages: dim one-line previews pinned between
-    // the spinner and the input box — the closest visual anchor to where
-    // the user just typed. One blank row above separates the block from
-    // the spinner; below it hugs the input separator directly (two-sided
-    // margins read as excessive padding here). The rows vanish the moment
-    // the loop injects them — they reappear in scrollback as regular user
-    // messages via consumeQueuedInputs.
+    // 排队中的回合中途用户消息：暗淡的单行预览钉在 spinner 和输入框之间 —— 最靠近用户刚
+    // 打字位置的视觉锚点。上方一条空行把块与 spinner 分开；下方直接贴着输入分隔线（双侧边
+    // 距在这里读作过度 padding）。这些行在循环注入它们的瞬间消失 —— 它们经
+    // consumeQueuedInputs 作为普通用户消息重新出现在滚动区。
     if (queuedMessages && queuedMessages.length > 0) {
       frame.push([])
       for (const q of queuedMessages) {
@@ -1737,16 +1508,13 @@ export function ChatInput({
       }
     }
 
-    // Permission dialog — rendered ABOVE the input box (between spinner
-    // and the input's top separator) so the input stays pinned at the
-    // bottom of the screen regardless of dialog state.
+    // 权限对话框 —— 渲染在输入框【上方】（spinner 与输入顶分隔线之间），这样无论对话框状
+    // 态如何，输入都保持钉在屏幕底部。
     if (permission) {
-      // Boxed dialog (same `╭╮│╰╯` language as the prompt box) in
-      // neutral white, matching the title and option text — the modal
-      // moment should read as a container, not as more scrolling text.
-      // Layout follows codex-cli's approval overlay: bold question title,
-      // blank, content, blank, numbered options with dim shortcut suffixes,
-      // blank, dim key-hint footer. Selected row uses the accent color.
+      // 带框对话框（与提示框相同的 `╭╮│╰╯` 语言）用中性白，匹配标题和选项文本 —— 模态时
+      // 刻应该读作一个容器，而不是更多滚动文本。布局遵循 codex-cli 的审批覆盖层：粗体问题
+      // 标题、空行、内容、空行、带暗淡快捷键后缀的编号选项、空行、暗淡按键提示脚注。选中
+      // 行使用强调色。
       frame.push(textToCells(`╭${boxRule}╮`, S_TEXT_STRONG))
       const titleText = permissionTitle(permission.toolName, permission.mcp)
       const titleCells: Cell[] = []
@@ -1763,10 +1531,9 @@ export function ChatInput({
       frame.push(boxedRow([], S_TEXT_STRONG))
 
       const ruleLabel = suggestRuleLabel(permission.toolName, permission.input, !!permission.mcp)
-      // When no rule can be suggested (e.g. powershell -Command "...",
-      // enterPlanMode), the always-option is omitted. The last row is
-      // kimi-cli's reject-with-feedback: selecting it (Enter / digit /
-      // 'f') opens an inline text field instead of resolving.
+      // 当无法建议规则时（例如 powershell -Command "..."、enterPlanMode），always 选项被
+      // 省略。最后一行是 kimi-cli 的 reject-with-feedback：选中它（Enter / 数字 / 'f'）会
+      // 打开内联文本字段而不是解析。
       const options: { label: string; shortcut: string }[] = [{ label: 'Yes', shortcut: 'y' }]
       if (ruleLabel) options.push({ label: `Yes, don't ask again for: ${ruleLabel}`, shortcut: 'a' })
       options.push({ label: 'No', shortcut: 'esc' })
@@ -1778,8 +1545,7 @@ export function ChatInput({
         const cells: Cell[] = []
         cells.push(...textToCells(selected ? `${GLYPH_SELECT_POINTER} ` : '  ', style))
         if (index === options.length - 1 && permissionFeedback) {
-          // Active feedback row collapses to an inline text field with
-          // the same inverse-video cursor as the main input.
+          // 活跃的反馈行折叠成一个内联文本字段，带与主输入相同的反色光标。
           cells.push(...textToCells(`${index + 1}. No: `, style))
           const t = permissionFeedback.text
           const c = permissionFeedback.cursor
@@ -1797,8 +1563,8 @@ export function ChatInput({
       })
 
       frame.push(boxedRow([], S_TEXT_STRONG))
-      // ↑/↓ (U+2191/2193) and · (U+00B7) are both in CP437, so legacy
-      // ConHost renders them without a glyph fallback.
+      // ↑/↓ (U+2191/2193) 和 · (U+00B7) 都在 CP437 里，所以旧式 ConHost 无需字形回退就能
+      // 渲染它们。
       const hintCells: Cell[] = []
       hintCells.push(
         ...textToCells(
@@ -1841,22 +1607,18 @@ export function ChatInput({
       frame.push(denyCells)
     }
 
-    // Select-options dialog — rendered inside our cell buffer, same slot
-    // as Permission. The commit path below detects "shrink from above
-    // viewport to at-or-below viewport" and does a clearTerminal + full
-    // redraw from messages state, so the tall dialog doesn't leave blank
-    // scrollback rows behind when it closes (mirrors Claude Code's
-    // log-update.ts fullResetSequence_CAUSES_FLICKER approach).
+    // Select-options 对话框 —— 渲染在我们的单元格缓冲里，与 Permission 同一个槽。下方提交
+    // 路径检测「从视口上方收缩到视口内或以下」，并做 clearTerminal + 从 messages state 全
+    // 量重绘，这样高对话框关闭时不会留下空滚动区行（模仿 Claude Code log-update.ts 的
+    // fullResetSequence_CAUSES_FLICKER 做法）。
     if (selectRequest) {
-      // Blank line above the question title for visual separation from
-      // scrollback content above (mirrors CC's PermissionRequestTitle
-      // sitting inside a padded container).
+      // 问题标题上方加空行，与上方滚动区内容做视觉分隔（模仿 CC 的 PermissionRequestTitle
+      // 坐在一个带 padding 的容器里）。
       frame.push([{ char: ' ', style: S_NONE, width: 1 }])
 
       const questionText = selectRequest.question
       const maxRowW = Math.max(20, termWidth - 1)
-      // Wrap question text across multiple lines instead of truncating.
-      // The 1-cell left padding is added to each wrapped line.
+      // 把问题文本跨多行折行，而不是截断。每个折行行都加上 1 单元格的左 padding。
       const rawCells = ansiTextToCells(renderInlineMarkdown(questionText))
       const contentW = maxRowW - 1
       let ci = 0
@@ -1882,9 +1644,8 @@ export function ChatInput({
       const rowsPerOption = hasDescriptions && isVertical ? 2 : 1
       const termRows = stdout?.rows ?? 25
 
-      // Viewport-scroll the options list when there are too many to fit
-      // on screen. The visible window follows the active selection index
-      // so the highlighted row is always in view.
+      // 当选项多到放不下时，对选项列表做视口滚动。可见窗口跟随活跃选中索引，让高亮行始终
+      // 在视野内。
       const questionRows = Math.max(1, Math.ceil(rawCells.reduce((s, c) => s + c.width, 0) / contentW))
       const hintRows = 1
       const selectBlanks = 2
@@ -1892,11 +1653,9 @@ export function ChatInput({
       const footerRow = 1
       const spinnerRows = spinner ? 1 : 0
       const todoRows = todos && todos.length > 0 ? todos.length : 0
-      // Match the live-tool-block filter above: collapsible read-only
-      // tools don't draw an indicator, so they don't consume rows here
-      // either. Without this filter the select-options dialog would
-      // reserve phantom rows for invisible tools and place itself too
-      // high (or scroll its own viewport unnecessarily).
+      // 与上方 live-tool-block 的过滤一致：可折叠只读工具不画指示，所以这里也不消耗行。没
+      // 有这个过滤，select-options 对话框会为不可见工具保留幽灵行，把自己放得过高（或不必
+      // 要地滚动自己的视口）。
       const tools = (activeToolCalls ?? []).filter((tc) => !isCollapsibleReadOnlyTool(tc.toolName))
       const activeToolRows =
         tools.length > 0
@@ -1936,7 +1695,7 @@ export function ChatInput({
         frame.push(cells)
       }
 
-      // Blank line between question header and options for visual grouping
+      // 问题头与选项之间的空行，用于视觉分组
       frame.push([{ char: ' ', style: S_NONE, width: 1 }])
 
       const maxRowWidth = Math.max(20, termWidth - 1)
@@ -1944,14 +1703,13 @@ export function ChatInput({
       const layout = selectRequest.layout ?? 'compact'
 
       if (layout === 'compact-vertical') {
-        // compact-vertical: description on a separate indented line below
-        // the label. Matches CC's QuestionView layout:
-        //   › 1. Label        ← focused: pointer "suggestion", label "suggestion"
+        // compact-vertical：描述在标签下方单独缩进一行。与 CC 的 QuestionView 布局一致：
+        //   › 1. Label        ← 聚焦：指针 "suggestion"，标签 "suggestion"
         //      description     ← paddingLeft = maxIndexWidth + 4
-        //     2. Label         ← unfocused: no pointer, label default (no bold)
-        //      description     ← dim
-        // CC's paddingLeft = maxIndexWidth + 4:
-        //   1(pointer) + 1(gap) + maxIdxWidth + 1(dot) + 1(space) = maxIdxWidth + 4
+        //     2. Label         ← 未聚焦：无指针，标签默认（不加粗）
+        //      description     ← 暗淡
+        // CC 的 paddingLeft = maxIndexWidth + 4：
+        //   1(指针) + 1(间隙) + maxIdxWidth + 1(点) + 1(空格) = maxIdxWidth + 4
         const descIndent = maxIdxWidth + 4
         for (let i = vpStart; i < vpEnd; i++) {
           const opt = opts[i]!
@@ -1988,9 +1746,8 @@ export function ChatInput({
           }
         }
       } else {
-        // compact (default): label and description on the same line,
-        // right-padded into two aligned columns.
-        // Compute max label column width for alignment.
+        // compact（默认）：标签和描述在同一行，右 padding 成对齐的两列。
+        // 计算最大标签列宽用于对齐。
         let maxLabelW = 0
         for (let i = vpStart; i < vpEnd; i++) {
           const o = opts[i]!
@@ -2044,7 +1801,7 @@ export function ChatInput({
         frame.push(cells)
       }
 
-      // Blank line between options and hint (CC: marginTop={1} on hint Box)
+      // 选项与提示之间的空行（CC：hint Box 上的 marginTop={1}）
       frame.push([{ char: ' ', style: S_NONE, width: 1 }])
 
       const hint: Cell[] = []
@@ -2057,13 +1814,10 @@ export function ChatInput({
       hint.push(...textToCells(hintText, S_DIM))
       frame.push(hint)
 
-      // Live preview pane. The focused option may carry a `preview`
-      // array of pre-rendered ANSI rows (e.g. the `/theme` picker
-      // attaches a colored diff snippet per theme). Render below the
-      // hint with one blank-row separator so the visual block reads as
-      // "options \u2193 preview". When the focused option has no preview
-      // (e.g. the auto-appended `Other` row) the pane simply doesn't
-      // appear \u2014 no flicker as the user arrows past it.
+      // 实时预览面板。聚焦选项可能携带一个 `preview` 数组（预渲染的 ANSI 行，例如
+      // `/theme` 选择器为每个主题附上彩色 diff 片段）。渲染在提示下方，用一条空行分隔，让
+      // 视觉块读作「options ↓ preview」。当聚焦选项没有预览（例如自动追加的 `Other` 行）
+      // 时，面板就不出现 —— 用户用箭头滑过时没有闪烁。
       if (activeOpt?.preview && activeOpt.preview.length > 0) {
         frame.push([{ char: ' ', style: S_NONE, width: 1 }])
         for (const row of activeOpt.preview) {
@@ -2076,38 +1830,30 @@ export function ChatInput({
       }
     }
 
-    // Todo panel. Driven by the model's `todoWrite` tool; gives the
-    // user a live view of multi-step task progress. Inspired by
-    // Claude Code's `<MessageResponse><TaskListV2/></MessageResponse>`
-    // in `Spinner.tsx:280`, but adapted to our cell-buffer where
-    // multiple anchor sources can sit above the panel.
+    // Todo 面板。由模型的 `todoWrite` 工具驱动；给用户一个多步任务进度的实时视图。灵感来
+    // 自 Claude Code `Spinner.tsx:280` 里的
+    // `<MessageResponse><TaskListV2/></MessageResponse>`，但适配到我们的单元格缓冲，那里可
+    // 以有多个锚点源坐在面板上方。
     //
-    // Anchor handling: the corner glyph `\u23bf` only renders on
-    // row 1 when *no* anchor exists above the panel (no spinner, no
-    // active tool calls). In that orphan case we also prepend a dim
-    // "Update Todos" header so the corner has something to attach to.
-    // When a spinner or live-tool row is already showing above, those
-    // rows already carry their own `\u23bf` connector; adding a
-    // second one here produces a visible double-corner (two `\u23bf`
-    // glyphs stacked) so we drop ours and let the items sit as plain
-    // indented rows under the existing anchor.
+    // 锚点处理：只有面板上方【没有】锚点（无 spinner、无活跃工具调用）时，角字形 `⎿`
+    // 才渲染在第 1 行。在那个孤例里，我们还会前置一个暗淡的 "Update Todos" 头，让角有东西
+    // 可附着。当上方已经显示 spinner 或实时工具行时，那些行已经自带 `⎿` 连接符；这里
+    // 再加一个会产生可见的双角（两个 `⎿` 字形堆叠），所以我们丢掉自己的，让条目作为
+    // 现有锚点下方的普通缩进行。
     //
-    //   no anchor above            anchor above (spinner/tool)
-    //     Update Todos               \u23bf Running command...
-    //   \u23bf <icon> Task name           <icon> Task name
+    //   上方无锚点                    上方有锚点（spinner/tool）
+    //     Update Todos               ⎿ Running command...
+    //   ⎿ <icon> Task name           <icon> Task name
     //     <icon> Task name              <icon> Task name
     //
-    // Other choices:
-    //   - No "N tasks (X done, ...)" summary header \u2014 CC drops it; the
-    //     icon progression (\u2713 vs \u25fc vs \u25fb) IS the status.
-    //   - Completed: dim check + strikethrough dim content. Pending:
-    //     hollow square in default color (NOT dim \u2014 pending is
-    //     "waiting", not "forgotten"). In-progress: filled square in
-    //     primary + bold content — shape (filled vs hollow), weight
-    //     (bold vs regular) AND the single brand hue mark active state.
-    //   - No `activeForm` activity line. CC doesn't render one, and
-    //     when the model echoed the same phrase for both fields the
-    //     extra row was visual noise.
+    // 其他选择：
+    //   - 没有「N tasks (X done, ...)」摘要头 — CC 丢掉它；图标递进
+    //     (✓ vs ◼ vs ◻) 本身就是状态。
+    //   - 已完成：暗淡的对勾 + 删除线暗淡内容。待处理：默认色的空心方块（不暗淡 —
+    //     待处理是「等待中」，不是「被遗忘」）。进行中：主色实心方块 + 加粗内容 —— 形状
+    //     （实心 vs 空心）、字重（加粗 vs 常规）和单一品牌色相共同标记活跃状态。
+    //   - 没有 `activeForm` 活动行。CC 不渲染它，而且当模型对两个字段都回显同一短语时，
+    //     多出来的行是视觉噪音。
     if (todos && todos.length > 0) {
       const hasAnchorAbove = !!spinner || (activeToolCalls?.length ?? 0) > 0
       if (!hasAnchorAbove) {
@@ -2130,7 +1876,7 @@ export function ChatInput({
         if (t.status === 'completed') {
           cells.push(...textToCells(GLYPH_TODO_CHECK, S_DIM))
           cells.push({ char: ' ', style: S_NONE, width: 1 })
-          // ANSI 2 = dim, 9 = strikethrough.
+          // ANSI 2 = 暗淡，9 = 删除线。
           cells.push(...textToCells(t.content, '\x1b[0m\x1b[2;9m'))
         } else if (t.status === 'in_progress') {
           cells.push(...textToCells(GLYPH_TODO_IN_PROGRESS, S_PRIMARY_BOLD))
@@ -2151,29 +1897,24 @@ export function ChatInput({
       frame.push([...textToCells(' ', S_NONE), ...textToCells(label, style)])
     }
 
-    // Reserved padding left over from a permission dialog that just closed.
-    // Sits between the in-progress tool rows (above) and the input
-    // separators (below) so the frame keeps the dialog's total height
-    // until the approved tool's result commits and slides into the
-    // reserved space.
+    // 刚关闭的权限对话框留下的保留 padding。位于进行中的工具行（上方）与输入分隔线（下
+    // 方）之间，让帧保持对话框的总高度，直到批准工具的结果提交并滑入保留空间。
     for (let i = 0; i < permissionSlotReserveRef.current; i++) {
       frame.push([])
     }
 
-    // Top box rule
+    // 顶框线
     frame.push(textToCells(`╭${boxRule}╮`, frameStyle))
 
-    // Input lines. The terminal's hardware cursor is hidden for the
-    // entire TUI lifetime; the visible "cursor" the user sees is just an
-    // inverse-video cell (S_CURSOR) drawn into the frame at the cursor
-    // position. So we don't compute or emit a cursor-park CSI here.
+    // 输入行。终端的硬件光标在整个 TUI 生命周期内隐藏；用户看到的可见「光标」只是一个在
+    // 光标位置画进帧里的反色单元格（S_CURSOR）。所以我们这里不计算也不发出 cursor-park
+    // CSI。
     for (let i = 0; i < displayLines.length; i++) {
       const line = displayLines[i]
       if (i === 0) inputFirstLineRow = frame.length
-      // Same `›` glyph the committed echo uses (stdout-writer) — the
-      // plain ASCII `>` reads pointier and out of place next to it.
-      // U+203A is width-1 per text-width.ts, so the prompt keeps its
-      // two-cell footprint (arrow + space).
+      // 与已提交回显（stdout-writer）用的同一个 `›` 字形 —— 纯 ASCII `>` 读起来更尖，在它
+      // 旁边显得格格不入。U+203A 按 text-width.ts 是宽度 1，所以提示保持两单元格的占位
+      // （箭头 + 空格）。
       const prompt = i === 0 ? `${GLYPH_PROMPT_ARROW} ` : '  '
       const showCursor = !disabled && i === cursorLine && cursorLine >= 0
       const cells: Cell[] = []
@@ -2214,21 +1955,18 @@ export function ChatInput({
       frame.push(boxedRow(cells, frameStyle))
     }
 
-    // Bottom box rule
+    // 底框线
     frame.push(textToCells(`╰${boxRule}╯`, frameStyle))
 
-    // Footer row — compact mode/model/context status owned entirely by the
-    // cell-diff buffer. Its width is capped at `termWidth - 1` so it never
-    // lands on the terminal's auto-wrap boundary.
+    // Footer 行 —— 紧凑的 mode/model/context 状态，完全由 cell-diff 缓冲拥有。
+    // 其宽度封顶在 `termWidth - 1`，所以它永远不会落到终端的自动折行边界上。
     //
-    // Left side  — notice / mode indicator (mutually exclusive). Priority:
-    //              notice > plan > acceptEdits. Mode switching via slash
-    //              commands only (/plan); the Shift+Tab keybinding was
-    //              removed because Windows needs Node ≥22.17 VT input mode
-    //              and Alt+M is too easily clobbered by IDE menus.
-    // Right side — active model plus `ctx 6.6k / 200k · 3%` when usage is
-    //              available. Context is green normally, amber from 70%,
-    //              and red at the 80% compression threshold.
+    // 左侧 —— notice / 模式指示器（互斥）。优先级：notice > plan > acceptEdits。
+    //              模式切换仅经斜杠命令（/plan）；Shift+Tab 键绑定被移除，因为
+    //              Windows 需要 Node ≥22.17 VT 输入模式，而且 Alt+M 太容易被
+    //              IDE 菜单覆盖。
+    // 右侧 —— 当前模型，加上可用的 `ctx 6.6k / 200k · 3%`。上下文正常为绿色，
+    //              从 70% 起为琥珀色，在 80% 压缩阈值处为红色。
     let leftCells: Cell[] | null = null
     if (notice) {
       const cells: Cell[] = []
@@ -2278,24 +2016,19 @@ export function ChatInput({
     }
 
     if (leftCells || rightCells.length > 0) {
-      // Footer row built as a NARROW cell sequence — left + ` · ` + right —
-      // never padded out to termWidth-1.
+      // Footer 行构建为一条窄单元格序列 —— 左侧 + ` · ` + 右侧 ——
+      // 从不填充到 termWidth-1。
       //
-      // Why narrow: an earlier revision right-justified `rightText` by
-      // padding with spaces to termWidth-1 cells. That made the LAST row
-      // of the frame land its final cell on the terminal's auto-wrap
-      // column. Under BSU/ESU sync mode on xterm.js (VS Code's terminal),
-      // a frame whose bottom row is that wide leaks residual cells into
-      // native scrollback every time a tool-result commit fires its LF
-      // auto-scroll — manifesting as ghost "Working…" rows piling up
-      // above the live frame. Keeping the row narrow stops the cursor
-      // ever reaching the wrap column and the regression doesn't fire.
+      // 为什么用窄行：早前的一个修订版用空格把 `rightText` 填充到 termWidth-1
+      // 个单元格来右对齐。这让帧的【最后】一行把它的最后一个单元格落在终端的
+      // 自动折行列上。在 xterm.js（VS Code 的终端）的 BSU/ESU 同步模式下，
+      // 底行这么宽的帧，每次工具结果提交触发 LF 自动滚动时都会把残留单元格
+      // 泄漏进原生滚动区 —— 表现为幽灵 "Working…" 行在实时帧上方堆积。
+      // 保持行窄就阻止了光标到达折行列，回归也就不会触发。
       //
-      // Competitor CLIs (Codex, Gemini) right-justify because their
-      // committed scrollback isn't pushed via LF auto-scroll — Codex
-      // uses ratatui's full-screen buffer, Gemini uses Ink `<Static>`.
-      // We can't right-justify cheaply without re-architecting the
-      // commit path.
+      // 竞品 CLI（Codex、Gemini）之所以能右对齐，是因为它们已提交的滚动区
+      // 不经 LF 自动滚动推进 —— Codex 用 ratatui 的全屏缓冲，Gemini 用
+      // Ink 的 `<Static>`。我们不重新架构提交路径就没办法廉价地右对齐。
       const cells: Cell[] = []
       const leftWidth = leftCells ? leftCells.reduce((sum, c) => sum + c.width, 0) : 0
       if (leftCells) cells.push(...leftCells)
@@ -2307,43 +2040,32 @@ export function ChatInput({
         }
         cells.push(...rightCells)
       }
-      // Truncate defensively: the model label made this row longer than it
-      // used to be, and a hard physical wrap would desync the cell-diff
-      // grid (same reasoning as the menu-row truncation above).
+      // 防御性截断：模型标签让这一行比过去更长，一次硬物理折行会让 cell-diff
+      // 网格失同步（与上面菜单行截断同理）。
       frame.push(truncateCellRow(cells, Math.max(20, termWidth - 1)))
     }
 
-    // Completion menu — at most one of slash / at renders per frame
-    // (activeMenu enforces the mutex). Two writers in the same frame
-    // would both compete for the rows above the input box, and a
-    // resize would clobber whichever drew last.
+    // 补全菜单 —— 每帧最多渲染 slash / at 其中之一（activeMenu 强制互斥）。
+    // 同一帧里两个写入者会争抢输入框上方的行，而 resize 会破坏后画的那个。
     if (activeMenu === 'slash') {
-      // Column width includes the longest "name + space + argumentHint" so
-      // every description column starts at the same x. Without folding
-      // the hint into the width, hint-bearing rows would push description
-      // to a different column from hint-less rows, producing a ragged
-      // right edge.
+      // 列宽包含最长的「name + 空格 + argumentHint」，这样每个描述列都从同一 x
+      // 开始。不把提示折叠进宽度，带提示的行会把描述推到与无提示行不同的列，
+      // 产生参差的右边缘。
       const labelWidth = matches.reduce((max, cmd) => {
         const hintW = cmd.argumentHint ? cmd.argumentHint.length + 1 : 0
         return Math.max(max, cmd.name.length + hintW)
       }, 0)
-      // Each description is wrapped across up to 2 rows; a description that
-      // still overflows gets an ellipsis at the end of row 2. Truncation is
-      // required: a row wider than termWidth hard-wraps at the physical-row
-      // level (cell-diff treats it as one grid row, so [K clears miss the
-      // wrapped overflow) and, when it spills past the last terminal row,
-      // scrolls the viewport — drifting the frame out of sync with
-      // lastFrameTopRef and leaving a phantom input box on every menu
-      // open/dismiss cycle.
+      // 每条描述最多折到 2 行；仍溢出的描述在第 2 行末尾得到省略号。截断是必需的：
+      // 比 termWidth 宽的行会在物理行层面硬折行（cell-diff 把它当作一个网格行，所以
+      // [K 清除会漏掉被折的溢出部分），而且当它溅过最后一行终端行时会滚动视口 ——
+      // 让帧与 lastFrameTopRef 失同步，并在每次菜单打开/关闭循环留下一个幻影输入框。
       const maxRowWidth = Math.max(20, termWidth - 1)
-      const descCol = labelWidth + 4 // 2-space gutter + label area (labelWidth + 2-space pad)
+      const descCol = labelWidth + 4 // 2 空格槽 + 标签区（labelWidth + 2 空格垫）
       const descWidth = Math.max(10, maxRowWidth - descCol)
-      // Windowed rendering: show at most MAX_VISIBLE_MENU_ITEMS items
-      // at a time, sliding the window to keep safeIndex visible. This
-      // caps the frame height so the menu never pushes scrollback
-      // content out of the viewport (the root cause of the streaming-
-      // corruption bug where `/` during an AI reply overwrote committed
-      // scrollback and froze the display).
+      // 窗口化渲染：一次最多显示 MAX_VISIBLE_MENU_ITEMS 个条目，滑动窗口让
+      // safeIndex 保持可见。这封顶了帧高度，使菜单永不把滚动区内容推出视口
+      // （那正是流式损坏 bug 的根因 —— AI 回复期间按 `/` 覆盖了已提交的滚动区
+      // 并冻结了显示）。
       const total = matches.length
       const cap = MAX_VISIBLE_MENU_ITEMS
       let winStart: number
@@ -2390,10 +2112,9 @@ export function ChatInput({
       }
     } else if (activeMenu === 'at') {
       if (atMatches.length === 0) {
-        // No-matches placeholder — keeps the user oriented when
-        // typing `@vitejs/plugin-react` or any token that doesn't
-        // map to a local file. The text still goes out to the model
-        // verbatim on Enter; the placeholder is purely a UI hint.
+        // 无匹配占位符 —— 当用户输入 `@vitejs/plugin-react` 或任何不对应本地文件的
+        // token 时，让用户保持方向感。文本在 Enter 时仍原样发给模型；占位符纯粹是
+        // UI 提示。
         const cells: Cell[] = []
         cells.push({ char: ' ', style: S_NONE, width: 1 })
         cells.push({ char: ' ', style: S_NONE, width: 1 })
@@ -2432,29 +2153,23 @@ export function ChatInput({
       }
     }
 
-    // ── Hardware-cursor park target ────────────────────────────────────
+    // ── 硬件光标停靠目标 ────────────────────────────────────
     //
-    // The terminal's hardware cursor is hidden app-wide, but macOS
-    // terminals (Terminal.app, iTerm2) still draw the IME composition
-    // preview (marked text — e.g. pinyin letters mid-composition) AT the
-    // hardware cursor position; the app only receives the committed
-    // characters. Our cell-diff loop leaves the cursor wherever the last
-    // changed cell ended: on a spinner tick that's mid-Working-row, after
-    // a keystroke it's one cell PAST the input box's right rail. The IME
-    // preview then lands there — pinyin letters overwriting the Working
-    // label, or a stray letter outside the box's right border. And since
-    // those glyphs never enter our cell grid, the diff (which compares
-    // against prevFrameRef, not the screen) doesn't know to erase them.
+    // 终端的硬件光标在应用范围内被隐藏，但 macOS 终端（Terminal.app、iTerm2）仍会把
+    // IME 组合预览（标记文本 —— 例如拼音字母在组合中途）绘制在【硬件光标位置】；
+    // 应用只收到已提交的字符。我们的 cell-diff 循环把光标留在最后一个变更单元格的
+    // 位置：spinner 跳动时在 Working 行中间，击键后就在输入框右沿之外一格。于是 IME
+    // 预览就落在那里 —— 拼音字母覆盖 Working 标签，或者一个游离字母出现在输入框右
+    // 边框之外。而且这些字形从未进入我们的单元格网格，diff（与 prevFrameRef 比较而
+    // 非屏幕）不知道要擦除它们。
     //
-    // Fix: park the hidden cursor on the visible caret cell at the end of
-    // every flush so the composition preview renders where the user is
-    // actually typing. The caret is the first S_CURSOR cell in the frame
-    // (dialogs render above the input box, so a freeform-dialog caret
-    // wins over the main input caret when both exist). When no caret is
-    // drawn (caret scrolled out of the windowed input), fall back to the
-    // input box's first text column so the preview stays inside the box.
+    // 修复：在每次 flush 结束时把隐藏光标停靠在可见的 caret 单元格上，这样组合预览
+    // 就渲染在用户真正输入的位置。caret 是帧中第一个 S_CURSOR 单元格（对话框渲染在
+    // 输入框上方，所以当两者都存在时，自由表单对话框的 caret 优先于主输入 caret）。
+    // 当没有绘制 caret（caret 滚出了窗口化输入区）时，回退到输入框的第一个文本列，
+    // 让预览保持在框内。
     let caretParkRow = inputFirstLineRow
-    let caretParkCol = 5 // 1-based: │ + space + › + space, then text
+    let caretParkCol = 5 // 1-based：│ + 空格 + › + 空格，然后是文本
     scanCaret: for (let r = 0; r < frame.length; r++) {
       let col = 0
       for (const cell of frame[r]!) {
@@ -2467,72 +2182,52 @@ export function ChatInput({
       }
     }
 
-    // ── Plan b: weak-terminal streaming bail-out (REMOVED). ──────────────
+    // ── Plan b：弱终端流式兜底（已移除）。──────────────────────────────
     //
-    // History: we used to clear the entire frame (`frame.length = 0`)
-    // during streaming on terminals that didn't honor DEC 2026 sync —
-    // the rationale was that pre-scroll (`\n.repeat(N)`) followed by a
-    // non-atomic frame redraw produced visible "input box jitter" at
-    // the bottom row. Hiding the frame cured the jitter at the cost of
-    // hiding the input box, spinner, separators, elapsed-time, active
-    // tool list, and todos for the entire reply.
+    // 历史：我们过去在不遵守 DEC 2026 同步的终端上流式期间清空整个帧
+    // （`frame.length = 0`）—— 理由是 pre-scroll（`\n.repeat(N)`）后跟着
+    // 一次非原子的帧重绘，会在底行产生可见的「输入框抖动」。隐藏帧治愈了抖动，
+    // 代价是整个回复期间隐藏输入框、spinner、分隔线、耗时、活动工具列表和 todos。
     //
-    // Why we dropped it: two things changed since.
+    // 为什么放弃它：此后的两件事变了。
     //
-    //  1. The streaming-chunk bookkeeping was broken at the time —
-    //     `freeBlanksAboveFrameRef` wasn't decremented when chunks
-    //     filled the blank rows below the (hidden) frame, so the
-    //     end-of-turn commit computed wrong preScroll and the
-    //     `\x1b[J` swept away half the reply. Hiding the frame masked
-    //     the symptom on capable terminals (xterm.js's scrollback
-    //     quirks held the missing rows) but the underlying account was
-    //     wrong. With the Plan b path now decrementing scrollRows
-    //     correctly (~25 lines below this point), pre-scroll only
-    //     fires when freeBlanks is actually exhausted, not on every
-    //     chunk. That alone reduces the jitter source dramatically.
+    //  1. 流式分块的记账当时是坏的 —— `freeBlanksAboveFrameRef` 在分块填满（隐藏的）
+    //     帧下方的空白行时没有递减，所以回合结束的 commit 算出了错误的 preScroll，
+    //     而 `\x1b[J` 扫掉了半段回复。隐藏帧在有能力终端上掩盖了症状（xterm.js
+    //     的滚动区怪癖保住了缺失的行），但底层账目是错的。现在 Plan b 路径正确递减
+    //     scrollRows（约在此处下方 25 行），pre-scroll 只在 freeBlanks 真正耗尽时才
+    //     触发，而不是每个分块都触发。仅此一点就大幅减少了抖动源。
     //
-    //  2. The capable-terminal whitelist above used to miss every
-    //     mainstream Linux desktop terminal (no VTE_VERSION check),
-    //     so Ubuntu/Fedora users on GNOME Terminal hit the bail-out
-    //     unconditionally and lost their input box during every AI
-    //     reply — same problem class as ConHost on Windows. Even
-    //     after we expanded the whitelist, ConHost-class terminals
-    //     remain "weak" by definition; the right answer for them is
-    //     visible-with-some-jitter, not invisible.
+    //  2. 上面的有能力终端白名单曾漏掉所有主流 Linux 桌面终端（没有 VTE_VERSION
+    //     检查），所以 Ubuntu/Fedora 的 GNOME Terminal 用户无条件命中兜底，并在每次
+    //     AI 回复期间丢失输入框 —— 与 Windows 上的 ConHost 同类问题。即使在我们
+    //     扩展白名单之后，ConHost 类终端按定义仍是「弱」的；对它们的正确答案是
+    //     可见带点抖动，而不是不可见。
     //
-    // Capable terminals (Windows Terminal, iTerm2, Ghostty, kitty,
-    // Alacritty, WezTerm, VTE 0.68+, foot, contour, Warp, Zed) get the
-    // smooth atomic-DEC-2026 path. Weak terminals (legacy ConHost via
-    // cmd.exe / Windows PowerShell host) get the same frame, just with
-    // potentially-visible cursor walks during cell-diff redraws — a
-    // tradeoff users explicitly preferred over a missing input box.
+    // 有能力终端（Windows Terminal、iTerm2、Ghostty、kitty、Alacritty、WezTerm、
+    // VTE 0.68+、foot、contour、Warp、Zed）走平滑的原子 DEC-2026 路径。弱终端
+    // （经 cmd.exe / Windows PowerShell 宿主运行的遗留 ConHost）得到同样的帧，只是
+    // cell-diff 重绘期间可能有可见的光标走动 —— 这是用户明确偏好的取舍，胜过丢失
+    // 输入框。
 
-    // ── Diff against previous frame and emit one buffered write ──────────
+    // ── 与上一帧 diff 并发出一次缓冲写入 ──────────
     //
-    // Frame is PINNED to the last `nextH` rows of the terminal. Every
-    // render jumps the cursor absolutely to the frame's top-left — no
-    // relative up/down walks from a "parked" position, no dependence on
-    // where the last render left the cursor. This is what lets the
-    // DECSTBM scrollback path (above) work correctly: that path parks the
-    // cursor at row (termRows - H) after reset-scroll-region, which would
-    // break any relative cursor math anchored to "the last row of the
-    // previous frame".
+    // 帧被钉在终端的最后 `nextH` 行。每次渲染都绝对地跳到帧的左上角 —— 不从
+    // 「停靠」位置做相对上/下走动，也不依赖上次渲染把光标留在哪里。这正是上方
+    // DECSTBM 滚动区路径能正确工作的原因：那条路径在 reset-scroll-region 之后把
+    // 光标停在 (termRows - H) 行，任何锚定于「上一帧的最后一行」的相对光标计算
+    // 都会失效。
     const nextH = frame.length
     const oldFrameH = lastFrameHRef.current
-    // Floating-frame model: when there are blank rows below the frame
-    // (freeBlanks > 0), the frame floats up so it sits right after the
-    // last content row. When freeBlanks reaches 0 the frame is at the
-    // bottom (the original behavior). frameTop is recomputed every time
-    // pendingFreeBlanks changes (after a commit absorbs blanks, after
-    // a frame-size change, etc.) so the cell-diff loop further down
-    // always writes at the position the frame will end up at.
+    // 浮动帧模型：当帧下方有空白行（freeBlanks > 0）时，帧上浮到紧贴最后一行内容
+    // 之后。当 freeBlanks 到 0 时，帧就在底部（原始行为）。frameTop 在每次
+    // pendingFreeBlanks 变化时（commit 吸收空白之后、帧尺寸变化之后等）重算，所以
+    // 下方的 cell-diff 循环总是在帧最终会落到的位置写入。
     const computeFrameTop = (blanks: number) => Math.max(1, termRows - nextH + 1 - blanks)
     let frameTop = computeFrameTop(freeBlanksAboveFrameRef.current)
-    // Geometry trace — diagnostics for the "input box drifting / dialog
-    // duplicate" symptom. Logs the inputs the bottom-anchor formula
-    // depends on so we can see which render is the one that starts
-    // shifting blanks. Cheap (no JSON.stringify of large structures), so
-    // safe to leave on under DEBUG_STDOUT=1.
+    // 几何追踪 —— 用于「输入框漂移 / 对话框重复」症状的诊断。记录底部锚定公式依赖
+    // 的输入，这样我们能看出是哪一次渲染开始让空白移位。开销小（不对大型结构做
+    // JSON.stringify），所以在 DEBUG_STDOUT=1 下安全保留。
     debugLog(
       'chatinput.geom.in',
       `termRows=${termRows} oldFrameH=${oldFrameH} nextH=${nextH} ` +
@@ -2546,60 +2241,43 @@ export function ChatInput({
         `didCommit=${messages.length > writtenMessageCountRef.current ? '1' : '0'}`,
     )
 
-    // First render: seed the "blanks above frame" tracker. The banner
-    // (initialContentRows) occupies the top of the viewport; everything
-    // else up to where the frame sits is blank. Subsequent grows can
-    // consume those blanks without pre-scrolling, so the banner stays
-    // in view during normal operation.
+    // 首次渲染：给「帧上方空白」追踪器播种。横幅（initialContentRows）占据视口顶部；
+    // 其余到帧所在位置之间的内容都是空白。后续的 grow 可以消耗这些空白而无需
+    // pre-scroll，所以横幅在正常操作期间保持在视野内。
     //
-    // Post-/clear is also a first-paint (we reset activeRef above) but
-    // the banner is gone — we just \x1b[2J'd the viewport — so reserving
-    // initialContentRows here would leave a phantom banner-sized empty
-    // strip at the top with the frame floating mid-screen. Treat the
-    // entire viewport as free blanks instead, so the frame anchors at
-    // row 1 with empty space below (the user's "fresh launch minus the
-    // banner" expectation).
+    // /clear 之后也是首次绘制（我们在上面重置了 activeRef），但横幅没了 —— 我们刚
+    // 用 \x1b[2J 清空了视口 —— 所以在这里保留 initialContentRows 会在顶部留出一条
+    // 幻影横幅大小的空白带，帧浮在屏幕中间。改为把整个视口当作自由空白，让帧锚定
+    // 在第 1 行、下方留空（用户「全新启动减去横幅」的预期）。
     if (justClearedRef.current) {
-      // When the retained /clear echo rides this render as a commit, the
-      // fresh viewport is entirely blank and owned by us — seed the full
-      // row budget so the commit path writes the echo at row 1 and floats
-      // the frame directly below it. Otherwise reserve only the frame's
-      // rows so the empty frame anchors at the top.
+      // 当保留的 /clear 回显随本次渲染作为 commit 到达时，新视口完全空白且归我们
+      // 所有 —— 播种完整的行预算，让 commit 路径把回显写在第 1 行，并让帧紧贴其下
+      // 浮动。否则只保留帧自身的行，让空帧锚定在顶部。
       freeBlanksAboveFrameRef.current = didCommitMessages ? termRows : Math.max(0, termRows - nextH)
       frameTop = computeFrameTop(freeBlanksAboveFrameRef.current)
       justClearedRef.current = false
     } else if (isFirstPaint && initialContentRows > 0) {
       freeBlanksAboveFrameRef.current = Math.max(0, termRows - initialContentRows - nextH)
-      // Re-seed frameTop now that freeBlanks is set so the very first
-      // paint floats the frame up to sit immediately below the banner
-      // instead of stranding it at the bottom of an otherwise-empty
-      // terminal.
+      // 现在 freeBlanks 已设定，重设 frameTop，让第一次绘制就把帧上浮到紧贴横幅
+      // 下方，而不是把它搁在一个原本空荡荡的终端底部。
       frameTop = computeFrameTop(freeBlanksAboveFrameRef.current)
     }
 
-    // ── Terminal resize: erase old frame at its previous position ────────
+    // ── 终端 resize：在其先前位置擦除旧帧 ────────
     //
-    // When the terminal dimensions change, the old frame must be erased
-    // before painting the new one.
+    // 当终端尺寸变化时，必须在绘制新帧之前擦除旧帧。
     //
-    // Width change: the terminal reflows ALL visible content. Every frame
-    // row was written as a hard (non-auto-wrapped) line, so a row of
-    // printable length L splits into exactly ceil(L/newW) rows when the
-    // terminal narrows and stays 1 row when it widens. onResize captured
-    // those lengths (prevFrameRowLensRef), so we can compute the reflowed
-    // frame's exact height R. The reflowed remnants do NOT sit at a
-    // predictable anchor: with a floating frame (blank rows below it) the
-    // split rows push the frame UP past its old top, and on shrink the
-    // viewport window itself shifts. The exact post-reflow top is
+    // 宽度变化：终端重排所有可见内容。每个帧行都以硬（非自动折行）行写出，所以一条
+    // 可打印长度为 L 的行，在终端变窄时拆成恰好 ceil(L/newW) 行，变宽时保持 1 行。
+    // onResize 捕获了那些长度（prevFrameRowLensRef），所以我们可以算出重排后帧的精确
+    // 高度 R。重排残留物不在可预测的锚点上：浮动帧（下方有空白行）时，拆分的行把帧
+    // 向上推过旧顶部，而缩小终端时视口窗口自身移位。精确的重排后顶部是
     //   oldTop - (R - oldFrameH) - max(0, oldTermRows - termRows)
-    // (the frame's own split growth, plus the viewport-window shift on a
-    // shrink). We erase from the min of that, the last-painted top (covers
-    // widen/join and top-anchored reflows), and the bottom-anchored
-    // estimate (covers full-viewport narrows where the remnants stay at
-    // the bottom). Erasing a few rows higher than the exact remnant top
-    // can clip blank rows, never conversation content — split continuations
-    // of content rows land below their originals, and scrollback content
-    // itself is untouched by reflow.
+    // （帧自身的拆分增长，加上缩小终端时视口窗口的移位）。我们从那个值、最后绘制的
+    // 顶部（覆盖变宽/合并与顶部锚定重排）、底部锚定估计（覆盖残留物留在底部的全视口
+    // 变窄）三者中的最小值开始擦除。比精确残留物顶部擦高几行可能裁剪空白行，但绝不
+    // 裁剪会话内容 —— 内容行的拆分延续落在其原始行之下，而滚动区内容本身不受重排
+    // 影响。
     const oldTermRows = lastTermRowsRef.current
     const oldTermWidth = lastTermWidthRef.current
     const didResize =
@@ -2613,39 +2291,31 @@ export function ChatInput({
         const lens = prevFrameRowLensRef.current
         const reflowedFrameH =
           lens.length > 0 ? lens.reduce((sum, len) => sum + Math.max(1, Math.ceil(len / newW)), 0) : oldFrameH
-        // The reflowed remnants do NOT sit at a predictable anchor: with
-        // a floating frame (blank rows below it) the split rows push the
-        // remnants UP past the old top, and on a shrink the viewport
-        // window itself shifts. The exact post-reflow top is
+        // 重排残留物不在可预测的锚点上：浮动帧（下方有空白行）时，拆分的行把残留物
+        // 向上推过旧顶部，而缩小终端时视口窗口自身移位。精确的重排后顶部是
         //   oldTop - (R - oldFrameH) - max(0, oldTermRows - termRows)
-        // (the frame's own split growth, plus the viewport-window shift
-        // on a shrink; split growth above the frame cancels out). Erase
-        // from the min of that, the last-painted top (covers widen/join
-        // and top-anchored reflows), the bottom-anchored estimate
-        // (covers full-viewport narrows whose remnants stay at the
-        // bottom). Erasing a few rows higher than the exact remnant top
-        // can clip blank rows — split
-        // continuations of scrollback content land below their originals,
-        // never above, so conversation content is never wiped.
+        // （帧自身的拆分增长，加上缩小终端时视口窗口的移位；帧上方的拆分增长相互
+        // 抵消）。从那个值、最后绘制的顶部（覆盖变宽/合并与顶部锚定重排）、底部锚定
+        // 估计（覆盖残留物留在底部的全视口变窄）三者中的最小值开始擦除。比精确残留
+        // 物顶部擦高几行可能裁剪空白行 —— 滚动区内容的拆分延续落在其原始行之下，
+        // 绝不会在其上，所以会话内容绝不会被擦除。
         const bottomAnchoredTop = Math.max(1, termRows - reflowedFrameH + 1)
         const oldTop = lastFrameTopRef.current > 0 ? lastFrameTopRef.current : Math.max(1, oldTermRows - oldFrameH + 1)
         const shiftedTop = oldTop - Math.max(0, reflowedFrameH - oldFrameH) - Math.max(0, oldTermRows - termRows)
         const eraseFrom = Math.max(1, Math.min(oldTop, shiftedTop, bottomAnchoredTop))
         preBuf += `\x1b[${eraseFrom};1H\x1b[J`
       } else {
-        // Height-only change: no reflow, but a shrink shifts the viewport
-        // window up by the row delta (overflow leaves via scrollback at
-        // the top), so the last-rendered top moves up by the same amount;
-        // a grow keeps the old rows in place (top-anchored). Same
-        // min-of-candidates erase as the width branch, with R = oldFrameH.
+        // 仅高度变化：无重排，但缩小终端会把视口窗口按行差向上移（溢出经顶部的
+        // 滚动区离开），所以最后渲染的顶部也向上移同样的量；放大则旧行留在原地
+        // （顶部锚定）。与宽度分支同样的最小值候选擦除，取 R = oldFrameH。
         const bottomAnchoredTop = Math.max(1, termRows - oldFrameH + 1)
         const oldTop = lastFrameTopRef.current > 0 ? lastFrameTopRef.current : Math.max(1, oldTermRows - oldFrameH + 1)
         const shiftedTop = oldTop - Math.max(0, oldTermRows - termRows)
         const eraseFrom = Math.max(1, Math.min(oldTop, shiftedTop, bottomAnchoredTop))
         preBuf += `\x1b[${eraseFrom};1H\x1b[J`
       }
-      // Resize invalidates the floating-frame state; the next render
-      // re-seeds freeBlanks via the first-paint path or commit branch.
+      // Resize 使浮动帧状态失效；下次渲染经首次绘制路径或 commit 分支重设
+      // freeBlanks。
       freeBlanksAboveFrameRef.current = 0
       blankRowsAboveFrameRef.current = 0
       frameTop = computeFrameTop(0)
@@ -2653,95 +2323,69 @@ export function ChatInput({
     lastTermRowsRef.current = termRows
     lastTermWidthRef.current = termWidth
 
-    // ── Scrollback-commit write (inline-stream) ──────────────────────────
+    // ── 滚动区提交写入（内联流）──────────────────────────
     //
-    // Writes new `content + frame` as ONE continuous stream starting at
-    // row `startRow = termRows - scrollRows - nextH + 1`, ending exactly
-    // at `termRows`. Rows that would be overwritten by the write AND
-    // previously held real scrollback content are first pushed to the
-    // terminal's real scrollback via pre-scroll `\n`s at screen bottom
-    // (the only mechanism xterm.js / Windows Terminal honor for preserving
-    // content — DECSTBM-restricted region scrolls are splice-discarded in
-    // xterm.js's InputHandler, confirmed in source).
+    // 把新的 `content + frame` 作为一条连续流写出，从
+    // `startRow = termRows - scrollRows - nextH + 1` 行开始，精确结束于
+    // `termRows`。会被这次写入覆盖、且此前保存着真实滚动区内容的行，先经屏幕底部
+    // 的 pre-scroll `\n`s 推入终端的真实滚动区（这是 xterm.js / Windows Terminal
+    // 唯一认可的内容保留机制 —— DECSTBM 限定的区域滚动在 xterm.js 的 InputHandler
+    // 里被拼接丢弃，已在源码确认）。
     //
-    // Pre-scroll amount = (rows in [startRow, termRows] that were
-    // above the old frame) = max(0, scrollRows + nextH - oldFrameH).
-    // This is 0 on first-paint / post-hidden (oldFrameH = 0, no active
-    // scrollback to preserve — pre-existing rows above stay put), it is
-    // scrollRows in the steady-state active case, and scrollRows +
-    // (nextH - oldFrameH) when the frame grows (e.g. spinner appearing
-    // at user submission).
+    // Pre-scroll 量 = （[startRow, termRows] 里在旧帧上方的行数）=
+    // max(0, scrollRows + nextH - oldFrameH)。首次绘制 / 隐藏后为 0（oldFrameH = 0，
+    // 没有要保留的活动滚动区 —— 已存在的上方行原地不动），稳态活动时为
+    // scrollRows，帧增长时（例如用户提交时 spinner 出现）为 scrollRows +
+    // (nextH - oldFrameH)。
     //
-    // After the pre-scroll, existing content rests at rows shifted up,
-    // and the write zone [startRow, termRows] contains the bottom rows
-    // of the old frame and the blanks just created by the pre-scroll —
-    // safe to overwrite entirely. The write places new content at
-    // rows [frameTop - scrollRows, frameTop - 1] and the new frame at
-    // [frameTop, termRows].
+    // Pre-scroll 之后，已有内容停在被上移的行上，写入区 [startRow, termRows] 包含旧
+    // 帧的底行以及 pre-scroll 刚制造出来的空白 —— 可以整块安全覆盖。写入把新内容放
+    // 在 [frameTop - scrollRows, frameTop - 1] 行，把新帧放在 [frameTop, termRows]。
     //
-    // prevFrameRef is set to the just-written frame so the diff loop
-    // below emits only cursor advances (no cell writes) — no separate
-    // frame-redraw phase, no flicker.
+    // prevFrameRef 被设为刚写入的帧，让下方的 diff 循环只发出光标前进（无单元格写
+    // 入）—— 没有独立的帧重绘阶段，没有闪烁。
     //
-    // Cursor is hidden for the duration of the write.
-    // Deferred-flush staging for freeBlanksAboveFrameRef. Two renders with
-    // the same (oldFrameH → nextH) transition used to each apply `+=
-    // deltaH` against the live ref before either one's stdout write ran —
-    // so on a shrink that got re-rendered once before its deferred flush
-    // fired, the blank-row credit doubled. Accumulating the target in a
-    // local and committing it in doFlush makes the mutation idempotent:
-    // every render of the same state computes the same target, only the
-    // one whose payload actually writes applies it. Symptom it cured:
-    // 3+ persistent blank lines appearing after every Bash approval.
+    // 写入期间光标保持隐藏。
+    // freeBlanksAboveFrameRef 的延迟 flush 暂存。两个有着相同（oldFrameH → nextH）
+    // 迁移的渲染，过去会在各自 stdout 写入运行之前都对着活 ref 应用 `+= deltaH` ——
+    // 所以在一次缩小被重渲染过一遍、其延迟 flush 尚未触发时，空白行信用会翻倍。把
+    // 目标累加到一个本地变量并在 doFlush 里提交，让这次修改变得幂等：同一状态的每次
+    // 渲染都算出同样的目标，只有那个真正写了负载的渲染才应用它。它治愈的症状：
+    // 每次 Bash 批准之后出现 3+ 条持续存在的空白行。
     let pendingFreeBlanks = freeBlanksAboveFrameRef.current
-    // Same idempotency story as pendingFreeBlanks above, but for the
-    // blank-row-above-frame counter the shrink path may bump and the
-    // grow path may consume. See blankRowsAboveFrameRef for the why.
+    // 与上面 pendingFreeBlanks 同样的幂等逻辑，但针对的是帧上方空白行计数器 —— 缩小
+    // 路径可能增加它，增长路径可能消耗它。为什么，见 blankRowsAboveFrameRef。
     let pendingBlankRowsAbove = blankRowsAboveFrameRef.current
     const scrollRows = didCommitMessages ? countContentRows(scrollbackContent, termWidth) : 0
-    // Top frame rows to force-repaint this render because the MINIMAL-WRITE
-    // commit below may have spilled content onto them (see the spill-heal
-    // assignment in that branch for the full rationale).
+    // 本次渲染要强制重绘的顶部帧行，因为下面的 MINIMAL-WRITE commit 可能把内容溅到
+    // 了它们上面（完整理由见该分支里的 spill-heal 赋值）。
     let healTopFrameRows = 0
     let handledCommitWithFrame = false
     let forceFullRedraw = false
     if (didCommitMessages && scrollRows > 0 && nextH > 0 && nextH < termRows) {
-      // Available rows we already "own" above the current frame: the old
-      // frame itself (about to be overwritten) plus any blank rows left
-      // by a recent shrink (dialog close). If the new content+frame fits
-      // within that space, no full-screen scroll is needed. If it doesn't,
-      // pre-scroll the shortfall into real terminal scrollback history.
-      // Floating-frame model: freeBlanks always represents the budget of
-      // re-usable rows below the frame (or above when frame is at the
-      // bottom — same value, just placed differently). On first-paint
-      // (oldFrameH = 0) it was just seeded from termRows-banner-nextH so
-      // the very first commit can write content right after the banner
-      // and leave the residual blanks below the frame.
+      // 我们在当前帧上方已经「拥有」的可用行：旧帧自身（即将被覆盖）加上最近一次
+      // 缩小（对话框关闭）留下的任何空白行。如果新的 content+frame 装得进那个空间，
+      // 就不需要全屏滚动。装不下，就把缺口 pre-scroll 进真实的终端滚动区历史。
+      // 浮动帧模型：freeBlanks 始终代表帧下方（或帧在底部时帧上方 —— 同样的值，只是
+      // 摆放位置不同）可复用行的预算。首次绘制（oldFrameH = 0）时它刚从
+      // termRows-banner-nextH 播种，所以第一次 commit 可以把内容写在横幅正后方，并把
+      // 剩余空白留在帧下方。
       const freeBlanks = freeBlanksAboveFrameRef.current
-      // Stranded blanks above the frame (left by a recent big shrink that
-      // bottom-anchored the frame, e.g. permission dialog closing). They
-      // are visible to the user as a blank gap between earlier scrollback
-      // and the frame. Including them in availSpace lets startRow shift
-      // upward so the committed content writes INTO those rows instead of
-      // skipping over them — eliminating the gap. Without this, the
-      // commit writes at termRows-oldFrameH-freeBlanks+1 and the rows
-      // between viewport-top and that startRow stay blank forever.
+      // 帧上方滞留的空白（由最近一次大缩小把帧锚到底部留下，例如权限对话框关闭）。
+      // 它们对用户可见，表现为早先滚动区与帧之间的一条空白间隙。把它们计入
+      // availSpace，让 startRow 向上移，这样已提交内容写进那些行而不是跳过它们 ——
+      // 消除间隙。没有这个，commit 会写在 termRows-oldFrameH-freeBlanks+1，而视口顶部
+      // 与该 startRow 之间的行永远空白。
       const blankAbove = blankRowsAboveFrameRef.current
       const availSpace = oldFrameH + freeBlanks + blankAbove
-      // Cap pre-scroll to the actual count of viewport rows holding old
-      // content above the frame (`termRows - availSpace`). The naive
-      // `scrollRows + nextH - availSpace` overshoots whenever new content
-      // exceeds what fits between the top of the viewport and the frame —
-      // each \n past that point auto-scrolls a *blank* row into real
-      // scrollback, leaving a visible gap of empty lines between the
-      // user's previous history and the just-committed message. The
-      // remaining shortfall is absorbed naturally by auto-scroll while
-      // `scrollbackContent` is being written below (each wrapped line
-      // beyond termRows triggers one row of LF-driven scroll, same
-      // mechanism — just interleaved with content instead of upfront
-      // blanks). Symptom this cures: long tool-result commits (e.g. a
-      // ~115-row ExitPlanMode plan) leaving ~30 blank rows in scrollback
-      // history above the rendered plan body.
+      // 把 pre-scroll 封顶到帧上方真正保存着旧内容的视口行数（`termRows -
+      // availSpace`）。朴素公式 `scrollRows + nextH - availSpace` 在新内容超过视口顶部
+      // 与帧之间能容纳的量时会超发 —— 超出那一点的每个 \n 都会把一行【空白】自动滚
+      // 进真实滚动区，在用户此前的历史和刚提交的消息之间留下可见的空行间隙。剩余的
+      // 缺口在 `scrollbackContent` 于下方写出时由自动滚动自然吸收（每一条超出 termRows
+      // 的折行触发一行 LF 驱动的滚动，同样的机制 —— 只是与内容交错，而不是预先的空
+      // 白）。它治愈的症状：长工具结果提交（例如约 115 行的 ExitPlanMode 计划）在渲染
+      // 出的计划主体上方的滚动区历史里留下约 30 条空白行。
       const maxUsefulPreScroll = Math.max(0, termRows - availSpace)
       const preScrollRows = Math.max(0, Math.min(scrollRows + nextH - availSpace, maxUsefulPreScroll))
       debugLog(
@@ -2750,135 +2394,91 @@ export function ChatInput({
           `availSpace=${availSpace} preScroll=${preScrollRows} ` +
           `freeBlanks=${freeBlanks} blankAbove=${blankAbove}`,
       )
-      // Write scrollbackContent DIRECTLY after the last row of real
-      // scrollback — this consumes the free-blank region row-by-row
-      // instead of leaving it stranded as a visible gap between the
-      // earlier history and the newly committed content.
+      // 把 scrollbackContent 直接写在真实滚动区最后一行之后 —— 这样逐行消耗自由空白
+      // 区域，而不是把它滞留成早先历史与新提交内容之间可见的间隙。
       const startRow = Math.max(1, termRows - availSpace - preScrollRows + 1)
-      // Rows still blank after this commit. These become the next
-      // render's freeBlanks — either kept BELOW the frame (frame keeps
-      // floating up) or implicitly consumed when the frame reaches the
-      // bottom (freeBlanks = 0).
+      // 本次提交之后仍然空白的行。它们成为下次渲染的 freeBlanks —— 要么保留在帧下方
+      // （帧继续上浮），要么在帧到达底部时（freeBlanks = 0）被隐式消耗。
       const rawLeftover = Math.max(0, availSpace + preScrollRows - scrollRows - nextH)
-      // When the frame shrank significantly (e.g. select/askUser dialog
-      // closed), the old availSpace reflects the large dialog. Without
-      // capping, leftoverBlanks can be 12+ rows, leaving the frame
-      // floating at the top of the viewport with a huge blank gap below.
-      // For large shrinks (> 3 rows), snap blanks to 0 so the frame
-      // immediately anchors to the bottom. Small shrinks (≤ 3) use the
-      // natural floor to let the floating-frame model consume blanks
-      // gradually.
+      // 当帧显著缩小（例如 select/askUser 对话框关闭）时，旧的 availSpace 反映的是那个
+      // 大对话框。不封顶的话，leftoverBlanks 可能达 12+ 行，让帧浮在视口顶部、下方留
+      // 一大片空白。对大缩小（> 3 行），把空白归零让帧立即锚到底部。小缩小（≤ 3）用
+      // 自然下限，让浮动帧模型逐步消耗空白。
       const frameShrunk = oldFrameH - nextH
       const maxBlanks = frameShrunk > 3 ? 0 : termRows - nextH
       const leftoverBlanks = Math.min(rawLeftover, maxBlanks)
       pendingFreeBlanks = leftoverBlanks
-      // Recompute frameTop now that pendingFreeBlanks reflects the
-      // post-commit free-row budget. In the floating-frame model the
-      // frame's top moves DOWN by scrollRows on every commit (until it
-      // reaches the bottom and stays there) — the cell-diff loop and
-      // the FULL-REDRAW path below both anchor at this updated value.
+      // 现在 pendingFreeBlanks 反映了提交后的自由行预算，重算 frameTop。在浮动帧模型
+      // 里，帧顶部每次 commit 都向下移动 scrollRows（直到到达底部并停在那里）—— 下方
+      // 的 cell-diff 循环和 FULL-REDRAW 路径都锚定在这个更新后的值上。
       frameTop = computeFrameTop(pendingFreeBlanks)
-      // No `\x1b[?25l` here. Earlier revisions hid the cursor across the
-      // scroll-clear-redraw window so its intermediate positions inside
-      // the renderRowToAnsi loop wouldn't blink across rows on terminals
-      // that don't fully atomize DEC 2026 — but at the 10-15Hz commit
-      // cadence of streaming responses this produced exactly the same
-      // hide/show flap that the spinner-tick path already removed for
-      // the same reason (see comment at the top of this file). DEC 2026
-      // sync on every target terminal (xterm.js / VSCode, Windows
-      // Terminal, iTerm2, Ghostty) already buffers the intermediate
-      // positions, and ESU_SHOW at the bottom of this render places the
-      // cursor at the input column. Cursor stays visible throughout.
-      // Two paths from here:
+      // 这里没有 `\x1b[?25l`。早先的修订在 scroll-clear-redraw 窗口期间隐藏光标，让
+      // 它在 renderRowToAnsi 循环内部的中间位置不会在无法完全原子化 DEC 2026 的终端上
+      // 跨行闪烁 —— 但在流式响应 10-15Hz 的 commit 节奏下，这产生了与 spinner-tick 路径
+      // 出于同样原因已经移除的完全相同的隐藏/显示抖动（见本文件顶部注释）。每个目标
+      // 终端（xterm.js / VSCode、Windows Terminal、iTerm2、Ghostty）上的 DEC 2026 同步
+      // 已经缓冲了中间位置，而本次渲染底部的 ESU_SHOW 把光标放在输入列。光标全程保持
+      // 可见。
+      // 从这里起有两条路径：
       //
-      //   FULL-REDRAW PATH — used when (a) the new content forces a
-      //     full-screen scroll (preScrollRows > 0) so the frame slid off
-      //     the bottom and must be repainted at the new bottom, OR
-      //     (b) the frame's height is changing this render (oldFrameH
-      //     !== nextH), e.g. the spinner is appearing/disappearing or
-      //     a permission dialog is opening/closing. Frame-height changes
-      //     can't go through the optimization below because the cell-
-      //     diff loop's `maxH = max(prevH, nextH)` then iterates past
-      //     the new bottom row, triggering a `\x1b[1B\r` from the last
-      //     terminal row and auto-scrolling the bottom separator out of
-      //     view. Symptom this cured: the bottom `─────` row vanishing
-      //     the moment an AI reply finished (frame went 4-row → 3-row
-      //     at end-of-stream).
+      //   FULL-REDRAW PATH —— 用于 (a) 新内容强制全屏滚动（preScrollRows > 0），帧从
+      //     底部滑出、必须在新底部重绘，或 (b) 本次渲染帧高度在变（oldFrameH !==
+      //     nextH），例如 spinner 出现/消失或权限对话框打开/关闭。帧高度变化不能走
+      //     下面的优化，因为 cell-diff 循环的 `maxH = max(prevH, nextH)` 随后会迭代过
+      //     新底部行，从最后一行终端行触发一个 `\x1b[1B\r` 并把底部分隔线自动滚出
+      //     视野。它治愈的症状：AI 回复结束的那一刻底部 `─────` 行消失（流结束时帧从
+      //     4 行变成 3 行）。
       //
-      //   MINIMAL-WRITE PATH — used when the frame is stable in size
-      //     AND no scroll is needed. Streaming responses spend almost
-      //     all their commits here. Don't `[J]`-clear or repaint the
-      //     frame at all; only clear the gap rows between scrollback
-      //     and frame, and let the cell-diff loop below pick up genuine
-      //     frame changes (typically just the 1-cell spinner glyph
-      //     swap). This is what eliminates the visible wipe-and-repaint
-      //     of the spinner / separator / input rows on every commit.
+      //   MINIMAL-WRITE PATH —— 用于帧尺寸稳定且无需滚动时。流式响应几乎把它们的
+      //     commit 全花在这里。完全不做 `[J]` 清除也不重绘帧；只清除滚动区与帧之间的
+      //     间隙行，并让下方的 cell-diff 循环拾取真正的帧变化（通常只是 1 单元格的
+      //     spinner 字形交换）。正是这一点消除了每次 commit 时 spinner / 分隔线 / 输入行
+      //     可见的擦除重绘。
       const frameSizeChanged = oldFrameH !== nextH
-      // Floating-frame model: any commit that moves the frame's top row
-      // MUST go through FULL-REDRAW. The cell-diff loop further down
-      // assumes the on-screen frame still matches prevFrameRef.current
-      // — true when frame stayed put, false when it just moved. Without
-      // this guard, after a commit the cell-diff would write the new
-      // frame at the new frameTop while the old frame's cells are still
-      // painted at the old position — leaving a phantom input box at
-      // the old row.
+      // 浮动帧模型：任何移动帧顶行的 commit 都必须走 FULL-REDRAW。下方的 cell-diff
+      // 循环假设屏幕上的帧仍与 prevFrameRef.current 一致 —— 帧原地不动时为真，刚移动
+      // 过则为假。没有这个守卫，commit 之后 cell-diff 会在新 frameTop 写新帧，而旧帧
+      // 的单元格仍画在旧位置 —— 在旧行留下一个幻影输入框。
       //
-      // Two ways the frame can move on commit:
-      //   (a) DOWN — freeBlanks (blank rows BELOW frame) was non-zero,
-      //       gets partially consumed by `scrollRows`, frame floats
-      //       toward the bottom.
-      //   (b) UP — frame was bottom-anchored with blankAbove > 0 (e.g.
-      //       a slash menu just shrunk), the commit writes scrollback
-      //       INTO that blankAbove region (`startRow` shifts up), and
-      //       the new frameTop ends up higher than where the frame
-      //       currently sits.
-      // The older check (`freeBlanks > 0`) only caught case (a). Case (b)
-      // fell through to MINIMAL-WRITE, the old bottom-anchored frame was
-      // never erased, and the user saw two stacked input boxes. We now
-      // compare the just-computed `frameTop` to where the frame was
-      // actually painted last (`lastFrameTopRef`) so both directions are
-      // covered.
+      // 帧在 commit 时移动的两种方式：
+      //   (a) 向下 —— freeBlanks（帧下方的空白行）非零，被 `scrollRows` 部分消耗，
+      //       帧向底部浮动。
+      //   (b) 向上 —— 帧原本底部锚定且 blankAbove > 0（例如斜杠菜单刚缩小），commit
+      //       把滚动区写进那个 blankAbove 区域（`startRow` 上移），新 frameTop 最终
+      //       高于帧当前所在位置。
+      // 旧的检查（`freeBlanks > 0`）只捕获情况 (a)。情况 (b) 落到 MINIMAL-WRITE，旧
+      // 的底部锚定帧从未被擦除，用户看到两个叠在一起的输入框。我们现在把刚算出的
+      // `frameTop` 与帧上次实际绘制的位置（`lastFrameTopRef`）比较，两个方向都覆盖。
       const oldFrameTopForMoveCheck =
         lastFrameTopRef.current > 0 ? lastFrameTopRef.current : Math.max(1, termRows - oldFrameH + 1)
       const frameMoved = freeBlanksAboveFrameRef.current > 0 || oldFrameTopForMoveCheck !== frameTop
       if (preScrollRows > 0 || frameSizeChanged || frameMoved) {
-        // FULL-REDRAW PATH.
+        // 全量重绘路径。
         const oldFrameTopForClear =
           lastFrameTopRef.current > 0 ? lastFrameTopRef.current : Math.max(1, termRows - oldFrameH + 1)
         const oldFrameBottomForClear = Math.min(oldFrameTopForClear + oldFrameH - 1, termRows)
         if (preScrollRows > 0) {
-          // Erase old frame BEFORE the pre-scroll LFs. After the LFs push
-          // N viewport rows into the terminal's real scrollback history,
-          // those rows become permanent — no ANSI escape can clear them.
-          // If the old frame (with its Working/spinner line) sits at rows
-          // that will be pushed above startRow by the scroll, the post-
-          // scroll erase loop can't reach them and they persist as ghost
-          // "Working..." lines in the user's scrollback. Erasing the
-          // old frame here ensures only blank rows enter scrollback history.
+          // 在 pre-scroll LF 之前擦除旧帧。LF 把 N 行视口行推进终端的真实滚动区历史之
+          // 后，那些行就成了永久 —— 没有任何 ANSI 转义能清除它们。如果旧帧（带着它的
+          // Working/spinner 行）坐在会被滚动推到 startRow 之上的行上，post-scroll 的擦除
+          // 循环够不到它们，它们就以幽灵 "Working..." 行的形式残留在用户滚动区里。在这
+          // 里擦除旧帧，确保只有空白行进入滚动区历史。
           for (let r = oldFrameTopForClear; r <= oldFrameBottomForClear; r++) {
             preBuf += `\x1b[${r};1H\x1b[K`
           }
-          // Push `preScrollRows` rows into the terminal's real scrollback
-          // by emitting N LFs at the bottom row. This is the ONLY portable
-          // mechanism that preserves displaced rows in scrollback history:
-          // SU (`\x1b[NS`) and DECSTBM-restricted scrolls both shift cells
-          // in the viewport but discard the rows that fall off the top
-          // on Windows Terminal, ConHost, iTerm2, native macOS Terminal,
-          // Ghostty, and Alacritty. (xterm.js was the one outlier where
-          // SU sometimes lands in scrollback — an earlier revision of
-          // this file used SU on that basis and silently swallowed the
-          // overflow on every other target terminal: any AI reply taller
-          // than the available rows above the frame lost its top lines.)
-          // Auto-scroll triggered by LF at termRows is universally honored.
+          // 通过在底行发出 N 个 LF，把 `preScrollRows` 行推进终端的真实滚动区。这是唯一
+          // 可移植的、能在滚动区历史里保留被位移行的机制：SU（`\x1b[NS`）和 DECSTBM 限定
+          // 的滚动都移动视口里的单元格，但在 Windows Terminal、ConHost、iTerm2、原生
+          // macOS Terminal、Ghostty 和 Alacritty 上会丢弃从顶部掉出去的行。（xterm.js 是
+          // 唯一的例外，SU 有时会落入滚动区 —— 本文件早先的一个修订版基于这一点用了
+          // SU，却在其他每个目标终端上静默吞掉了溢出：任何高于帧上方可用行的 AI 回复
+          // 都会丢失其顶部几行。）由 termRows 处 LF 触发的自动滚动被普遍遵守。
           preBuf += `\x1b[${termRows};1H` + '\n'.repeat(preScrollRows)
         }
-        // After pre-scroll (or when no scroll needed), erase the viewport
-        // rows that will hold new content. When preScroll happened, old
-        // frame rows have already been blanked above; the post-scroll
-        // viewport rows [startRow, termRows] are blank lines created by
-        // the scroll. We still clear [startRow, clearEnd] to handle the
-        // non-scroll cases (frameSizeChanged / frameMoved) where old frame
-        // cells sit at their original positions.
+        // Pre-scroll 之后（或无需滚动时），擦除将要容纳新内容的视口行。preScroll 发生
+        // 时，旧帧行已经在上面被清空；post-scroll 的视口行 [startRow, termRows] 是滚动
+        // 制造出来的空白行。我们仍清除 [startRow, clearEnd] 以处理无滚动的情况
+        // （frameSizeChanged / frameMoved），那里旧帧单元格仍坐在其原始位置。
         const clearEnd = preScrollRows > 0 ? termRows : oldFrameBottomForClear
         for (let r = startRow; r <= clearEnd; r++) {
           preBuf += `\x1b[${r};1H\x1b[K`
@@ -2887,29 +2487,20 @@ export function ChatInput({
         preBuf += scrollbackContent
         const postContentScrollRows = computePostContentScrollRows(startRow, scrollRows, frameTop, termRows)
         if (postContentScrollRows > 0) {
-          // Content taller than the space above the frame leaves its tail
-          // in rows the absolute-positioned frame is about to repaint.
-          // Move only that overlap into real scrollback first.
+          // 比帧上方空间还高的内容会把它的尾部留在绝对定位帧即将重绘的行上。先把那
+          // 部分重叠移进真实滚动区。
           preBuf += `\x1b[${termRows};1H${'\n'.repeat(postContentScrollRows)}`
         }
-        // When the frame shrank significantly (e.g. askUser dialog closed),
-        // scrollback content only fills a fraction of the space the old frame
-        // occupied. Instead of anchoring the frame at the terminal bottom and
-        // leaving a visible blank gap between scrollback and frame, place the
-        // frame directly below the scrollback content. The remaining blank
-        // rows below the frame are recorded in pendingFreeBlanks so
-        // subsequent commits can consume them naturally (frame floats down
-        // toward the bottom as new content arrives).
+        // 当帧显著缩小（例如 askUser 对话框关闭）时，滚动区内容只占旧帧空间的一小部
+        // 分。与其把帧锚在终端底部、在滚动区与帧之间留下可见空白间隙，不如把帧直接
+        // 放在滚动区内容下方。帧下方剩余的空白行记入 pendingFreeBlanks，让后续 commit
+        // 能自然消耗它们（新内容到达时帧向底部浮动）。
         //
-        // Skip when blankAbove > 0: those stranded blanks were JUST consumed
-        // (startRow shifted up to fill them), and the leftover space is the
-        // budget the dialog grew into. Pulling the frame up to sit directly
-        // below content would leave that leftover BELOW the frame — the
-        // input bar floats in the middle of the viewport with empty rows
-        // beneath it. Keep the frame bottom-anchored instead so the gap
-        // stays where the dialog was, above the input bar (the familiar
-        // bottom position) — visually the input stays at the terminal edge
-        // and the gap is between the recent activity and the input row.
+        // 当 blankAbove > 0 时跳过：那些滞留空白刚刚被消耗（startRow 上移去填满它们），
+        // 剩余空间是对话框长进去的预算。把帧拉上来紧贴内容下方，会让那份剩余留在帧
+        // 下方 —— 输入条浮在视口中间、下方是空行。改为保持帧底部锚定，让间隙留在
+        // 对话框原先的位置、输入条上方（熟悉的底部位置）—— 视觉上输入待在终端边缘，
+        // 间隙在最近活动与输入行之间。
         if (preScrollRows === 0 && frameShrunk > 3 && leftoverBlanks === 0 && blankAbove === 0) {
           const scrollEndRow = startRow + scrollRows
           if (scrollEndRow < frameTop) {
@@ -2925,77 +2516,56 @@ export function ChatInput({
         }
         prevFrameRef.current = frame
       } else {
-        // MINIMAL-WRITE PATH (the dominant case during streaming).
-        // Clear ONLY the rows in [startRow, frameTop), write scrollback
-        // into them, and leave the frame area untouched. The cell-diff
-        // loop below compares the unchanged on-screen frame against the
-        // new frame and emits only the cells that actually differ
-        // (spinner glyph, elapsed-time digits).
+        // MINIMAL-WRITE PATH（流式期间的主导情况）。
+        // 只清除 [startRow, frameTop) 里的行，把滚动区写进去，帧区域不动。下方的
+        // cell-diff 循环把屏幕上未变的帧与新帧比较，只发出真正不同的单元格
+        // （spinner 字形、耗时数字）。
         for (let r = startRow; r < frameTop; r++) {
           preBuf += `\x1b[${r};1H\x1b[K`
         }
         preBuf += `\x1b[${startRow};1H` + scrollbackContent
-        // Spill heal: the content just written occupies scrollRows rows in
-        // our geometry, but a line the terminal wraps later than predicted
-        // (CJK/ambiguous width disagreement, delayed-wrap phantom row) spills
-        // its tail onto the frame's top rows. The cell-diff below compares
-        // against prevFrameRef — which still holds the clean frame — so it
-        // would rewrite only differing cells and leave the spill's first
-        // column and tail painted ("I+ Waiting…interrupt)ke@example.com…").
-        // Rows that never change (the ⎿ command preview) wouldn't be
-        // rewritten at all, leaving the spilled row fully visible. Force the
-        // at-risk top rows through the fresh-redraw branch (full rewrite
-        // from col 0 + \x1b[K) so any spill is wiped in the same flush.
+        // 溅出修复：刚写的内容在我们的几何里占 scrollRows 行，但某行在终端里比预期
+        // 晚折行（CJK/歧义宽度不一致、延迟折行的幻影行）会把它的尾部溅到帧的顶部行
+        // 上。下方的 cell-diff 与 prevFrameRef 比较 —— 它还保存着干净的帧 —— 所以只会
+        // 重写不同的单元格，而把溅出的首列和尾部留在屏幕上（"I+ Waiting…interrupt)
+        // ke@example.com…"）。永不变化的行（⎿ 命令预览）根本不会被重写，让溅出的行
+        // 完全可见。把有风险的顶部行强制走 fresh-redraw 分支（从第 0 列整行重写 +
+        // \x1b[K），让任何溅出在同一次 flush 里被擦掉。
         healTopFrameRows = Math.min(nextH, countSpillRiskRows(scrollbackContent, termWidth))
         if (healTopFrameRows > 0) {
           debugLog('chatinput.flush.spill-heal', `rows=${healTopFrameRows}`)
         }
-        // Always park cursor at frameTop after scrollback write.
-        // The cell-diff loop uses absolute positioning per row, but
-        // an explicit jump prevents any cursor-position mismatch
-        // from causing visual artifacts.
+        // 滚动区写入后总是把光标停在 frameTop。cell-diff 循环逐行使用绝对定位，但
+        // 一次显式跳转防止任何光标位置不匹配造成视觉伪影。
         preBuf += `\x1b[${frameTop};1H`
-        // DON'T set prevFrameRef.current = frame here — the on-screen
-        // frame is still the previous render's frame (we didn't repaint
-        // it), and the cell-diff loop below needs to compare against
-        // that to find the cells that genuinely changed.
+        // 不要在这里设 prevFrameRef.current = frame —— 屏幕上的帧仍是上一渲染的帧
+        // （我们没有重绘它），下方的 cell-diff 循环需要与它比较才能找出真正变化的
+        // 单元格。
       }
       handledCommitWithFrame = true
-      // Commit just wrote `scrollRows` rows of scrollback content at
-      // `startRow`, then placed the frame at `frameTop`. Any rows in
-      // between are blank (the clear loop wiped them but no content
-      // landed there — typically zero, or one when the special-block
-      // path squashed the gap). Whatever it is, that's the new
-      // contiguous-blank count directly above the frame; older blanks
-      // farther up stop being "directly above" once committed content
-      // sits between them and the frame, so they no longer interact
-      // with the grow path's scroll-only-real-content logic.
+      // Commit 刚在 `startRow` 写了 `scrollRows` 行滚动区内容，然后把帧放在
+      // `frameTop`。它们之间的行是空白（清除循环擦掉了它们但没内容落在那儿 —— 通常
+      // 为零，或当特殊块路径压扁了间隙时为一）。不管它是什么，那就是帧正上方新的
+      // 连续空白计数；更靠上的旧空白一旦有已提交内容坐在它们与帧之间，就不再是
+      // 「正上方」，所以它们不再与增长路径的「只滚动真实内容」逻辑交互。
       pendingBlankRowsAbove = Math.max(0, frameTop - (startRow + scrollRows))
     } else if (didCommitMessages) {
-      // Plan b weak-terminal path: nextH=0 (frame was cleared by the
-      // streaming bail-out above) but oldFrameH may still be > 0 — the
-      // OLD frame is still painted on screen. If we let scrollbackContent
-      // write first, its trailing `\r\n\r\n` triggers auto-scrolls at
-      // termRows that push the OLD top-separator and OLD input row into
-      // the terminal's scrollback history (visible as "horizontal line +
-      // `> 查询…`" appearing above the AI response). The erase done by
-      // the shrink path BELOW fires too late — it lands on the just-
-      // shifted rows and erases the new echo instead.
+      // Plan b 弱终端路径：nextH=0（帧被上面的流式兜底清空）但 oldFrameH 可能仍 > 0
+      // —— 旧帧仍画在屏幕上。如果我们让 scrollbackContent 先写，它尾部的
+      // `\r\n\r\n` 会在 termRows 触发自动滚动，把旧顶部分隔线和旧输入行推进
+      // 终端的滚动区历史（表现为 AI 回复上方出现「横线 + `> 查询…`」）。下面缩小路径
+      // 做的擦除触发得太晚 —— 它落在刚被移位的行上，反而擦掉了新回显。
       //
-      // Fix: erase the OLD frame rows FIRST, here, before scrollbackContent
-      // writes. With the frame area cleared, the echo's auto-scrolls push
-      // BLANK rows into scrollback rather than old frame remnants, and
-      // the echo lands cleanly. Mark handledCommitWithFrame so the shrink
-      // path below doesn't double-erase.
+      // 修复：在这里先擦除旧帧行，在 scrollbackContent 写之前。帧区域清空后，回显的
+      // 自动滚动把【空白】行推进滚动区而不是旧帧残留，回显干净落地。标记
+      // handledCommitWithFrame，让下面的缩小路径不要双重擦除。
       if (oldFrameH > 0 && nextH < oldFrameH && !permission) {
-        // Use the actual previous frame top (floating-frame model means
-        // the OLD frame may have sat above the bottom-anchor position).
+        // 使用实际的上一帧顶部（浮动帧模型意味着旧帧可能坐在底部锚定位置之上）。
         const oldTop = lastFrameTopRef.current > 0 ? lastFrameTopRef.current : Math.max(1, termRows - oldFrameH + 1)
         for (let i = 0; i < oldFrameH; i++) {
           preBuf += `\x1b[${oldTop + i};1H\x1b[K`
         }
-        // Cursor sits at top of where the old frame was, so the echo
-        // writes there instead of one row below the old input.
+        // 光标停在旧帧原先位置的顶部，所以回显写在那里，而不是旧输入下面一行。
         preBuf += `\x1b[${oldTop};1H`
         pendingFreeBlanks = freeBlanksAboveFrameRef.current + oldFrameH
         frameTop = computeFrameTop(pendingFreeBlanks)
@@ -3008,23 +2578,17 @@ export function ChatInput({
         forceFullRedraw = true
         handledCommitWithFrame = true
       }
-      // Account for streamed-content rows so freeBlanks tracks reality.
-      // Plan b runs every render where messages committed but the frame
-      // is hidden (nextH=0, the streaming bail-out) — i.e. on every chunk
-      // of an AI reply. `scrollbackContent` is about to be written into
-      // rows the renderer previously thought were blank (the `freeBlanks`
-      // budget seeded from termRows-banner-frameH on first paint). Without
-      // this decrement, freeBlanks stays at its initial value for the
-      // entire response, so the FINAL render at end-of-stream (nextH:0→3,
-      // takes the main FULL-REDRAW path) computes availSpace=oldFrameH+
-      // freeBlanks=40, preScroll=0, and \x1b[J wipes the streamed body.
-      // xterm.js / VSCode's terminal accidentally papered over this via
-      // its own scrollback quirks (see SU comment around line 1932); on
-      // ConHost / Windows PowerShell host / GNOME Terminal / xterm /
-      // every other target, the body really did get wiped, leaving only
-      // the last 1-2 lines above the input box once the spinner stopped.
-      // Mirror of the leftoverBlanks bookkeeping the main commit path
-      // does at line ~1869 — same idea, just applied on the Plan b side.
+      // 计入流式内容行，让 freeBlanks 跟上现实。Plan b 在每次消息已提交但帧被隐藏
+      // （nextH=0，流式兜底）的渲染上运行 —— 即 AI 回复的每个分块。`scrollbackContent`
+      // 即将写进渲染器之前以为空白的行（首次绘制时从 termRows-banner-frameH 播种的
+      // `freeBlanks` 预算）。没有这个递减，freeBlanks 在整个响应期间停留在初始值，所以
+      // 流结束时（nextH:0→3，走主 FULL-REDRAW 路径）的最终渲染会算出
+      // availSpace=oldFrameH+freeBlanks=40、preScroll=0，而 \x1b[J 擦掉流式正文。
+      // xterm.js / VSCode 的终端靠自身滚动区怪癖意外掩盖了这一点（见约 1932 行的 SU
+      // 注释）；在 ConHost / Windows PowerShell 宿主 / GNOME Terminal / xterm / 其他所有
+      // 目标上，正文真的被擦掉了，spinner 停止后输入框上方只剩最后 1-2 行。
+      // 与主 commit 路径在约 1869 行做的 leftoverBlanks 记账互为镜像 —— 同样的思路，
+      // 只是应用在 Plan b 一侧。
       if (scrollRows > 0) {
         const before = pendingFreeBlanks
         pendingFreeBlanks = Math.max(0, pendingFreeBlanks - scrollRows)
@@ -3039,83 +2603,59 @@ export function ChatInput({
 
     let buf = ''
 
-    // Frame-height change: the frame is pinned to the bottom, so when
-    // H grows, its top moves UP — risking overwrite of scrollback rows
-    // that currently live there.
+    // 帧高度变化：帧钉在底部，所以 H 增长时它的顶部向上移 —— 有覆盖当前住在那里的
+    // 滚动区行的风险。
     //
-    // Small grows (≤3 rows — spinner appearing, permission dialog) use
-    // a full-screen scroll so the displaced content ends up preserved
-    // in the terminal's real scrollback.
+    // 小增长（≤3 行 —— spinner 出现、权限对话框）用全屏滚动，让被位移的内容最终
+    // 保留在终端的真实滚动区里。
     //
-    // Large grows (≥4 rows — SelectOptions picker, completion menu with
-    // many items) are almost always sitting over blank rows in a typical
-    // session (banner + some blanks + frame at bottom). Pre-scrolling
-    // those blanks INTO real scrollback permanently consumes viewport
-    // rows that the subsequent shrink can't recover — that's the
-    // "after /model there's a big blank" complaint. We skip the
-    // pre-scroll in this case and instead erase the grow area before
-    // the cell diff repaints over it. When the frame shrinks back, the
-    // existing erase branch below clears the expanded area and the
-    // layout returns to exactly what it was before the grow.
+    // 大增长（≥4 行 —— SelectOptions 选择器、有很多条目的补全菜单）在典型会话里几乎
+    // 总是坐在空白行上（横幅 + 一些空白 + 底部的帧）。把这些空白 pre-scroll 进真实
+    // 滚动区会永久消耗后续缩小无法恢复的视口行 —— 这就是「/model 之后有一大块空白」
+    // 的抱怨。这种情况下我们跳过 pre-scroll，改为在 cell diff 重绘覆盖之前先擦除增长
+    // 区域。当帧缩回去时，下面已有的擦除分支清除扩展区域，布局回到增长之前的样子。
     //
-    // For shrinks, the bottom of the old frame stays exposed as "stale
-    // frame cells" above the new top — clear those rows.
+    // 对缩小，旧帧底部在新顶部上方暴露为「陈旧帧单元格」—— 清除那些行。
     if (!handledCommitWithFrame && activeRef.current && oldFrameH > 0 && oldFrameH !== nextH) {
       if (nextH > oldFrameH) {
         const deltaH = nextH - oldFrameH
-        // Consume as much freshly-blank space below the frame as we can —
-        // those rows can be overwritten without losing anything. Any excess
-        // expansion exceeds the bottom blanks, so pre-scroll that much into
-        // real scrollback to preserve content above (banner, earlier
-        // messages). Without this, typing `/` to open the completion menu
-        // would wipe whatever scrollback sat right above the input.
+        // 尽可能消耗帧下方刚变空的空间 —— 那些行可以被覆盖而不丢失任何东西。任何多余
+        // 的扩展超过底部空白，就把多出的部分 pre-scroll 进真实滚动区，以保留上方内容
+        // （横幅、更早的消息）。没有这个，输入 `/` 打开补全菜单就会抹掉输入框正上方
+        // 的任何滚动区。
         const absorbed = Math.min(deltaH, freeBlanksAboveFrameRef.current)
-        // Then consume any blank rows DIRECTLY above the frame (left
-        // there by a prior large-shrink). The frame can extend up into
-        // these rows via the cell-grid repaint without any LF scroll —
-        // emitting LFs here would push the blanks into terminal
-        // scrollback as a permanent gap (the symptom: a big stretch
-        // of empty rows under a `Task()` line whenever sub-agents
-        // open multiple permission dialogs in a row). Only the rows
-        // BEYOND that blank zone are real content that genuinely needs
-        // to be scrolled into history.
+        // 然后消耗帧【正上方】的任何空白行（由之前一次大缩小留下）。帧可以经 cell-grid
+        // 重绘向上伸进这些行，而无需任何 LF 滚动 —— 在这里发 LF 会把空白推进终端滚动
+        // 区成为永久间隙（症状：每当子代理连续打开多个权限对话框时，`Task()` 行下面
+        // 出现一大段空行）。只有超出那个空白区域的行才是真正需要滚进历史的真实内容。
         const fromBlankAbove = Math.min(deltaH - absorbed, pendingBlankRowsAbove)
         pendingBlankRowsAbove -= fromBlankAbove
         const rawNeedsScroll = deltaH - absorbed - fromBlankAbove
-        // Cap LF count to the rows of REAL CONTENT actually sitting above
-        // the old frame. Without this cap, the slash menu's grow path
-        // (e.g. nextH=22 in an 18-row terminal) would emit `deltaH - absorbed`
-        // LFs at the bottom edge — but every LF beyond `oldTop - 1` is
-        // scrolling a phantom row (frame extends upward off-screen) and
-        // each phantom scroll pushes a BLANK row into terminal scrollback,
-        // leaving visible empty lines between each /command's output.
-        // The frame is allowed to clip at the top of the viewport (the
-        // computeFrameTop floor is row 1); we don't need to "make room"
-        // for the off-screen portion.
+        // 把 LF 数量封顶到实际坐在旧帧上方的真实内容行数。没有这个封顶，斜杠菜单的
+        // 增长路径（例如 18 行终端里 nextH=22）会在底边发出 `deltaH - absorbed` 个 LF
+        // —— 但每个超出 `oldTop - 1` 的 LF 都在滚动一个幻影行（帧向上延伸到屏幕外），
+        // 每次幻影滚动都把一行【空白】推进终端滚动区，在每个 /command 输出之间留下可见
+        // 的空行。帧被允许在视口顶部被裁剪（computeFrameTop 的下限是第 1 行）；我们
+        // 不需要为屏幕外部分「腾地方」。
         //
-        // We further subtract `blankRowsAboveFrameRef.current` because
-        // those rows are blank already (a prior shrink left them) and
-        // `fromBlankAbove` only consumed up to `deltaH - absorbed` of
-        // them; any leftover blank rows above the frame would otherwise
-        // be counted as "real content" by the `oldTop - 1` formula.
+        // 我们再减去 `blankRowsAboveFrameRef.current`，因为那些行已经空白（之前一次
+        // 缩小留下的），而 `fromBlankAbove` 只消耗了其中至多 `deltaH - absorbed`；帧上方
+        // 任何剩余的空白行否则会被 `oldTop - 1` 公式当作「真实内容」。
         const oldTop = lastFrameTopRef.current > 0 ? lastFrameTopRef.current : Math.max(1, termRows - oldFrameH + 1)
         const realContentAboveFrame = Math.max(0, oldTop - 1 - blankRowsAboveFrameRef.current)
         const needsScroll = Math.min(rawNeedsScroll, realContentAboveFrame)
         if (needsScroll > 0) {
-          // Erase the old frame before scrolling so that blank rows — not
-          // stale prompt/separator cells — get pushed into terminal scrollback.
-          // Without this, the `> ▊` prompt line becomes a permanent ghost in
-          // scrollback after the select dialog closes.
+          // 在滚动前擦除旧帧，让被推进终端滚动区的是空白行 —— 而不是陈旧的提示/分隔
+          // 线单元格。没有这个，select 对话框关闭后，`> ▊` 提示行会成为滚动区里的永久
+          // 幽灵。
           for (let i = 0; i < oldFrameH; i++) {
             preBuf += `\x1b[${oldTop + i};1H\x1b[K`
           }
           preBuf += `\x1b[${termRows};1H` + '\n'.repeat(needsScroll)
         }
         pendingFreeBlanks = Math.max(0, freeBlanksAboveFrameRef.current - deltaH)
-        // Recompute frameTop for the new (smaller) freeBlanks. With pure
-        // absorb (no scroll), frameTop stays at the old top and the frame
-        // grows downward. With scroll, frameTop drops to the bottom-anchor
-        // position (newFreeBlanks=0).
+        // 为新的（更小的）freeBlanks 重算 frameTop。纯吸收（无滚动）时，frameTop 留在
+        // 旧顶部，帧向下增长。有滚动时，frameTop 掉到底部锚定位置（newFreeBlanks=0）。
         frameTop = computeFrameTop(pendingFreeBlanks)
         debugLog(
           'chatinput.geom.grow',
@@ -3125,27 +2665,20 @@ export function ChatInput({
             `blankAbove ${blankRowsAboveFrameRef.current}->${pendingBlankRowsAbove} ` +
             `frameTop=${frameTop}`,
         )
-        // Pre-erase the newly-occupied bottom-of-frame rows so any stale
-        // cells (from prior renders or auto-scroll residue) don't bleed
-        // through before the diff below repaints them.
+        // 预擦除新占据的帧底部行，让任何陈旧单元格（来自先前渲染或自动滚动残留）不会
+        // 在下方 diff 重绘它们之前渗出来。
         for (let i = 0; i < deltaH; i++) {
           preBuf += `\x1b[${frameTop + oldFrameH + i};1H\x1b[K`
         }
       } else {
         const deltaH = oldFrameH - nextH
-        // Shrink: the frame got shorter (e.g. a select dialog closed).
-        // Erase the ENTIRE old frame area so no ghost content remains
-        // (old spinner rows, dialog options, etc.) and reposition the
-        // frame near the bottom.
+        // 缩小：帧变短了（例如 select 对话框关闭）。擦除整个旧帧区域，让没有幽灵内容
+        // 残留（旧的 spinner 行、对话框选项等），并把帧重新定位到靠近底部。
         //
-        // Large shrinks (e.g. askUser dialog closing: 37→7) would
-        // otherwise leave 26+ blank rows. The frame floats at row 1
-        // and takes many commits to drift back down, leaving the user
-        // staring at a mostly-blank screen. Cap blanks to 0 so the
-        // frame snaps to the bottom immediately after a big shrink.
-        // Small shrinks (≤3 rows, e.g. permission dialog closing) can
-        // keep their blanks for the floating-frame model to consume
-        // naturally — the gap is barely visible.
+        // 大缩小（例如 askUser 对话框关闭：37→7）否则会留下 26+ 行空白。帧浮在第 1 行，
+        // 要经过许多次 commit 才能漂回下来，让用户盯着一块几乎空白的屏幕。把空白封顶
+        // 为 0，让帧在大缩小后立即弹到底部。小缩小（≤3 行，例如权限对话框关闭）可以
+        // 保留它们的空白让浮动帧模型自然消耗 —— 间隙几乎不可见。
         const rawBlanks = freeBlanksAboveFrameRef.current + deltaH
         const MAX_SHRINK_BLANKS = deltaH > 3 ? 0 : termRows - nextH
         pendingFreeBlanks = Math.min(rawBlanks, MAX_SHRINK_BLANKS)
@@ -3157,39 +2690,29 @@ export function ChatInput({
             `(raw=${rawBlanks}) ` +
             `oldTop=${oldTop} newTop=${frameTop}`,
         )
-        // Erase the entire old frame area — not just the bottom delta
-        // rows. When the frame moves from a high position (oldTop=3)
-        // to near the bottom (frameTop=28), rows at the old position
-        // must be cleared to prevent ghost spinners / stale content.
+        // 擦除整个旧帧区域 —— 不只是底部增量行。当帧从高位（oldTop=3）移到靠近底部
+        // （frameTop=28）时，旧位置的行必须清除，以防幽灵 spinner / 陈旧内容。
         for (let i = 0; i < oldFrameH; i++) {
           preBuf += `\x1b[${oldTop + i};1H\x1b[K`
         }
-        // Large-shrink (deltaH > 3) snaps the frame to the bottom; the
-        // rows between oldTop and the new frameTop are now blank but
-        // never went to terminal scrollback. Track them so the next
-        // grow can extend the frame back up via cell-grid repositioning
-        // instead of LF auto-scrolls (which would push these blanks
-        // into history). Small shrinks keep their freeBlanks below the
-        // frame so frameTop stays put — `frameTop - oldTop` is 0 or
-        // negative, yielding no contribution.
+        // 大缩小（deltaH > 3）把帧弹到底部；oldTop 与新 frameTop 之间的行现在是空白，
+        // 但从未进过终端滚动区。追踪它们，让下次 grow 可以经 cell-grid 重定位把帧向上
+        // 延伸，而不是用 LF 自动滚动（那会把这些空白推进历史）。小缩小把它们的
+        // freeBlanks 留在帧下方，让 frameTop 原地不动 —— `frameTop - oldTop` 为 0 或
+        // 负数，不产生贡献。
         if (frameTop > oldTop) {
           pendingBlankRowsAbove += frameTop - oldTop
         }
       }
-      // Frame moved — prev cell matrix is at the wrong rows now; force
-      // full redraw at the new position.
-      // NOTE: do NOT mutate prevFrameRef.current here. This code runs
-      // during payload construction, but for non-commit (deferred)
-      // renders the doFlush that writes this payload to stdout may be
-      // CANCELLED by a commit arriving 1-2 ms later. If we cleared
-      // prevFrameRef now and the deferred is cancelled, the ref stays
-      // [] while the on-screen frame is still the OLD frame — causing
-      // the next render's cell-diff to treat every row as "fresh",
-      // writing the full Working line at the NEW frameTop while the
-      // OLD Working remains on screen at the OLD position → two
-      // visible "Working…" lines.
-      // Instead, use a local flag; doFlush (line below) sets
-      // prevFrameRef = frame unconditionally after a successful write.
+      // 帧移动了 —— prev 单元格矩阵现在在错误的行上；强制在新位置全量重绘。
+      // 注意：不要在这里改动 prevFrameRef.current。这段代码在负载构建期间运行，但对
+      // 非 commit（延迟）渲染，把该负载写到 stdout 的 doFlush 可能被 1-2 ms 后到达的
+      // commit 取消。如果我们现在清空 prevFrameRef 而延迟被取消，ref 保持 []，而屏幕
+      // 上的帧仍是旧帧 —— 导致下次渲染的 cell-diff 把每一行都当「新行」，在新 frameTop
+      // 写完整条 Working 行，而旧的 Working 还在屏幕上旧位置 → 两条可见的 "Working…"
+      // 行。
+      // 改为使用本地标志；doFlush（下面那行）在成功写入后无条件地设
+      // prevFrameRef = frame。
       forceFullRedraw = true
     }
 
@@ -3197,80 +2720,64 @@ export function ChatInput({
     const prevH = prevFrame.length
     const maxH = Math.max(prevH, nextH)
 
-    // PER-ROW ABSOLUTE POSITIONING (Claude-Code style).
+    // 逐行绝对定位（Claude-Code 风格）。
     //
-    // Earlier code did `jump-to-frame-top, then walk-down each row with
-    // \x1b[1B\r`. On a steady spinner tick only ONE cell in ONE row
-    // actually differs, but the relative-walk approach emitted
-    // `\x1b[1B\r` after every row regardless — moving the cursor through
-    // every unchanged row of the frame on the way down, plus an initial
-    // jump to frame-top, plus a final park to the cursor anchor. That's
-    // 5+ cursor positions per tick and on terminals whose DEC 2026 sync
-    // doesn't fully atomize cursor positions (Windows Terminal, VSCode
-    // xterm.js, ConHost) every intermediate stop is processed by the
-    // terminal's renderer — visible as a flicker even with the cursor
-    // hidden, because each cursor-position command kicks the cell-render
-    // pipeline.
+    // 早先的代码做「跳到帧顶，然后用 \x1b[1B\r 逐行向下走」。稳定的 spinner 跳动时
+    // 实际只有一行里一个单元格变化，但相对走法不管怎样都在每一行后发出
+    // `\x1b[1B\r` —— 把光标在向下过程中移过帧的每一个未变行，加上初始跳到帧顶，
+    // 加上最后停到光标锚点。每次跳动 5+ 个光标位置，而在 DEC 2026 同步不能完全原子化
+    // 光标位置的终端（Windows Terminal、VSCode xterm.js、ConHost）上，每个中间停点都
+    // 会被终端渲染器处理 —— 即使光标隐藏也可见为闪烁，因为每个光标定位命令都会启动
+    // cell-render 管线。
     //
-    // Per-row absolute (`\x1b[absRow;colH` only on rows we actually
-    // write) means a stable spinner tick visits 2 cursor positions:
-    // the spinner cell, and the final cursor-anchor park. Unchanged
-    // rows are SKIPPED — no jump to them, no `\x1b[K`, no advance.
+    // 逐行绝对（`\x1b[absRow;colH` 只在我们实际写的行上）意味着一次稳定的 spinner
+    // 跳动只访问 2 个光标位置：spinner 单元格，和最后的光标锚点停靠。未变行被跳过
+    // —— 不跳到它们，不 `\x1b[K`，不前进。
     for (let row = 0; row < maxH; row++) {
-      // Rows flagged by the spill-heal get an empty prevRow so they take
-      // the fresh-redraw branch (col-0 rewrite + \x1b[K) regardless of
-      // whether their cells differ from prevFrameRef.
+      // 被 spill-heal 标记的行拿到空 prevRow，这样无论它们的单元格是否与 prevFrameRef
+      // 不同，都走 fresh-redraw 分支（第 0 列重写 + \x1b[K）。
       const prevRow = row < healTopFrameRows ? [] : row < prevH ? prevFrame[row] : []
       const nextRow = row < nextH ? frame[row] : []
       const absRow = frameTop + row
 
       if (row < nextH) {
-        // First cell that differs from prevRow
+        // 第一个与 prevRow 不同的单元格
         let diffIdx = 0
         const minCells = Math.min(prevRow.length, nextRow.length)
         while (diffIdx < minCells && cellsEqual(prevRow[diffIdx], nextRow[diffIdx])) {
           diffIdx++
         }
-        // Last cell that differs (scanning from the end). On a fresh
-        // redraw (prevRow empty) we keep emitting through end-of-row;
-        // otherwise we cap at the last actual change so that, e.g., a
-        // spinner tick rewrites just the glyph cell instead of the
-        // entire " glyph  Working… (5s · ↑ 2k tokens)" suffix every
-        // 80ms. Less to write = fewer visible cells re-painting per
-        // tick = no perceptible flash on terminals where DEC 2026
-        // sync-update isn't perfectly atomic.
+        // 最后一个不同的单元格（从末尾扫描）。fresh redraw（prevRow 为空）时我们一直
+        // 发到行尾；否则在最后一次真正变化处封顶，这样例如一次 spinner 跳动只重写
+        // 字形单元格，而不是每 80ms 重写整个 " glyph  Working… (5s · ↑ 2k tokens)"
+        // 后缀。写得越少 = 每次跳动重新绘制的可见单元格越少 = 在 DEC 2026 同步更新
+        // 不完全原子的终端上没有可感知的闪烁。
         let endIdx = nextRow.length
         if (prevRow.length > 0 && nextRow.length === prevRow.length) {
           let last = nextRow.length - 1
           while (last >= diffIdx && cellsEqual(prevRow[last], nextRow[last])) {
             last--
           }
-          endIdx = last + 1 // exclusive bound
+          endIdx = last + 1 // 排他上界
         }
 
-        // Force-clear branch: prevRow is empty AND nextRow is empty.
-        // Normally an "empty stays empty" row is a no-op, but when the
-        // upstream grow/shrink path resets prevFrameRef to [] to force a
-        // full repaint, an empty row at this position can shadow stale
-        // characters left on screen by the previous (taller) frame —
-        // most visibly the input box's `─` top separator peeking through
-        // a newly inserted blank between two parallel tool blocks. The
-        // explicit \x1b[K wipes whatever the terminal still has at this
-        // row before the redraw moves on.
+        // 强制清除分支：prevRow 为空且 nextRow 为空。通常「空保持空」的行是 no-op，但
+        // 当上游 grow/shrink 路径把 prevFrameRef 重置为 [] 以强制全量重绘时，这个位置
+        // 的空行可能遮蔽上一个（更高的）帧留在屏幕上的陈旧字符 —— 最明显的是输入框的
+        // `─` 顶部分隔线从两个并行工具块之间新插入的空白中透出来。显式的 \x1b[K 在
+        // 重绘继续之前擦掉终端在这一行仍残留的一切。
         if (prevRow.length === 0 && nextRow.length === 0) {
           buf += `\x1b[${absRow};1H\x1b[K`
         } else if (diffIdx < nextRow.length || nextRow.length < prevRow.length) {
-          // Absolute-position to (absRow, diffIdx's visual column).
+          // 绝对定位到 (absRow, diffIdx 的视觉列)。
           let col = 0
           for (let c = 0; c < diffIdx; c++) col += nextRow[c].width
           buf += `\x1b[${absRow};${col + 1}H`
 
-          // Emit changed cells. Initialize lastStyle to S_NONE (= explicit
-          // reset code) so the first cell's char doesn't inherit any SGR
-          // state left over from the previous render — without this, the
-          // diff loop's `if (cell.style !== lastStyle) buf += cell.style`
-          // branch could emit '' (no-op) for an S_NONE cell whose char
-          // then renders in whatever color was active before.
+          // 发出变化的单元格。把 lastStyle 初始化为 S_NONE（= 显式重置码），让第一个
+          // 单元格的字符不继承上一渲染留下的任何 SGR 状态 —— 没有这个，diff 循环的
+          // `if (cell.style !== lastStyle) buf += cell.style` 分支可能对一个 S_NONE 单元格
+          // 发出 ''（no-op），其字符随后用之前激活的任意颜色渲染。
           let lastStyle = S_NONE
           buf += S_NONE
           for (let c = diffIdx; c < endIdx; c++) {
@@ -3283,18 +2790,15 @@ export function ChatInput({
           }
           buf += S_RESET
           if (prevRow.length === 0) {
-            // Fresh redraw (post-eraseRegion or first paint). The row may
-            // carry stale chars from scrollback writes that preceded this
-            // frame (e.g. a CJK line whose width miscalculation bumped
-            // residuals onto the spinner/input row). Erase to EOL so we
-            // start from a clean line. We deliberately DON'T do this on
-            // diff updates: the 80 ms spinner tick would then emit an
-            // \x1b[K every frame, which visibly flickers on terminals
-            // without full DEC 2026 sync-update support.
+            // Fresh redraw（post-eraseRegion 或首次绘制之后）。该行可能带着先于这个帧的
+            // 滚动区写入留下的陈旧字符（例如一条 CJK 行因宽度误算把残留撞到了
+            // spinner/输入行上）。擦到 EOL，这样我们从干净的行开始。我们在 diff 更新时
+            // 刻意不这么做：80 ms 的 spinner 跳动随后会每帧发一个 \x1b[K，在没有完整
+            // DEC 2026 同步更新支持的终端上明显闪烁。
             buf += '\x1b[K'
           } else {
-            // Diff update — pad with spaces when the old row was wider.
-            // Invisible on terminals (no SGR change), so no flicker.
+            // Diff 更新 —— 旧行更宽时用空格填充。在终端上不可见（无 SGR 变化），所以
+            // 不闪烁。
             let oldTailW = 0
             for (let c = diffIdx; c < prevRow.length; c++) oldTailW += prevRow[c].width
             let newTailW = 0
@@ -3304,65 +2808,46 @@ export function ChatInput({
             }
           }
         }
-        // else: row identical — skip without moving the cursor.
+        // 否则：行相同 —— 跳过，不移动光标。
       } else {
-        // Extra old row — absolute-position and blank it out.
+        // 多出的旧行 —— 绝对定位并清空它。
         buf += `\x1b[${absRow};1H\x1b[K`
       }
     }
 
-    // Cursor parking happens at the END of the payload (see below), not
-    // here: the target's absolute row depends on the final `frameTop`,
-    // which the commit/geometry paths above may still reassign. What
-    // matters is that every flush that moves the cursor re-parks it on
-    // the caret cell — see the "Hardware-cursor park target" block at
-    // frame-build time for why (IME marked text renders at the hardware
-    // cursor even while hidden). The visual "input cursor" the user sees
-    // remains the inverse-video cell (S_CURSOR) drawn atomically by the
-    // cell-diff loop above.
+    // 光标停靠在负载末尾（见下方）发生，不在这里：目标的绝对行取决于最终的
+    // `frameTop`，而上面的 commit/geometry 路径仍可能重设它。关键是每次移动光标的
+    // flush 都把它重新停到 caret 单元格上 —— 为什么，见帧构建时的「硬件光标停靠目标」
+    // 块（IME 标记文本即使在隐藏时也渲染在硬件光标处）。用户看到的视觉「输入光标」
+    // 仍是上方 cell-diff 循环原子绘制的反白单元格（S_CURSOR）。
 
-    // Flush everything as a single write: preBuf (BSU + DECSTBM scrollback
-    // insertion + any frame-height-change scrolling) + frame diff + ESU.
-    // One write() = one atomic paint on every terminal, not just those
-    // with DEC 2026 support. NOTE: we no longer tack on SAVE_CURSOR (\x1b7)
-    // at the end. That DEC save register is single-slot AND shared with
-    // Ink's log-update internals, so our save was being clobbered on every
-    // Ink tree reconcile. Instead we jump absolutely to (frameTop, 1) at
-    // the start of every render — no cross-render cursor-state dependency.
-    // ESU never carries a visibility command. The cursor is hidden for
-    // the entire lifetime of this component (see the mount useEffect
-    // above) and the input "cursor" is just an inverse-video cell on
-    // the input row, drawn atomically with the rest of the frame. Per-
-    // flush `?25h` / `?25l` toggling resets the cursor blink phase on
-    // Windows Terminal and VSCode's xterm.js — that is the flicker
-    // users were reporting at the rightmost typed column.
+    // 把一切作为单次写入 flush：preBuf（BSU + DECSTBM 滚动区插入 + 任何帧高度变化的
+    // 滚动）+ 帧 diff + ESU。一次 write() = 在【每个】终端上的一次原子绘制，不只是支持
+    // DEC 2026 的那些。注意：我们不再在末尾追加 SAVE_CURSOR (\x1b7)。那个 DEC 保存
+    // 寄存器是单槽位，而且与 Ink 的 log-update 内部共享，所以我们的保存在每次 Ink 树
+    // reconcile 时都被覆盖。改为在每次渲染开始时绝对跳到 (frameTop, 1) —— 没有跨渲染
+    // 的光标状态依赖。ESU 从不携带可见性命令。光标在这个组件整个生命周期内都被隐藏
+    // （见上面挂载 useEffect），输入「光标」只是输入行上一个反白单元格，与帧其余部分
+    // 一起原子绘制。每次 flush 的 `?25h` / `?25l` 切换会重置 Windows Terminal 和 VSCode
+    // xterm.js 上的光标闪烁相位 —— 那就是用户在输入到最右列时报告的闪烁。
     const esu = '\x1b[?2026l'
 
-    // Early-return for no-op flushes. When the spinner ticks but no
-    // cell content has changed (preBuf empty after BSU, buf empty),
-    // the wrapper alone (`?2026h` + `?2026l`, 16 bytes) is enough to
-    // make the terminal re-process the sync window — and on weak
-    // terminals this still resets the cursor blink phase, producing
-    // the cursor flicker the user was seeing at 12 Hz. Skipping the
-    // write entirely is the same trick Claude Code uses
-    // (D:\res\claude-code\src\ink\ink.tsx:623, 668-671 — the
-    // `hasDiff || targetMoved` early-return).
+    // 对 no-op flush 提前返回。当 spinner 跳动但没有任何单元格内容变化（BSU 之后
+    // preBuf 为空、buf 为空），仅包装（`?2026h` + `?2026l`，16 字节）就足以让终端重新
+    // 处理同步窗口 —— 而在弱终端上这仍会重置光标闪烁相位，产生用户以 12 Hz 看到的
+    // 光标闪烁。完全跳过写入正是 Claude Code 用的技巧
+    // （D:\res\claude-code\src\ink\ink.tsx:623, 668-671 ——
+    // `hasDiff || targetMoved` 提前返回）。
     if (preBuf === BSU && buf === '') {
       lastFlushTimeRef.current = Date.now()
-      // Empty diff means the current render's frame matches what's
-      // already on screen (prevFrameRef). If a deferred flush is
-      // pending, it was scheduled by an earlier render whose frame
-      // diverged from prevFrameRef — letting it fire now would draw
-      // that intermediate state on top of the (already correct)
-      // current frame. Concrete case: a fast read tool grew the frame
-      // to 7 rows (deferred 8ms), then the result arrived and the
-      // next render computed 5 rows — same as last actually-flushed,
-      // so this empty-diff branch ran. Without the cancel below, the
-      // 8ms deferred fired and painted the stale `● Read / ⎿ Running`
-      // live indicator after the read had already finished, leaving
-      // it stuck on screen until the next tool call's grow overwrote
-      // it. Symptom users reported as "read tool appears then
-      // disappears between consecutive reads".
+      // 空 diff 意味着当前渲染的帧与屏幕上已有的（prevFrameRef）一致。如果有待处理的
+      // 延迟 flush，它是由某个帧偏离 prevFrameRef 的更早渲染安排的 —— 让它现在触发会
+      // 把那个中间状态画在（已经正确的）当前帧之上。具体案例：一个快速 read 工具把帧
+      // 长到 7 行（延迟 8ms），然后结果到达、下一次渲染算出 5 行 —— 与上次实际 flush
+      // 的相同，于是这个空 diff 分支运行。没有下面的取消，8ms 的延迟触发并把陈旧的
+      // `● Read / ⎿ Running` 实时指示器画出来，而此时 read 早已完成，让它卡在屏幕上直到
+      // 下一次工具调用的 grow 覆盖它。用户报告的症状是「read 工具在连续的 read 之间
+      // 出现又消失」。
       if (deferredFlushRef.current !== null) {
         clearTimeout(deferredFlushRef.current)
         deferredFlushRef.current = null
@@ -3372,8 +2857,7 @@ export function ChatInput({
         clearImmediate(deferredImmediateRef.current)
         deferredImmediateRef.current = null
       }
-      // Still need to apply the pending blank-rows update; the
-      // shrink path may have computed a new value.
+      // 仍需要应用待处理的空白行更新；缩小路径可能算出了新值。
       if (pendingFreeBlanks !== freeBlanksAboveFrameRef.current) {
         debugLog('chatinput.geom.persist-noop', `blanks ${freeBlanksAboveFrameRef.current}->${pendingFreeBlanks}`)
       }
@@ -3388,16 +2872,13 @@ export function ChatInput({
       return
     }
 
-    // Park the hidden hardware cursor on the caret cell as the payload's
-    // last action. Appended AFTER the no-op early-return above so a flush
-    // that writes nothing stays byte-silent (the cursor is already parked
-    // from the previous write); any flush that DID write leaves the
-    // cursor mid-frame (mid-Working-row on a spinner tick, one cell past
-    // the right rail after a keystroke), which is exactly where macOS
-    // terminals would then paint the IME composition preview. One extra
-    // CSI per non-empty flush; caretParkRow is -1 only when the frame has
-    // no input box at all (nextH=0), in which case there's no caret to
-    // anchor and we leave the cursor where the writes left it.
+    // 把隐藏的硬件光标停靠在 caret 单元格上，作为负载的最后一个动作。追加在上面的
+    // no-op 提前返回之后，让什么都不写的 flush 保持字节静默（光标已从上一次写入时
+    // 停靠好）；任何确实写了东西的 flush 会把光标留在帧中间（spinner 跳动时在 Working
+    // 行中间，击键后就在右沿之外一格），而那正是 macOS 终端随后绘制 IME 组合预览的
+    // 位置。每次非空 flush 多一个 CSI；只有当帧根本没有输入框（nextH=0）时
+    // caretParkRow 才为 -1，那种情况下没有可锚定的 caret，我们把光标留在写入结束的
+    // 位置。
     if (caretParkRow >= 0) {
       buf += `\x1b[${frameTop + caretParkRow};${caretParkCol}H`
     }
@@ -3407,42 +2888,31 @@ export function ChatInput({
       'chatinput.flush',
       `bytes=${payload.length} preBufBytes=${preBuf.length} bufBytes=${buf.length} msgsCommitted=${writtenMessageCountRef.current} pendingBlanks=${pendingFreeBlanks} frameTop=${frameTop} nextH=${nextH}`,
     )
-    // The rendered frame may contain peer messages, secrets, or the complete
-    // egress approval viewer. Log only geometry so debug mode cannot become a
-    // second, persistent copy of security-sensitive terminal content.
+    // 渲染出的帧可能包含 peer 消息、机密、或完整的出口审批查看器。只记录几何信息，
+    // 让 debug 模式不会成为安全敏感终端内容的第二份持久副本。
     debugLog('chatinput.flush.payload', `bytes=${Buffer.byteLength(payload, 'utf8')} rows=${nextH}`)
 
-    // ── Anti-flicker write scheduling ──────────────────────────────────
+    // ── 防闪烁写入调度 ──────────────────────────────────
     //
-    // Fast tools (listDir, glob, readFile) complete in <5ms. React renders
-    // frames back-to-back:
-    //   Frame A (non-commit): shows "⠼ Running…" for the tool
-    //   Frame B (commit, ~2ms later): replaces it with the result summary
-    // Both are large redraws (~600-700 bytes). Painting both within one
-    // vsync window (16ms) causes visible flicker/jitter.
+    // 快速工具（listDir、glob、readFile）在 <5ms 内完成。React 背靠背渲染帧：
+    //   Frame A（非 commit）：为工具显示 "⠼ Running…"
+    //   Frame B（commit，约 2ms 后）：用结果摘要替换它
+    // 两者都是大型重绘（约 600-700 字节）。在同一个 vsync 窗口（16ms）内画两者会
+    // 造成可见的闪烁/抖动。
     //
-    // Strategy:
-    //   • Commit and resize frames write IMMEDIATELY — they cancel any
-    //     pending deferred write since both carry one-shot scroll/erase
-    //     operations that must reach the terminal atomically.
-    //   • Non-commit frames are DEFERRED. Two windows:
-    //       — Spinner ticks (spinnerFrame changed since last flush): 24ms.
-    //         A wider window so a useStreamBuffer 150ms-drain commit
-    //         landing 1-20ms after the spinner tick supersedes the
-    //         spinner-only write instead of producing a back-to-back
-    //         spinner-cell + commit pair (the visible "tick + content
-    //         scroll-in" flicker observed during long streaming
-    //         responses).
-    //       — Everything else (typing, content changes that didn't tick
-    //         the spinner): 8ms. Held-down letter keys produce one
-    //         non-commit render per keystroke; a wider window here
-    //         visibly stutters under continuous typing because each
-    //         keystroke's deferred-fire happens on the wider cadence
-    //         instead of feeling immediate.
-    //     If a commit arrives during the deferred window, the deferred
-    //     frame is discarded and only the commit is painted.
-    //   • Additionally, non-commit frames within 16ms of the last write
-    //     are dropped entirely (spinner coalescing).
+    // 策略：
+    //   • commit 和 resize 帧立即写入 —— 它们取消任何待处理的延迟写入，因为两者都
+    //     携带必须原子到达终端的一次性滚动/擦除操作。
+    //   • 非 commit 帧延迟。两个窗口：
+    //       — spinner 跳动（spinnerFrame 自上次 flush 后变化）：24ms。更宽的窗口让
+    //         一个在 spinner 跳动后 1-20ms 落地的 useStreamBuffer 150ms-排空 commit
+    //         取代只含 spinner 的写入，而不是产生背靠背的 spinner-cell + commit 对
+    //         （在长时间流式响应中观察到的可见「跳动 + 内容滚入」闪烁）。
+    //       — 其他一切（打字、没让 spinner 跳动的内容变化）：8ms。按住字母键每次击键
+    //         产生一次非 commit 渲染；这里更宽的窗口会在连续打字时明显卡顿，因为每次
+    //         击键的延迟触发都发生在更宽的节奏上，而不是感觉即时。
+    //     如果 commit 在延迟窗口期间到达，延迟帧被丢弃，只画 commit。
+    //   • 此外，距离上次写入 16ms 内的非 commit 帧被完全丢弃（spinner 合并）。
 
     const doFlush = () => {
       const ok = process.stdout.write(payload)
@@ -3452,12 +2922,9 @@ export function ChatInput({
       prevFrameRef.current = frame
       lastFrameHRef.current = nextH
       lastFrameTopRef.current = frameTop
-      // Bytes are now on stdout. Drop the ref so the next render doesn't
-      // re-emit them. Setting to '' (rather than slicing scrollbackContent
-      // off the front) is safe: any render that mutates the ref between
-      // scheduling and firing this throttled doFlush would have entered
-      // the immediate structural branch below and replaced the throttle
-      // with a fresh payload that includes the new bytes.
+      // 字节现在已到 stdout。丢弃 ref 让下次渲染不重发它们。设为 ''（而不是把
+      // scrollbackContent 从前面切掉）是安全的：任何在调度与这个节流 doFlush 触发之间
+      // 改动 ref 的渲染，都会进入下面立即的结构分支，用包含新字节的新负载替换节流。
       pendingScrollbackRef.current = ''
       if (pendingFreeBlanks !== freeBlanksAboveFrameRef.current) {
         debugLog(
@@ -3474,30 +2941,22 @@ export function ChatInput({
         )
       }
       blankRowsAboveFrameRef.current = pendingBlankRowsAbove
-      // Bump the generation. Any pending deferred-flush macrotask whose
-      // captured flushId now differs from this value will short-circuit
-      // when it runs — see the schedule path below.
+      // 增加代数。任何捕获的 flushId 现在与此值不同的待处理延迟 flush 宏任务，运行时
+      // 都会短路 —— 见下方调度路径。
       flushGenRef.current++
     }
 
-    // `hasNewMessages` (not `didCommitMessages`) drives the scheduler:
-    // a render that processed new messages — even if every one got
-    // buffered by the read-group collapser and produced zero scrollback
-    // bytes — is still "real" state change and must paint promptly.
-    // Without this, the post-result render of a buffered read tool
-    // takes the deferred path (160ms delay) and the previous render's
-    // grow-frame (the `● Read(file) / ⎿ Running…` live indicator) sits
-    // staged in the deferred timer. It fires later — long after the
-    // read actually finished — leaving a stale live indicator on screen
-    // until the next read's grow overwrites it. Visible symptom users
-    // reported: the `● Read` row "appears then disappears" between
-    // consecutive read tools.
+    // 驱动调度器的是 `hasNewMessages`（而非 `didCommitMessages`）：一个处理了新消息的
+    // 渲染 —— 即使每条都被 read-group 折叠器缓冲、产生零滚动区字节 —— 仍是「真实」
+    // 状态变化，必须及时绘制。没有这个，被缓冲的 read 工具的结果后渲染会走延迟路径
+    // （160ms 延迟），而上一渲染的 grow-frame（`● Read(file) / ⎿ Running…` 实时指示器）
+    // 停在延迟定时器里。它稍后才触发 —— 远在 read 真正完成之后 —— 让陈旧的实时指示器
+    // 留在屏幕上，直到下一次 read 的 grow 覆盖它。用户报告的可见症状：`● Read` 行在
+    // 连续的 read 工具之间「出现又消失」。
     if (didCommitMessages || hasNewMessages || didClearScreen || didResize) {
-      // Invalidate a deferred frame as soon as structural output is observed,
-      // not only after it reaches stdout. Its timer may already have queued a
-      // setImmediate and cleared deferredFlushRef; without this generation
-      // bump that stale callback can paint first, clear pending scrollback,
-      // or strand a resize erase that cannot be reconstructed next render.
+      // 一旦观察到结构输出就立即使延迟帧失效，而不是等它到达 stdout。它的定时器可能
+      // 已经排了 setImmediate 并清空了 deferredFlushRef；没有这次代数增加，那个陈旧
+      // 回调可能先绘制、清除待处理的滚动区，或搁置一个下次渲染无法重建的 resize 擦除。
       flushGenRef.current++
       if (deferredFlushRef.current !== null) {
         clearTimeout(deferredFlushRef.current)
@@ -3508,28 +2967,24 @@ export function ChatInput({
         clearImmediate(deferredImmediateRef.current)
         deferredImmediateRef.current = null
       }
-      // Newer commit's payload (incl. fresher scrollback + spinner glyph)
-      // supersedes any previously throttled commit.
+      // 较新 commit 的负载（包括更新的滚动区 + spinner 字形）取代任何之前被节流的
+      // commit。
       if (commitThrottleRef.current !== null) {
         clearTimeout(commitThrottleRef.current)
         commitThrottleRef.current = null
         debugLog('chatinput.flush.commit-throttle-superseded', 'newer commit replaces throttled')
       }
       const dt = Date.now() - lastFlushTimeRef.current
-      // Minimum gap between consecutive stdout writes. Two writes inside
-      // the same terminal paint window (~16ms vsync) appear as flicker
-      // even when each is wrapped in BSU/ESU — DEC 2026 sync is per-write
-      // atomic but doesn't span writes. Most common cause: a 160ms spinner
-      // deferred-fire (T) followed by a useStreamBuffer drain commit
-      // (T+10–50ms). Throttling the commit to land ≥50ms after the last
-      // write puts it in a fresh paint cycle. 50ms = ~3 vsyncs, enough
-      // headroom on terminals that buffer multiple frames.
+      // 连续 stdout 写入之间的最小间隔。同一个终端绘制窗口（约 16ms vsync）内的两次
+      // 写入，即使各自都包在 BSU/ESU 里，也会显示为闪烁 —— DEC 2026 同步是每次写入
+      // 原子的，但不跨写入。最常见的原因：一次 160ms spinner 延迟触发（T）后跟一次
+      // useStreamBuffer 排空 commit（T+10–50ms）。把 commit 节流到在上次写入后 ≥50ms
+      // 落地，让它进入一个全新的绘制周期。50ms = 约 3 个 vsync，对缓冲多帧的终端足够
+      // 富余。
       const MIN_COMMIT_GAP_MS = 50
-      // /clear and resize payloads are exempt from the gap throttle: their
-      // one-shot erase bytes cannot be re-collected by a later render. In
-      // particular, advancing lastTermWidthRef before a throttled resize
-      // flush lets the next reasoning/spinner render cancel the only payload
-      // that erases xterm.js's reflowed old frame.
+      // /clear 和 resize 负载免于间隔节流：它们的一次性擦除字节无法被后续渲染重新收
+      // 集。特别地，在节流的 resize flush 之前推进 lastTermWidthRef，让下一次
+      // reasoning/spinner 渲染能取消唯一那个擦除 xterm.js 重排后旧帧的负载。
       if (!didClearScreen && !didResize && lastFlushTimeRef.current > 0 && dt < MIN_COMMIT_GAP_MS) {
         const delay = MIN_COMMIT_GAP_MS - dt
         const capturedGen = flushGenRef.current
@@ -3550,11 +3005,9 @@ export function ChatInput({
         doFlush()
       }
     } else {
-      // A throttled commit is in flight. If this non-commit frame has a
-      // DIFFERENT height (dialog opening/closing, error row, etc.) it
-      // supersedes the throttled commit — cancel the stale throttle and
-      // let this frame through immediately. Height-preserving frames
-      // (spinner ticks) can safely wait.
+      // 有一个被节流的 commit 在途。如果这个非 commit 帧有【不同】高度（对话框打开/
+      // 关闭、错误行等），它取代被节流的 commit —— 取消陈旧的节流并让这个帧立即通过。
+      // 保持高度的帧（spinner 跳动）可以安全等待。
       if (commitThrottleRef.current !== null) {
         const heightChanged = nextH !== lastFrameHRef.current
         if (!heightChanged) {
@@ -3569,35 +3022,23 @@ export function ChatInput({
         )
       }
       const now = Date.now()
-      // Only coalesce identical-height frames (spinner ticks, single-cell
-      // input edits). A frame-height change signals a structural update —
-      // dialog opening/closing, error row appearing, etc. — and must paint
-      // even when it lands within 16ms of the previous write. Coalescing
-      // a height-changing frame used to strand the UI on the old frame
-      // when the event that triggered it (e.g. stream end → permission
-      // prompt render) also happened to be the last thing that would ever
-      // re-render: the spinner interval clears on `spinner === null`, no
-      // further React ticks arrive, and the dropped payload carrying the
-      // prompt is never retried. Symptom: tool-call row stuck showing
-      // "⠴ Running... (↓ N tokens)" forever with frozen input.
+      // 只合并同高度的帧（spinner 跳动、单单元格输入编辑）。帧高度变化标志着结构性
+      // 更新 —— 对话框打开/关闭、错误行出现等 —— 即使落在上次写入 16ms 内也必须绘制。
+      // 合并一个高度变化的帧过去会把 UI 搁在旧帧上，当触发它的事件（例如流结束 →
+      // 权限提示渲染）也恰好是永远会重渲染的最后事件时：spinner 间隔在
+      // `spinner === null` 时清除，不再有 React tick 到达，携带提示的被丢弃负载再也不
+      // 重试。症状：工具调用行永远卡在 "⠴ Running... (↓ N tokens)"，输入冻结。
       const isSpinnerTick = nextH === lastFrameHRef.current
-      // True when this render's only meaningful change is the spinner
-      // glyph cycling — content/text/dialogs are unchanged. We can be
-      // far more aggressive about dropping these because the next commit
-      // will repaint the entire frame anyway, picking up the latest
-      // spinner glyph as part of the full redraw.
+      // 当这次渲染唯一有意义的变化是 spinner 字形循环 —— 内容/文本/对话框都未变 ——
+      // 时为真。我们可以更激进地丢弃这些，因为下一个 commit 反正会重绘整个帧，在全量
+      // 重绘里带上最新的 spinner 字形。
       const spinnerTicked = spinner != null && spinnerFrame !== lastFlushedSpinnerFrameRef.current
-      // Coalesce. Only drop back-to-back same-height frames within a
-      // single terminal refresh window (16ms) — anything wider gets
-      // through. The job of preventing spinner-vs-commit flicker is
-      // handed to the deferred-fire mechanism below: a wide spinner
-      // deferMs lets in-flight commits clearTimeout the deferred,
-      // turning would-be near-collisions into single commit-only
-      // writes. We deliberately do NOT coalesce against commit time
-      // here — that approach (drop spinner-only frames during
-      // streaming) tied the spinner glyph to commit cadence, which is
-      // visibly jittery at the variable 50-300ms gaps that
-      // useStreamBuffer's COMMIT_BATCH_MS produces.
+      // 合并。只在单个终端刷新窗口（16ms）内丢弃背靠背的同高度帧 —— 更宽的都放行。
+      // 防止 spinner-vs-commit 闪烁的职责交给下面的延迟触发机制：一个宽的 spinner
+      // deferMs 让在途 commit 能 clearTimeout 延迟，把可能的近碰撞变成单次仅 commit
+      // 写入。我们刻意不在这里对 commit 时间做合并 —— 那种做法（流式期间丢弃只含
+      // spinner 的帧）把 spinner 字形绑到 commit 节奏上，在 useStreamBuffer 的
+      // COMMIT_BATCH_MS 产生的 50-300ms 可变间隙下明显抖动。
       const coalesceWindow = 16
       const dt = now - lastFlushTimeRef.current
       if (isSpinnerTick && dt < coalesceWindow) {
@@ -3611,29 +3052,22 @@ export function ChatInput({
         clearImmediate(deferredImmediateRef.current)
         deferredImmediateRef.current = null
       }
-      // Spinner ticks defer 160ms. Rationale:
-      //   - useStreamBuffer drains 150ms after a chunk queues, then a
-      //     React render scheduling adds ~10ms before our commit lands.
-      //     A 160ms defer lets that drain-driven commit reliably hit
-      //     the clearTimeout above BEFORE our spinner-only write fires,
-      //     collapsing the spinner+commit pair into a single commit-only
-      //     write (the commit's full-frame redraw repaints the spinner
-      //     glyph anyway).
-      //   - Previous value was 100ms. Symptom: spinner outer-enter at
-      //     queue+42ms → defer fires at queue+142ms; drain commit at
-      //     queue+160ms — spinner wrote 18ms before commit, two stdout
-      //     writes per vsync = visible flicker.
-      //   - Must remain strictly less than the 200ms spinner-tick
-      //     interval — at ≥200ms a back-to-back tick would re-arm the
-      //     timer perpetually and the spinner would freeze.
-      // Typing edits keep the original 8ms so held-key echo stays snappy.
+      // spinner 跳动延迟 160ms。理由：
+      //   - useStreamBuffer 在分块排队 150ms 后排空，然后 React 渲染调度在 commit 落地
+      //     前再增加约 10ms。160ms 的延迟让那个排空驱动的 commit 能可靠地在只含
+      //     spinner 的写入触发之前命中上面的 clearTimeout，把 spinner+commit 对折叠成
+      //     单次仅 commit 写入（commit 的全帧重绘反正重画了 spinner 字形）。
+      //   - 之前的值是 100ms。症状：spinner 在 queue+42ms 进入外层 → 延迟在
+      //     queue+142ms 触发；排空 commit 在 queue+160ms —— spinner 比 commit 早 18ms
+      //     写，每个 vsync 两次 stdout 写入 = 可见闪烁。
+      //   - 必须严格小于 200ms 的 spinner 跳动间隔 —— ≥200ms 时背靠背的跳动会永久
+      //     重新武装定时器，spinner 会冻结。
+      // 打字编辑保持原来的 8ms，让按住键的回显保持跟手。
       const deferMs = spinnerTicked ? 160 : 8
-      // Capture flush generation at SCHEDULE time. If a commit-path
-      // doFlush() runs before our timer fires, flushGenRef advances and
-      // our deferred frame becomes stale (its cells were built from a
-      // pre-commit React state). setImmediate yields one Node tick so
-      // any React commit queued in the same macrotask flushes first;
-      // the staleness check then short-circuits us.
+      // 在调度时捕获 flush 代数。如果 commit 路径的 doFlush() 在我们的定时器触发之前
+      // 运行，flushGenRef 前进，我们的延迟帧就变得陈旧（它的单元格是从 commit 前的
+      // React 状态构建的）。setImmediate 让出一个 Node tick，让同一宏任务里排队的任何
+      // React commit 先 flush；然后陈旧性检查让我们短路。
       const flushId = flushGenRef.current
       deferredFlushRef.current = setTimeout(() => {
         deferredFlushRef.current = null
@@ -3651,7 +3085,7 @@ export function ChatInput({
     }
   })
 
-  // Unmount cleanup
+  // 卸载清理
   useEffect(() => {
     return () => {
       flushGenRef.current++ // eslint-disable-line react-hooks/exhaustive-deps -- invalidates callbacks queued before unmount
@@ -3674,7 +3108,7 @@ export function ChatInput({
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ChatInput renders nothing through Ink — the full bottom region is
-  // owned by direct stdout writes inside the useEffect above.
+  // ChatInput 不经 Ink 渲染任何东西 —— 整个底部区域由上面 useEffect 里的直接 stdout
+  // 写入拥有。
   return null
 }

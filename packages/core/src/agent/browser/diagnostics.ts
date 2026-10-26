@@ -1,5 +1,4 @@
-// @x-code-cli/core — Sanitization for browser/MCP diagnostics before they
-// reach model context or the terminal UI.
+// @x-code-cli/core — 对进入模型上下文或终端 UI 之前的浏览器/MCP 诊断信息做脱敏。
 import { redactMemoryText } from '../../knowledge/memory/redaction.js'
 
 const CONTROL_CHAR_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g

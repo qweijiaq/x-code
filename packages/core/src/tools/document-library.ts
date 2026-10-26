@@ -1,9 +1,8 @@
-// @x-code-cli/core — documentLibrary tool
+// @x-code-cli/core — documentLibrary 工具
 //
-// Manages the local document index: index a folder or file, show stats, or
-// clear it. Indexing parses documents locally (readDocument) and never uploads
-// anything; semantic vectors are only produced when the optional BGE backend
-// is available.
+// 管理本地文档索引：索引一个文件夹或文件、查看统计，或清空它。索引在本地
+// 解析文档（readDocument），从不上传任何东西；语义向量只在可选的 BGE 后端
+// 可用时才会产生。
 import { tool } from 'ai'
 
 import { z } from 'zod'

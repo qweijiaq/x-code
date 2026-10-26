@@ -8,16 +8,16 @@ import {
   formatBytes,
 } from '../src/utils/image-compress.js'
 
-// ── helpers ──────────────────────────────────────────────────────────
+// ── 辅助函数 ──────────────────────────────────────────────────────────
 
-/** Generate a solid-color PNG of the given dimensions using Jimp. */
+/** 用 Jimp 生成给定尺寸的纯色 PNG。 */
 async function makePng(width: number, height: number, color = 0xff0000ff): Promise<Buffer> {
   const { Jimp } = await import('jimp')
   const img = new Jimp({ width, height, color })
   return img.getBuffer('image/png')
 }
 
-/** Generate a solid-color JPEG of the given dimensions. */
+/** 用 Jimp 生成给定尺寸的纯色 JPEG。 */
 async function makeJpeg(width: number, height: number, color = 0xff0000ff): Promise<Buffer> {
   const { Jimp } = await import('jimp')
   const img = new Jimp({ width, height, color })
@@ -30,7 +30,7 @@ async function makeImage(width: number, height: number, mimeType: 'image/bmp' | 
   return image.getBuffer(mimeType)
 }
 
-// ── tests ────────────────────────────────────────────────────────────
+// ── 测试 ────────────────────────────────────────────────────────────
 
 describe('compressImage', () => {
   describe('validated pass-through', () => {
@@ -154,8 +154,8 @@ describe('compressImage', () => {
       const buf = await makePng(3000, 3000)
       const result = await compressImage(buf, 'image/png')
       expect(result.changed).toBe(true)
-      // A solid-color 2000x2000 PNG compresses very well as PNG.
-      // The result should be PNG (not JPEG) when it fits the budget.
+      // 纯色 2000x2000 PNG 用 PNG 压缩效果很好。
+      // 当结果在预算内时，应为 PNG（而非 JPEG）。
       expect(result.mimeType).toBe('image/png')
     })
 

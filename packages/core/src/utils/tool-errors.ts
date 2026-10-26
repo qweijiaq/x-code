@@ -1,9 +1,8 @@
-// @x-code-cli/core — Shared tool error formatting
+// @x-code-cli/core — 共享的工具错误格式化
 //
-// All `tool({ execute })` bodies follow the same pattern: catch unknown,
-// extract a string message, and return `Error <action>: <msg>`. Centralising
-// it here keeps the wording consistent and removes ~7 copies of the
-// `err instanceof Error ? err.message : String(err)` snippet.
+// 所有 `tool({ execute })` 主体都遵循同一模式：捕获 unknown，提取字符串消息，
+// 并返回 `Error <action>: <msg>`。集中在这里能保持措辞一致，并去掉约 7 份
+// `err instanceof Error ? err.message : String(err)` 片段。
 
 function toErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return String(err)
@@ -21,8 +20,8 @@ function toErrorMessage(err: unknown): string {
   return `${messages[0]} (cause: ${messages.slice(1).join(' → ')})`
 }
 
-/** Format a tool failure as a user-facing string the model will see as the
- *  tool result. `action` is a short verb phrase ("reading file", "searching"). */
+/** 把工具失败格式化为面向用户的字符串，模型会将其视作工具结果。`action`
+ *  是一个简短动词短语（如 "reading file"、"searching"）。 */
 export function formatToolError(action: string, err: unknown): string {
   return `Error ${action}: ${toErrorMessage(err)}`
 }

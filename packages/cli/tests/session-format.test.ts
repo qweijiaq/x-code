@@ -58,7 +58,7 @@ describe('dedupeChoiceLabels', () => {
     expect(result[0].label).toBe('experiment  ·  2m ago')
     expect(result[1].label).toContain('20260101-120001-000')
     expect(result[2].label).toContain('20260101-120002-000')
-    // Non-label fields survive the spread.
+    // 非 label 字段在展开后仍保留。
     expect(result[1].extra).toBe(2)
   })
 })

@@ -305,7 +305,7 @@ describe.runIf(process.platform !== 'win32')('Unix peer transport', () => {
       senderInstanceId: randomUUID(),
       frame: { v: 1, type: 'ping', requestId: randomUUID() } as const,
     }
-    // Use the server's real token after constructing one shared parameter object.
+    // 构造完共享参数对象后，使用服务器的真实 token。
     const actualToken = token()
     await server.close()
     const active = await transport.listen({

@@ -9,12 +9,12 @@ const currentVersion = JSON.parse(readFileSync(resolve(rootDir, packages[0]), 'u
 
 function run(cmd, opts) {
   console.log(`\n> ${cmd}`)
-  // Use shell: true for cross-platform compatibility (Windows needs this for some commands)
+  // 使用 shell: true 以保证跨平台兼容（某些命令在 Windows 上需要这样）
   return execSync(cmd, { stdio: 'inherit', cwd: rootDir, shell: true, windowsHide: true, ...opts })
 }
 
 function runCapture(cmd) {
-  // Use shell: true for cross-platform compatibility (Windows cmd.exe vs Unix sh)
+  // 使用 shell: true 以保证跨平台兼容（Windows 的 cmd.exe 与 Unix 的 sh 不同）
   return execSync(cmd, { cwd: rootDir, encoding: 'utf-8', shell: true, windowsHide: true }).trim()
 }
 
@@ -50,7 +50,7 @@ function updatePackageVersion(pkgPath, version) {
 }
 
 function generateChangelog(version) {
-  // Use try-catch instead of Unix shell operators (2>/dev/null || echo) for Windows compatibility
+  // 用 try-catch 代替 Unix shell 运算符（2>/dev/null || echo），以兼容 Windows
   let lastTag
   try {
     lastTag = runCapture('git describe --tags --abbrev=0')
@@ -62,8 +62,8 @@ function generateChangelog(version) {
 
   if (!log) return ''
 
-  // Only user-facing changes appear in the changelog.
-  // refactor / docs / chore / ci / style / test / release commits are filtered out.
+  // 只有面向用户的改动会出现在 changelog 中。
+  // refactor / docs / chore / ci / style / test / release 提交会被过滤掉。
   const groups = { feat: [], fix: [], perf: [] }
   const labels = {
     feat: 'Features',
@@ -92,7 +92,7 @@ function generateChangelog(version) {
   return md
 }
 
-// --- main ---
+// --- 主流程 ---
 console.log(`\nCurrent version: v${currentVersion}\n`)
 console.log('  1) patch  → v' + bumpVersion(currentVersion, 'patch'))
 console.log('  2) minor  → v' + bumpVersion(currentVersion, 'minor'))
@@ -122,14 +122,14 @@ if (confirm.toLowerCase() !== 'y') {
   process.exit(0)
 }
 
-// 1. Update versions
+// 1. 更新版本
 console.log('\nUpdating package versions...')
 for (const pkg of packages) {
   updatePackageVersion(pkg, targetVersion)
   console.log(`  ${pkg} → v${targetVersion}`)
 }
 
-// 2. Generate changelog
+// 2. 生成 changelog
 console.log('\nGenerating changelog...')
 const changelog = generateChangelog(targetVersion)
 const changelogPath = resolve(rootDir, 'CHANGELOG.md')
@@ -140,15 +140,15 @@ try {
 writeFileSync(changelogPath, changelog + existingChangelog)
 console.log('  CHANGELOG.md updated')
 
-// 3. Build
+// 3. 构建
 run('pnpm build')
 
-// 4. Git commit & tag
+// 4. Git 提交并打标签
 run('git add -A')
 run(`git commit -m "release: v${targetVersion}"`)
 run(`git tag v${targetVersion}`)
 
-// 5. Push
+// 5. 推送
 run('git push')
 run('git push --tags')
 

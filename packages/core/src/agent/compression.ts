@@ -1,15 +1,14 @@
-// @x-code-cli/core — Context-window compression
+// @x-code-cli/core — 上下文窗口压缩
 //
-// Two paths share the same primitives:
-//   - Proactive (`checkAndCompressContext`): runs before every turn and
-//     trims old messages once we cross the per-model token threshold.
-//   - Reactive (`handleContextTooLong`): runs when a stream errors with
-//     a "prompt too long" classification; compresses and signals retry.
+// 两条路径共享同样的原语：
+//   - 主动（`checkAndCompressContext`）：每轮开始前运行，一旦超过
+//     每个模型的 token 阈值就裁掉旧消息。
+//   - 响应式（`handleContextTooLong`）：当流因 "prompt too long" 分类
+//     而报错时运行；压缩并发出重试信号。
 //
-// Both first try a cheap, in-process light compaction (drops loop-guard
-// pairs — no LLM call). Only if that's insufficient do we fall through
-// to `compressMessages`, which makes a generateText round-trip for an
-// LLM-written summary.
+// 两者都会先尝试廉价的进程内 light compaction（丢弃 loop-guard
+// 配对——不调用 LLM）。只有这还不够时，才落到 `compressMessages`，
+// 它会发起一次 generateText 往返，让 LLM 写摘要。
 import { generateText } from 'ai'
 import type { LanguageModel, LanguageModelUsage, ModelMessage } from 'ai'
 
@@ -26,9 +25,9 @@ import { appendUsage, markBoundaryAndReflush } from './session-store.js'
 import { setTrackedTranscript } from './tracked-messages.js'
 import { accumulateUsage, attributedModelId, normalizeLanguageModelUsage } from './usage.js'
 
-/** Optional hook surface threaded through both compression paths. Lets
- *  plugins observe (PreCompact) and react to (PostCompact) the act of
- *  trimming context — useful for checkpoint persistence or audit. */
+/** 贯穿两条压缩路径的可选 hook 表面。让插件可以观察（PreCompact）
+ *  并对（PostCompact）裁剪上下文这一行为做出反应——对检查点持久化
+ *  或审计很有用。 */
 export interface CompactionHookContext {
   hookBus?: HookBus
   modelId: string
@@ -37,22 +36,21 @@ export interface CompactionHookContext {
   authority?: ExecutionAuthority
 }
 
-/** Approximate token budget for the "recent" slice kept verbatim.
- *  Messages are walked from newest to oldest; once the running total
- *  exceeds this budget the walk stops and everything older gets
- *  summarized. Prevents a single massive tool result from consuming
- *  the entire keep window (the old KEEP_RECENT=6 messages approach). */
+/** 保留原样不动的 "recent" 切片的近似 token 预算。
+ *  消息从新到旧遍历；一旦累计总量超过该预算就停止，
+ *  更旧的内容都会被摘要化。防止单个巨大的工具结果吞掉
+ *  整个保留窗口（旧的 KEEP_RECENT=6 条消息的做法）。 */
 export const KEEP_RECENT_TOKENS = 20_000
 
-/** Minimum messages we'll always preserve even if they exceed
- *  KEEP_RECENT_TOKENS, so we never produce an empty "recent" slice. */
+/** 即使超过 KEEP_RECENT_TOKENS 也始终保留的最小消息数，
+ *  这样我们绝不会产生一个空的 "recent" 切片。 */
 export const MIN_KEEP_MESSAGES = 2
 
-/** @deprecated Use KEEP_RECENT_TOKENS. Kept for backward compat —
- *  now returns MIN_KEEP_MESSAGES (the guard used by /compact). */
+/** @deprecated 请使用 KEEP_RECENT_TOKENS。保留以向后兼容——
+ *  现在返回 MIN_KEEP_MESSAGES（/compact 使用的守护值）。 */
 export const KEEP_RECENT = MIN_KEEP_MESSAGES
 
-// ── Summarization prompts ──
+// ── 摘要提示词 ──
 
 const INITIAL_SUMMARY_SYSTEM = `You are a context-compression assistant. Summarize the conversation into a structured checkpoint another LLM will use to continue the work.
 
@@ -94,17 +92,15 @@ RULES:
 
 Use the SAME structured format as the previous summary (## Goal, ## Constraints & Preferences, ## Progress, ## Key Decisions, ## Next Steps, ## Critical Context).`
 
-/** Compress old messages into a structured summary, preserving the
- *  recent tail based on a token budget rather than a fixed message count.
+/** 把旧消息压缩成结构化摘要，基于 token 预算（而非固定消息数）
+ *  保留最近尾部。
  *
- *  When a previousSummary exists (from an earlier compaction), the LLM
- *  is asked to incrementally UPDATE it with the new messages rather than
- *  re-summarize from scratch — this preserves earlier decisions that
- *  would otherwise be lost through repeated dilution.
+ *  当存在 previousSummary（来自更早的压缩）时，让 LLM 用新消息
+ *  增量地 UPDATE 它，而不是从头重新摘要——这能保住那些否则会
+ *  在反复稀释中丢失的早期决策。
  *
- *  The filesTracked set (if provided) is appended to the summary as
- *  <files-modified> / <files-read> tags so the model knows which files
- *  were touched even after the original messages are gone. */
+ *  filesTracked 集合（若提供）会以 <files-modified> / <files-read> 标签
+ *  追加到摘要里，这样即使原始消息已删除，模型也知道碰过哪些文件。 */
 export interface CompressionResult {
   messages: ModelMessage[]
   summary: string
@@ -112,9 +108,8 @@ export interface CompressionResult {
   modelId?: string
 }
 
-/** Walk messages from newest to oldest, accumulating estimated tokens until
- *  the budget is reached. Returns the number of messages to keep (the "recent"
- *  tail), ensuring it never starts with an orphaned tool result. */
+/** 从新到旧遍历消息，累计估算 token 直到预算用尽。返回要保留的
+ *  消息数（"recent" 尾部），并确保它不会以一个孤立的 tool result 开头。 */
 function computeKeepCount(messages: ModelMessage[]): number {
   let keepCount = 0
   let tokenBudget = 0
@@ -146,7 +141,7 @@ export async function compressMessagesWithUsage(
 
   const { text: summary, usage, modelId } = await summarizeWithOverflowSplit(old, model, previousSummary, abortSignal)
 
-  // Append file tracking metadata
+  // 追加文件跟踪元数据
   let enrichedSummary = summary
   if (filesTracked) {
     const { modified, read } = filesTracked
@@ -172,12 +167,11 @@ interface SummaryChunkResult {
   modelId?: string
 }
 
-/** Summarize the old history, splitting the request when the summary call
- *  itself overflows. A resumed long session — or a small-context custom
- *  model — can have more old messages than the model accepts even after the
- *  recent tail is kept verbatim; without this the reactive path would fail
- *  for exactly the conversations that need it most. Chained update-mode
- *  summaries keep the result a single coherent checkpoint. */
+/** 摘要旧历史，当摘要调用本身溢出时拆分请求。一个恢复的长会话——
+ *  或小上下文的自定义模型——可能在保留 recent 尾部原样不动之后，
+ *  仍有超过模型接受上限的旧消息；没有这段逻辑，响应式路径会恰好在
+ *  最需要它的那些会话上失败。链式的 update 模式摘要让结果保持为
+ *  单个连贯的检查点。 */
 async function summarizeWithOverflowSplit(
   messages: ModelMessage[],
   model: LanguageModel,
@@ -186,8 +180,7 @@ async function summarizeWithOverflowSplit(
 ): Promise<SummaryChunkResult> {
   const isUpdate = !!previousSummary
   const systemPrompt = isUpdate ? UPDATE_SUMMARY_SYSTEM : INITIAL_SUMMARY_SYSTEM
-  // For update mode, wrap the previous summary and send the new messages
-  // as the conversation to incorporate.
+  // 对 update 模式，包装上一个摘要，并把新消息作为要并入的对话发送。
   const userContent = isUpdate
     ? `<previous-summary>\n${previousSummary}\n</previous-summary>\n\nNew messages to incorporate follow in the conversation.`
     : undefined
@@ -218,9 +211,9 @@ async function summarizeWithOverflowSplit(
   }
 }
 
-/** Split at a message boundary that keeps tool-call ↔ tool-result pairs
- *  intact: the second half must never start with a tool result whose
- *  tool-call stays in the first half (providers reject orphan tool results). */
+/** 在保持 tool-call ↔ tool-result 配对完整的前提下，于消息边界处拆分：
+ *  后半部分绝不能以一个 tool result 开头，而其 tool-call 留在前半部分
+ *  （提供商会拒绝孤立的 tool result）。 */
 export function splitForSummary(messages: ModelMessage[]): [ModelMessage[], ModelMessage[]] | null {
   if (messages.length < 4) return null
   const mid = Math.floor(messages.length / 2)
@@ -285,7 +278,7 @@ export async function compressTrackedMessagesWithUsage(
   }
 }
 
-/** Backward-compatible public API. */
+/** 向后兼容的公共 API。 */
 export async function compressMessages(
   messages: ModelMessage[],
   model: LanguageModel,
@@ -297,14 +290,13 @@ export async function compressMessages(
 }
 
 /**
- * Proactive compression: compress when either the last real input-token count
- * or the character-based estimate has crossed the threshold.
+ * 主动压缩：当最后一次真实输入 token 计数或基于字符的估算
+ * 越过阈值时触发压缩。
  *
- * Runs a light O(n) compaction first (drops loop-guard pairs — no LLM call,
- * no network). If that brings us back under the threshold, we skip the
- * expensive LLM-summary path entirely. This is the difference between a
- * $0 10ms pass and a full summarisation round trip — for loop-induced
- * bloat (by far the common case), the light path is enough.
+ * 先做一次轻量的 O(n) compaction（丢弃 loop-guard 配对——不调用 LLM，
+ * 不联网）。如果这就能回到阈值以下，就完全跳过昂贵的 LLM 摘要路径。
+ * 这就是 0 美元 10ms 的通过和一次完整摘要往返之间的差别——对于
+ * 由循环导致的膨胀（占绝大多数的情况），轻量路径已经足够。
  */
 export async function checkAndCompressContext(
   state: LoopState,
@@ -316,9 +308,8 @@ export async function checkAndCompressContext(
   const needsCompression = state.lastInputTokens > threshold || estimateTokenCount(state.messages) > threshold
   if (!needsCompression || state.messages.length <= MIN_KEEP_MESSAGES) return
 
-  // PreCompact — fires before either compaction path runs. We don't
-  // wait for hook decisions to influence behaviour (compaction is
-  // mandatory once we cross the threshold), so this is fire-and-forget.
+  // PreCompact——在任一压缩路径运行之前触发。我们不会等待 hook 的
+  // 决策来影响行为（一旦越过阈值，压缩是强制的），所以这是即发即忘。
   const messageCountBefore = state.messages.length
   const tokenEstimateBefore = estimateTokenCount(state.messages)
   emitCompactionHook(hookCtx, {
@@ -376,9 +367,9 @@ export async function checkAndCompressContext(
 }
 
 /**
- * Reactive compact: when a stream errors because the prompt was too long,
- * compress and signal the caller to retry. Mirrors Claude Code's reactiveCompact.
- * Returns true if compression happened (caller should retry this turn).
+ * 响应式 compact：当流因 prompt 过长而报错时，压缩并通知调用方重试。
+ * 对应 Claude Code 的 reactiveCompact。若发生了压缩则返回 true
+ * （调用方应重试本轮）。
  */
 export async function handleContextTooLong(
   state: LoopState,
@@ -402,8 +393,8 @@ export async function handleContextTooLong(
     hookCtx,
   )
 
-  // Anti-spin guard. If summarizing barely freed context, the overflow
-  // lives in the kept recent messages — bail so the user can /clear.
+  // 防自旋守护。如果摘要几乎没释放上下文，说明溢出存在于
+  // 保留的 recent 消息中——退出，让用户可以 /clear。
   if (tokensAfter > tokensBefore * 0.9) {
     debugLog('compression.reactive-no-progress', `before=${tokensBefore} after=${tokensAfter} — not retrying`)
     return false
@@ -421,7 +412,7 @@ export async function handleContextTooLong(
   return true
 }
 
-// ── Helpers ──
+// ── 辅助函数 ──
 
 const SUMMARY_PREFIX = '[Previous conversation summary]\n'
 
@@ -432,8 +423,8 @@ async function finishLightweightCompression(
 ): Promise<void> {
   await markBoundaryAndReflush(state, undefined, candidate)
   setTrackedTranscript(state, candidate)
-  // A compacted transcript may no longer contain the file bodies that made
-  // these de-dup entries valid. Let readFile deliver them again on demand.
+  // 压缩后的转录可能不再包含让这些去重条目有效的文件主体。
+  // 让 readFile 在需要时重新提供它们。
   state.readFileCache.clear()
   state.lastInputTokens = 0
   markExpectedCacheMiss(state, 'compaction')
@@ -488,9 +479,8 @@ async function recordCompressionUsage(
   await appendUsage(state, modelId)
 }
 
-/** Extract the previous compaction summary from messages[0] if it was
- *  produced by an earlier compressMessages call. Returns undefined for
- *  sessions that haven't been compacted yet. */
+/** 若 messages[0] 由更早的 compressMessages 调用产生，则提取先前的
+ *  压缩摘要。对尚未压缩过的会话返回 undefined。 */
 function extractPreviousSummary(messages: ModelMessage[]): string | undefined {
   if (messages.length === 0) return undefined
   const first = messages[0]
@@ -499,17 +489,16 @@ function extractPreviousSummary(messages: ModelMessage[]): string | undefined {
   return first.content.slice(SUMMARY_PREFIX.length)
 }
 
-/** Build the files-modified / files-read tracking lists from LoopState.
- *  Cost: a few dozen short path strings — negligible token overhead. */
+/** 从 LoopState 构建 files-modified / files-read 跟踪列表。
+ *  代价：几十条短路径字符串——token 开销可忽略。 */
 function buildFilesTracked(state: LoopState): { modified: string[]; read: string[] } {
   const modified = [...state.filesModified]
   const read = [...state.readFileCache.keys()].filter((p) => !state.filesModified.has(p))
   return { modified, read }
 }
 
-/** Fire a PreCompact / PostCompact hook with the session context. Best
- *  effort — compaction has already happened (or is committed to happen),
- *  so hook failures and aborts must not bubble. */
+/** 携带会话上下文触发 PreCompact / PostCompact hook。尽力而为——
+ *  压缩已经发生（或已确定要发生），所以 hook 失败和中止绝不能冒泡。 */
 function emitCompactionHook(
   ctx: CompactionHookContext | undefined,
   partial:

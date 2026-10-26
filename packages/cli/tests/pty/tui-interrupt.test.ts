@@ -70,10 +70,9 @@ describe('TUI interruption', () => {
         await harness.waitForText('Press Ctrl+C again to exit')
         await waitFor(() => provider.mainRequests()[0]?.cancelled === true, 'stream request cancellation')
         expect(harness.raw()).not.toContain('MUST-NOT-COMMIT')
-        // The provider reports cancellation before the CLI finishes the abort
-        // unwind (isLoading=false, lease release, queue-to-draft restore). A
-        // resubmit inside that window gets folded back into the input draft
-        // instead of starting a turn — wait for the idle prompt first.
+        // 提供方会在 CLI 完成 abort 收尾（isLoading=false、释放租约、恢复到草稿队列）
+        // 之前就报告取消。在该窗口内重新提交会被折回输入草稿，而不是开启新回合 —
+        // 所以先等待空闲提示。
         await harness.waitForScreen(
           (screen) => screen.includes('[Request interrupted by user]') && !screen.includes('Working'),
           'idle prompt after stream interrupt',

@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-/** Map a known file extension to an IANA media type without guessing. */
+/** 将已知文件扩展名映射到 IANA 媒体类型，不做猜测。 */
 export function knownMediaTypeFor(filePath: string): string | null {
   const ext = path.extname(filePath).toLowerCase()
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
@@ -9,7 +9,7 @@ export function knownMediaTypeFor(filePath: string): string | null {
   if (ext === '.gif') return 'image/gif'
   if (ext === '.bmp') return 'image/bmp'
   if (ext === '.tif' || ext === '.tiff') return 'image/tiff'
-  // Audio
+  // 音频
   if (ext === '.mp3') return 'audio/mpeg'
   if (ext === '.wav') return 'audio/wav'
   if (ext === '.m4a') return 'audio/mp4'
@@ -23,8 +23,8 @@ export function knownMediaTypeFor(filePath: string): string | null {
 }
 
 /**
- * @deprecated Use knownMediaTypeFor() and handle null. This compatibility
- * fallback remains for one release cycle; ingestion code must not use it.
+ * @deprecated 请使用 knownMediaTypeFor() 并处理 null。此兼容性回退仅保留
+ * 一个发布周期；摄取代码不得使用它。
  */
 export function mediaTypeFor(filePath: string): string {
   return knownMediaTypeFor(filePath) ?? 'image/png'

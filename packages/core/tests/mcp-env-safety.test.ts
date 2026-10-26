@@ -53,9 +53,9 @@ describe('assertSafeEnv', () => {
   })
 
   it('is case-insensitive — Windows env names ignore case at the OS level', () => {
-    // The Windows env is canonically upper-cased by the OS, but Node will
-    // happily pass through whatever case we hand to spawn. Rejecting only
-    // the upper form would let a config slip through with `node_options:`.
+    // Windows 环境变量通常由操作系统转为大写，但 Node 会
+    // 原样传递我们交给 spawn 的任何大小写。只拒绝大写形式
+    // 会让 `node_options:` 这样的配置溜过去。
     expect(() => assertSafeEnv({ Node_Options: '--require ./x.js' })).toThrow(UnsafeEnvError)
     expect(() => assertSafeEnv({ ld_preload: '/tmp/x.so' })).toThrow(UnsafeEnvError)
   })

@@ -1,4 +1,4 @@
-// @x-code-cli/core — shell tool (cross-platform command execution, no execute — needs permission check)
+// @x-code-cli/core — shell 工具（跨平台命令执行，无 execute —— 需要权限检查）
 import { tool } from 'ai'
 
 import { z } from 'zod'
@@ -44,5 +44,5 @@ Instructions:
       .optional()
       .describe('Legacy compatibility flag. When true and yieldTimeMs is omitted, return a shell id immediately.'),
   }),
-  // No execute — handled manually in agent loop for permission check + cross-platform shell + streaming
+  // 无 execute —— 在 agent loop 里手动处理：权限检查 + 跨平台 shell + 流式输出
 })

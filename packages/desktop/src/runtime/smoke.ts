@@ -32,9 +32,9 @@ async function probeModule(
 }
 
 /**
- * pdfjs takes its browser code path when `process.type` is set (Electron
- * utility process) and therefore skips the @napi-rs/canvas DOMMatrix polyfill
- * it installs in a plain Node process. Supply the same constructor first.
+ * 当 `process.type` 被设置（Electron utility 进程）时，pdfjs 走其
+ * 浏览器代码路径，因此跳过它在普通 Node 进程中安装的
+ * @napi-rs/canvas DOMMatrix polyfill。先提供同一个构造函数。
  */
 async function ensureDomMatrix(): Promise<void> {
   const globals = globalThis as { DOMMatrix?: unknown }
@@ -70,7 +70,7 @@ async function probePty(): Promise<{ ok: boolean; output: string; error?: string
         try {
           proc.kill()
         } catch {
-          // Already gone.
+          // 已消失。
         }
         resolve({ ok: false, output, error: 'pty timeout' })
       }, 5000)
@@ -273,8 +273,8 @@ export async function runSmoke(): Promise<SmokeReport> {
     )
     const convertOk = String(convertOutput).includes('Merged 2 PDFs (3 pages)') && fs.existsSync(merged)
 
-    // documentExport's PDF path goes through the main process (printToPDF),
-    // which also exercises the reverse main-request channel.
+    // documentExport 的 PDF 路径经过主进程（printToPDF），
+    // 这也顺带演练了反向 main-request 通道。
     const exportedPdf = path.join(dir, 'export-smoke.pdf')
     const exportOutput = await execute(
       toolRegistry.documentExport,

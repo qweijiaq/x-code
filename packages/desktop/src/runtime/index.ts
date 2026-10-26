@@ -1,9 +1,9 @@
 /**
- * Runtime utility process.
+ * 运行时 utility 进程。
  *
- * Owns everything that needs Node: the agent loop, native modules, PTY
- * sessions, sessions, and approvals. It talks to the Electron main process over
- * `process.parentPort`; main relays messages to the sandboxed renderer.
+ * 拥有所有需要 Node 的东西：agent 循环、原生模块、PTY
+ * 会话、会话和审批。它通过 `process.parentPort` 与 Electron 主进程通信；
+ * 主进程再把消息转发给沙箱化的 renderer。
  */
 import { setDocumentRenderers } from '@x-code-cli/core'
 
@@ -39,9 +39,9 @@ if (!parentPort) {
 }
 const port: ParentPortLike = parentPort
 
-// Core's audio runner uses child_process.fork(), which would otherwise launch
-// another Electron app instead of a Node worker. Child processes inherit this
-// flag and run as Node.
+// core 的音频 runner 使用 child_process.fork()，否则会启动
+// 另一个 Electron 应用而不是 Node worker。子进程继承这个
+// 标志并以 Node 运行。
 process.env.ELECTRON_RUN_AS_NODE = '1'
 
 function sendEvent(event: RuntimeEvent): void {

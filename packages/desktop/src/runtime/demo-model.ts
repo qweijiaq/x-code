@@ -58,13 +58,12 @@ function textStream(text: string): { stream: ReadableStream<LanguageModelV3Strea
 }
 
 /**
- * Demo model used when no provider key is configured. It keeps the desktop app
- * usable without credentials and can exercise the write → permission → diff
- * path when the prompt contains `[tool-demo]`. `[compact-demo]` fails once
- * with a context-overflow error so the auto-compaction path can be verified.
+ * 未配置任何 provider key 时使用的演示模型。它让桌面应用在无凭据时仍然可用，
+ * 当提示词包含 `[tool-demo]` 时还能走通「写入 → 权限确认 → diff」链路；
+ * `[compact-demo]` 会先失败一次（上下文溢出错误），用于验证自动压缩路径。
  *
- * One instance is created per submit, so `pendingCallId` tracks the current
- * turn's tool call and resets after the loop feeds the tool result back.
+ * 每次提交都会创建一个实例，因此 `pendingCallId` 追踪当前轮的工具调用，
+ * 并在循环把工具结果回传后重置。
  */
 export function createDemoModel(): MockLanguageModelV3 {
   let pendingCallId: string | null = null
@@ -73,8 +72,8 @@ export function createDemoModel(): MockLanguageModelV3 {
   return new MockLanguageModelV3({
     provider: 'demo',
     modelId: 'demo:mock',
-    // Used by context compaction (generateText). Keeping it implemented lets
-    // the demo exercise the reactive overflow path without credentials.
+    // 供上下文压缩（generateText）使用。保留其实现，让演示模型无需凭据
+    // 也能走通「响应式溢出」路径。
     doGenerate: async () => ({
       content: [{ type: 'text' as const, text: '（演示）会话摘要：之前的对话、工具调用与上下文已保留。' }],
       finishReason: { unified: 'stop' as const, raw: 'stop' },
@@ -91,8 +90,8 @@ export function createDemoModel(): MockLanguageModelV3 {
 
       if (lastUserText.includes('[compact-demo]')) {
         if (!overflowRetried) {
-          // First attempt fails the way a small-context provider does; the
-          // core loop must compact and retry instead of surfacing this.
+          // 首次尝试以「小上下文 provider」的方式失败；核心循环应当压缩并
+          // 重试，而不是把这个错误直接抛给用户。
           overflowRetried = true
           throw new Error(
             "This model's maximum context length is 128000 tokens. However, your messages resulted in 150000 tokens.",

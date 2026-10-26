@@ -106,7 +106,7 @@ describe('Kimi endpoint model ids', () => {
       onError: () => undefined,
     })
     for await (const _chunk of result.textStream) {
-      // The mock returns a deliberate error after the outbound request is captured.
+      // mock 在捕获到出站请求后返回一个刻意的错误。
     }
 
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -134,7 +134,7 @@ describe('Kimi endpoint model ids', () => {
       onError: () => undefined,
     })
     for await (const _chunk of result.textStream) {
-      // The mock returns a deliberate error after the outbound request is captured.
+      // mock 在捕获到出站请求后返回一个刻意的错误。
     }
 
     const [, init] = fetchMock.mock.calls[0]!
@@ -160,7 +160,7 @@ describe('Kimi endpoint model ids', () => {
       onError: () => undefined,
     })
     for await (const _chunk of result.textStream) {
-      // The mock returns a deliberate error after the outbound request is captured.
+      // mock 在捕获到出站请求后返回一个刻意的错误。
     }
 
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
@@ -181,7 +181,7 @@ describe('Kimi endpoint model ids', () => {
       onError: () => undefined,
     })
     for await (const _chunk of result.textStream) {
-      // The mock returns a deliberate error after the outbound request is captured.
+      // mock 在捕获到出站请求后返回一个刻意的错误。
     }
 
     const [url, init] = fetchMock.mock.calls[0]!
@@ -221,7 +221,7 @@ describe('Kimi endpoint model ids', () => {
       },
     })
     for await (const _chunk of result.textStream) {
-      // The mock returns a deliberate error after the outbound request is captured.
+      // mock 在捕获到出站请求后返回一个刻意的错误。
     }
 
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -266,7 +266,7 @@ describe('Kimi endpoint model ids', () => {
       },
     })
     for await (const _chunk of result.textStream) {
-      // The mock returns a deliberate error after the outbound request is captured.
+      // mock 在捕获到出站请求后返回一个刻意的错误。
     }
 
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -318,7 +318,7 @@ describe('Kimi endpoint model ids', () => {
       onError: () => undefined,
     })
     for await (const _chunk of result.textStream) {
-      // The mock returns a deliberate error after the outbound request is captured.
+      // mock 在捕获到出站请求后返回一个刻意的错误。
     }
 
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -363,7 +363,7 @@ describe('Kimi endpoint model ids', () => {
       onError: () => undefined,
     })
     for await (const _chunk of result.textStream) {
-      // The mock returns a deliberate error after the outbound request is captured.
+      // mock 在捕获到出站请求后返回一个刻意的错误。
     }
 
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -402,7 +402,7 @@ describe('Kimi endpoint model ids', () => {
       },
     })
     for await (const _chunk of result.textStream) {
-      // The guarded provider returns a local 401 before the global fetch is reached.
+      // 被守卫的 provider 在到达全局 fetch 之前就返回本地 401。
     }
 
     expect(fetchMock).not.toHaveBeenCalled()
@@ -425,7 +425,7 @@ describe('Kimi endpoint model ids', () => {
       onError: () => undefined,
     })
     for await (const _chunk of rebound.textStream) {
-      // The rebound provider reaches the ChatGPT endpoint and stops at the mock response.
+      // 重新绑定的 provider 到达 ChatGPT 端点，并停在 mock 响应处。
     }
 
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -464,7 +464,7 @@ describe('Kimi endpoint model ids', () => {
       },
     })
     for await (const _chunk of result.textStream) {
-      // A subscription quota error has no stream chunks.
+      // 订阅配额错误没有任何流式 chunk。
     }
 
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -568,7 +568,7 @@ describe('Kimi endpoint model ids', () => {
       onError: () => undefined,
     })
     for await (const _chunk of first.fullStream) {
-      // Consume the complete first response so the SDK materializes response.messages.
+      // 完整消费第一个响应，好让 SDK 实体化 response.messages。
     }
     const firstMessages = (await first.response).messages
     const second = streamText({
@@ -594,7 +594,7 @@ describe('Kimi endpoint model ids', () => {
       onError: () => undefined,
     })
     for await (const _chunk of second.fullStream) {
-      // The second mock intentionally stops after the request has been captured.
+      // 第二个 mock 刻意在请求被捕获后停止。
     }
 
     expect(fetchMock).toHaveBeenCalledTimes(2)

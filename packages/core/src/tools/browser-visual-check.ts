@@ -1,10 +1,8 @@
-// @x-code-cli/core — One-shot local browser screenshot verification
+// @x-code-cli/core — 一次性本地浏览器截图校验
 //
-// This is intentionally a single composite tool rather than exposing the
-// Playwright MCP surface to the root agent. The dispatch layer opens the local
-// page, waits briefly, captures one bounded screenshot, and returns only that
-// image plus a compact console-error summary. Navigation snapshots stay outside
-// model context.
+// 这里刻意做成单一组合工具，而不是把 Playwright MCP 暴露给根 agent。分发层
+// 打开本地页面，短暂等待，截取一张有界截图，只返回该图片外加一份简短的
+// console 错误摘要。导航快照不进入模型上下文。
 import { tool } from 'ai'
 
 import { z } from 'zod'
@@ -30,6 +28,6 @@ export const browserVisualCheck = tool({
       .optional()
       .describe('Optional viewport override. Omit to use the configured browser viewport.'),
   }),
-  // No execute — hand-dispatched in agent/tool-execution.ts so it can share
-  // the private browser MCP, forward abortSignal, and return typed image media.
+  // 无 execute —— 在 agent/tool-execution.ts 里手动分发，这样能共享私有的
+  // browser MCP、透传 abortSignal，并返回带类型的图片媒体。
 })

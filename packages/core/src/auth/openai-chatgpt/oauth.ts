@@ -202,7 +202,7 @@ async function responseError(
     }
     if (typeof body.error_description === 'string') errorDescription = body.error_description.slice(0, 500)
   } catch {
-    // OAuth endpoints sometimes return HTML; do not copy an untrusted body into logs or terminal output.
+    // OAuth 端点有时会返回 HTML；不要把不可信的响应体复制进日志或终端输出。
   }
   if (
     loginRequiredOnPermanentRefreshFailure &&
@@ -634,7 +634,7 @@ export async function loginOpenAIChatGPTWithDevice(
         const pending = (await pollResponse.json()) as { error?: string }
         pendingError = pending.error
       } catch {
-        // A body is optional for the endpoint's 403/404 pending responses.
+        // 该端点 403/404 待处理响应中 body 是可选的。
       }
       if (pendingError === 'slow_down') {
         intervalMs += 5_000

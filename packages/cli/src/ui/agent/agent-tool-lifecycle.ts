@@ -88,9 +88,9 @@ export function createToolLifecycleCallbacks({
       flushBuffer()
       pendingToolsRef.current.set(toolCallId, { toolName, input, startedAt: now() })
 
-      // toolSearch is an internal deferred-tool loader. Keep it out of both
-      // the live tool list and scrollback while retaining its pending record
-      // so onToolResult can identify and discard the matching result.
+      // toolSearch 是一个内部的延迟工具加载器。把它同时排除在实时工具列表和
+      // scrollback 之外，同时保留其待处理记录，让 onToolResult 能识别并丢弃
+      // 匹配的结果。
       if (toolName === TOOL_SEARCH_TOOL_NAME || isPassiveShellWait({ toolName, input })) return
 
       const isReadOnly = isCollapsibleReadOnlyTool(toolName)

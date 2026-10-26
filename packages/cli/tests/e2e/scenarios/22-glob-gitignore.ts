@@ -3,14 +3,13 @@ import type { Scenario } from '../framework/types.js'
 const scenario: Scenario = {
   id: '22-glob-gitignore',
   name: 'glob 工具尊重 .gitignore：node_modules/ 被过滤掉',
-  // Regression guard for commit 605cba1 — glob switched to ripgrep and
-  // started honoring .gitignore. Before that, `**/*.js` would happily
-  // return every vendored dep, which is both noise and a cost multiplier.
+  // 针对 commit 605cba1 的回归守卫 — glob 切换到了 ripgrep，并开始
+  // 遵守 .gitignore。在那之前，`**/*.js` 会毫无顾忌地返回每一个
+  // 依赖文件，既是噪音又是成本放大。
   async run(ctx) {
-    // ripgrep only honors .gitignore when it detects a git repo (no
-    // `--no-require-git` flag in the glob tool, by design — outside a git
-    // tree, .gitignore semantically doesn't apply). So we need a minimal
-    // .git/ marker for the test to exercise the gitignore path.
+    // ripgrep 只有在检测到 git 仓库时才遵守 .gitignore（glob 工具里
+    // 特意没有 `--no-require-git` 标志 — 在 git 树之外，.gitignore 语义上
+    // 不适用）。所以测试需要一个最小的 .git/ 标记来走通 gitignore 路径。
     await ctx.mkdir('.git')
     await ctx.writeFile('.git/HEAD', 'ref: refs/heads/main\n')
     await ctx.writeFile('.gitignore', 'node_modules/\n')

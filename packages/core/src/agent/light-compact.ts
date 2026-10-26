@@ -1,27 +1,23 @@
-// @x-code-cli/core — Light-weight message compaction (no LLM call)
+// @x-code-cli/core — 轻量消息压缩（不调用 LLM）
 //
-// The main compression path (`compressMessages` in compression.ts) summarises old
-// turns by making a separate `generateText` call — that's a network round
-// trip plus a full pass over the messages, which is wasteful when the bulk
-// of the context comes from a narrow, obvious source: repeated tool-call
-// failures that the loop guard already flagged.
+// 主压缩路径（compression.ts 里的 `compressMessages`）通过发起一次单独的
+// `generateText` 调用来摘要旧轮次——那是一次网络往返加一次对消息的完整遍历。
+// 当上下文的大头来自一个狭窄、明显的来源时（loop guard 已经标记出来的反复
+// 工具调用失败），这样做就很浪费。
 //
-// This module runs a cheap O(n) pass that drops the messages we can safely
-// throw away without losing signal:
-//   - tool-call + tool-result pairs whose result is a `[loop-guard]` notice
-//     (the model has already been told to stop; the blocked calls don't
-//     teach it anything new on replay)
-//   - tool-result payloads that are PowerShell noise stacks older than the
-//     most recent one (keep at most the latest so the model can still see
-//     the current error shape, drop older duplicates)
+// 本模块跑一遍 O(n) 的廉价扫描，丢弃那些丢掉也不损失信号的消息：
+//   - 结果为 `[loop-guard]` 提示的 tool-call + tool-result 配对
+//     （模型已经被叫停了；这些被拦下的调用重放时教不会它任何新东西）
+//   - 比最新一条更旧的 PowerShell 噪声堆栈 tool-result 负载
+//     （最多保留最新一条，让模型仍能看到当前的错误形态，丢弃更旧的重复项）
 //
-// Callers should run this BEFORE invoking the LLM summariser so the
-// summariser operates on the signal-rich remainder.
+// 调用方应在调用 LLM 摘要器【之前】运行它，好让摘要器在信号丰富的
+// 剩余部分上工作。
 import type { ModelMessage } from 'ai'
 
 import type { TrackedModelMessage } from '../types/index.js'
 
-/** Content of a tool-result part that we should drop on sight. */
+/** 一见到就该丢弃的 tool-result part 的内容。 */
 const LOOP_GUARD_SENTINEL = '[loop-guard]'
 
 type ToolResultPartLike = {
@@ -47,10 +43,9 @@ function hasDropTargetResult(msg: ModelMessage): boolean {
   return parts.some(isToolResultDropTarget)
 }
 
-/** Remove an assistant message's tool-call parts for the given id set.
- *  Returns the message as-is if no changes needed, otherwise a shallow copy
- *  with filtered content. If every part is removed, returns null so the
- *  caller can drop the whole message. */
+/** 从一条 assistant 消息里移除给定 id 集合的 tool-call part。
+ *  无需改动时原样返回消息，否则返回过滤后内容的浅拷贝。
+ *  若每个 part 都被移除，则返回 null，好让调用方丢弃整条消息。 */
 function stripToolCallParts(msg: ModelMessage, idsToRemove: Set<string>): ModelMessage | null {
   if (msg.role !== 'assistant') return msg
   const content = msg.content as unknown as Array<{ type?: string; toolCallId?: string }>
@@ -70,7 +65,7 @@ function stripToolCallParts(msg: ModelMessage, idsToRemove: Set<string>): ModelM
   return { ...msg, content: filtered } as ModelMessage
 }
 
-/** Collect the toolCallIds whose tool-result was a loop-guard notice. */
+/** 收集 tool-result 为 loop-guard 提示的 toolCallId。 */
 function collectLoopGuardedIds(messages: ModelMessage[]): Set<string> {
   const ids = new Set<string>()
   for (const msg of messages) {
@@ -88,14 +83,14 @@ function collectLoopGuardedIds(messages: ModelMessage[]): Set<string> {
 
 export interface LightCompactResult {
   messages: ModelMessage[]
-  /** Number of messages dropped. Useful for UI / telemetry — if zero, the
-   *  caller may still want to fall through to the LLM summariser. */
+  /** 被丢弃的消息数。对 UI / 遥测有用 —— 若为零，
+   *  调用方可能仍希望回退到 LLM 摘要器。 */
   dropped: number
 }
 
 /**
- * Drop loop-guard tool-call/result pairs from the message array. Leaves
- * everything else untouched. Does not mutate the input array.
+ * 从消息数组中丢弃 loop-guard 的 tool-call/result 配对。其余内容
+ * 原样不动。不修改输入数组。
  */
 export function lightCompactMessages(messages: ModelMessage[]): LightCompactResult {
   const idsToRemove = collectLoopGuardedIds(messages)
@@ -123,9 +118,9 @@ export interface TrackedLightCompactResult {
   dropped: number
 }
 
-/** Tracked variant used by the agent. Tainted loop-guard pairs are retained:
- * ordinary compaction is not a decontamination operation and must never
- * remove the final peer-derived evidence from the active transcript. */
+/** agent 使用的带跟踪变体。被污染的 loop-guard 配对会被保留：
+ * 普通压缩不是去污操作，绝不能把最后一条来自 peer 的证据从
+ * 活跃转录中移除。 */
 export function lightCompactTrackedMessages(entries: readonly TrackedModelMessage[]): TrackedLightCompactResult {
   const messages = entries.map((entry) => entry.message)
   const candidateIds = collectLoopGuardedIds(messages)
@@ -173,19 +168,17 @@ export function lightCompactTrackedMessages(entries: readonly TrackedModelMessag
   return { trackedMessages: out, dropped }
 }
 
-// ── Smart tool-result truncation ──
+// ── 智能 tool-result 截断 ──
 //
-// Intermediate compaction layer between the loop-guard dropper above and the
-// expensive LLM summariser in compression.ts. Replaces old, large tool_result
-// payloads with short stubs that preserve what-was-done metadata while
-// recovering the majority of the tokens. Stubs include the tool name, key
-// input parameters, output size, and a short preview so the model can decide
-// whether to re-run the tool.
+// 位于上面的 loop-guard 丢弃器和 compression.ts 里昂贵的 LLM 摘要器之间的
+// 中间压缩层。把旧的、巨大的 tool_result 负载替换成保留「做了什么」元数据的
+// 短占位 stub，从而回收大部分 token。stub 包含工具名、关键输入参数、
+// 输出大小和一小段预览，好让模型决定是否要重新运行该工具。
 //
-// Designed to delay full compaction — which invalidates the entire prompt
-// cache — by freeing context without rewriting the message structure.
+// 设计目的是推迟完整压缩——它会失效整个提示词缓存——通过在不重写消息
+// 结构的前提下释放上下文。
 
-/** Tools whose results represent decisions or are already compact — never truncate. */
+/** 结果代表决策、或本身已经紧凑的工具 —— 永不截断。 */
 const NEVER_TRUNCATE_TOOLS = new Set([
   'edit',
   'writeFile',
@@ -197,13 +190,13 @@ const NEVER_TRUNCATE_TOOLS = new Set([
   'exitPlanMode',
 ])
 
-/** Only truncate results whose text is longer than this (chars). */
+/** 只有文本长度超过此值（字符）的结果才会被截断。 */
 const MIN_TRUNCATABLE_CHARS = 500
 
-/** Number of recent messages to protect from truncation. */
+/** 免于截断保护的最近消息条数。 */
 const KEEP_RECENT_MESSAGES = 10
 
-/** Max chars to keep from the original output as a preview in the stub. */
+/** 从原始输出中保留作为 stub 预览的最大行数。 */
 const PREVIEW_LINES = 3
 
 const RECOVERABLE_SHELL_TOOLS = new Set(['shell', 'shellOutput', 'killShell'])
@@ -231,10 +224,9 @@ export interface TruncateOldToolResultsResult {
 }
 
 /**
- * Replace old, large tool_result text with compact stubs. Mutates the
- * messages in-place for efficiency (this runs on `state.messages` which is
- * already mutable). Returns stats for the caller to decide whether to
- * proceed to full compaction.
+ * 把旧的、巨大的 tool_result 文本替换成紧凑 stub。为了效率就地修改
+ * messages（它运行在本来就可变的 `state.messages` 上）。返回统计信息，
+ * 供调用方决定是否继续进入完整压缩。
  */
 export function truncateOldToolResults(messages: ModelMessage[]): TruncateOldToolResultsResult {
   const protectedStart = Math.max(0, messages.length - KEEP_RECENT_MESSAGES)

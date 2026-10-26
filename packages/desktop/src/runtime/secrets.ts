@@ -1,16 +1,14 @@
 /**
- * Local API-key storage for the desktop app.
+ * 桌面应用的本地 API Key 存储。
  *
- * Core reads API keys only from environment variables. The desktop settings
- * panel persists keys in `~/.x-code/desktop-secrets.json` (mode 0600) and
- * injects them into `process.env` before the provider registry is built. The
- * renderer only ever sees a configured flag and, for stored keys, the last four
- * characters.
+ * core 只从环境变量读取 API key。桌面设置面板把 key 持久化到
+ * `~/.x-code/desktop-secrets.json`（mode 0600），并在构建 provider
+ * 注册表之前注入到 `process.env`。renderer 只会看到已配置标志，以及
+ * 已存储 key 的最后四个字符。
  *
- * Values are encrypted with Electron's safeStorage (OS keychain) when it is
- * available. On platforms without it (e.g. Linux without a secret service) the
- * file falls back to plaintext with 0600 and the settings UI says so. Legacy
- * plaintext entries are migrated to `enc` on the next load when possible.
+ * 当 Electron 的 safeStorage（OS 钥匙串）可用时，值用它加密。在没有它的
+ * 平台（例如没有 secret service 的 Linux）上，文件回退为 0600 的明文，
+ * 设置 UI 会如此说明。旧的明文条目会在可能时于下一次加载迁移到 `enc`。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -97,7 +95,7 @@ const bridgeCipher: SecretCipher = {
 
 let cipher: SecretCipher = bridgeCipher
 
-/** Test seam: replace the safeStorage-backed cipher (null restores it). */
+/** 测试接缝：替换 safeStorage 支撑的加密器（null 还原）。 */
 export function setSecretCipher(next: SecretCipher | null): void {
   cipher = next ?? bridgeCipher
   availableCache = null
@@ -124,7 +122,7 @@ function readRaw(): SecretsFile {
       }
     }
   } catch {
-    // Missing or malformed secrets file.
+    // 缺失或格式损坏的 secrets 文件。
   }
   return { version: 1, providers: {}, search: {}, baseUrls: {} }
 }
@@ -143,7 +141,7 @@ async function encodeEntry(value: string): Promise<StoredEntry> {
   try {
     if (await cipher.available()) return { enc: await cipher.encrypt(value) }
   } catch {
-    // Fall back to plaintext (still 0600) when encryption fails.
+    // 加密失败时回退到明文（仍为 0600）。
   }
   return { plain: value }
 }
@@ -199,8 +197,8 @@ async function decodeEntries(
   return { values, next, migrated }
 }
 
-/** Read the file, decrypt entries, and migrate legacy plaintext values to
- *  `enc` when the cipher is available. Populates the in-memory cache. */
+/** 读取文件，解密条目，并在加密器可用时把旧的明文值迁移到
+ *  `enc`。填充内存缓存。 */
 export async function loadSecrets(): Promise<void> {
   const raw = readRaw()
   const canEncrypt = await cipher.available().catch(() => false)
@@ -230,8 +228,8 @@ async function ensureLoaded(): Promise<SecretsCache> {
   return cache ?? { providers: new Map(), search: new Map(), baseUrls: new Map() }
 }
 
-/** Inject stored keys into the environment. Call after loading the workspace
- *  `.env` and before provider discovery. */
+/** 把存储的 key 注入环境变量。在加载工作区 `.env` 之后、
+ *  provider 发现之前调用。 */
 export async function applyStoredSecrets(): Promise<void> {
   captureOriginals()
   const loaded = await ensureLoaded()
@@ -372,8 +370,8 @@ export async function clearProviderKey(provider: string): Promise<void> {
   }
 }
 
-/** Smoke probe: save a value, verify the file holds ciphertext (when
- *  encryption is available), read it back through the normal path, and clear. */
+/** 冒烟探测：保存一个值，验证文件持有密文（当加密可用时），
+ *  通过正常路径读回，然后清除。 */
 export async function secretRoundTripProbe(): Promise<{
   available: boolean
   encrypted: boolean

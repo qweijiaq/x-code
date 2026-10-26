@@ -124,10 +124,9 @@ describe('classifyApiError', () => {
   })
 
   it('classifies Moonshot suspended-account billing error (HTTP 429 body)', () => {
-    // Real Moonshot error: HTTP 429 with body saying the account is
-    // suspended for insufficient balance. Must classify as billing (not
-    // rate-limit) so the user is told to top up / switch provider rather
-    // than told to wait for a retry.
+    // 真实的 Moonshot 错误：HTTP 429 且响应体说明账户因余额不足被暂停。
+    // 必须归类为计费问题（而非限流），这样用户会被告知充值 / 切换提供方，
+    // 而不是被告知等待重试。
     const result = classifyApiError(
       new Error(
         'Your account org-xxx <ak-yyy> is suspended due to insufficient balance, please recharge your account (429)',

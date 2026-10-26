@@ -1,4 +1,4 @@
-// Tests for skill loader + registry
+// 技能加载器 + 注册表的测试
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -8,7 +8,7 @@ import path from 'node:path'
 import { loadSkills } from '../src/skills/loader.js'
 import { SkillRegistry } from '../src/skills/registry.js'
 
-/** Create a temp dir, write skill subdirs into it, return the dir path. */
+/** 创建临时目录，把技能子目录写进去，返回目录路径。 */
 async function makeTempSkillsDir(skills: { dir: string; frontmatter: string; body: string }[]): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-skills-test-'))
   for (const s of skills) {
@@ -110,7 +110,7 @@ describe('loadSkills', () => {
         body: 'Body',
       },
     ])
-    // Extra directory with no SKILL.md
+    // 没有 SKILL.md 的多余目录
     await fs.mkdir(path.join(dir, 'empty-dir'), { recursive: true })
     process.env.XC_SKILLS_DIR = dir
 
@@ -133,7 +133,7 @@ describe('loadSkills', () => {
     const dir = await makeTempSkillsDir([
       {
         dir: 'no-desc',
-        frontmatter: 'name: no-desc', // missing description
+        frontmatter: 'name: no-desc', // 缺少 description
         body: 'Body',
       },
     ])
@@ -173,7 +173,7 @@ describe('loadSkills', () => {
   })
 })
 
-// ── loadSkills: dir + files population ───────────────────────────────────────
+// ── loadSkills：目录 + 文件填充 ───────────────────────────────────────
 
 describe('loadSkills bundled-resources support', () => {
   it('populates `dir` with the absolute skill directory path', async () => {
@@ -199,7 +199,7 @@ describe('loadSkills bundled-resources support', () => {
         body: 'Body',
       },
     ])
-    // Add scripts + references next to SKILL.md
+    // 在 SKILL.md 旁边添加 scripts + references
     const skillRoot = path.join(dir, 'with-files')
     await fs.mkdir(path.join(skillRoot, 'scripts'), { recursive: true })
     await fs.writeFile(path.join(skillRoot, 'scripts', 'preflight.sh'), '#!/bin/sh\necho ok\n', 'utf-8')
@@ -221,13 +221,13 @@ describe('loadSkills bundled-resources support', () => {
       },
     ])
     const skillRoot = path.join(dir, 'with-heavy')
-    // Hidden file at root + nested .git dir + node_modules dir
+    // 根目录的隐藏文件 + 嵌套 .git 目录 + node_modules 目录
     await fs.writeFile(path.join(skillRoot, '.DS_Store'), '', 'utf-8')
     await fs.mkdir(path.join(skillRoot, '.git'), { recursive: true })
     await fs.writeFile(path.join(skillRoot, '.git', 'HEAD'), 'ref: ...', 'utf-8')
     await fs.mkdir(path.join(skillRoot, 'node_modules', 'foo'), { recursive: true })
     await fs.writeFile(path.join(skillRoot, 'node_modules', 'foo', 'package.json'), '{}', 'utf-8')
-    // A real file that should still be listed
+    // 仍应被列出的真实文件
     await fs.writeFile(path.join(skillRoot, 'real.txt'), 'real content', 'utf-8')
     process.env.XC_SKILLS_DIR = dir
 
@@ -332,8 +332,8 @@ describe('SkillRegistry', () => {
   })
 
   it('project skill overrides user-scope skill with same name', () => {
-    // loadSkills returns user-scope first, then project — registry deduplicates
-    // by last-write-wins, so project wins.
+    // loadSkills 先返回 user 作用域，再返回 project —— 注册表按
+    // 最后写入胜出去重，因此 project 胜出。
     const defs = [
       {
         name: 'review',
@@ -428,7 +428,7 @@ describe('SkillRegistry', () => {
     const registry = new SkillRegistry(v1)
     const refBefore = registry
 
-    // alpha unchanged, beta description changed, gamma added, delta absent
+    // alpha 不变，beta 描述改变，gamma 新增，delta 缺席
     const v2 = [
       {
         name: 'alpha',
@@ -462,10 +462,10 @@ describe('SkillRegistry', () => {
     expect(summary.unchanged).toEqual(['alpha'])
     expect(summary.removed).toEqual([])
 
-    // Object identity preserved — callers caching the registry don't lose it
+    // 对象身份保持不变 —— 缓存注册表的调用方不会丢失它
     expect(registry).toBe(refBefore)
 
-    // Visible state matches v2
+    // 可见状态与 v2 匹配
     expect(registry.names().sort()).toEqual(['alpha', 'beta', 'gamma'])
     expect(registry.get('beta')!.description).toBe('B v2')
   })
@@ -512,14 +512,14 @@ describe('SkillRegistry', () => {
 
     const summary = registry.reload(defs, new Set(['alpha']))
     expect(summary.changed).toEqual(['alpha'])
-    // Disabled — hidden from list/get, still visible via listAll
+    // 已禁用 —— 对 list/get 隐藏，但 listAll 仍可见
     expect(registry.get('alpha')).toBeUndefined()
     expect(registry.listAll()).toHaveLength(1)
     expect(registry.listAll()[0].disabled).toBe(true)
   })
 })
 
-// ── reloadSkillRegistry (integration) ────────────────────────────────────────
+// ── reloadSkillRegistry（集成）────────────────────────────────────────
 
 describe('reloadSkillRegistry', () => {
   let originalCwd: string
@@ -535,7 +535,7 @@ describe('reloadSkillRegistry', () => {
   it('rescans disk + settings and mutates the registry in place', async () => {
     const { createSkillRegistry, reloadSkillRegistry } = await import('../src/skills/registry.js')
 
-    // Initial state: one skill on disk, no disabledSkills setting
+    // 初始状态：磁盘上一个技能，无 disabledSkills 设置
     const skillsDir = await makeTempSkillsDir([
       {
         dir: 'initial',
@@ -550,7 +550,7 @@ describe('reloadSkillRegistry', () => {
     const registry = await createSkillRegistry()
     expect(registry.names()).toEqual(['initial'])
 
-    // Simulate user adding a new skill on disk
+    // 模拟用户在磁盘上新增一个技能
     await fs.mkdir(path.join(skillsDir, 'added'), { recursive: true })
     await fs.writeFile(
       path.join(skillsDir, 'added', 'SKILL.md'),
@@ -565,7 +565,7 @@ describe('reloadSkillRegistry', () => {
   })
 })
 
-// ── settings (disabledSkills) ─────────────────────────────────────────────────
+// ── 设置（disabledSkills）────────────────────────────────────────────────
 
 describe('skill settings', () => {
   let originalHome: string | undefined
@@ -586,10 +586,10 @@ describe('skill settings', () => {
     const { setSkillDisabled, loadDisabledSkillsSet } = await import('../src/skills/settings.js')
     const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-settings-test-home-'))
     const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-settings-test-proj-'))
-    // utils.ts caches USER_XCODE_DIR at module-eval time, so X_CODE_HOME
-    // alone won't redirect the user-scope path here. We chdir into a temp
-    // project dir to point the project scope at a fresh location; the
-    // user-scope path lives wherever utils.ts resolved it on first import.
+    // utils.ts 在模块求值时缓存 USER_XCODE_DIR，因此单靠 X_CODE_HOME
+    // 无法在这里重定向 user 作用域路径。我们 chdir 进一个临时项目
+    // 目录，把 project 作用域指向全新位置；user 作用域路径则停留在
+    // utils.ts 首次导入时解析出的位置。
     process.chdir(projectDir)
 
     await setSkillDisabled('alpha', 'project', true)
@@ -628,12 +628,11 @@ describe('skill settings', () => {
   })
 })
 
-// ── createSkillRegistry integration ───────────────────────────────────────────
-// End-to-end through loader + settings + registry filter. The unit tests
-// above each cover one layer in isolation; this guards against future
-// refactors that decouple the layers and silently let a disabled skill
-// reach the agent loop (the failure mode would be a settings.json entry
-// that the registry stops honoring).
+// ── createSkillRegistry 集成 ───────────────────────────────────────────
+// 端到端贯穿 loader + settings + registry 过滤器。上面的单元测试各自
+// 孤立地覆盖一层；这里防范未来的重构把各层解耦、静默让一个被禁用的
+// 技能进入 agent loop（失败模式就是某条 settings.json 条目不再被
+// registry 遵守）。
 
 describe('createSkillRegistry', () => {
   let originalCwd: string
@@ -664,11 +663,11 @@ describe('createSkillRegistry', () => {
     ])
     process.env.XC_SKILLS_DIR = skillsDir
 
-    // Project-scope settings live under cwd/.x-code/settings.local.json.
-    // Chdir to a fresh temp dir so we don't pollute the real repo or the
-    // user's home (utils.ts caches USER_XCODE_DIR at import time, so we
-    // can't redirect user scope here — project scope is sufficient
-    // because XC_SKILLS_DIR also tags loaded skills as source='project').
+    // project 作用域设置位于 cwd/.x-code/settings.local.json。
+    // chdir 到一个全新临时目录，避免污染真实仓库或用户主目录
+    // （utils.ts 在导入时缓存 USER_XCODE_DIR，因此这里无法重定向
+    // user 作用域 —— project 作用域已足够，因为 XC_SKILLS_DIR
+    // 也会把加载的技能标记为 source='project'）。
     const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-registry-int-'))
     process.chdir(projectDir)
     const settingsFile = skillSettingsPath('project')
@@ -677,7 +676,7 @@ describe('createSkillRegistry', () => {
 
     const registry = await createSkillRegistry()
 
-    // listAll surfaces both, with disabled flag set correctly.
+    // listAll 展示两者，disabled 标志设置正确。
     const all = registry.listAll()
     expect(all).toHaveLength(2)
     const onEntry = all.find((s) => s.name === 'skill-on')!
@@ -685,15 +684,15 @@ describe('createSkillRegistry', () => {
     expect(onEntry.disabled).toBe(false)
     expect(offEntry.disabled).toBe(true)
 
-    // list / names / get all hide the disabled one — this is the contract
-    // the agent loop and system-prompt builder rely on.
+    // list / names / get 都隐藏被禁用的那一个 —— 这是 agent loop 和
+    // system-prompt 构建器所依赖的契约。
     expect(registry.list().map((s) => s.name)).toEqual(['skill-on'])
     expect(registry.names()).toEqual(['skill-on'])
     expect(registry.get('skill-off')).toBeUndefined()
     expect(registry.get('skill-on')).toBeDefined()
 
-    // getEntry is the one accessor that still returns disabled skills,
-    // for the /skill list + /skill enable handlers to act on them.
+    // getEntry 是唯一仍返回被禁用技能的访问器，
+    // 供 /skill list + /skill enable 处理器操作它们。
     expect(registry.getEntry('skill-off')?.disabled).toBe(true)
   })
 })

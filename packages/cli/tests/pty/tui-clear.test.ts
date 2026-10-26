@@ -5,12 +5,10 @@ import { submitInput, typeInput, withTui } from './test-context.js'
 const LONG_TEXT = Array.from({ length: 60 }, (_, i) => `LINE-${String(i + 1).padStart(2, '0')}`).join('\n')
 
 describe('TUI /clear behavior', () => {
-  // Regression: the /clear render carries one-shot erase+scroll bytes that
-  // used to ride the cancellable deferred-flush path. A nearby re-render
-  // (input reset, turn-teardown state) superseded it, the clear bytes were
-  // lost forever, and the just-consumed justCleared seed still anchored the
-  // fresh frame at row 1 — leaving the old conversation visible below it.
-  // The second turn below exists to produce those racing renders.
+  // 回归修复：/clear 的渲染携带一次性的擦除+滚动字节，过去挂在可取消的
+  // 延迟 flush 路径上。附近的一次重渲染（输入重置、回合收尾状态）会覆盖它，
+  // clear 字节就永久丢失，而刚消费的 justCleared 种子仍把新帧锚定在第 1 行 —
+  // 旧对话依旧可见地留在下面。下面的第二个回合就是用来制造这些竞争渲染的。
   it('clears the visible viewport even with racing renders around the clear', async () => {
     await withTui(
       'clear-viewport',
@@ -31,7 +29,7 @@ describe('TUI /clear behavior', () => {
         await harness.waitForText('done')
         await harness.settle()
 
-        // Submit /clear with the completion menu open, mirroring real usage.
+        // 在补全菜单打开时提交 /clear，模拟真实使用。
         await typeInput(harness, '/clear')
         await harness.waitForScreen((screen) => screen.includes('Clear conversation history'), 'slash menu open')
         harness.key('enter')
@@ -44,18 +42,16 @@ describe('TUI /clear behavior', () => {
         const lines = harness.screen()
         expect(harness.text()).not.toContain('LINE-01')
         expect(harness.text()).not.toContain('done')
-        // The retained /clear echo renders as the first content of the
-        // fresh viewport — the same padded card every other command echo
-        // gets: blank row, full-width bg pad row, text row, bg pad row —
-        // with the fresh input frame directly below it.
+        // 保留的 /clear 回声作为新视口的第一个内容渲染 — 与其它命令回声
+        // 相同的填充卡片：空行、全宽 bg 填充行、文本行、bg 填充行 —
+        // 其下方紧挨着新的输入框。
         const echoRow = lines.findIndex((line) => /[›>] \/clear/.test(line))
         expect(echoRow).toBeGreaterThanOrEqual(2)
         expect((lines[echoRow - 1] ?? 'x').trim()).toBe('')
         expect((lines[echoRow + 1] ?? 'x').trim()).toBe('')
         expect(lines[echoRow + 2] ?? '').toMatch(/^╭/)
-        // The card's bg rows must actually be emitted AFTER the clear's
-        // home-cursor jump (they used to be pushed into scrollback where
-        // some terminals drop bg-only rows from history).
+        // 卡片的 bg 行必须真的在 clear 的 home 光标跳转之后发出
+        //（过去它们被推入 scrollback，而有些终端会从历史中丢弃仅 bg 的行）。
         const postClear = harness.raw().slice(harness.raw().lastIndexOf('\x1b[H'))
         expect(postClear.split('\x1b[48;2;60;56;54m').length - 1).toBeGreaterThanOrEqual(3)
       },

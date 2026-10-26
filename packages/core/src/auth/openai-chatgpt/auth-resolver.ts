@@ -54,7 +54,7 @@ function chatGPTSnapshot(raw: string): ResolvedAuthSnapshot {
       if (legacyIdentity) storedRevision = `legacy-${digest(legacyIdentity)}`
     }
   } catch {
-    // A malformed credential file still disables API-key fallback.
+    // 格式损坏的凭证文件同样会禁用 API key 回退。
   }
   return { context: { mode: 'chatgpt' }, revision: `chatgpt:${storedRevision ?? digest(raw)}` }
 }

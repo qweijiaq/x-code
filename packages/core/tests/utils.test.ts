@@ -1,11 +1,10 @@
-// Regression tests for tools/utils.ts
+// tools/utils.ts 的回归测试
 //
-// Background: previous implementations used a bare `require('@vscode/ripgrep')`
-// inside an ESM module. At runtime that throws `ReferenceError: require is
-// not defined` — the call hit the catch arm and silently fell back to
-// `'rg'`, which then failed with `spawn rg ENOENT` on machines without a
-// system-wide ripgrep install. Now `tools/utils.ts` uses
-// `createRequire(import.meta.url)` so the require call actually works.
+// 背景：之前的实现在一个 ESM 模块里直接使用 `require('@vscode/ripgrep')`。
+// 运行时那会抛 `ReferenceError: require is not defined` —— 调用落入 catch
+// 分支，静默回退到 `'rg'`，随后在未安装系统级 ripgrep 的机器上以
+// `spawn rg ENOENT` 失败。现在 `tools/utils.ts` 使用
+// `createRequire(import.meta.url)`，让 require 调用真正生效。
 import { describe, expect, it } from 'vitest'
 
 import fs from 'node:fs'
@@ -16,12 +15,11 @@ import { getRipgrepPath } from '../src/tools/utils.js'
 describe('getRipgrepPath', () => {
   it('resolves to an existing absolute @vscode/ripgrep binary', () => {
     const p = getRipgrepPath()
-    // If the resolved path doesn't exist, glob/grep will surface
-    // `spawn ... ENOENT` to the model on first call. This test is the
-    // canary: it catches both ESM/CJS regressions (where require fails
-    // and we silently fall back) and broken @vscode/ripgrep installs
-    // (where require succeeds but the postinstall didn't drop the
-    // binary).
+    // 如果解析出的路径不存在，glob/grep 会在首次调用时把
+    // `spawn ... ENOENT` 暴露给模型。这个测试是金丝雀：它同时捕获
+    // ESM/CJS 回归（require 失败后我们静默回退）和
+    // @vscode/ripgrep 安装损坏（require 成功但 postinstall 没有
+    // 放置二进制文件）。
     expect(path.isAbsolute(p)).toBe(true)
     expect(fs.existsSync(p)).toBe(true)
   })

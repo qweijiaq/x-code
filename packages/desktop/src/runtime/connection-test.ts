@@ -8,8 +8,8 @@ const ENV_BY_PROVIDER = new Map<string, string>(PROVIDERS.map((provider) => [pro
 ENV_BY_PROVIDER.set('custom', 'OPENAI_COMPATIBLE_API_KEY')
 
 /**
- * Send one minimal request through the real provider registry. A key or base
- * URL supplied here is used for this request only and restored afterwards.
+ * 通过真实 provider 注册表发送一个最小请求。这里提供的 key 或 base
+ * URL 仅用于本次请求，之后恢复原状。
  */
 export async function testProviderConnection(
   provider: string,
@@ -45,9 +45,9 @@ export async function testProviderConnection(
   try {
     const registry = createModelRegistry()
     const model = registry.languageModel(modelId as `${string}:${string}`)
-    // Use the streaming path, matching the agent loop and the provider test
-    // fixtures. generateText would require the fixture to implement a
-    // non-streaming JSON response.
+    // 使用流式路径，与 agent 循环和 provider 测试 fixture 保持一致。
+    // generateText 会要求 fixture 实现
+    // 非流式 JSON 响应。
     const result = streamText({
       model,
       prompt: 'Reply with the single word: ok',

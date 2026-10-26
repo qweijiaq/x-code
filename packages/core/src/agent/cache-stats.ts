@@ -25,8 +25,8 @@ export interface ProviderTurnUsage {
   cacheCreationTokens: number | null
   cacheReadReported: boolean
   cacheCreationReported: boolean
-  /** Provider/transport-specific window in which adjacent cache reads are
-   *  meaningfully comparable. Missing on sessions written by older builds. */
+  /** 提供商/传输层特定的时间窗口，在此窗口内相邻的 cache read 才有
+   *  有意义的可比性。旧构建写入的会话中该字段缺失。 */
   cacheComparisonTtlMs?: number | null
   expectedMissReasons: CacheMissReason[]
 }
@@ -48,9 +48,9 @@ export interface CacheMissSummary {
   unexpectedCount: number
   probableTtlTokens: number
   probableTtlCount: number
-  /** Upper bound of reusable input across comparable adjacent turns. */
+  /** 可比较的相邻轮次中可复用输入的上界。 */
   estimatedReusableTokens: number
-  /** Provider-reported cache reads, clamped to the comparable prefix. */
+  /** 提供商报告的 cache read，被裁剪到可比较前缀以内。 */
   estimatedReusedTokens: number
   comparableTurnCount: number
   estimates: CacheMissEstimate[]
@@ -153,7 +153,7 @@ function appendComparablePrefix(
 
   const reusable = Math.min(previous.inputTokens, current.inputTokens)
   if (reusable <= 0) return
-  // `??=` keeps resumed sessions written by older builds from accumulating NaN.
+  // `??=` 防止旧构建写入的已恢复会话累积出 NaN。
   summary.estimatedReusableTokens ??= 0
   summary.estimatedReusedTokens ??= 0
   summary.comparableTurnCount ??= 0
@@ -190,8 +190,8 @@ export function estimateCacheMiss(
   }
 }
 
-/** Add one adjacent provider-turn pair to a cumulative summary. Mutates the
- *  supplied summary so the hot path stays O(1) as a session grows. */
+/** 把一对相邻的 provider 轮次加到累计汇总里。就地修改传入的
+ *  summary，这样在会话增长时热路径保持 O(1)。 */
 export function appendCacheMissEstimate(
   summary: CacheMissSummary,
   previous: ProviderTurnUsage | undefined,

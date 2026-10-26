@@ -1,31 +1,27 @@
-// @x-code-cli/core — Plugin installer
+// @x-code-cli/core — 插件安装器
 //
-// Three supported source kinds:
+// 支持三种来源类型：
 //
-//   - 'local'   filesystem directory → copied recursively into cache
-//                (skipping .git / node_modules / OS junk)
-//   - 'git'     arbitrary git URL    → shallow-cloned (depth 1, optional ref)
-//   - 'github'  github:owner/repo    → shallow-cloned via resolveCloneUrl
-//                Monorepo `subdir` supported: whole repo is shallow-cloned,
-//                the named subdir is copied into a fresh temp dir, the rest
-//                discarded.
+//   - 'local'   文件系统目录 → 递归复制进缓存
+//                （跳过 .git / node_modules / 操作系统垃圾文件）
+//   - 'git'     任意 git URL    → 浅克隆（depth 1，可选 ref）
+//   - 'github'  github:owner/repo → 通过 resolveCloneUrl 浅克隆
+//                支持 monorepo 的 `subdir`：先浅克隆整个仓库，再把指定
+//                子目录复制进新的临时目录，其余部分丢弃。
 //
-// Install flow:
-//   1. Fetch source into a temp dir
-//   2. Discover + parse manifest (reject Gemini-only sources here)
-//   3. Compute final cache path: cache/<marketplace>/<plugin>/<version>/
-//   4. Stage the new tree beside the final cache path
-//   5. Atomically swap stage → final, retaining the previous tree for rollback
-//   6. Append/update installed_plugins.json, then remove the rollback tree
+// 安装流程：
+//   1. 把来源取到临时目录
+//   2. 发现 + 解析 manifest（在此拒绝仅 Gemini 的来源）
+//   3. 计算最终缓存路径：cache/<marketplace>/<plugin>/<version>/
+//   4. 在最终缓存路径旁暂存新目录树
+//   5. 原子地把暂存 → 最终，保留旧目录树用于回滚
+//   6. 追加 / 更新 installed_plugins.json，再删除回滚目录树
 //
-// AbortSignal threads through git clone (via execa's `signal`) and the
-// recursive copy (cooperative check between entries) so Esc during a long
-// install cleanly cancels in-flight work.
+// AbortSignal 贯穿 git clone（经 execa 的 `signal`）和递归复制（在条目间
+// 协作检查），因此长安装过程中按 Esc 能干净地取消进行中的工作。
 //
-// Cache layout is deliberately per-version so `/plugin update` can install
-// a new version side-by-side and atomically switch (a later improvement);
-// today the registry points at one active version while cached versions remain
-// side-by-side.
+// 缓存布局有意按版本划分，好让 `/plugin update` 能并排安装新版本并原子
+// 切换（后续改进）；目前 registry 指向一个活动版本，各缓存版本并排保留。
 import { execa } from 'execa'
 
 import { randomUUID } from 'node:crypto'
@@ -51,36 +47,28 @@ import { type UserConfigValue, setPluginUserConfig } from './user-config.js'
 
 export interface InstallRequest {
   source: PluginSource
-  /** Marketplace this plugin belongs to. Use `"local"` for direct
-   *  git/local installs that aren't associated with a subscribed
-   *  marketplace — the resulting plugin id will be `<name>@local`. */
+  /** 该插件所属的市场。对于不关联任何已订阅市场的直接 git/local 安装，
+   *  用 `"local"`——生成的插件 id 将是 `<name>@local`。 */
   marketplace: string
-  /** Scope where the install is recorded (which settings.json's
-   *  `enabledPlugins` map will mention it). Defaults to `'user'`. */
+  /** 安装记录在哪个作用域（即哪个 settings.json 的 `enabledPlugins` 映射
+   *  会提到它）。默认为 `'user'`。 */
   scope?: PluginScope
-  /** If set, the installer aborts when the manifest's `name` field
-   *  doesn't match — used by the marketplace install path to catch
-   *  spoofed entries. */
+  /** 若设置，当 manifest 的 `name` 字段不匹配时安装器中止——供市场安装
+   *  路径用于拦截伪造条目。 */
   expectedName?: string
-  /** Whether the marketplace listing marked this plugin as verified.
-   *  Surfaced to the consent callback so users know whether the listing
-   *  came with curator endorsement. Pure metadata — we don't grant
-   *  extra trust based on the flag. */
+  /** 市场条目是否把该插件标记为 verified。传给授权回调，让用户知道该
+   *  条目是否带有策展人背书。纯元数据——我们不会基于该标志授予额外信任。 */
   verified?: boolean
-  /** Called after manifest parse but BEFORE the temp dir is moved to
-   *  the cache. Return false to abort the install — the temp dir is
-   *  cleaned up and the cache is untouched. Absent ⇒ install proceeds
-   *  without prompting (used by tests + the `--yes` CLI flag). */
+  /** 在 manifest 解析之后、临时目录移到缓存之前调用。返回 false 即中止
+   *  安装——临时目录被清理，缓存不受影响。缺省 ⇒ 不提示直接安装（供测试
+   *  与 `--yes` CLI 标志使用）。 */
   consent?: (preview: ConsentPreview) => Promise<boolean> | boolean
-  /** Called AFTER consent passes when the manifest declares `userConfig`.
-   *  The caller (a CLI / TUI handler) collects values for each field —
-   *  typically by prompting the user one field at a time, masking input
-   *  for `sensitive: true` fields — and resolves to a `{ key: value }`
-   *  map that gets persisted via user-config.ts. Returning `null`
-   *  aborts the install (treat it like consent denial). Absent ⇒ we
-   *  skip the prompt; non-sensitive fields fall back to manifest
-   *  defaults, sensitive fields are simply unset (the plugin's hooks /
-   *  MCP entries will see empty env vars, which is the same as today). */
+  /** 当 manifest 声明 `userConfig` 时，在授权通过之后调用。调用方（CLI /
+   *  TUI 处理器）为每个字段收集值——通常是一次提示一个字段，对
+   *  `sensitive: true` 的字段屏蔽输入——然后解析成 `{ key: value }` 映射，
+   *  经 user-config.ts 持久化。返回 `null` 即中止安装（视同拒绝授权）。
+   *  缺省 ⇒ 跳过提示；非敏感字段回落到 manifest 默认值，敏感字段则直接
+   *  不设置（插件的 hooks / MCP 条目会看到空的环境变量，与目前一致）。 */
   userConfigPrompt?: (fields: PluginManifest['userConfig']) => Promise<Record<string, UserConfigValue> | null>
   signal?: AbortSignal
 }
@@ -101,13 +89,12 @@ export class InstallError extends Error {
 }
 
 export async function installPlugin(req: InstallRequest): Promise<InstallResult> {
-  // ── Pre-flight policy checks (cheap, fail-fast) ──
-  // `strictKnownMarketplaces` and `blockedPlugins` come from
-  // ~/.x-code/plugins/known_marketplaces.json. When the admin
-  // (typically enterprise) has opted into strict mode, every install
-  // must come from a subscribed marketplace — direct git / github /
-  // local installs are denied. `blockedPlugins` is checked after the
-  // manifest is parsed (we need the canonical id).
+  // ── 前置策略检查（廉价、快速失败） ──
+  // `strictKnownMarketplaces` 和 `blockedPlugins` 来自
+  // ~/.x-code/plugins/known_marketplaces.json。当管理员（通常是企业）
+  // 启用严格模式时，每次安装都必须来自已订阅的市场——直接的 git /
+  // github / local 安装会被拒绝。`blockedPlugins` 在 manifest 解析之后
+  // 检查（我们需要规范 id）。
   const km = await readKnownMarketplaces()
   if (km.strictKnownMarketplaces) {
     const subscribed = km.marketplaces.some((m) => m.name === req.marketplace)
@@ -148,16 +135,14 @@ export async function installPlugin(req: InstallRequest): Promise<InstallResult>
       throw new InstallError(`manifest name "${manifest.name}" does not match expected "${req.expectedName}"`)
     }
 
-    // Now that we know the canonical plugin id, run the second
-    // policy check: blockedPlugins from known_marketplaces.json. This
-    // is an admin-style force-disable list — an install attempt for
-    // a blocked id is rejected regardless of marketplace / consent.
-    // Two match forms are accepted:
-    //   - Fully-qualified id `name@marketplace` — precise (admin can
-    //     block one marketplace's variant without affecting forks)
-    //   - Bare name `name` — broad (admin can block every marketplace's
-    //     plugin with that name in one shot; matches the npm `--ignore`
-    //     style some admins expect)
+    // 现在知道了规范插件 id，执行第二个策略检查：来自
+    // known_marketplaces.json 的 blockedPlugins。这是管理员式的强制禁用
+    // 列表——对被屏蔽 id 的安装尝试，无论市场 / 授权如何都会被拒绝。
+    // 接受两种匹配形式：
+    //   - 全限定 id `name@marketplace` —— 精确（管理员可以只屏蔽某一个
+    //     市场的变体而不影响其它 fork）
+    //   - 裸名 `name` —— 宽泛（管理员可以一次性屏蔽所有市场中同名插件；
+    //     符合部分管理员期望的 npm `--ignore` 风格）
     const earlyId = `${manifest.name}@${req.marketplace}`
     const blocked = km.blockedPlugins?.find((b) => b === earlyId || b === manifest.name)
     if (blocked) {
@@ -167,12 +152,10 @@ export async function installPlugin(req: InstallRequest): Promise<InstallResult>
       )
     }
 
-    // ── Consent gate ──
-    // Built from the parsed manifest so the caller can render a
-    // preview of what the plugin will contribute (hooks, mcp, scopes)
-    // and ask the user explicitly. Skipping the prompt (callback
-    // absent) is intentional for non-interactive paths — the CLI
-    // implements `--yes` by simply not passing `consent`.
+    // ── 授权闸门 ──
+    // 基于已解析的 manifest 构建，好让调用方渲染该插件将贡献内容（hooks、
+    // mcp、作用域）的预览并显式询问用户。对非交互路径，跳过提示（回调
+    // 缺省）是有意为之——CLI 通过不传 `consent` 来实现 `--yes`。
     if (req.consent) {
       const rootProbe = await probePluginRoot(tempDir)
       const preview = buildConsentPreview({
@@ -190,22 +173,19 @@ export async function installPlugin(req: InstallRequest): Promise<InstallResult>
       }
     }
 
-    // ── userConfig prompt (post-consent, pre-commit) ──
-    // Only fires when the manifest declares userConfig fields AND the
-    // caller wired a prompt callback. Non-interactive paths (--yes, CI)
-    // skip the prompt — fields stay unset and the plugin sees empty env
-    // vars at hook / mcp launch time, same as before this feature.
-    // Returning null from the prompt aborts the install (treated like
-    // consent denial); a non-null object is persisted via setPluginUserConfig.
+    // ── userConfig 提示（授权之后、提交之前） ──
+    // 仅当 manifest 声明 userConfig 字段且调用方接入了提示回调时才触发。
+    // 非交互路径（--yes、CI）跳过提示——字段保持未设置，插件在 hook /
+    // mcp 启动时看到空的环境变量，与此功能之前一致。提示返回 null 即
+    // 中止安装（视同拒绝授权）；非 null 对象经 setPluginUserConfig 持久化。
     if (manifest.userConfig && manifest.userConfig.length > 0 && req.userConfigPrompt) {
       const collected = await req.userConfigPrompt(manifest.userConfig)
       if (collected === null) {
         throw new InstallError('install cancelled by user (userConfig prompt aborted)')
       }
-      // Persist BEFORE moving the temp dir to cache so a crash between
-      // the two phases leaves the user with no broken plugin and no
-      // orphaned secret. The settings file is keyed by plugin id and
-      // overwrites cleanly on reinstall.
+      // 在把临时目录移到缓存之前持久化，这样两个阶段之间崩溃时，用户
+      // 既不会留下坏插件，也不会留下孤立的密钥。该 settings 文件以插件
+      // id 为键，重装时干净覆盖。
       const pluginIdForConfig = `${manifest.name}@${req.marketplace}`
       await setPluginUserConfig(pluginIdForConfig, collected)
     }
@@ -234,18 +214,17 @@ export async function installPlugin(req: InstallRequest): Promise<InstallResult>
 
     return { pluginId, rootDir: finalDir, manifest, manifestFormat: discovery.format, record }
   } catch (err) {
-    // Best-effort cleanup of the temp dir on any failure mid-install. The
-    // moveOrCopy success path renames the temp away, so this only fires
-    // when something went wrong before the move.
+    // 安装中途任何失败时尽力清理临时目录。moveOrCopy 的成功路径会把
+    // 临时目录 rename 走，所以这里只在 move 之前出错时才触发。
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {
-      /* nothing useful to do */
+      /* 无可作为 */
     })
     if (err instanceof InstallError || err instanceof ManifestParseError) throw err
     throw new InstallError(errorMessage(err))
   }
 }
 
-// ── Source → temp dir ───────────────────────────────────────────────────
+// ── 来源 → 临时目录 ───────────────────────────────────────────────────
 
 async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<string> {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-plugin-install-'))
@@ -255,11 +234,10 @@ async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<
     const stat = await fs.stat(resolved).catch(() => null)
     if (!stat || !stat.isDirectory()) {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
-      // Surface cwd in the error: relative paths get resolved against
-      // process.cwd(), and when xc is launched via `pnpm dev` the cwd
-      // is `packages/cli/`, not the repo root — that mismatch confuses
-      // users typing `./foo` in the slash command. Showing both the
-      // resolved absolute path and the cwd makes the cause obvious.
+      // 在错误里带出 cwd：相对路径会按 process.cwd() 解析，而通过
+      // `pnpm dev` 启动 xc 时 cwd 是 `packages/cli/` 而不是仓库根目录——
+      // 这种不一致会让在 slash 命令里输入 `./foo` 的用户困惑。同时展示
+      // 解析后的绝对路径和 cwd，能让原因一目了然。
       const isRelative = !path.isAbsolute(source.path)
       const cwdHint = isRelative ? ` (resolved relative to cwd: ${process.cwd()})` : ''
       throw new InstallError(`local source is not a directory: ${resolved}${cwdHint}`)
@@ -272,11 +250,10 @@ async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<
     const cloneUrl = source.kind === 'git' ? source.url : resolveCloneUrl(`github:${source.owner}/${source.repo}`)
     const args = ['clone', '--depth', '1']
     if (source.ref) args.push('--branch', source.ref)
-    // For subdir installs we still shallow-clone the whole repo. Real
-    // sparse-checkout would be faster on huge monorepos but the
-    // `--depth 1 --filter=blob:none --sparse` sequence is fragile across
-    // git versions; a depth-1 clone of even a large monorepo is usually
-    // <100 MB. Revisit if it becomes a pain point.
+    // 对 subdir 安装我们仍浅克隆整个仓库。真正的 sparse-checkout 在巨大
+    // monorepo 上会更快，但 `--depth 1 --filter=blob:none --sparse` 序列
+    // 在不同 git 版本间很脆弱；即使是大型 monorepo，depth-1 克隆通常也
+    // 不到 100 MB。若日后成为痛点再重新考虑。
     args.push(cloneUrl, tempDir)
 
     try {
@@ -286,23 +263,20 @@ async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<
       throw new InstallError(`git clone failed: ${errorMessage(err)}`)
     }
 
-    // Integrity check: when the marketplace.json pinned a `sha`, verify
-    // that the commit we actually cloned matches it. Defends against the
-    // upstream ref being force-pushed or the repo being compromised
-    // between marketplace review and end-user install. Must run BEFORE
-    // we drop `.git` below (rev-parse needs the repo metadata).
+    // 完整性校验：当 marketplace.json 钉死了 `sha` 时，校验我们实际克隆的
+    // 提交是否与之匹配。用于防御在市场评审与最终用户安装之间上游 ref 被
+    // 强推、或仓库被攻破的情况。必须在下面删除 `.git` 之前运行（rev-parse
+    // 需要仓库元数据）。
     //
-    // Prefix-match semantics: declared sha can be a short sha (≥7 hex)
-    // and still validate against the full 40-char HEAD — same tolerance
-    // as `git checkout <short-sha>` and what real marketplaces produce
-    // (anthropics/claude-plugins-official sometimes ships 7-char shas).
+    // 前缀匹配语义：声明的 sha 可以是短 sha（≥7 位十六进制），仍能对照
+    // 完整的 40 位 HEAD 校验——与 `git checkout <short-sha>` 的容错一致，
+    // 也是真实市场产生的形式（anthropics/claude-plugins-official 有时
+    // 会发布 7 位 sha）。
     //
-    // Why hard fail and not warn: a sha mismatch is by definition either
-    // a misconfigured marketplace.json (author bug) or a real
-    // supply-chain anomaly. Either way the user shouldn't end up with
-    // unreviewed code on disk. Better to surface a loud error pointing
-    // at the marketplace author than to silently install whatever HEAD
-    // happens to be.
+    // 为什么是硬失败而不是警告：sha 不匹配按定义要么是 marketplace.json
+    // 配置错误（作者 bug），要么是真实的供应链异常。无论哪种，用户都不
+    // 应该在磁盘上留下未评审的代码。与其静默安装恰好是 HEAD 的东西，
+    // 不如抛出指向市场作者的响亮错误。
     if (source.expectedSha) {
       try {
         const result = await execa('git', ['rev-parse', 'HEAD'], { cwd: tempDir, stdio: 'pipe', signal })
@@ -319,22 +293,19 @@ async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<
         }
       } catch (err) {
         if (err instanceof InstallError) throw err
-        // rev-parse failed (shouldn't happen on a fresh clone) — treat
-        // as integrity failure so we don't silently install unchecked.
+        // rev-parse 失败（在全新克隆上不应发生）——视作完整性失败，以免
+        // 静默安装未经校验的内容。
         await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
         throw new InstallError(`failed to verify sha for ${cloneUrl}: ${errorMessage(err)}`)
       }
     }
 
-    // Drop the .git dir — we never need it after install and it would
-    // bloat the cache significantly for large-history repos.
+    // 删除 .git 目录——安装后不再需要，且对历史悠久的仓库会显著撑大缓存。
     await fs.rm(path.join(tempDir, '.git'), { recursive: true, force: true }).catch(() => {})
 
-    // Subdir handling: the plugin actually lives at <tempDir>/<subdir>.
-    // Re-stage so the rest of the install flow (manifest discovery +
-    // moveOrCopy to cache) operates on just that subdir. Simplest
-    // approach: copy the subdir into a fresh temp dir, discard the
-    // original clone.
+    // subdir 处理：插件实际位于 <tempDir>/<subdir>。重新暂存，让安装流程
+    // 的其余部分（manifest 发现 + moveOrCopy 到缓存）只针对该子目录操作。
+    // 最简单的做法：把子目录复制进新的临时目录，丢弃原始克隆。
     const subdir = source.subdir
     if (subdir) {
       const cloneRoot = await fs.realpath(tempDir)
@@ -382,9 +353,9 @@ async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<
   throw new InstallError(`unknown source kind: ${(source as PluginSource).kind}`)
 }
 
-/** Names we never copy through. `node_modules` is excluded because a
- *  bundled-deps plugin should reinstall on the user's machine; if a
- *  plugin genuinely needs node_modules we'll revisit. */
+/** 我们永不复制透传的目录名。排除 `node_modules` 是因为打包了依赖的插件
+ *  应该在用户机器上重新安装；若真有插件确实需要 node_modules，我们再来
+ *  重新考虑。 */
 const COPY_SKIP = new Set(['.git', 'node_modules', '.DS_Store', 'Thumbs.db'])
 const MAX_PLUGIN_FILES = 20_000
 const MAX_PLUGIN_FILE_BYTES = 100 * 1024 * 1024
@@ -441,8 +412,8 @@ async function validatePluginTree(rootDir: string, signal?: AbortSignal): Promis
         ) {
           await fs.rm(entryPath, { force: true })
         } else if (targetStats?.isFile()) {
-          // A Windows host without symlink privileges copies this target
-          // into the cache, so charge its real size against the same budget.
+          // 没有 symlink 权限的 Windows 主机会把这个目标复制进缓存，因此
+          // 把它的大小也计入同一预算。
           countPluginBytes(budget, targetStats.size)
         }
         continue
@@ -465,9 +436,8 @@ async function copyDirFiltered(
   root?: string,
   budget: CopyBudget = { files: 0, bytes: 0 },
 ): Promise<void> {
-  // `root` is captured on the first (non-recursive) call so the symlink
-  // escape check below validates against the original plugin source, not
-  // the current recursion's `src` (which moves with each subdir).
+  // `root` 在第一次（非递归）调用时捕获，这样下面的 symlink 逃逸检查是
+  // 针对原始插件来源校验，而不是当前递归的 `src`（它随每个子目录变动）。
   const rootDir = root ?? src
   await fs.mkdir(dst, { recursive: true })
   const entries = await fs.readdir(src, { withFileTypes: true })
@@ -484,14 +454,12 @@ async function copyDirFiltered(
       countPluginBytes(budget, stats.size)
       await fs.copyFile(s, d)
     } else if (entry.isSymbolicLink()) {
-      // Resolve the symlink target relative to its containing directory.
-      // If the resolved target escapes the plugin source root, drop the
-      // symlink rather than preserve it: on POSIX a `evil -> /etc/passwd`
-      // in the plugin tree would put a host-file pointer in the cache for
-      // loader / hooks to deref at runtime; on Windows the fallback below
-      // would copy `/etc/passwd`-equivalents straight into the cache.
-      // We don't follow the symlink to validate that the target exists —
-      // a broken-but-in-bounds symlink is still safe to preserve.
+      // 相对其所在目录解析 symlink 目标。若解析后的目标逃逸出插件来源
+      // 根目录，就丢弃该 symlink 而不是保留：在 POSIX 上，插件树里的
+      // `evil -> /etc/passwd` 会在缓存中留下一个宿主文件指针，供 loader /
+      // hooks 在运行时解引用；在 Windows 上，下面的回退会把类似
+      // `/etc/passwd` 的东西直接复制进缓存。我们不顺着 symlink 去校验目标
+      // 是否存在——一个断了但仍位于边界内的 symlink 保留起来仍是安全的。
       const target = await fs.readlink(s)
       const resolved = path.resolve(path.dirname(s), target)
       const rel = path.relative(rootDir, resolved)
@@ -504,17 +472,16 @@ async function copyDirFiltered(
       try {
         await fs.symlink(target, d)
       } catch {
-        // Windows without symlink privilege: fall back to copying the
-        // resolved file. Best effort — broken symlinks just get dropped.
+        // 没有 symlink 权限的 Windows：回退为复制已解析的文件。尽力而为——
+        // 断掉的 symlink 直接丢弃。
         await fs.copyFile(s, d).catch(() => {})
       }
     }
   }
 }
 
-/** Move from temp → final dir. Rename is atomic + cheap when src and dst
- *  are on the same filesystem; otherwise (EXDEV on Windows mostly) we
- *  fall back to copy + rm. */
+/** 从临时目录移动到最终目录。当 src 与 dst 在同一文件系统时，rename 原子
+ *  且廉价；否则（主要是 Windows 上的 EXDEV）回退为 copy + rm。 */
 async function moveOrCopy(src: string, dst: string, signal?: AbortSignal): Promise<void> {
   try {
     await fs.rename(src, dst)
@@ -522,9 +489,8 @@ async function moveOrCopy(src: string, dst: string, signal?: AbortSignal): Promi
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
     if (code !== 'EXDEV' && code !== 'EPERM' && code !== 'ENOTEMPTY') {
-      // Surfacing the original error here would block install for transient
-      // weirdness; the copy fallback below succeeds in all the cases we've
-      // seen in the wild. Still log for postmortem.
+      // 此处若抛出原始错误，会因瞬时异常而阻断安装；下面 copy 回退在我们
+      // 见过的所有实际场景里都能成功。仍记日志以便事后排查。
       debugLog('plugins.install-rename-fallback', String(err))
     }
   }
@@ -583,7 +549,7 @@ async function stageAndSwapPluginDirectory(
   }
 }
 
-// ── installed_plugins.json bookkeeping ──────────────────────────────────
+// ── installed_plugins.json 记账 ──────────────────────────────────
 
 let pluginMutationTail: Promise<void> = Promise.resolve()
 
@@ -639,20 +605,18 @@ export async function findInstalledPlugin(id: string): Promise<InstalledPluginRe
   return data.plugins.find((p) => p.id === id)
 }
 
-// ── Uninstall ──────────────────────────────────────────────────────────
+// ── 卸载 ──────────────────────────────────────────────────────────
 
 export interface UninstallResult {
-  /** Versions that were removed from cache. Empty if the plugin wasn't
-   *  cached. */
+  /** 从缓存删除的版本。若插件未被缓存则为空。 */
   removedVersions: string[]
-  /** Whether the installed_plugins.json record was removed. */
+  /** installed_plugins.json 记录是否被删除。 */
   removedRecord: boolean
 }
 
-/** Remove all cached versions of a plugin + drop its
- *  installed_plugins.json record. Leaves the data dir
- *  (`~/.x-code/plugins/data/<id>/`) intact so the user doesn't lose
- *  state if they reinstall later. */
+/** 删除某插件的所有缓存版本，并去掉它的 installed_plugins.json 记录。
+ *  保留数据目录（`~/.x-code/plugins/data/<id>/`）不动，这样用户日后重装
+ *  不会丢失状态。 */
 export async function uninstallPlugin(id: string): Promise<UninstallResult> {
   return withPluginMutationLock(async () => {
     const data = await readInstalledPlugins()
@@ -666,8 +630,7 @@ export async function uninstallPlugin(id: string): Promise<UninstallResult> {
         result.removedVersions = versions.filter((version) => !version.startsWith('.'))
         await fs.rm(parent, { recursive: true, force: true })
       } catch {
-        // No cache entries — the record might be stale. Removing the record
-        // below still happens.
+        // 没有缓存条目——该记录可能是陈旧的。下面删除记录仍会执行。
       }
     }
 

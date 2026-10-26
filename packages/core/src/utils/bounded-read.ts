@@ -14,9 +14,9 @@ export class FileSizeLimitError extends Error {
   }
 }
 
-/** Read from one opened file identity and stop after limit + 1 bytes. The
- *  handle-level stat closes the path replacement window left by a prior
- *  caller stat, while the bounded loop also catches files appended mid-read. */
+/** 从同一个已打开的文件身份读取，并在 limit + 1 字节后停止。句柄级 stat
+ *  关闭了先前调用方 stat 留下的路径替换窗口，而有界循环同时还能捕获读取
+ *  途中被追加的文件。 */
 export async function readFileWithinLimit(
   filePath: string,
   limitBytes: number,
@@ -31,7 +31,7 @@ export async function readFileWithinLimit(
   }
 }
 
-/** Read a bounded snapshot from an already-open identity without closing it. */
+/** 从已打开的文件身份读取有界快照，且不关闭它。 */
 export async function readFileHandleWithinLimit(
   handle: FileHandle,
   filePath: string,

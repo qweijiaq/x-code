@@ -19,8 +19,8 @@ function utf8Prefix(buffer: Buffer, maxBytes: number): Buffer {
 }
 
 /**
- * A byte-bounded output accumulator. It retains the beginning and end of the
- * stream and records exactly how many UTF-8 bytes were omitted in between.
+ * 按字节设上限的输出累加器。它保留流的开头和结尾，并精确记录中间省略了多少
+ * 个 UTF-8 字节。
  */
 export class HeadTailOutputBuffer {
   private readonly headLimit: number
@@ -94,7 +94,7 @@ export class HeadTailOutputBuffer {
     return { output, originalBytes: this.totalBytes, omittedBytes }
   }
 
-  /** Returns a bounded suffix without materializing the whole retained buffer. */
+  /** 返回一个有界后缀，而不用把整个保留的缓冲区物化出来。 */
   tailSnapshot(maxBytes: number): string {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
       throw new RangeError('maxBytes must be a non-negative safe integer')

@@ -1,14 +1,14 @@
-// Renderer-side @-mention trigger detection.
+// 渲染进程侧的 @-提及触发检测。
 //
-// The sandboxed renderer cannot import `@x-code-cli/core` (Node-only), so the
-// token rule is mirrored from `packages/core/src/agent/file-completion.ts`.
-// Keep the two in sync: a path the menu offers must be one the backend accepts.
+// 沙箱化渲染进程无法引入 `@x-code-cli/core`（仅限 Node），因此
+// token 规则从 `packages/core/src/agent/file-completion.ts` 镜像而来。
+// 保持两者同步：菜单提供的路径必须能被后端接受。
 
 export interface MentionTrigger {
   atIdx: number
-  /** Path fragment between `@` and the cursor, quotes stripped. */
+  /** `@` 与光标之间的路径片段，引号已剥离。 */
   query: string
-  /** First whitespace at or after the cursor (or end of text). */
+  /** 光标处或其后的第一个空白字符（或文本末尾）。 */
   tokenEnd: number
 }
 
@@ -55,9 +55,8 @@ export function detectMention(text: string, cursor: number): MentionTrigger | nu
   return null
 }
 
-/** Replace the whole @-token with the picked path. Paths containing
- *  whitespace, quotes, or backslashes are quoted; the cursor lands before the
- *  closing quote so the user can keep narrowing a directory. */
+/** 用选中的路径替换整个 @-token。包含空白、引号或反斜杠的路径会
+ *  加上引号；光标落在结束引号之前，方便用户继续收窄目录。 */
 export function insertMention(
   text: string,
   trigger: MentionTrigger,

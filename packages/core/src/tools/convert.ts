@@ -1,8 +1,8 @@
-// @x-code-cli/core — convert tool
+// @x-code-cli/core — convert 工具
 //
-// Local conversions that do not spend tokens: merge PDFs, extract PDF pages,
-// and (on macOS) convert images through `sips`. Every output path is refused
-// if it already exists, so a conversion can never clobber a file.
+// 不消耗 token 的本地转换：合并 PDF、抽取 PDF 页面，以及（在 macOS 上）经
+// `sips` 转换图片。每个输出路径若已存在都会被拒绝，因此转换永远不可能
+// 覆盖已有文件。
 import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'

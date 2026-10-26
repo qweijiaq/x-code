@@ -39,9 +39,9 @@ describe('plugins/paths honors X_CODE_HOME', () => {
   })
 
   it('downstream path helpers inherit the X_CODE_HOME redirect', () => {
-    // The actual side-finding: an `xc plugin list` under X_CODE_HOME=tmp
-    // was still reading from ~/.x-code/plugins/installed_plugins.json
-    // because pluginsRoot() called the frozen USER_XCODE_DIR constant.
+    // 实际的发现：在 X_CODE_HOME=tmp 下运行 `xc plugin list`，
+    // 仍会读取 ~/.x-code/plugins/installed_plugins.json，
+    // 因为 pluginsRoot() 调用了冻结的 USER_XCODE_DIR 常量。
     process.env.X_CODE_HOME = '/tmp/xc-sandbox'
     const root = '/tmp/xc-sandbox/plugins'
     expect(knownMarketplacesPath()).toBe(path.join(root, 'known_marketplaces.json'))
@@ -52,8 +52,8 @@ describe('plugins/paths honors X_CODE_HOME', () => {
   })
 
   it('falls through to ~/.x-code/plugins when no override is set', () => {
-    // Don't pin an exact string (HOME varies across machines); just assert
-    // the suffix and that we didn't pick up a stray override.
+    // 不固定具体字符串（HOME 因机器而异）；只断言后缀，
+    // 并确认没有捡到多余的覆盖。
     expect(pluginsRoot().endsWith(path.join('.x-code', 'plugins'))).toBe(true)
   })
 

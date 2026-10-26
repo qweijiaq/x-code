@@ -1,6 +1,6 @@
-// Tests for vision-fallback module — pickVisionProvider() priority logic.
-// captionImage() is not exercised here because it makes a real API call;
-// integration testing is handled separately in scripts/.
+// vision-fallback 模块的测试 —— pickVisionProvider() 的优先级逻辑。
+// captionImage() 不在这里测试，因为它会发起真实 API 调用；
+// 集成测试在 scripts/ 中单独处理。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -51,8 +51,8 @@ describe('pickVisionProvider', () => {
   })
 
   it('returns null when only custom OpenAI-compatible endpoint is configured', () => {
-    // Custom is treated as text-only by default — even with both env vars set,
-    // the user has not opted into vision support.
+    // Custom 默认按纯文本处理 —— 即便同时设置两个环境变量，
+    // 用户也没有选择启用视觉支持。
     process.env.OPENAI_COMPATIBLE_API_KEY = 'test'
     process.env.OPENAI_COMPATIBLE_BASE_URL = 'https://example.com'
     expect(pickVisionProvider()).toBeNull()

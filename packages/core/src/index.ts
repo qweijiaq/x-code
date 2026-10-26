@@ -1,6 +1,6 @@
-// @x-code-cli/core — Public API exports
+// @x-code-cli/core — 公共 API 导出
 
-// Types
+// 类型
 export type {
   PermissionDecision,
   PermissionLevel,
@@ -39,7 +39,7 @@ export {
 } from './providers/catalog.js'
 export type { ProviderModel } from './providers/catalog.js'
 
-// Config
+// 配置
 export {
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_PEER_MESSAGING_CONFIG,
@@ -54,7 +54,7 @@ export {
   saveUserConfig,
 } from './config/index.js'
 
-// OpenAI authentication
+// OpenAI 认证
 export {
   getOpenAIAuthContext,
   getOpenAIAuthSnapshot,
@@ -87,7 +87,7 @@ export type {
   UserConfig,
 } from './config/index.js'
 
-// Provider Registry
+// 提供商注册表
 export { createModelRegistry, setZhipuReasoningEffort } from './providers/registry.js'
 export { createLocalOpenAICompatibleModel } from './providers/local.js'
 export {
@@ -237,12 +237,12 @@ export type {
   GoalVerificationResult,
 } from './agent/goal/index.js'
 
-// Provider capabilities
+// 提供商能力
 export { capabilitiesOf, modelSupportsVision, providerOf } from './providers/capabilities.js'
 export type { ProviderCapabilities } from './providers/capabilities.js'
 export { getReasoningTierOptions, supportsReasoningTier } from './providers/thinking.js'
 
-// Tools
+// 工具
 export { toolRegistry, truncateToolResult } from './tools/index.js'
 export { TOOL_SEARCH_TOOL_NAME } from './tools/tool-search.js'
 export {
@@ -274,7 +274,7 @@ export type {
   TerminationReason,
 } from './tools/shell-session/types.js'
 
-// Permissions
+// 权限
 export { checkPermission, getPermissionLevel } from './permissions/index.js'
 export { addSessionAllowRule, clearSessionRules, buildAllowRule, removeSessionAllowRule } from './permissions/index.js'
 export {
@@ -299,20 +299,20 @@ export {
   verifyAuthorityApproval,
 } from './permissions/authority.js'
 
-// Cross-session lifecycle primitives. Stage 0 deliberately exports no transport or service.
+// 跨会话生命周期原语。Stage 0 有意不导出任何传输层或服务。
 export { createPeerInbox } from './peers/inbox.js'
 export { DEFAULT_PEER_INBOX_LIMITS } from './peers/inbox-types.js'
 export type * from './peers/inbox-types.js'
 export * from './peers/index.js'
 
-// Utils
+// 工具函数
 export { USER_XCODE_DIR, XCODE_DIR, debugLog, errorMessage, setPluginDebugMirror, userXcodeDir } from './utils.js'
 export { LruCache } from './utils/lru-cache.js'
 export { knownMediaTypeFor, mediaTypeFor } from './utils/media-type.js'
 export { extractText } from './utils/message-helpers.js'
 export { ensureProjectStorageDir } from './project-storage.js'
 
-// Knowledge
+// 知识
 export { buildKnowledgeContext } from './knowledge/loader.js'
 export { MemoryService } from './knowledge/memory/service.js'
 export { MemoryIndex, normalizeMemoryText, tokenizeMemoryText } from './knowledge/memory/search-index.js'
@@ -342,17 +342,17 @@ export type {
 } from './knowledge/memory/types.js'
 export { generateSessionSummary } from './agent/session-summary.js'
 
-// Sub-agents
+// 子 agent
 export { createSubAgentRegistry, createBuiltInRegistry, SubAgentRegistry } from './agent/sub-agents/index.js'
 export type { SubAgentDefinition, SubAgentEvent, SubAgentTrace } from './agent/sub-agents/index.js'
-// Managed browser — private MCP lifecycle (gracefulShutdown closes the browser).
+// 托管浏览器——私有 MCP 生命周期（gracefulShutdown 会关闭浏览器）。
 export { shutdownBrowserMcp } from './agent/browser/registry.js'
 
-// File-based slash commands (plugin-contributed `commands/*.md`).
+// 基于文件的斜杠命令（插件贡献的 `commands/*.md`）。
 export { CommandRegistry, createCommandRegistry, loadPluginCommands, expandCommandBody } from './commands/index.js'
 export type { CommandDefinition, LoadCommandsOptions } from './commands/index.js'
 
-// Hooks — agent lifecycle event subsystem driven by plugin contributions.
+// Hooks——由插件贡献驱动的 agent 生命周期事件子系统。
 export {
   HookBus,
   emptyHookBus,
@@ -380,7 +380,7 @@ export type {
   SessionContext as HookSessionContext,
 } from './hooks/types.js'
 
-// Plugins — discovery, install, marketplace, registry.
+// 插件——发现、安装、市场、注册表。
 export { loadAllPlugins, resolveContributions } from './plugins/loader.js'
 export type {
   LoadOptions as PluginLoadOptions,
@@ -452,7 +452,7 @@ export type {
 } from './plugins/types.js'
 export { discoverManifest, parseManifest, ManifestParseError } from './plugins/manifest.js'
 
-// Skills
+// 技能
 export {
   SkillRegistry,
   createSkillRegistry,
@@ -464,8 +464,8 @@ export type { SkillDefinition, SkillEntry, SkillReloadSummary } from './skills/r
 export { getScopedDisabledSkills, setSkillDisabled, skillSettingsPath } from './skills/settings.js'
 export type { SkillSettingsScope } from './skills/settings.js'
 
-// Session store (per-session jsonl transcript — used by /resume,
-// /usage history, and the CLI startup --resume / --continue flags).
+// 会话存储（每会话 jsonl 记录——供 /resume、/usage 历史以及 CLI 启动时的
+// --resume / --continue 标志使用）。
 export {
   appendCheckpoint,
   appendGoalInput,
@@ -499,11 +499,11 @@ export type {
   SessionListEntry,
 } from './agent/session-store.js'
 
-// Rewind snapshots — file-history backing for /rewind.
+// 回退快照——为 /rewind 提供文件历史支撑。
 export { createCheckpoint, restoreCheckpoint, getDiffStatsForCheckpoint } from './agent/snapshot.js'
 export type { CheckpointEntry, DiffStats } from './agent/snapshot.js'
 
-// MCP — Model Context Protocol client support.
+// MCP——Model Context Protocol 客户端支持。
 export { McpRegistry, emptyRegistry } from './mcp/registry.js'
 export type {
   RegisteredServer,

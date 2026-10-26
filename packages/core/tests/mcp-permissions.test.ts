@@ -31,7 +31,7 @@ describe('McpPermissionStore', () => {
     store.approveForSession('foo__bar')
     expect(await store.isApproved('foo__bar')).toBe(true)
 
-    // New store instance — should still be unapproved (session-only).
+    // 新的 store 实例 —— 应仍未批准（仅会话内）。
     const store2 = new McpPermissionStore()
     expect(await store2.isApproved('foo__bar')).toBe(false)
   })

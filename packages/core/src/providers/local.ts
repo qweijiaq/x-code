@@ -1,10 +1,8 @@
-// @x-code-cli/core — OpenAI-compatible clients for user-run local servers
+// @x-code-cli/core — 供用户本地服务器的 OpenAI-compatible 客户端
 //
-// The desktop runtime discovers local Ollama / LM Studio instances and needs
-// to turn `<server>:<model>` ids into AI SDK models without adding local
-// providers to the catalog (they have no API key and no static model list).
-// Keeping the construction here avoids a duplicate @ai-sdk dependency in the
-// desktop package.
+// 桌面运行时发现本地的 Ollama / LM Studio 实例，需要把 `<server>:<model>` id
+// 转成 AI SDK 模型，而不把本地 provider 加进目录（它们没有 API key，也没有
+// 静态模型列表）。把构造逻辑放在这里，可避免 desktop 包重复依赖 @ai-sdk。
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { LanguageModel } from 'ai'
 

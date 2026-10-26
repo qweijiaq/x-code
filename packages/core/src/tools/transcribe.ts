@@ -1,7 +1,7 @@
-// @x-code-cli/core — transcribe tool
+// @x-code-cli/core — transcribe 工具
 //
-// On-device speech-to-text for audio files. The audio never leaves the machine;
-// the whisper model is downloaded once and cached under the user directory.
+// 音频文件的设备端语音转文字。音频从不出本机；whisper 模型下载一次后缓存
+// 在用户目录下。
 import { tool } from 'ai'
 
 import { z } from 'zod'

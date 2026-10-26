@@ -30,7 +30,7 @@ export function Inspector({ tab, onTab, onClose, children }: InspectorProps): Re
       const stored = Number(localStorage.getItem(WIDTH_KEY))
       if (Number.isFinite(stored) && stored >= MIN_WIDTH && stored <= MAX_WIDTH) return stored
     } catch {
-      // Fall through to the default width.
+      // 回落到默认宽度。
     }
     return 560
   })
@@ -64,7 +64,7 @@ export function Inspector({ tab, onTab, onClose, children }: InspectorProps): Re
         try {
           localStorage.setItem(WIDTH_KEY, String(Math.round(current)))
         } catch {
-          // Width persistence is a convenience.
+          // 宽度持久化只是便利功能。
         }
         return current
       })

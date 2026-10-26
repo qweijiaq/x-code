@@ -58,8 +58,8 @@ export function canonicalSecurityJson(value: unknown): string {
     const record = item as Record<string, unknown>
     const normalized: Record<string, unknown> = {}
     for (const key of Object.keys(record).sort()) {
-      // Model SDK objects commonly retain optional own-properties as
-      // undefined. JSONL persistence omits them, so digest that same shape.
+      // 模型 SDK 对象常把可选的自身属性保留为 undefined。
+      // JSONL 持久化会省略它们，因此按同样的形状计算摘要。
       if (record[key] !== undefined) normalized[key] = normalize(record[key])
     }
     seen.delete(item)

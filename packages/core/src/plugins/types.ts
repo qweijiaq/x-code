@@ -1,55 +1,46 @@
-// @x-code-cli/core — Plugin system core types
+// @x-code-cli/core — 插件系统核心类型
 //
-// A plugin bundles skills / sub-agents / slash commands / MCP servers /
-// hooks behind a single manifest and namespace. Plugins are discovered
-// at CLI startup, frozen for the session (same byte-stability constraint
-// as skills + sub-agents — see CLAUDE.md on systemPromptCache), and
-// re-loaded only via `/plugin refresh` which explicitly invalidates the
-// prompt cache.
+// 插件把 skills / sub-agents / slash commands / MCP servers / hooks 打包在
+// 单个 manifest 和命名空间之下。插件在 CLI 启动时被发现、在本会话内冻结
+// （与 skills + sub-agents 相同的字节稳定约束——见 CLAUDE.md 关于
+// systemPromptCache 的说明），仅通过 `/plugin refresh` 重新加载，它会显式
+// 使提示词缓存失效。
 //
-// Manifest format is intentionally byte-compatible with Claude Code's
-// `.claude-plugin/plugin.json` so the same plugin tarball can be installed
-// in either CLI. The native `.x-code-plugin/plugin.json` path is also
-// accepted (preferred for newly-authored x-code-only plugins) and a bare
-// `plugin.json` in the root is tolerated.
+// Manifest 格式有意与 Claude Code 的 `.claude-plugin/plugin.json` 字节兼容，
+// 让同一插件包可装进任一 CLI。原生的 `.x-code-plugin/plugin.json` 路径也
+// 被接受（新写的纯 x-code 插件优先使用），根目录的裸 `plugin.json` 也容忍。
 
-// ── Plugin source (where it came from) ───────────────────────────────────
+// ── 插件来源（它来自哪里） ───────────────────────────────────
 
-/** Where a plugin was installed from — the internal canonical form used
- *  by the installer and recorded in `installed_plugins.json`. Marketplace
- *  entries arrive in a different on-disk wire format (string shortcut,
- *  `git-subdir`, `url`) and are normalised to this shape by
- *  [[normalizeMarketplaceSource]]. `subdir` is supported on both git and
- *  github so monorepo-published plugins (common in real Claude Code
- *  marketplaces like `anthropics/claude-plugins-official`) install
- *  correctly.
+/** 插件从何安装而来——安装器使用的内部规范形式，记录在
+ *  `installed_plugins.json` 里。市场条目以不同的磁盘线上格式（字符串捷径、
+ *  `git-subdir`、`url`）到达，并由 [[normalizeMarketplaceSource]] 归一化成
+ *  此形状。`subdir` 在 git 与 github 上都支持，让 monorepo 发布的插件
+ *  （在 `anthropics/claude-plugins-official` 这类真实 Claude Code 市场里
+ *  很常见）能正确安装。
  *
- *  `expectedSha` is an optional integrity pin propagated from the
- *  marketplace.json's `sha` field on git-backed sources. When set, the
- *  installer clones, runs `git rev-parse HEAD`, and aborts with
- *  `InstallError` on mismatch. Defends against the upstream ref being
- *  force-pushed or the repo being compromised between when the
- *  marketplace author reviewed it and when a user installs. Absent
- *  field skips the check (so marketplaces that haven't pinned shas
- *  still install). */
+ *  `expectedSha` 是可选的完整性钉，从 git 来源的市场条目 marketplace.json
+ *  的 `sha` 字段传播而来。设置后，安装器克隆、运行 `git rev-parse HEAD`，
+ *  不匹配就以 `InstallError` 中止。用于防御市场作者评审之后、用户安装之前，
+ *  上游 ref 被强推或仓库被攻破。缺省字段则跳过该检查（这样未钉 sha 的市场
+ *  仍能安装）。 */
 export type PluginSource =
   | { kind: 'git'; url: string; ref?: string; subdir?: string; expectedSha?: string }
   | { kind: 'github'; owner: string; repo: string; ref?: string; subdir?: string; expectedSha?: string }
   | { kind: 'local'; path: string }
 
-/** Two-scope plugin enablement, mirroring the convention used by mcp and
- *  skill (see packages/core/src/skills/settings.ts):
+/** 双作用域插件启用，与 mcp 和 skill 使用的约定一致（见
+ *  packages/core/src/skills/settings.ts）：
  *
  *    'user'     →  ~/.x-code/settings.json
- *    'project'  →  <cwd>/.x-code/settings.local.json  (gitignored)
+ *    'project'  →  <cwd>/.x-code/settings.local.json  （已 gitignore）
  *
- *  `'project'` reading a `.local.json` file is a slight naming quirk
- *  inherited from skills — it's a per-user override scoped to one repo,
- *  not a team-shared file. A separate team-shared scope (committed) can
- *  be layered on later without changing this union. */
+ *  `'project'` 读取 `.local.json` 文件是从 skills 继承的小命名别扭——它是
+ *  针对单个仓库的 per-user 覆盖，不是团队共享文件。日后可在此联合类型不变
+ *  的前提下另加一个团队共享（需提交）的作用域。 */
 export type PluginScope = 'user' | 'project'
 
-// ── Manifest (the contract authors write) ───────────────────────────────
+// ── Manifest（作者编写的契约） ───────────────────────────────
 
 export interface PluginAuthor {
   name?: string
@@ -57,10 +48,9 @@ export interface PluginAuthor {
   url?: string
 }
 
-/** A single user-prompted config item (API key, base URL, etc.). When
- *  `sensitive: true`, the value lives in the system keyring rather than
- *  settings.json. Schema mirrors Claude Code's so the same plugin works
- *  in either CLI without authors writing a separate config block. */
+/** 单个由用户填写的配置项（API key、base URL 等）。当 `sensitive: true` 时，
+ *  值存放在系统 keyring 而非 settings.json。schema 与 Claude Code 一致，
+ *  让同一插件无需作者另写配置块即可在任一 CLI 工作。 */
 export interface UserConfigItem {
   key: string
   type: 'string' | 'number' | 'boolean'
@@ -71,26 +61,21 @@ export interface UserConfigItem {
   description?: string
 }
 
-/** Inline hook configuration (the alternative to a hooks file path).
- *  Loose shape here — full validation lives in
- *  packages/core/src/hooks/config-schema.ts so that hooks-only changes
- *  don't reach into the plugin layer. */
+/** 内联 hook 配置（hooks 文件路径的替代）。这里只是宽松形状——完整校验在
+ *  packages/core/src/hooks/config-schema.ts，这样仅涉及 hooks 的改动不会
+ *  渗透进插件层。 */
 export type InlineHookConfig = Record<string, unknown>
 
-/** Inline mcpServers record (the alternative to a path string). Matches
- *  the shape of `mcpServers` in ~/.x-code/config.json — validated by
- *  the existing mcp config-schema, not duplicated here. */
+/** 内联 mcpServers 记录（路径字符串的替代）。与 ~/.x-code/config.json 里
+ *  `mcpServers` 的形状一致——由既有 mcp config-schema 校验，不在这里重复。 */
 export type InlineMcpServers = Record<string, unknown>
 
-/** The plugin manifest as parsed from disk. All paths are STORED RAW —
- *  resolution against the plugin root happens in [[loader]]. Unknown
- *  fields in the source JSON are silently stripped (zod default) so that
- *  newer Claude Code manifests with fields we don't understand still
- *  load cleanly. */
+/** 从磁盘解析出的插件 manifest。所有路径都按原样存储——按插件根解析发生在
+ *  [[loader]]。源 JSON 中的未知字段被静默剥除（zod 默认），让带我们不懂
+ *  字段的较新 Claude Code manifest 仍能干净加载。 */
 export interface PluginManifest {
-  /** Schema version. Defaults to "1" when missing. Bumped by us only on
-   *  breaking changes to the manifest contract; older plugins still load
-   *  as long as their fields validate. */
+  /** Schema 版本。缺省时默认 "1"。只有对 manifest 契约做破坏性变更时我们才
+   *  提升它；旧插件只要字段能通过校验仍可加载。 */
   schemaVersion: string
   name: string
   version: string
@@ -100,86 +85,80 @@ export interface PluginManifest {
   homepage?: string
   license?: string
 
-  // ── Contributions (all optional, all relative to plugin root) ─────────
-  /** Path to a directory of skills, each in `<name>/SKILL.md` form (same
-   *  layout as `~/.x-code/skills/`). Or a single file path. */
+  // ── 贡献（全部可选，全部相对插件根） ─────────
+  /** 指向 skills 目录的路径，每个都采用 `<name>/SKILL.md` 形式（与
+   *  `~/.x-code/skills/` 布局相同）。或单个文件路径。 */
   skills?: string
-  /** Path to a directory of sub-agent `.md` files (same layout as
-   *  `~/.x-code/agents/`). */
+  /** 指向 sub-agent `.md` 文件目录的路径（与 `~/.x-code/agents/` 布局
+   *  相同）。 */
   agents?: string
-  /** Path to a directory of slash command `.md` files. */
+  /** 指向 slash 命令 `.md` 文件目录的路径。 */
   commands?: string
-  /** Either a path to a JSON file with `{ mcpServers: { ... } }` OR an
-   *  inline `mcpServers` record. Inline form matches the shape used in
-   *  ~/.x-code/config.json. */
+  /** 要么是带 `{ mcpServers: { ... } }` 的 JSON 文件路径，要么是内联
+   *  `mcpServers` 记录。内联形式与 ~/.x-code/config.json 使用的形状一致。 */
   mcpServers?: string | InlineMcpServers
-  /** Either a path to a hooks.json OR an inline hook config. */
+  /** 要么是 hooks.json 的路径，要么是内联 hook 配置。 */
   hooks?: string | InlineHookConfig
 
-  // ── Author-visible config the user fills in at install time ───────────
+  // ── 作者可见、用户安装时填写的配置 ───────────
   userConfig?: UserConfigItem[]
 
-  // ── Plugin-to-plugin deps & runtime compat ────────────────────────────
-  /** Dependencies as `name@marketplace` IDs. Bare `name` resolves against
-   *  the same marketplace as the dependent plugin. */
+  // ── 插件间依赖与运行时兼容性 ────────────────────────────
+  /** 以 `name@marketplace` ID 表示的依赖。裸 `name` 解析到与依赖它的插件
+   *  相同的市场。 */
   dependencies?: string[]
   engines?: { 'x-code'?: string }
 }
 
-// ── Loaded plugin (what the registry holds at runtime) ──────────────────
+// ── 已加载插件（registry 运行时持有的） ──────────────────
 
-/** Which manifest file we loaded. `'gemini'` is never reached — Gemini
- *  extensions are rejected at install time by design (see plugin-marketplace-design.md
- *  §3.4) and the value is only used in error reporting to say "this looks
- *  like a Gemini extension, we don't support those". */
+/** 我们加载的是哪个 manifest 文件。`'gemini'` 永不出现——Gemini 扩展按设计
+ *  在安装时就被拒绝（见 plugin-marketplace-design.md §3.4），该值仅用于错误
+ *  报告，表示“这看起来是 Gemini 扩展，我们不支持”。 */
 export type ManifestFormat = 'native' | 'claude' | 'bare' | 'gemini'
 
 export interface LoadedPlugin {
-  /** Composite id `name@marketplace`. `marketplace` is `"local"` for
-   *  plugins installed from a local path (i.e. authored in-tree). */
+  /** 组合 id `name@marketplace`。对从本地路径安装（即仓库内自研）的插件，
+   *  `marketplace` 为 `"local"`。 */
   id: string
   manifest: PluginManifest
-  /** Absolute path to the plugin's root directory. */
+  /** 插件根目录的绝对路径。 */
   rootDir: string
-  /** Absolute path to the manifest file we loaded. */
+  /** 我们加载的 manifest 文件的绝对路径。 */
   manifestPath: string
   manifestFormat: ManifestFormat
-  /** Where this plugin originally came from. `undefined` only for the
-   *  rare case of a plugin manually dropped into cache without metadata. */
+  /** 该插件最初来自哪里。仅当插件被手动放进缓存而无元数据这种罕见情况时才
+   *  为 `undefined`。 */
   source: PluginSource | undefined
-  /** Marketplace name this plugin belongs to. `"local"` for plugins
-   *  installed from a local path / authored in-tree. */
+  /** 该插件所属的市场名。对从本地路径安装 / 仓库内自研的插件为 `"local"`。 */
   marketplace: string
   scope: PluginScope
-  /** Effective enabled state after merging all three scopes. */
+  /** 合并所有作用域之后的有效启用状态。 */
   enabled: boolean
 }
 
-/** A non-fatal load error — collected by the loader and surfaced via
- *  `/plugin doctor`. One broken plugin must never crash the CLI. */
+/** 一条非致命加载错误——由 loader 收集，经 `/plugin doctor` 呈现。单个坏
+ *  插件绝不至于让 CLI 崩溃。 */
 export interface PluginLoadError {
-  /** `name@marketplace` if we got far enough to know it. */
+  /** 若进展到足以知晓则为 `name@marketplace`。 */
   id?: string
-  /** Filesystem path that triggered the error, even if no manifest parsed. */
+  /** 触发错误的文件系统路径，即使没有解析出任何 manifest。 */
   path: string
   message: string
 }
 
-// ── Marketplace (the index / catalog format) ────────────────────────────
+// ── 市场（索引 / 目录格式） ────────────────────────────
 
-/** One plugin listing within a marketplace. `source` tells the installer
- *  where to fetch the plugin from. */
+/** 市场内的单个插件条目。`source` 告诉安装器从哪里获取该插件。 */
 export interface MarketplaceEntry {
   name: string
   description?: string
   category?: string
-  /** Marketplace-curator's claim of vetted-ness. We surface this in the UI
-   *  but never grant additional trust based on it — install consent still
-   *  runs. */
+  /** 市场策展人声称的“已审查”。我们在 UI 中呈现它，但绝不基于它授予额外
+   *  信任——安装授权仍会执行。 */
   verified?: boolean
   source: PluginSource
-  /** Pinned version, if any. Otherwise installer reads version from the
-   *  fetched manifest. */
+  /** 钉住的版本（若有）。否则安装器从获取的 manifest 读取版本。 */
   version?: string
   homepage?: string
   keywords?: string[]
@@ -187,15 +166,13 @@ export interface MarketplaceEntry {
 
 export interface Marketplace {
   schemaVersion: string
-  /** The user-facing canonical identity of this marketplace — the
-   *  subscription alias the user typed (e.g. `anthropic-marketplace`).
-   *  Storage paths, install ids (`<plugin>@<name>`), and lookups all key
-   *  off this. */
+  /** 该市场的用户可见规范身份——用户输入的订阅别名（如
+   *  `anthropic-marketplace`）。存储路径、安装 id（`<plugin>@<name>`）和查找
+   *  都以它为键。 */
   name: string
-  /** The marketplace's own self-declared `name` from its `marketplace.json`
-   *  (e.g. `claude-plugins-official`). Kept so `info` can show users what
-   *  the upstream calls itself when it differs from their subscription
-   *  alias. Never used as an identity for lookup. */
+  /** 市场在其 `marketplace.json` 里自声明的 `name`（如
+   *  `claude-plugins-official`）。保留它是为了让 `info` 能在上游自称与订阅
+   *  别名不同时向用户展示。绝不作为查找身份使用。 */
   upstreamName?: string
   displayName?: string
   description?: string
@@ -203,37 +180,33 @@ export interface Marketplace {
   plugins: MarketplaceEntry[]
 }
 
-/** One entry in `~/.x-code/plugins/known_marketplaces.json` — a
- *  marketplace the user has subscribed to. The `source` string can be a
- *  git URL (`github:owner/repo`, `https://...`) or a direct HTTPS URL
- *  to the marketplace.json. */
+/** `~/.x-code/plugins/known_marketplaces.json` 中的一条——用户订阅的一个
+ *  市场。`source` 字符串可以是 git URL（`github:owner/repo`、`https://...`）
+ *  或指向 marketplace.json 的直接 HTTPS URL。 */
 export interface KnownMarketplace {
   name: string
   source: string
-  /** Set on built-in entries (e.g., the default `anthropic-marketplace`).
-   *  Reserved names only accept their canonical source — see
-   *  RESERVED_MARKETPLACE_NAMES in [[marketplace]]. */
+  /** 设在内置条目上（如默认的 `anthropic-marketplace`）。保留名只接受其规范
+   *  来源——见 [[marketplace]] 中的 RESERVED_MARKETPLACE_NAMES。 */
   reservedName?: boolean
-  /** Expected GitHub org for reserved names. The installer rejects any
-   *  attempt to register a reserved name pointing elsewhere. */
+  /** 保留名预期的 GitHub 组织。安装器会拒绝任何把保留名指向别处的注册尝试。 */
   officialSource?: string
 }
 
 export interface KnownMarketplaces {
   marketplaces: KnownMarketplace[]
-  /** When true, plugins can only be installed from a marketplace in the
-   *  `marketplaces` list. Off by default; enterprise admins flip it on. */
+  /** 为 true 时，插件只能从 `marketplaces` 列表中的市场安装。默认关闭；
+   *  企业管理员会打开它。 */
   strictKnownMarketplaces?: boolean
-  /** Plugin IDs (`name@marketplace`) that are force-disabled regardless of
-   *  user settings. Admin-style block list. */
+  /** 无论用户设置如何都被强制禁用的插件 ID（`name@marketplace`）。管理员
+   *  式的屏蔽列表。 */
   blockedPlugins?: string[]
 }
 
-// ── Installed plugin registry (~/.x-code/plugins/installed_plugins.json) ─
+// ── 已安装插件注册表（~/.x-code/plugins/installed_plugins.json） ─
 
-/** One entry in the installed registry — the bookkeeping we keep about
- *  each cached install so updates / uninstalls / scope changes work
- *  without re-reading every manifest. */
+/** 已安装注册表中的一条——我们为每个缓存安装保留的记账，让更新 / 卸载 /
+ *  作用域变更无需重读每个 manifest 即可工作。 */
 export interface InstalledPluginRecord {
   id: string
   name: string
@@ -241,8 +214,8 @@ export interface InstalledPluginRecord {
   version: string
   source: PluginSource
   installedAt: string
-  /** Which scope's settings.json triggered the install (where to record
-   *  the enable). User scope is the default. */
+  /** 哪个作用域的 settings.json 触发了安装（在哪里记录启用）。默认是 user
+   *  作用域。 */
   installScope: PluginScope
 }
 

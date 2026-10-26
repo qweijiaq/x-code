@@ -1,4 +1,4 @@
-// Tests for utils/shell-error.ts
+// utils/shell-error.ts 的测试
 import { describe, expect, it } from 'vitest'
 
 import { foldShellErrorNoise } from '../src/utils/shell-error.js'

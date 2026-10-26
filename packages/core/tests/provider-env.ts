@@ -1,7 +1,7 @@
-// Shared provider env-var list for tests that must scrub the developer's
-// real shell environment before asserting "no providers configured"
-// behavior. Derived from the catalog so adding a provider needs no test
-// edit; the OPENAI_COMPATIBLE_* pair is read by getAvailableProviders.
+// 共享的 provider 环境变量列表，供那些必须先清除开发者真实 shell 环境、
+// 再断言“未配置任何 provider”行为的测试使用。它从 catalog 派生而来，
+// 因此新增 provider 无需修改测试；OPENAI_COMPATIBLE_* 这一对由
+// getAvailableProviders 读取。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -16,7 +16,7 @@ export const PROVIDER_ENV_VARS: readonly string[] = [
   'OPENAI_COMPATIBLE_BASE_URL',
 ]
 
-/** Keep provider-policy tests independent from a developer's real `xc login`. */
+/** 让 provider-policy 测试独立于开发者的真实 `xc login`。 */
 export function isolateOpenAIAuth(): () => void {
   const previousHome = process.env.X_CODE_HOME
   const isolatedHome = path.join(os.tmpdir(), `x-code-provider-auth-${crypto.randomUUID()}`)

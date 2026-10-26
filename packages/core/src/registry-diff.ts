@@ -1,8 +1,7 @@
-// @x-code-cli/core — Shared registry reload diff helper
+// @x-code-cli/core — 共享的注册表重载差异计算辅助
 //
-// Computes the added/removed/changed/unchanged breakdown when a named
-// registry is hot-replaced. Each registry brings its own change-detection
-// predicate while sharing this structural algorithm.
+// 在具名注册表被热替换时计算 added/removed/changed/unchanged 明细。
+// 每个注册表带来自己的变更检测谓词，同时共享这一结构性算法。
 
 export interface ReloadSummary {
   added: string[]
@@ -11,8 +10,8 @@ export interface ReloadSummary {
   unchanged: string[]
 }
 
-/** Diff two named entry maps. `isChanged(prev, next)` returns true when
- *  entries with the same key differ in a domain-relevant way. */
+/** 对比两个具名条目映射。当同键条目在领域相关的维度上不同时，
+ *  `isChanged(prev, next)` 返回 true。 */
 export function diffNamedEntries<T>(
   previous: ReadonlyMap<string, T>,
   next: ReadonlyMap<string, T>,

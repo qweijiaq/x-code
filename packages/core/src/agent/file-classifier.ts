@@ -5,7 +5,7 @@ import { readFileHandleWithinLimit } from '../utils/bounded-read.js'
 import { KNOWN_AUDIO_EXTENSIONS, SUPPORTED_AUDIO_EXTENSIONS, isSupportedAudioBytes } from './audio-formats.js'
 import { MAX_OFFICE_SOURCE_BYTES, detectOfficeKindFromArchive, officeMediaType } from './office-archive.js'
 
-/** Compatibility type retained for the public classifyFile() API. */
+/** 为公开的 classifyFile() API 保留的兼容性类型。 */
 export type FileKind = 'text' | 'image' | 'pdf' | 'office' | 'audio' | 'unknown'
 export type InspectedFileKind = 'text' | 'image' | 'pdf' | 'office' | 'audio' | 'notebook' | 'binary'
 export type TextEncoding = 'utf-8' | 'utf-16le' | 'utf-16be'
@@ -168,9 +168,8 @@ async function readSample(filePath: string, abortSignal?: AbortSignal): Promise<
   abortSignal?.throwIfAborted()
   const handle = await fs.open(filePath, 'r')
   try {
-    // Read enough look-ahead to validate a UTF-8 code point or UTF-16
-    // surrogate pair that starts at the nominal 32 KiB boundary. The extra
-    // byte distinguishes a full sample from an exact-length file.
+    // 多读一点前瞻，以校验跨在名义 32 KiB 边界上的 UTF-8 码点或
+    // UTF-16 代理对。多出的字节用于区分「完整样本」和「恰好等长的文件」。
     const buffer = Buffer.allocUnsafe(FILE_TEXT_SAMPLE_BYTES + 5)
     abortSignal?.throwIfAborted()
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
@@ -198,9 +197,9 @@ async function inspectBytes(
   let detected: { mime: string } | undefined
   try {
     const { fileTypeFromBuffer } = await import('file-type')
-    // A text BOM is an encoding marker, not part of a binary signature.
-    // Inspect the bytes after it so UTF-16LE is not mistaken for AAC while
-    // BOM-prefixed PNG/PDF/etc. still override a misleading text extension.
+    // 文本 BOM 是编码标记，不属于二进制签名的一部分。检查它之后的字节，
+    // 这样 UTF-16LE 不会被误判成 AAC，而带 BOM 前缀的 PNG/PDF 等仍能
+    // 覆盖掉具有误导性的文本扩展名。
     detected = await fileTypeFromBuffer(withoutTextBom(sample))
   } catch {
     detected = undefined

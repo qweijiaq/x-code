@@ -1,4 +1,4 @@
-// Tests for agent/plan-tools.ts (handleTodoWrite / handleEnterPlanMode / handleExitPlanMode)
+// agent/plan-tools.ts（handleTodoWrite / handleEnterPlanMode / handleExitPlanMode）的测试
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -290,11 +290,11 @@ describe('handleExitPlanMode', () => {
     expect(callbacks.onPlanModeChange).toHaveBeenCalledWith('acceptEdits')
     expect(captured[0].output).toContain('Plan approved')
 
-    // The override body was persisted to disk.
+    // 覆盖后的正文已写入磁盘。
     const written = await fs.readFile(planPath, 'utf-8')
     expect(written).toBe('My plan body')
 
-    // A follow-up user message is appended so the model knows the gate flipped.
+    // 追加一条后续用户消息，让模型知道模式开关已翻转。
     const lastMsg = state.messages[state.messages.length - 1]
     expect(lastMsg.role).toBe('user')
   })

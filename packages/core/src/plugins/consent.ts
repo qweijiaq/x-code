@@ -1,28 +1,23 @@
-// @x-code-cli/core — Install-time consent preview
+// @x-code-cli/core — 安装时的授权预览
 //
-// Before a plugin's contents are committed to the cache, the installer
-// builds a `ConsentPreview` summarising what the plugin will contribute
-// (hooks, MCP servers, scopes etc.) and hands it to the caller-supplied
-// consent callback. If the callback returns false, the install aborts
-// and the temp dir is cleaned up.
+// 在插件内容提交到缓存之前，安装器会构造一个 `ConsentPreview`，
+// 汇总该插件将要贡献的内容（hooks、MCP 服务器、作用域等），并交给
+// 调用方提供的授权回调。若回调返回 false，安装中止，临时目录被清理。
 //
-// The preview is built from the already-parsed manifest, so all the
-// validation work has already happened — by the time we ask the user
-// "do you accept?" we know the plugin parses cleanly and what it will
-// touch on their system.
+// 预览基于已经解析过的 manifest 构建，因此所有校验工作都已完成——
+// 等到我们向用户询问“是否接受”时，我们已经知道插件能干净解析、
+// 以及它会触碰用户系统上的哪些东西。
 //
-// What it intentionally does NOT include:
+// 有意不包含的内容：
 //
-//   - Skill / agent / command counts (they're hidden inside subdirs;
-//     scanning them just to build a preview would slow every install,
-//     and the preview is meant to be a glance, not an audit).
-//   - LICENSE file contents — surfaced as a name only; readers should
-//     follow the homepage / source URL to read the actual terms.
+//   - Skill / agent / command 的数量（它们藏在子目录里；仅为构建
+//     预览就去扫描会拖慢每次安装，而且预览只求一瞥，不是审计）。
+//   - LICENSE 文件内容——只以文件名呈现；读者应顺着主页 / 源码
+//     URL 去阅读真正的条款。
 //
-// What it DOES include — the things with real security blast radius:
-// hooks (arbitrary shell), MCP servers (arbitrary subprocesses), and
-// source (so the user knows whether it came from a trusted marketplace
-// or a random GitHub repo).
+// 有意包含的内容——真正有安全波及面的东西：hooks（任意 shell）、
+// MCP 服务器（任意子进程），以及来源（让用户知道它来自可信市场，
+// 还是某个随意的 GitHub 仓库）。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -39,54 +34,50 @@ export interface ConsentPreview {
   description?: string
   source: PluginSource
   marketplace: string
-  /** True when the install came from a marketplace flagged `verified`. */
+  /** 当安装来自标记为 `verified` 的市场时为 true。 */
   verified: boolean
-  /** True when the marketplace's name is one of `RESERVED_MARKETPLACE_NAMES`. */
+  /** 当市场名是 `RESERVED_MARKETPLACE_NAMES` 之一时为 true。 */
   fromReservedMarketplace: boolean
-  /** Hook event names the plugin registers. Empty means no hooks. */
+  /** 插件注册的 hook 事件名。为空表示没有 hooks。 */
   hookEvents: HookEventName[]
-  /** MCP server names contributed inline (path-form not previewed —
-   *  requires reading another file before consent). */
+  /** 以内联形式贡献的 MCP 服务器名（路径形式不预览——需要在授权前
+   *  再读一个文件）。 */
   inlineMcpServerNames: string[]
   hasSkillsDir: boolean
   hasAgentsDir: boolean
   hasCommandsDir: boolean
-  /** True when manifest declares `mcpServers` as a file path (not
-   *  inline) — we don't have the names yet at consent time, but we can
-   *  warn the user that the plugin DOES bring MCP servers. */
+  /** 当 manifest 将 `mcpServers` 声明为文件路径（而非内联）时为 true——
+   *  授权时我们还没有这些名称，但可以提醒用户该插件确实会带来 MCP
+   *  服务器。 */
   hasPathMcpServers: boolean
-  /** Same as above for hooks declared via path rather than inline. */
+  /** 同上，用于通过路径（而非内联）声明的 hooks。 */
   hasPathHooks: boolean
   author?: string
   license?: string
   homepage?: string
-  /** Fields the plugin needs from the user. The install UI collects values
-   *  for these after consent and before the plugin is committed. */
+  /** 插件需要用户提供的字段。安装 UI 在授权后、插件提交前收集这些值。 */
   userConfig?: UserConfigItem[]
 }
 
-/** Filesystem-side info about a plugin's root directory — the things
- *  a manifest-only inspection can't see. Populated by [[probePluginRoot]]
- *  and passed to [[buildConsentPreview]] so the install-time "Will
- *  contribute" line reflects auto-discovered contributions (e.g.
- *  Claude Code's convention of dropping `.mcp.json` next to plugin.json
- *  instead of declaring `mcpServers` in the manifest). */
+/** 关于插件根目录的文件系统侧信息——仅靠 manifest 检查看不到的东西。
+ *  由 [[probePluginRoot]] 填充并传给 [[buildConsentPreview]]，这样
+ *  安装时的“将贡献”一行能反映自动发现的贡献（例如 Claude Code 的约定：
+ *  把 `.mcp.json` 放在 plugin.json 旁边，而不是在 manifest 里声明
+ *  `mcpServers`）。 */
 export interface RootProbe {
   hasSkillsDir: boolean
   hasAgentsDir: boolean
   hasCommandsDir: boolean
-  /** Server names parsed from a root-level `.mcp.json` / `mcp.json`
-   *  (both flat and wrapped shapes accepted; see
-   *  [[extractMcpServersBlock]]). Empty when neither file is present
-   *  or the file failed to parse. */
+  /** 从根级 `.mcp.json` / `mcp.json` 解析出的服务器名（平面和包裹两种
+   *  形状都接受；见 [[extractMcpServersBlock]]）。当两个文件都不存在
+   *  或解析失败时为空。 */
   rootMcpServerNames: string[]
-  /** True when a root-level mcp file exists, even if no names could
-   *  be parsed from it. Lets the consent UI still warn "this plugin
-   *  contributes MCP servers" when names are momentarily unknown. */
+  /** 当根级 mcp 文件存在、即使未能从中解析出任何名称时为 true。让授权
+   *  UI 在名称暂时未知时仍能警告“该插件会贡献 MCP 服务器”。 */
   hasRootMcpFile: boolean
-  /** Hook event names parsed from `hooks/hooks.json` at root, if present. */
+  /** 若存在，从根级 `hooks/hooks.json` 解析出的 hook 事件名。 */
   rootHookEvents: HookEventName[]
-  /** True when `hooks/hooks.json` exists, regardless of parse result. */
+  /** 无论解析结果如何，只要 `hooks/hooks.json` 存在即为 true。 */
   hasRootHooksFile: boolean
 }
 
@@ -97,20 +88,17 @@ export interface BuildPreviewInput {
   marketplace: string
   verified?: boolean
   fromReservedMarketplace?: boolean
-  /** Optional probe of the plugin's root directory. Without it,
-   *  consent shows only what the manifest declares — which misses
-   *  Claude Code-convention plugins that ship contributions as
-   *  conventional files / dirs alongside `plugin.json`. */
+  /** 可选的插件根目录探测。缺省时，授权只显示 manifest 声明的部分——
+   *  会漏掉那些以约定文件 / 目录（放在 `plugin.json` 旁边）方式携带
+   *  贡献的 Claude Code 约定插件。 */
   rootProbe?: RootProbe
 }
 
-/** Stat the plugin root for the conventional contribution files / dirs
- *  the loader's `resolveContributions` will pick up at runtime. The
- *  consent UI uses this so "Will contribute" doesn't lie when a plugin
- *  drops `skills/`, `.mcp.json`, etc. at root without naming them in
- *  the manifest. Safe to call on any directory — every probe is a
- *  best-effort stat / read and missing or unreadable files just count
- *  as "absent". */
+/** 探测插件根目录下 loader 的 `resolveContributions` 在运行时会拾取的
+ *  约定贡献文件 / 目录。授权 UI 用它来保证“将贡献”不会说谎——当插件把
+ *  `skills/`、`.mcp.json` 等放在根目录却未在 manifest 里点名时。可对任意
+ *  目录安全调用——每次探测都是尽力而为的 stat / read，缺失或不可读的
+ *  文件一律视为“不存在”。 */
 export async function probePluginRoot(rootDir: string): Promise<RootProbe> {
   const [hasSkillsDir, hasAgentsDir, hasCommandsDir] = await Promise.all([
     isDir(path.join(rootDir, 'skills')),
@@ -131,9 +119,8 @@ export async function probePluginRoot(rootDir: string): Promise<RootProbe> {
       const { servers } = parseServersBlock(block)
       rootMcpServerNames = Object.keys(servers)
     } catch {
-      // parse errors are deliberately swallowed — they'll surface
-      // with a precise message at load time. The consent preview
-      // just needs to know the file exists.
+      // 有意吞掉解析错误——它们在加载时会以精确的消息浮现。授权预览
+      // 只需要知道文件存在。
     }
     break
   }
@@ -149,7 +136,7 @@ export async function probePluginRoot(rootDir: string): Promise<RootProbe> {
       const cfg = parseHookConfig(parsed, rootDir)
       rootHookEvents = Object.keys(cfg) as HookEventName[]
     } catch {
-      // Same reasoning as the mcp probe — load-time errors win.
+      // 与 mcp 探测同理——加载时的错误优先。
     }
   }
 
@@ -164,16 +151,13 @@ export async function probePluginRoot(rootDir: string): Promise<RootProbe> {
   }
 }
 
-/** Build a `ConsentPreview` from a parsed manifest. The hook + mcp
- *  fields are inspected only for the inline shape; path-form
- *  contributions are surfaced as `has*` booleans so the consent UI can
- *  warn "this plugin contributes MCP servers" even when their names
- *  aren't yet known.
+/** 从已解析的 manifest 构建 `ConsentPreview`。hook + mcp 字段仅按内联
+ *  形状检查；路径形式的贡献以 `has*` 布尔值呈现，这样授权 UI 即使在
+ *  名称尚未可知时也能警告“该插件会贡献 MCP 服务器”。
  *
- *  When `input.rootProbe` is present, conventional root-level
- *  contributions (an undeclared `.mcp.json`, `hooks/hooks.json`,
- *  `skills/`, etc.) are merged in too — the loader will pick those up
- *  at runtime, so the consent UI needs to know about them now. */
+ *  当 `input.rootProbe` 存在时，约定式的根级贡献（未声明的 `.mcp.json`、
+ *  `hooks/hooks.json`、`skills/` 等）也会合并进来——loader 会在运行时
+ *  拾取它们，所以授权 UI 现在就需要知道。 */
 export function buildConsentPreview(input: BuildPreviewInput): ConsentPreview {
   const m = input.manifest
   const probe = input.rootProbe
@@ -188,9 +172,8 @@ export function buildConsentPreview(input: BuildPreviewInput): ConsentPreview {
         const cfg = parseHookConfig(m.hooks, input.pluginId)
         hookEvents = Object.keys(cfg) as HookEventName[]
       } catch {
-        // Don't fail consent on hook parse errors — the install path
-        // will surface them properly. Just leave hookEvents empty so
-        // the preview doesn't lie about what's registered.
+        // 不要因 hook 解析错误而让授权失败——安装路径会妥善地浮现这些
+        // 错误。这里只让 hookEvents 保持为空，避免预览谎报注册内容。
       }
     }
   } else if (probe?.hasRootHooksFile) {
@@ -208,9 +191,8 @@ export function buildConsentPreview(input: BuildPreviewInput): ConsentPreview {
       inlineMcpServerNames = Object.keys(servers)
     }
   } else if (probe?.hasRootMcpFile) {
-    // Convention-discovered `.mcp.json` at the plugin root — same blast
-    // radius as a manifest-declared path entry. Surface names when we
-    // were able to parse them; otherwise just flag the file's presence.
+    // 在插件根目录按约定发现的 `.mcp.json`——其波及面与 manifest 声明的
+    // 路径条目相同。能解析时呈现名称；否则只标记该文件的存在。
     inlineMcpServerNames = probe.rootMcpServerNames
     hasPathMcpServers = true
   }

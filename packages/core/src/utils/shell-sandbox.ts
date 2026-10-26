@@ -1,17 +1,16 @@
-// @x-code-cli/core — macOS workspace-write shell sandbox
+// @x-code-cli/core — macOS 工作区写入 shell 沙箱
 //
-// When enabled (desktop setting, macOS only), agent shell commands run under
-// `/usr/bin/sandbox-exec` with a generated SBPL profile:
-//   - reads are allowed everywhere except a list of credential locations,
-//   - writes are allowed only inside the workspace and temp directories,
-//   - network access is denied unless the user explicitly allows it,
-//   - API keys / tokens / secrets are stripped from the child environment.
+// 启用后（桌面设置，仅 macOS），agent 的 shell 命令会在生成的 SBPL 配置下
+// 通过 `/usr/bin/sandbox-exec` 运行：
+//   - 除了一组凭据位置之外，读取处处允许，
+//   - 写入只允许在工作区和临时目录内，
+//   - 除非用户显式允许，否则拒绝网络访问，
+//   - API 密钥 / 令牌 / 机密会从子进程环境中剔除。
 //
-// The interactive terminal in the desktop app is the user's own shell and is
-// NOT sandboxed. With `includeExtensions`, hook commands and stdio MCP
-// servers are wrapped too: hooks use the configured network policy, MCP
-// servers always keep network access (their APIs live outside the sandbox)
-// while still being restricted to workspace/temp writes.
+// 桌面应用中的交互式终端是用户自己的 shell，不受沙箱约束。开启
+// `includeExtensions` 后，hook 命令和 stdio MCP 服务器也会被包裹：hook 使用
+// 配置的网络策略，MCP 服务器始终保留网络访问（其 API 在沙箱之外），但写入
+// 仍被限制在工作区/临时目录。
 import os from 'node:os'
 import path from 'node:path'
 
@@ -19,7 +18,7 @@ export interface ShellSandboxConfig {
   enabled: boolean
   workspace: string
   allowNetwork: boolean
-  /** Opt-in: also sandbox hook commands and stdio MCP servers. */
+  /** 可选加入：同时沙箱化 hook 命令和 stdio MCP 服务器。 */
   includeExtensions: boolean
 }
 
@@ -40,12 +39,12 @@ export function getShellSandbox(): ShellSandboxConfig {
   return current
 }
 
-/** True when commands must be wrapped with sandbox-exec. */
+/** 当命令必须用 sandbox-exec 包裹时为 true。 */
 export function isShellSandboxActive(): boolean {
   return process.platform === 'darwin' && current.enabled
 }
 
-/** True when hooks / stdio MCP servers must also be wrapped. */
+/** 当 hook / stdio MCP 服务器也必须被包裹时为 true。 */
 export function isExtensionSandboxActive(): boolean {
   return isShellSandboxActive() && current.includeExtensions
 }
@@ -71,8 +70,8 @@ function sensitivePaths(): string[] {
   ]
 }
 
-/** Build the SBPL profile. Later rules override earlier ones, so the sensitive
- *  deny block sits after the workspace write allow. */
+/** 构建 SBPL 配置。后面的规则覆盖前面的，因此敏感路径的拒绝块放在工作区
+ *  写入允许之后。 */
 export function sandboxProfileText(config: ShellSandboxConfig = current): string {
   const workspace = path.resolve(config.workspace)
   const temp = os.tmpdir()
@@ -85,8 +84,8 @@ export function sandboxProfileText(config: ShellSandboxConfig = current): string
     '(allow file-write*',
     `  (subpath ${sbplString(workspace)})`,
     `  (subpath ${sbplString(temp)})`,
-    // Skill scripts may download models/dependencies into their isolated
-    // runtime; it is app-managed and contains no credentials.
+    // 技能脚本可能把模型/依赖下载到其隔离运行时；该目录由应用管理且不含
+    // 凭据。
     `  (subpath ${sbplString(skillRuntime)})`,
     '  (subpath "/private/tmp")',
     '  (subpath "/private/var/folders")',
@@ -103,7 +102,7 @@ export function sandboxProfileText(config: ShellSandboxConfig = current): string
   return lines.join('\n')
 }
 
-/** Wrap an executable + args so it runs inside sandbox-exec when active. */
+/** 包裹可执行文件及其参数，使其在启用时于 sandbox-exec 内运行。 */
 export function wrapShellSpawn(
   executable: string,
   args: string[],
@@ -115,8 +114,8 @@ export function wrapShellSpawn(
 
 const SECRET_ENV_PATTERN = /(API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE[_-]?KEY)/i
 
-/** Remove credential-looking variables from a child environment. PATH, HOME,
- *  locale, and display variables are preserved. */
+/** 从子进程环境中移除形似凭据的变量。PATH、HOME、locale 和显示相关变量会被
+ *  保留。 */
 export function sanitizeShellEnv(env: NodeJS.ProcessEnv, config: ShellSandboxConfig = current): NodeJS.ProcessEnv {
   if (process.platform !== 'darwin' || !config.enabled) return env
   const sanitized: NodeJS.ProcessEnv = {}

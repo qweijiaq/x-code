@@ -1,8 +1,7 @@
-// @x-code-cli/core — batchRename tool
+// @x-code-cli/core — batchRename 工具
 //
-// Renames files in place with a dry-run default, a 100-file cap, and a hard
-// no-overwrite rule. It deliberately cannot move files between directories,
-// change extensions through a separate option, or delete anything.
+// 就地重命名文件：默认先 dry-run，100 个文件上限，且强制不覆盖规则。它
+// 刻意不能跨目录移动文件、不能通过单独选项改扩展名，也不能删除任何东西。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 

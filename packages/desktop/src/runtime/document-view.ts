@@ -1,10 +1,9 @@
-// Desktop document previews: one request in, one bounded view out.
+// 桌面文档预览：一个请求进来，一个有界视图出去。
 //
-// Text comes from core's readDocument (local parsing/OCR); PDFs render page
-// images in batches (20 by default) through core's pdf-render worker, and
-// spreadsheets are parsed into small sheet previews with ExcelJS. OCR the user
-// runs page by page is persisted in desktop-documents.json and merged back on
-// the next open until the user clears it.
+// 文本来自 core 的 readDocument（本地解析/OCR）；PDF 通过 core 的
+// pdf-render worker 分批渲染页面图片（默认 20 页），电子表格则用
+// ExcelJS 解析为小的表格预览。用户逐页运行的 OCR 持久化在
+// desktop-documents.json 中，并在下次打开时合并回来，直到用户清除。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -18,7 +17,7 @@ const MAX_TEXT_CHARS = 60_000
 const MAX_PAGE_TEXT_CHARS = 120_000
 const DEFAULT_PAGE_BATCH = 20
 const MAX_PAGE_BATCH = 40
-/** processPdf accepts at most 20 pages per call. */
+/** processPdf 每次调用最多接受 20 页。 */
 const PDF_RENDER_CHUNK = 20
 const MAX_SHEET_ROWS = 60
 const MAX_SHEET_COLUMNS = 30
@@ -31,8 +30,8 @@ const PDF_EXTENSION = '.pdf'
 const SHEET_EXTENSIONS = new Set(['.xlsx'])
 const CSV_EXTENSIONS = new Set(['.csv', '.tsv'])
 
-/** Extracted page text keyed by absolute path; avoids re-parsing a large PDF
- *  for every "load more" batch. */
+/** 以绝对路径为键的提取页面文本；避免为每一次「加载更多」
+ *  批次重新解析大 PDF。 */
 const pageTextCache = new Map<string, { at: number; pageTexts: Map<number, string> }>()
 
 function clampText(text: string, maxChars: number): string {
@@ -172,7 +171,7 @@ async function readSheetsWithExcel(filePath: string): Promise<DocumentSheetView[
   })
 }
 
-/** Split the `--- Page N ---` blocks emitted by readDocument. */
+/** 拆分 readDocument 输出的 `--- Page N ---` 块。 */
 export function parsePageTexts(text: string): Map<number, string> {
   const pages = new Map<number, string>()
   const segments = text.split(/^--- Page (\d+) ---$/m)
@@ -317,14 +316,14 @@ export async function openDocumentView(
     return view
   }
 
-  // Page images cover scanned PDFs, so skip the (slow) OCR fallback here.
+  // 页面图片覆盖扫描版 PDF，因此此处跳过（慢速的）OCR 回退。
   const document = await readDocument(resolved, {
     maxChars: MAX_TEXT_CHARS,
     ocr: extension === PDF_EXTENSION ? false : undefined,
   })
   view.text = clampText(document.text, MAX_TEXT_CHARS)
-  // Previews never run OCR for PDFs (page images are shown instead), so the
-  // "call again without ocr:false" hint would be misleading.
+  // 预览从不针对 PDF 运行 OCR（改为显示页面图片），所以
+  // 「不带 ocr:false 再次调用」的提示会误导。
   view.notes = document.notes.filter((note) => !/^OCR skipped for \d+ page\(s\)/.test(note))
   view.metadata = document.metadata
 
@@ -361,7 +360,7 @@ export async function openDocumentView(
   return view
 }
 
-/** Load the next PDF page-image batch without re-reading the whole document. */
+/** 加载下一批 PDF 页面图片，而不重新读取整个文档。 */
 export async function loadDocumentPages(
   input: string,
   start: number,
@@ -378,8 +377,8 @@ export async function loadDocumentPages(
   return { pages: rendered.pages, hasMore: lastLoaded < totalPages }
 }
 
-/** OCR a single rendered PDF page on demand (scanned pages have no text
- *  layer). The result is persisted so reopening the document keeps it. */
+/** 按需对单个渲染后的 PDF 页面做 OCR（扫描页没有文本
+ *  层）。结果被持久化，因此重新打开文档时仍保留。 */
 export async function ocrDocumentPage(filePath: string, page: number): Promise<string> {
   const resolved = path.resolve(filePath)
   const result = await processPdf(resolved, {

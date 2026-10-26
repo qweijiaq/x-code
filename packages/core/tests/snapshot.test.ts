@@ -1,24 +1,22 @@
-// Tests for the /rewind feature: content-addressed snapshot store +
-// session-jsonl persistence + hydrate path.
+// /rewind 功能的测试：内容寻址的快照存储 +
+// session-jsonl 持久化 + hydrate 路径。
 //
-// What we care about (and what would actually break for users):
+// 我们关心的（也是真正会破坏用户体验的）：
 //
-//   1. Roundtrip: createCheckpoint → mutate → restore. The file content the
-//      user sees afterward IS the pre-mutation content. This is the whole
-//      point — if it doesn't hold, rewind is broken.
-//   2. Dedup: identical content across two checkpoints occupies one blob on
-//      disk. Without this, a 100-checkpoint cap could blow up to gigabytes.
-//   3. After-checkpoint deletion: a file the agent CREATED after the
-//      checkpoint must be unlinked on rewind. Otherwise "go back to before
-//      I asked you to make X" leaves X on disk.
-//   4. Absent / skip: files marked absent are re-deleted; files marked skip
-//      (oversize, unreadable) are left alone. The skip semantics are the
-//      safety valve — never silently delete a file we couldn't capture.
-//   5. Persistence: appendCheckpoint → loadSession → hydrateLoopState gives
-//      back the same checkpoint list. Without this, /rewind silently breaks
-//      across /resume.
-//   6. Compact-boundary semantics: pre-boundary checkpoints disappear on
-//      load (their messageCount anchors are invalid after compaction).
+//   1. 往返：createCheckpoint → mutate → restore。用户事后看到的文件内容
+//      就是变更前的内容。这是整个功能的要点——如果这条不成立，
+//      rewind 就坏了。
+//   2. 去重：两个 checkpoint 中相同的内容在磁盘上只占一个 blob。
+//      没有这一点，100 个 checkpoint 的上限可能膨胀到数 GB。
+//   3. checkpoint 之后的删除：agent 在 checkpoint 之后创建的文件必须在
+//      rewind 时被 unlink。否则“回到我让你创建 X 之前”会把 X 留在磁盘上。
+//   4. 缺席 / 跳过：标记为缺席的文件会被再次删除；标记为跳过（超大、
+//      不可读）的文件则保持原样。skip 语义是安全阀——绝不静默删除
+//      我们未能捕获的文件。
+//   5. 持久化：appendCheckpoint → loadSession → hydrateLoopState 返回相同的
+//      checkpoint 列表。没有这一点，/rewind 会在跨 /resume 时静默失效。
+//   6. 压缩边界语义：边界之前的 checkpoint 在加载时消失（它们的
+//      messageCount 锚点在压缩后无效）。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
@@ -45,15 +43,15 @@ import {
 } from '../src/agent/snapshot.js'
 import { XCODE_DIR } from '../src/utils.js'
 
-// ── Setup ───────────────────────────────────────────────────────────────
+// ── 准备 ───────────────────────────────────────────────────────────────
 
 let tempDir: string
 let originalCwd: string
 
 beforeEach(() => {
-  // chdir into a fresh tempdir so session-store writes (which use process.cwd())
-  // and our explicit-cwd snapshot calls land in the same isolated tree. Matches
-  // the pattern in session-store.test.ts.
+  // chdir 到一个全新临时目录，让 session-store 的写入（使用 process.cwd()）
+  // 和我们显式指定 cwd 的快照调用落在同一棵隔离目录树里。与
+  // session-store.test.ts 中的模式一致。
   tempDir = mkdtempSync(path.join(tmpdir(), 'xc-snapshot-'))
   originalCwd = process.cwd()
   process.chdir(tempDir)
@@ -64,7 +62,7 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true })
 })
 
-// ── Helpers ─────────────────────────────────────────────────────────────
+// ── 辅助函数 ─────────────────────────────────────────────────────────────
 
 async function writeWorkfile(rel: string, content: string): Promise<string> {
   const abs = path.join(tempDir, rel)
@@ -86,7 +84,7 @@ async function lsHistory(sid: string, sub: 'blobs' | 'checkpoints'): Promise<str
   }
 }
 
-// ── Snapshot core ───────────────────────────────────────────────────────
+// ── 快照核心 ───────────────────────────────────────────────────────
 
 describe('snapshot: roundtrip', () => {
   it('restores file content captured at the checkpoint', async () => {
@@ -134,7 +132,7 @@ describe('snapshot: roundtrip', () => {
 
   it('records the entry on state.checkpoints with the correct messageCount', async () => {
     const state = createLoopState()
-    // Simulate the agentLoop call site: messages.push then createCheckpoint.
+    // 模拟 agentLoop 的调用点：先 messages.push 再 createCheckpoint。
     state.messages.push({ role: 'user', content: 'hello' })
     const ckpt = await createCheckpoint(state, 'hello', tempDir)
     expect(ckpt).not.toBeNull()
@@ -253,13 +251,13 @@ describe('snapshot: content-addressed dedup', () => {
 describe('snapshot: after-checkpoint deletion', () => {
   it('unlinks a file that was created after the checkpoint', async () => {
     const state = createLoopState()
-    // ckpt 1 taken with empty filesModified — represents "the world before
-    // any agent edits in this session".
+    // ckpt 1 在 filesModified 为空时建立 —— 代表“本会话中 agent 尚未
+    // 做任何编辑”的世界。
     const ckpt1 = await createCheckpoint(state, 'm1', tempDir)
     expect(ckpt1).not.toBeNull()
 
-    // The mutation pipeline records that this path was truly absent before
-    // the first write, then tracks the successful creation.
+    // 变更流水线先记录该路径在首次写入前确实缺席，
+    // 再跟踪这次成功创建。
     const newfile = path.join(tempDir, 'newfile.ts')
     await captureFileBeforeMutation(state, newfile, tempDir)
     await writeWorkfile('newfile.ts', 'created later')
@@ -415,19 +413,19 @@ describe('snapshot: first-mutation origins', () => {
 describe('snapshot: absent handling', () => {
   it('recreates "absent at snapshot" by deleting the file on restore', async () => {
     const state = createLoopState()
-    // Track a file that doesn't exist when the checkpoint is taken.
+    // 跟踪一个在建立 checkpoint 时尚不存在的文件。
     const ghost = path.join(tempDir, 'ghost.ts')
     state.filesModified.add(ghost)
 
     const ckpt = await createCheckpoint(state, 'm1', tempDir)
     expect(ckpt).not.toBeNull()
 
-    // Caller creates it later.
+    // 调用方之后才创建它。
     await writeWorkfile('ghost.ts', 'now exists')
     expect(existsSync(ghost)).toBe(true)
 
     await restoreCheckpoint(state, ckpt!.ckptId, tempDir)
-    // Manifest said absent → restore re-asserts absent → file unlinked.
+    // manifest 说缺席 → restore 重新断言缺席 → 文件被 unlink。
     expect(existsSync(ghost)).toBe(false)
   })
 })
@@ -436,8 +434,8 @@ describe('snapshot: oversize / skip', () => {
   it('does not blob oversized files, and leaves them alone on restore', async () => {
     const state = createLoopState()
     const big = path.join(tempDir, 'big.bin')
-    // Sparse file slightly above the 10MB cap. truncate() is instant on most
-    // FSes — we don't want to allocate 10MB in RAM just to test the boundary.
+    // 稀疏文件略高于 10MB 上限。truncate() 在大多数文件系统上是瞬时的——
+    // 我们不想仅仅为了测试边界就在内存里分配 10MB。
     const fh = await open(big, 'w')
     await fh.truncate(11 * 1024 * 1024)
     await fh.close()
@@ -445,14 +443,14 @@ describe('snapshot: oversize / skip', () => {
 
     const ckpt = await createCheckpoint(state, 'm1', tempDir)
     expect(ckpt).not.toBeNull()
-    // Oversize → no blob written.
+    // 超大 → 不写 blob。
     expect(await lsHistory(state.sessionId, 'blobs')).toHaveLength(0)
 
-    // Mutate AFTER the checkpoint, then restore.
+    // 在 checkpoint 之后变更，再 restore。
     await writeFile(big, 'now small')
     const ok = await restoreCheckpoint(state, ckpt!.ckptId, tempDir)
     expect(ok).toBe(true)
-    // Skip semantics: we couldn't capture it, so we won't undo it.
+    // skip 语义：我们没能捕获它，所以也不会撤销它。
     expect(await readFile(big, 'utf-8')).toBe('now small')
   })
 })
@@ -473,7 +471,7 @@ describe('snapshot: post-restore bookkeeping', () => {
     await restoreCheckpoint(state, c1!.ckptId, tempDir)
     expect(state.checkpoints).toHaveLength(1)
     expect(state.checkpoints[0]!.ckptId).toBe(c1!.ckptId)
-    // Manifests on disk should also have been trimmed.
+    // 磁盘上的 manifest 也应已被裁剪。
     expect(await lsHistory(state.sessionId, 'checkpoints')).toHaveLength(1)
   })
 
@@ -488,17 +486,17 @@ describe('snapshot: post-restore bookkeeping', () => {
     expect(await lsHistory(state.sessionId, 'blobs')).toHaveLength(2)
 
     await restoreCheckpoint(state, c1!.ckptId, tempDir)
-    // The second blob is now orphaned → GC unlinks it; only v1's blob remains.
+    // 第二个 blob 现在成了孤儿 → GC 把它 unlink；只剩 v1 的 blob。
     expect(await lsHistory(state.sessionId, 'blobs')).toHaveLength(1)
   })
 })
 
-// ── Session-store integration ──────────────────────────────────────────
+// ── 会话存储集成 ──────────────────────────────────────────
 //
-// These cover the jsonl persistence layer that lets /rewind survive /resume.
-// They're not "unit tests of session-store" (that's session-store.test.ts) —
-// they're specifically the end-to-end contract appendCheckpoint → loadSession
-// → hydrateLoopState that the picker depends on.
+// 这些覆盖 jsonl 持久化层，让 /rewind 能跨 /resume 存活。
+// 它们不是“session-store 的单元测试”（那是 session-store.test.ts）——
+// 而是 picker 所依赖的端到端契约 appendCheckpoint → loadSession
+// → hydrateLoopState。
 
 describe('rewind persistence: appendCheckpoint + loadSession roundtrip', () => {
   it('checkpoints written before any compact-boundary survive load', async () => {
@@ -517,17 +515,16 @@ describe('rewind persistence: appendCheckpoint + loadSession roundtrip', () => {
     expect(loaded!.checkpoints).toHaveLength(1)
     expect(loaded!.checkpoints[0]!.ckptId).toBe(ckpt!.ckptId)
 
-    // And hydrate carries them onto the live state.
+    // 而 hydrate 会把它们带到活的状态上。
     const hydrated = hydrateLoopState(loaded!)
     expect(hydrated.checkpoints).toHaveLength(1)
     expect(hydrated.checkpoints[0]!.ckptId).toBe(ckpt!.ckptId)
   })
 
   it('checkpoints before a compact-boundary are dropped on load', async () => {
-    // Why this matters: a pre-boundary checkpoint's `messageCount` anchor
-    // points into the COMPACTED-OUT message range, so "rewind to here" is
-    // meaningless. The loader has to drop them, matching the in-memory
-    // clearing that markBoundaryAndReflush does.
+    // 为什么重要：边界之前 checkpoint 的 `messageCount` 锚点指向
+    // 已被压缩掉的消息区间，因此“rewind 到这里”没有意义。加载器必须
+    // 丢弃它们，与 markBoundaryAndReflush 所做的内存内清理一致。
     const state = createLoopState()
     state.taskSlug = 'compact-test'
     state.messages.push({ role: 'user', content: 'before' })
@@ -537,10 +534,9 @@ describe('rewind persistence: appendCheckpoint + loadSession roundtrip', () => {
     const pre = await createCheckpoint(state, 'before', tempDir)
     await appendCheckpoint(state, pre!)
 
-    // Simulate light compaction: shrink messages and write a boundary +
-    // reflush. markBoundaryAndReflush clears state.checkpoints in memory,
-    // and the boundary line on disk causes the loader to drop the pre
-    // entry as well.
+    // 模拟轻度压缩：收缩 messages，写入边界 + 重新 flush。
+    // markBoundaryAndReflush 会在内存中清空 state.checkpoints，
+    // 磁盘上的边界行让加载器同样丢弃 pre 条目。
     state.messages = []
     state.messages.push({ role: 'user', content: 'after' })
     await markBoundaryAndReflush(state)
@@ -551,7 +547,7 @@ describe('rewind persistence: appendCheckpoint + loadSession roundtrip', () => {
 
     const loaded = await loadSession(getSessionFilePath(state, tempDir))
     expect(loaded).not.toBeNull()
-    // Only the post-boundary checkpoint should be visible.
+    // 只有边界之后的 checkpoint 应该可见。
     expect(loaded!.checkpoints).toHaveLength(1)
     expect(loaded!.checkpoints[0]!.ckptId).toBe(post!.ckptId)
   })

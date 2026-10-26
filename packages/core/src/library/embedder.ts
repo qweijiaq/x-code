@@ -1,9 +1,8 @@
-// @x-code-cli/core — Optional local embedding backend.
+// @x-code-cli/core — 可选的本地嵌入后端。
 //
-// Semantic search uses BGE-small-zh-v1.5 through transformers.js when the
-// optional package is installed. Loading the model downloads it once into the
-// transformers cache (~100 MB). When the package or model is unavailable the
-// library still works with keyword search; callers check the returned null.
+// 安装可选包后，语义搜索通过 transformers.js 使用 BGE-small-zh-v1.5。
+// 加载模型时会把模型下载一次到 transformers 缓存（约 100 MB）。
+// 包或模型不可用时，库仍能用关键词检索工作；调用方检查返回的 null。
 export const EMBEDDING_DIMENSIONS = 512
 const MODEL_ID = 'Xenova/bge-small-zh-v1.5'
 const RETRY_COOLDOWN_MS = 5 * 60_000
@@ -29,8 +28,8 @@ let extractor: FeaturePipeline | null = null
 let lastError: string | null = null
 let lastAttempt = 0
 
-// A non-literal dynamic import keeps bundlers and tsc from requiring the
-// optional package at build time.
+// 非字面的动态 import 可让打包器和 tsc 不在构建时
+// 要求这个可选包。
 const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<unknown>
 
 async function loadBackend(): Promise<TransformersModule | null> {
@@ -43,7 +42,7 @@ async function loadBackend(): Promise<TransformersModule | null> {
         return backend
       }
     } catch {
-      // Try the next package name.
+      // 尝试下一个包名。
     }
   }
   backend = null
@@ -88,8 +87,8 @@ export async function embedderStatus(): Promise<EmbedderStatus> {
   }
 }
 
-/** Embed texts with CLS pooling + L2 normalisation (BGE convention).
- *  Returns null when the backend or model is unavailable. */
+/** 用 CLS 池化 + L2 归一化对文本做嵌入（BGE 约定）。
+ *  后端或模型不可用时返回 null。 */
 export async function embedTexts(texts: string[]): Promise<Float32Array[] | null> {
   if (texts.length === 0) return []
   const pipeline = await ensureExtractor()

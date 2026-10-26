@@ -1,101 +1,92 @@
-// @x-code-cli/cli — Platform-aware Unicode glyph fallbacks.
+// @x-code-cli/cli — 平台感知的 Unicode 字形回退。
 //
-// Legacy ConHost (cmd.exe / Windows PowerShell host outside Windows Terminal)
-// defaults to fonts (Lucida Console, Consolas, SimSun, NSimSun, MS Gothic)
-// that lack many Unicode glyphs outside the CP437 / Latin-1 Supplement range.
-// Characters like ●, ›, ⎿, ✢, ✶, ✓, ◼, •, ▎ either render as
-// missing-glyph boxes (□) or at incorrect widths, producing visual artifacts
-// the user described as "ugly" / "broken".
+// 旧版 ConHost（cmd.exe / Windows Terminal 之外的 Windows PowerShell 宿主）
+// 默认字体（Lucida Console、Consolas、SimSun、NSimSun、MS Gothic）缺少
+// CP437 / Latin-1 Supplement 范围之外的许多 Unicode 字形。像 ●、›、⎿、
+// ✢、✶、✓、◼、•、▎ 这类字符要么渲染成缺字方框（□），要么宽度不对，
+// 产生用户描述的「难看」/「破碎」的视觉伪影。
 //
-// This module centralises ALL decorative Unicode used in the TUI behind a
-// capability-detection gate. Every rendering path (ChatInput cell buffer,
-// stdout-writer scrollback, render-markdown, AppHeader) imports glyphs from
-// here instead of hard-coding literals.
+// 本模块把 TUI 中用到的所有装饰性 Unicode 统一收口到一个能力检测闸门后面。
+// 每条渲染路径（ChatInput 单元格缓冲、stdout-writer 滚动区、render-markdown、
+// AppHeader）都从这里导入字形，而不是硬编码字面量。
 //
-// Detection logic mirrors the spinner ASCII fallback that already existed
-// in ChatInput.tsx: WT_SESSION → Windows Terminal (Cascadia Mono, full
-// Unicode); TERM_PROGRAM=vscode → VSCode integrated terminal; neither on
-// win32 → legacy ConHost. Non-Windows platforms always get rich glyphs.
+// 检测逻辑与 ChatInput.tsx 里已有的 spinner ASCII 回退一致：WT_SESSION →
+// Windows Terminal（Cascadia Mono，完整 Unicode）；TERM_PROGRAM=vscode →
+// VSCode 集成终端；win32 上两者都没有 → 旧版 ConHost。非 Windows 平台
+// 始终使用完整字形。
 
-/** True when the terminal is a legacy ConHost that can't reliably render
- *  Unicode beyond CP437 / Latin-1 Supplement (U+0000–U+00FF) and the
- *  Box Drawing block (U+2500–U+257F). */
+/** 当终端是无法可靠渲染 CP437 / Latin-1 Supplement（U+0000–U+00FF）和
+ *  制表符块（U+2500–U+257F）之外 Unicode 的旧版 ConHost 时为 true。 */
 const IS_LEGACY_TERMINAL =
   process.platform === 'win32' && !process.env.WT_SESSION && process.env.TERM_PROGRAM !== 'vscode'
 
-// ── Glyph table ─────────────────────────────────────────────────────────
+// ── 字形表 ─────────────────────────────────────────────────────────
 //
-// Each export pair: `GLYPH_NAME` = rich Unicode, fallback = ASCII/Latin-1.
-// Consumers import the name and get the right variant at module load time.
+// 每对导出：`GLYPH_NAME` = 完整 Unicode，回退 = ASCII/Latin-1。
+// 使用者导入该名字，模块加载时即得到正确的变体。
 
-/** "Current selection" radio marker in picker dialogs: `●` (U+25CF) → `*` */
+/** 选择器对话框中的「当前选中」单选标记：`●` (U+25CF) → `*` */
 export const GLYPH_BULLET = IS_LEGACY_TERMINAL ? '*' : '●'
 
-/** Row-leading status bullet (tool calls, collapsed read groups, peer
- *  messages) in scrollback and live frames: `•` (U+2022) → `*`. Half the
- *  visual size of GLYPH_BULLET — the full-size `●` read as oversized next
- *  to single-line tool rows. U+2022 is in CP437/Windows-1252 so even the
- *  legacy ConHost fonts carry it; the `*` fallback stays for consistency
- *  with the rest of the table. */
+/** 滚动区和实时帧中行首的状态符号（工具调用、折叠的读取组、peer 消息）：
+ *  `•` (U+2022) → `*`。视觉尺寸是 GLYPH_BULLET 的一半——全尺寸的 `●`
+ *  在单行工具行旁边显得过大。U+2022 在 CP437/Windows-1252 中，所以即使是
+ *  旧版 ConHost 字体也有它；保留 `*` 回退是为了与表格其余部分保持一致。 */
 export const GLYPH_TOOL_BULLET = IS_LEGACY_TERMINAL ? '*' : '\u2022'
 
-/** User-message prompt arrow: `›` (U+203A) → `>`. Matches the
- *  codex CLI composer prompt. */
+/** 用户消息提示箭头：`›` (U+203A) → `>`。与 codex CLI 输入框的提示符一致。 */
 export const GLYPH_PROMPT_ARROW = IS_LEGACY_TERMINAL ? '>' : '\u203a'
 
-/** Tool-result / sub-item bracket: `⎿` (U+23BF) → `|` */
+/** 工具结果 / 子项括号：`⎿` (U+23BF) → `|` */
 export const GLYPH_RESULT_BRACKET = IS_LEGACY_TERMINAL ? '|' : '⎿'
 
-/** Permission / select-option pointer: `›` (U+203A) → `>`. Matches
- *  GLYPH_PROMPT_ARROW and the codex CLI selection pointer. */
+/** 权限 / 选项选择指针：`›` (U+203A) → `>`。与 GLYPH_PROMPT_ARROW 和
+ *  codex CLI 的选择指针一致。 */
 export const GLYPH_SELECT_POINTER = IS_LEGACY_TERMINAL ? '>' : '\u203a'
 
-/** Todo completed check: `✓` (U+2713) → `+` */
+/** 待办已完成勾选：`✓` (U+2713) → `+` */
 export const GLYPH_TODO_CHECK = IS_LEGACY_TERMINAL ? '+' : '\u2713'
 
-/** Todo in-progress filled square: `◼` (U+25FC) → `#` */
+/** 待办进行中的实心方块：`◼` (U+25FC) → `#` */
 export const GLYPH_TODO_IN_PROGRESS = IS_LEGACY_TERMINAL ? '#' : '\u25fc'
 
-/** Todo pending hollow square: `◻` (U+25FB) → `-` */
+/** 待办待处理空心方块：`◻` (U+25FB) → `-` */
 export const GLYPH_TODO_PENDING = IS_LEGACY_TERMINAL ? '-' : '\u25fb'
 
-/** Todo panel corner bracket: `⎿` (U+23BF) → `|` (same as result bracket) */
+/** 待办面板角落括号：`⎿` (U+23BF) → `|`（与结果括号相同） */
 export const GLYPH_TODO_BRACKET = IS_LEGACY_TERMINAL ? '|' : '\u23bf'
 
-/** Blockquote left bar: `▎` (U+258E) → `|` */
+/** 引用左侧竖条：`▎` (U+258E) → `|` */
 export const GLYPH_BLOCKQUOTE_BAR = IS_LEGACY_TERMINAL ? '|' : '\u258e'
 
-/** Unordered list bullet: `•` (U+2022) → `-` */
+/** 无序列表符号：`•` (U+2022) → `-` */
 export const GLYPH_LIST_BULLET = IS_LEGACY_TERMINAL ? '-' : '\u2022'
 
-/** Header separator pipe: `│` (U+2502) → `|` */
+/** 头部隔断竖线：`│` (U+2502) → `|` */
 export const GLYPH_HEADER_PIPE = IS_LEGACY_TERMINAL ? '|' : '\u2502'
 
-/** Fork lineage arrow in session pickers: `↳` (U+21B3) → `->` */
+/** 会话选择器中的 fork 谱系箭头：`↳` (U+21B3) → `->` */
 export const GLYPH_FORK_ARROW = IS_LEGACY_TERMINAL ? '->' : '\u21b3'
 
-/** Ellipsis: `…` (U+2026) — present in Windows-1252 and all ConHost fonts,
- *  no fallback needed. Exported for consistency so consumers don't hardcode
- *  the literal, but the value is the same on every platform. */
+/** 省略号：`…` (U+2026)——Windows-1252 和所有 ConHost 字体都有它，
+ *  无需回退。导出仅为保持一致，避免使用者硬编码字面量；该值在各平台相同。 */
 export const GLYPH_ELLIPSIS = '\u2026'
 
-// Spinner frames — already had a partial fallback in ChatInput.tsx, now
-// centralised here. ConHost's default fonts lack U+2722–U+273D (dingbats).
+// Spinner 帧——ChatInput.tsx 里原本就有一份部分回退，现在收口到这里。
+// ConHost 默认字体缺少 U+2722–U+273D（dingbats 装饰符号）。
 const SPINNER_BASE_RICH = ['·', '✢', '*', '✶', '✻', '✽']
 const SPINNER_BASE_ASCII = ['·', ':', '+', '*', '+', ':']
 const BASE = IS_LEGACY_TERMINAL ? SPINNER_BASE_ASCII : SPINNER_BASE_RICH
 
-/** Full spinner frame sequence (forward + reversed for breathe cycle). */
+/** 完整 spinner 帧序列（正向 + 反向，用于呼吸循环）。 */
 export const SPINNER_FRAMES = [...BASE, ...[...BASE].reverse()]
 
-// ── Box-drawing characters (tables in render-markdown) ──────────────────
+// ── 制表符（render-markdown 中的表格）──────────────────
 //
-// The light box-drawing range U+2500–U+257F is present in every ConHost
-// font (Lucida Console, Consolas, SimSun, all CJK fallbacks) — they're
-// part of CP437, the original IBM PC character set. Same for the double-
-// line range U+2550–U+256C used in AppHeader's logo. These do NOT need
-// fallbacks.
+// 细制表符范围 U+2500–U+257F 在所有 ConHost 字体（Lucida Console、
+// Consolas、SimSun 及全部 CJK 回退字体）中都存在——它们是 CP437（最初的
+// IBM PC 字符集）的一部分。AppHeader logo 用的双线范围 U+2550–U+256C
+// 同理。这些字符不需要回退。
 //
-// The horizontal rule character `─` (U+2500) and table chars `┌┐└┘├┤┬┴┼│`
-// are all in this safe range. No exports needed — they render correctly
-// on every terminal we target.
+// 水平线字符 `─` (U+2500) 和表格字符 `┌┐└┘├┤┬┴┼│` 都在这个安全范围内。
+// 无需导出——它们在我们支持的所有终端上都能正确渲染。

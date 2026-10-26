@@ -1,4 +1,4 @@
-// @x-code-cli/core — askUser tool (interactive question, no execute — handled via callback)
+// @x-code-cli/core — askUser 工具（交互式提问，无 execute —— 通过回调处理）
 import { tool } from 'ai'
 
 import { z } from 'zod'
@@ -19,5 +19,5 @@ export const askUser = tool({
       .max(4)
       .describe('Two to four mutually exclusive choices; do not add Other.'),
   }),
-  // No execute — handled through callback to trigger UI rendering
+  // 无 execute —— 通过回调触发 UI 渲染来处理
 })

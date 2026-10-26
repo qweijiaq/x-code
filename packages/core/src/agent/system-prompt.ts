@@ -1,4 +1,4 @@
-// @x-code-cli/core — System Prompt management
+// @x-code-cli/core — 系统提示词管理
 import { getShellProvider } from '../tools/shell-provider.js'
 
 const BASE_SYSTEM_PROMPT = `You are X-Code CLI, an AI coding assistant running in the user's terminal, powered by {model}. If asked about your identity or model, state those facts and do not invent training, architecture, or version details.
@@ -55,8 +55,7 @@ const MEMORY_RULES = `
 - Never access the managed memory store with general file or shell tools unless the user explicitly asks to diagnose memory storage.
 - Do not narrate internal memory processing; /memory commands are the diagnostic surface.`
 
-/** Byte-stable mode overlay; tool visibility and path checks enforce its
- *  safety boundary in code. */
+/** 字节稳定的模式叠加层；工具可见性与路径检查在代码中强制执行其安全边界。 */
 const PLAN_MODE_OVERLAY = `
 
 ## Plan Mode
@@ -77,9 +76,8 @@ The UI adds "Chat about this" and "Skip interview and plan immediately" to askUs
 
 End each planning turn with askUser when information is missing, or exitPlanMode when the plan is ready. askUser never approves or exits Plan mode; exitPlanMode is the only approval path.`
 
-/** Build a focused system prompt for a sub-agent invocation.
- *  Shorter than the parent prompt — no plan-mode overlay, no independent memory
- *  guidelines, no response-format rules. Just role + environment + contract. */
+/** 为一次子 agent 调用构建聚焦的系统提示词。比父提示词短——没有 plan 模式叠加层、
+ *  没有独立记忆指南、没有响应格式规则。只有角色 + 环境 + 契约。 */
 export function buildSubAgentSystemPrompt(options: {
   agentPrompt: string
   knowledgeContext: string
@@ -110,30 +108,26 @@ ${options.knowledgeContext || '(none)'}
 - IMPORTANT: You MUST NOT use any emojis, icons, or special Unicode symbols in your responses.`
 }
 
-/** Describes one MCP tool well enough for the system prompt. The
- *  description is truncated to ~200 chars upstream so it doesn't bloat
- *  the prompt — overly verbose server descriptions are a real problem
- *  in the wild. */
+/** 描述一个 MCP 工具，程度足以用于系统提示词。描述在上游被截断到约 200 字符，
+ *  以免提示词臃肿——现实中服务器描述过于啰嗦是个真实存在的问题。 */
 export interface SystemPromptMcpTool {
   callableName: string
   serverName: string
   description: string
 }
 
-/** One deferred tool, listed by NAME ONLY in the `## Deferred Tools` block.
- *  No description — the whole point is to keep the up-front cost to just the
- *  names; the model loads the real schema (and description) via toolSearch. */
+/** 一个延迟工具，在 `## Deferred Tools` 块中仅按名称列出。不带描述——
+ *  目的就是把前期成本压到只剩名字；模型通过 toolSearch 加载真实 schema（和描述）。 */
 export interface SystemPromptDeferredTool {
   name: string
   serverName?: string
   source: 'builtin' | 'mcp'
 }
 
-/** Format the skill guidance block. Sessions without registered skills
- *  receive no skill instructions.
+/** 格式化 skill 指导块。未注册 skill 的会话不会收到 skill 指令。
  *
- *  Exported for the context-composition estimator: the CLI recomputes this
- *  exact block to split `systemPromptCache` into per-category token counts. */
+ *  导出给上下文构成估算器：CLI 会重算这个一模一样的块，
+ *  把 `systemPromptCache` 拆成按类别的 token 计数。 */
 export function formatSkillCapabilities(skills: readonly { name: string; description: string }[] | undefined): string {
   const installHint =
     'For skill installation, prefer `/skill install`; a shell may download the raw file directly, but never reconstruct `SKILL.md` with `webFetch + writeFile` because that can corrupt YAML frontmatter. After a shell installation, run `/skill refresh` or restart `xc` before activation.'
@@ -153,17 +147,14 @@ export function formatSkillCapabilities(skills: readonly { name: string; descrip
   return lines.join('\n')
 }
 
-/** Format the optional MCP tools block. Returns "" when no tools AND
- *  no registry are passed, so the byte layout of BASE_SYSTEM_PROMPT
- *  after substitution exactly matches the pre-MCP version — preserves
- *  prefix-cache hits for sessions without any MCP configuration.
+/** 格式化可选的 MCP 工具块。未传任何工具且未传 registry 时返回 ""，
+ *  这样替换后 BASE_SYSTEM_PROMPT 的字节布局与 MCP 之前的版本完全一致——
+ *  从而保住无任何 MCP 配置会话的前缀缓存命中。
  *
- *  When MCP is active the block always lists the two built-in
- *  resource tools (listMcpResources / readMcpResource) at the top
- *  even if no server-specific tools exist — because the resource
- *  tools only get registered when MCP is active, so their advertising
- *  must travel with this same block. Exported for the context-composition
- *  estimator (same recompute-and-subtract pattern as formatSkillCapabilities). */
+ *  当 MCP 激活时，即便没有服务器专属工具，该块也总会在顶部列出两个内置
+ *  资源工具（listMcpResources / readMcpResource）——因为资源工具只在 MCP 激活时
+ *  才注册，所以它们的广告必须随同一个块一起出现。导出给上下文构成估算器
+ *  （与 formatSkillCapabilities 相同的重算再相减模式）。 */
 export function formatMcpCapabilities(mcpTools: readonly SystemPromptMcpTool[] | undefined): string {
   if (mcpTools === undefined) return ''
 
@@ -180,8 +171,7 @@ export function formatMcpCapabilities(mcpTools: readonly SystemPromptMcpTool[] |
     return lines.join('\n')
   }
 
-  // Group by server for readability. Within a group, preserve incoming
-  // order (the registry hands them out in a stable order).
+  // 按服务器分组以便阅读。组内保留传入顺序（registry 以稳定顺序提供它们）。
   const byServer = new Map<string, SystemPromptMcpTool[]>()
   for (const t of mcpTools) {
     const list = byServer.get(t.serverName) ?? []
@@ -198,13 +188,11 @@ export function formatMcpCapabilities(mcpTools: readonly SystemPromptMcpTool[] |
   return lines.join('\n')
 }
 
-/** Format the `## Deferred Tools` block (top-level agent only). Lists the
- *  NAMES of every deferred tool (non-core built-ins + all MCP tools), grouped
- *  by source, plus instructions to load them via `toolSearch`. Returns "" when
- *  `deferredTools` is undefined (sub-agents / no deferral) so the byte layout
- *  matches the non-deferred shape. The list is fixed at boot, so the block is
- *  byte-stable across turns — a prerequisite for prefix caching. Exported for
- *  the context-composition estimator. */
+/** 格式化 `## Deferred Tools` 块（仅顶层 agent）。按来源分组列出每个延迟工具
+ *  （非核心内置 + 全部 MCP 工具）的名称，并附上通过 `toolSearch` 加载它们的指令。
+ *  当 `deferredTools` 为 undefined（子 agent / 无延迟）时返回 ""，使字节布局与
+ *  非延迟形态一致。该列表在启动时固定，因此该块跨轮次字节稳定——这是前缀缓存的
+ *  前提。导出给上下文构成估算器。 */
 export function formatDeferredCapabilities(deferredTools: readonly SystemPromptDeferredTool[] | undefined): string {
   if (deferredTools === undefined) return ''
 
@@ -224,7 +212,7 @@ export function formatDeferredCapabilities(deferredTools: readonly SystemPromptD
     lines.push('', '### Built-in', `- ${builtins.join(', ')}`)
   }
 
-  // Group MCP tools by server, preserving incoming (registry) order.
+  // 按服务器分组 MCP 工具，保留传入（registry）顺序。
   const byServer = new Map<string, string[]>()
   for (const t of deferredTools) {
     if (t.source !== 'mcp') continue
@@ -239,40 +227,33 @@ export function formatDeferredCapabilities(deferredTools: readonly SystemPromptD
   return lines.join('\n')
 }
 
-/** Build the full system prompt with dynamic values and optional knowledge context */
+/** 用动态值和可选知识上下文构建完整系统提示词 */
 export function buildSystemPrompt(options?: {
   knowledgeContext?: string
   modelId?: string
   isGitRepo?: boolean
-  /** When true, append the plan-mode overlay (read-only constraints +
-   *  exitPlanMode handoff). Pair with `planFilePath` so the model knows
-   *  which path is allowed for writes. */
+  /** 为 true 时追加 plan 模式叠加层（只读约束 + exitPlanMode 交接）。
+   *  与 `planFilePath` 搭配，让模型知道哪个路径被允许写入。 */
   planMode?: boolean
-  /** Absolute path to the session's plan file. Required when
-   *  `planMode === true`; ignored otherwise. */
+  /** 会话计划文件的绝对路径。`planMode === true` 时必需；否则忽略。 */
   planFilePath?: string
-  /** Optional MCP tool surface. When provided, an additional
-   *  `## MCP Tools` section is appended to `## Capabilities`. When
-   *  absent or empty, the prompt body is byte-identical to the
-   *  pre-MCP version. */
+  /** 可选的 MCP 工具面。提供时，额外的 `## MCP Tools` 段会被追加到
+   *  `## Capabilities` 之后。缺省或为空时，提示词正文与 MCP 之前的版本字节一致。 */
   mcpTools?: readonly SystemPromptMcpTool[]
-  /** Optional deferred-tool surface (top-level agent only). When provided, a
-   *  `## Deferred Tools` section listing tool NAMES is appended in place of
-   *  the `## MCP Tools` block, and the model loads each tool's real schema on
-   *  demand via `toolSearch`. Mutually exclusive with `mcpTools` in practice
-   *  (deferral replaces full injection). */
+  /** 可选的延迟工具面（仅顶层 agent）。提供时，会在 `## MCP Tools` 块的位置
+   *  追加一个列出工具名称的 `## Deferred Tools` 段，模型通过 `toolSearch`
+   *  按需加载每个工具的真实 schema。实践中与 `mcpTools` 互斥（延迟取代全量注入）。 */
   deferredTools?: readonly SystemPromptDeferredTool[]
-  /** Optional skill surface. When provided, an `## Available Skills`
-   *  section is appended listing each skill name + description. Absent and
-   *  empty inputs add nothing. */
+  /** 可选的 skill 面。提供时，追加一个 `## Available Skills` 段，
+   *  列出每个 skill 的名称 + 描述。缺省与空输入都不添加任何内容。 */
   skills?: readonly { name: string; description: string }[]
   hasBrowserVisualCheck?: boolean
   hasPeerTools?: boolean
   hasTaskTool?: boolean
   hasTodoTool?: boolean
   hasMemoryService?: boolean
-  /** Extra task-mode instructions appended after the knowledge context. Must
-   *  stay stable within a session (it participates in prompt caching). */
+  /** 追加在知识上下文之后的额外任务模式指令。必须在会话内保持稳定
+   *  （它参与提示词缓存）。 */
   extra?: string
 }): string {
   const shellProvider = getShellProvider()
@@ -287,9 +268,8 @@ export function buildSystemPrompt(options?: {
     .replace(/\{delegationRules\}/g, options?.hasTaskTool ? DELEGATION_RULES : '')
     .replace(/\{taskManagementRules\}/g, options?.hasTodoTool ? TASK_MANAGEMENT_RULES : '')
     .replace(/\{memoryRules\}/g, options?.hasMemoryService ? MEMORY_RULES : '')
-    // Deferred + MCP share one slot. At most one is non-empty: the top-level
-    // agent passes deferredTools (full injection replaced by name-only), and
-    // sub-agents pass mcpTools (full injection). Both undefined → "".
+    // Deferred 与 MCP 共用一个槽位。二者至多一个非空：顶层 agent 传 deferredTools
+    // （全量注入被仅名称替代），子 agent 传 mcpTools（全量注入）。二者皆 undefined → ""。
     .replace(
       /\{mcpCapabilities\}/g,
       formatDeferredCapabilities(options?.deferredTools) + formatMcpCapabilities(options?.mcpTools),
@@ -308,8 +288,8 @@ export function buildSystemPrompt(options?: {
     prompt += PLAN_MODE_OVERLAY.replace(/\{planFilePath\}/g, options.planFilePath ?? '<unset>')
   }
 
-  // Keep this last: English knowledge, task-mode instructions, or a plan
-  // overlay must not talk the model out of the user's language.
+  // 保持这段在最后：英文知识、任务模式指令或 plan 叠加层，
+  // 绝不能把模型从用户的语言里劝走。
   prompt += `
 
 ## Response Language (final)

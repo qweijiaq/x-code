@@ -1,11 +1,11 @@
-// @x-code-cli/core — API error classification & pattern detection
+// @x-code-cli/core — API 错误分类与模式检测
 import {
   OPENAI_CHATGPT_AUTH_RESPONSE_HEADER,
   OPENAI_CHATGPT_USAGE_LIMIT_HEADER,
 } from '../providers/openai-chatgpt-fetch.js'
 import { errorMessage } from '../utils.js'
 
-/** Substrings that signal the request exceeded the model's context window. */
+/** 表示请求超出模型上下文窗口的子串。 */
 const CONTEXT_TOO_LONG_PATTERNS = [
   'maximum context length',
   'context_length_exceeded',
@@ -16,7 +16,7 @@ const CONTEXT_TOO_LONG_PATTERNS = [
   'context window',
 ] as const
 
-/** Extract HTTP status from "status code 400", "(400)", or "400 ..." */
+/** 从 "status code 400"、" (400)" 或 "400 ..." 中提取 HTTP 状态码。 */
 export function extractHttpStatus(msg: string): number {
   const match =
     msg.match(/\bstatus(?:\s+code)?\s+(\d{3})\b/i) ??
@@ -36,9 +36,9 @@ function extractErrorStatus(err: unknown, depth = 0): number {
   return extractErrorStatus(record.lastError, depth + 1) || extractErrorStatus(record.cause, depth + 1)
 }
 
-/** True when an error message indicates the request exceeded the context window.
- *  Also matches HTTP 413, which `permanentErrorFetch` rewrites context-overflow
- *  responses to so the SDK marks them non-retryable. */
+/** 当错误消息表明请求超出上下文窗口时返回 true。
+ *  同时匹配 HTTP 413——`permanentErrorFetch` 会把上下文溢出响应改写成该状态码，
+ *  以便 SDK 将其标记为不可重试。 */
 export function isContextTooLongError(err: unknown): boolean {
   const msg = errorMessage(err)
   if (extractHttpStatus(msg) === 413) return true
@@ -48,12 +48,11 @@ export function isContextTooLongError(err: unknown): boolean {
   return false
 }
 
-/** Substrings that signal the provider rejected an image in the request.
- *  Observed phrasings: Anthropic "Could not process image", OpenAI and
- *  OpenAI-compatible "Invalid image data" / "invalid_image", Gemini
- *  "image_parse_error", plus size-limit variants. Kept image-specific so a
- *  generic 400 (bad tool input, unknown parameter) never triggers the
- *  strip-and-retry path. */
+/** 表示提供商拒绝了请求中某张图片的子串。
+ *  已观察到的措辞：Anthropic 的 "Could not process image"、OpenAI 及
+ *  OpenAI 兼容提供商的 "Invalid image data" / "invalid_image"、Gemini 的
+ *  "image_parse_error"，以及各种尺寸上限变体。刻意保持图片专用，
+ *  这样通用的 400（错误工具输入、未知参数）绝不会误触“剥离并重试”路径。 */
 const IMAGE_DATA_PATTERNS = [
   'could not process image',
   'could not process the image',
@@ -68,9 +67,9 @@ const IMAGE_DATA_PATTERNS = [
   'unsupported image',
 ] as const
 
-/** True when the provider's error says the image payload itself is bad. The
- *  agent loop uses this to strip binary parts from history and retry once —
- *  without it the rejected part poisons every subsequent request. */
+/** 当提供商的错误表明图片负载本身有问题时返回 true。
+ *  agent 循环据此从历史中剥离二进制部分并重试一次——
+ *  没有它，被拒绝的部分会毒化后续的每一次请求。 */
 export function isImageDataError(err: unknown): boolean {
   const msg = errorMessage(err).toLowerCase()
   return IMAGE_DATA_PATTERNS.some((pattern) => msg.includes(pattern))
@@ -81,14 +80,14 @@ export interface ClassifiedError {
   retryable: boolean
 }
 
-// ── Error-shape predicates ───────────────────────────────────────────────
-// Each predicate matches one provider failure mode. Keeping them as named
-// helpers keeps classifyApiError() readable and gives unit tests a clean
-// hook to assert on individual cases without driving the full classifier.
+// ── 错误形态谓词 ─────────────────────────────────────────────────────────
+// 每个谓词对应一种提供商失败模式。把它们写成具名辅助函数，
+// 能让 classifyApiError() 保持可读，也给单测提供了一个干净的断言入口，
+// 无需驱动整个分类器即可验证单个分支。
 
 function isReasoningContentError(msg: string): boolean {
-  // DeepSeek Reasoner requires reasoning_content on assistant messages
-  // during tool-call chains; both phrasings appear in the wild.
+  // DeepSeek Reasoner 要求 tool-call 链中的 assistant 消息携带 reasoning_content；
+  // 两种措辞在线上都出现过。
   return msg.includes('Missing `reasoning_content`') || msg.includes('reasoning_content')
 }
 
@@ -102,13 +101,12 @@ function isUnauthorizedError(msg: string, status: number): boolean {
 
 function isInsufficientBalanceError(msg: string, status: number): boolean {
   if (status === 402) return true
-  // Case-insensitive: providers are inconsistent — DeepSeek returns
-  // "Insufficient Balance", OpenAI uses "insufficient_quota", Moonshot
-  // returns HTTP 429 with body "is suspended due to insufficient balance,
-  // please recharge your account" (lowercase, spaced). Without the
-  // permissive match Moonshot's billing failure falls through to the 429
-  // rate-limit branch and gets retried 4 times before surfacing as a
-  // RetryError, which is the exact opposite of what the user needs.
+  // 不区分大小写：各家提供商并不一致——DeepSeek 返回
+  // "Insufficient Balance"，OpenAI 用 "insufficient_quota"，Moonshot
+  // 则返回 HTTP 429 且 body 为 "is suspended due to insufficient balance,
+  // please recharge your account"（小写、带空格）。若不做宽松匹配，
+  // Moonshot 的欠费失败会落到 429 限流分支，被重试 4 次后才以 RetryError
+  // 形式浮现，这与用户实际需要的处理方向恰好相反。
   const lower = msg.toLowerCase()
   return (
     lower.includes('insufficient balance') ||
@@ -130,7 +128,7 @@ function isMaxTokensError(msg: string): boolean {
   if (msg.includes('Invalid max_tokens') || msg.includes('Range of max_tokens') || msg.includes('InvalidParameter')) {
     return true
   }
-  // Catch-all: any "max_tokens" reference combined with an invalid/range marker.
+  // 兜底：任何 "max_tokens" 引用再叠加 invalid/range 标记。
   if (!msg.includes('max_tokens')) return false
   return /invalid|range/i.test(msg)
 }
@@ -139,10 +137,9 @@ function isServiceUnavailableError(msg: string, status: number): boolean {
   return status === 503 || msg.includes('Service Unavailable') || msg.includes('overloaded')
 }
 
-/** Provider safety/moderation filter blocked the content. permanentErrorFetch
- *  rewrites matching bodies to HTTP 422 so this fires on status alone; the
- *  pattern fallback catches cases that bypass the fetch shim (other entry
- *  points, alternate providers). */
+/** 提供商的安全/审核过滤器拦截了内容。permanentErrorFetch 会把匹配的
+ *  响应体重写为 HTTP 422，因此仅凭状态码即可命中；模式回退用于兜住
+ *  绕过该 fetch 垫片的情形（其他入口、其他提供商）。 */
 function isContentPolicyError(msg: string, status: number): boolean {
   if (status === 422) return true
   const lower = msg.toLowerCase()
@@ -157,15 +154,14 @@ function isContentPolicyError(msg: string, status: number): boolean {
   )
 }
 
-/** Model id unknown to the provider (typo / deprecated / not entitled).
- *  permanentErrorFetch normalizes matching 5xx/429 bodies to 404; the pattern
- *  list catches providers that already return 404 with a descriptive body. */
+/** 提供商不认识该模型 id（拼写错误 / 已废弃 / 无权限）。
+ *  permanentErrorFetch 会把匹配的 5xx/429 响应体归一化为 404；模式列表则用于
+ *  兜住那些已直接返回 404 且带有描述性 body 的提供商。 */
 function isModelNotFoundError(msg: string, status: number): boolean {
   if (status === 404) return true
   const lower = msg.toLowerCase()
-  // "model ... does not exist" — OpenAI inserts the model name between
-  // the two tokens, so we can't match the literal phrase; require both
-  // tokens present anywhere in the body.
+  // "model ... does not exist" —— OpenAI 会把模型名插在这两个词之间，
+  // 因此无法按字面短语匹配；改为要求这两个词在 body 中任意位置出现。
   if (lower.includes('model') && lower.includes('does not exist')) return true
   return lower.includes('model_not_found') || lower.includes('model not found') || lower.includes('unknown model')
 }
@@ -240,13 +236,11 @@ function nestedProviderErrorMessage(err: unknown, depth = 0): string | undefined
   return undefined
 }
 
-/** Provider rejection due to malformed tool_call ↔ tool_result pairing
- *  in the message history. Most often surfaces against DeepSeek with a
- *  specific wording; OpenAI and others have variants. The
- *  `repairOrphanToolCalls` sweep in `runTurn` should prevent this from
- *  happening — but if it leaks through (or for older session state),
- *  surface a directly actionable message instead of the raw provider
- *  dump. */
+/** 因消息历史中 tool_call ↔ tool_result 配对异常而被提供商拒绝。
+ *  最常见的触发方是 DeepSeek，措辞固定；OpenAI 及其他提供商各有变体。
+ *  `runTurn` 中的 `repairOrphanToolCalls` 扫描本应防止这种情况发生——
+ *  但若它漏掉了（或针对较旧的会话状态），就给出可操作的消息，
+ *  而不是直接抛出提供商的原始报错。 */
 function isMalformedToolHistoryError(msg: string): boolean {
   return (
     msg.includes("Messages with role 'tool' must be a response to a preceding message with 'tool_calls'") ||
@@ -255,25 +249,25 @@ function isMalformedToolHistoryError(msg: string): boolean {
   )
 }
 
-/** Pull a provider name out of "Anthropic API key is missing" → "Anthropic". */
+/** 从 "Anthropic API key is missing" 中提取提供商名 → "Anthropic"。 */
 function extractProviderName(msg: string): string {
   const m = msg.match(/^(\w+)\s+API key/i)
   return m ? m[1]! : 'Provider'
 }
 
 /**
- * Extract a meaningful error message from AI SDK errors. TypeValidationError
- * (thrown when a provider returns non-standard JSON — e.g. Alibaba returning
- * an error object instead of an SSE stream) embeds the real provider message
- * inside its `.value` property. We dig it out so classifyApiError can pattern-
- * match on the actual provider error, not the Zod validation wrapper.
+ * 从 AI SDK 错误中提取有意义的错误消息。TypeValidationError
+ * （当提供商返回非标准 JSON 时抛出——例如 Alibaba 返回错误对象而非 SSE 流）
+ * 会把真实提供商消息藏在它的 `.value` 属性里。我们把它挖出来，
+ * 这样 classifyApiError 就能针对真实的提供商错误做模式匹配，
+ * 而不是去匹配 Zod 校验的包装层。
  */
 function extractErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return String(err)
   const providerMessage = nestedProviderErrorMessage(err)
   if (providerMessage) return providerMessage
   const msg = err.message
-  // AI SDK TypeValidationError: the real provider error lives in `.value`
+  // AI SDK 的 TypeValidationError：真实的提供商错误存放在 `.value` 里
   const val = (err as unknown as Record<string, unknown>).value
   if (val && typeof val === 'object') {
     const inner = (val as Record<string, unknown>).error
@@ -352,7 +346,7 @@ function chatGPTUsageLimitMessage(err: unknown): string {
   return `ChatGPT subscription usage limit reached${details.length ? ` (${details.join(', ')})` : ''}.`
 }
 
-/** Classify API error and return a user-friendly recovery message. */
+/** 分类 API 错误并返回便于用户理解的恢复提示。 */
 export function classifyApiError(err: unknown): ClassifiedError {
   const msg = extractErrorMessage(err)
   const status = extractErrorStatus(err) || extractHttpStatus(msg)
@@ -456,9 +450,9 @@ export function classifyApiError(err: unknown): ClassifiedError {
       retryable: true,
     }
   }
-  // AI SDK TypeValidationError — provider returned a non-standard response
-  // (e.g. an error JSON body instead of a valid SSE stream). Surface the
-  // provider's error message rather than the raw Zod validation dump.
+  // AI SDK 的 TypeValidationError——提供商返回了非标准响应
+  // （例如返回错误 JSON body 而非合法的 SSE 流）。展示提供商的
+  // 错误消息，而不是原始 Zod 校验转储。
   if (isTypeValidationError(err, msg)) {
     return {
       message: `Provider returned an error: ${msg}. Try a different model with /model.`,

@@ -479,9 +479,8 @@ export class MemoryService {
     return configured === 'inherit' ? this.activeModelId : configured
   }
 
-  /** Shared semantic-selector invocation. attempted=false means no usable
-   *  model was configured; attempted=true with ids=null means the call
-   *  failed and the caller should apply its own local fallback. */
+  /** 共享的语义选择器调用。attempted=false 表示没有配置可用模型；
+   *  attempted=true 且 ids=null 表示调用失败，调用方应自行应用本地回退。 */
   private async runSelector(input: {
     query: RecallQuery
     manifest: ReturnType<MemoryIndex['manifest']>
@@ -627,9 +626,8 @@ export class MemoryService {
       pinnedChanged = state.memoryRecallAttachments.some((attachment) =>
         attachment.topics.some((topic) => this.index.topics.get(topic.topicId)?.metadata.pinned),
       )
-      // A missing manifest means we cannot prove the cached Core profile is
-      // unchanged. Prefer one expected cache miss over retaining stale pinned
-      // data across a damaged/pruned generation chain.
+      // manifest 缺失意味着无法证明缓存的 Core profile 未变。与其在损坏/被
+      // 剪裁的代际链上保留过时的置顶数据，宁可接受一次预期的缓存未命中。
       if (state.systemPromptCache !== null) pinnedChanged = true
     }
     if (manualEdit) {

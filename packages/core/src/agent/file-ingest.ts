@@ -1,15 +1,14 @@
-// @x-code-cli/core — Attach-file-to-message pipeline
+// @x-code-cli/core — 附件文件到消息的管道
 //
-// Given a raw user prompt that references files (via `@path` or bare
-// absolute paths), resolve each reference into an AI-SDK content part:
+// 给定一条引用了文件的原始用户提示词（通过 `@path` 或裸绝对路径），
+// 把每个引用解析成 AI-SDK 的 content part：
 //
-//   text / code  → TextPart with file body
-//   PDF          → page-ordered local text and standard page images
-//   docx/xlsx/pptx → TextPart via bounded format-specific parsers
-//   image        → image FilePart for the active vision model; otherwise local OCR
+//   text / code  → 带文件正文的 TextPart
+//   PDF          → 按页排序的本地文本和标准页面图片
+//   docx/xlsx/pptx → 通过有界的格式专用解析器产生的 TextPart
+//   image        → 给具备视觉能力的模型用的 image FilePart；否则本地 OCR
 //
-// PDF, audio, Office, and unknown binary source bytes never leave the local
-// processing pipeline.
+// PDF、音频、Office 和未知二进制源字节永不离开本地处理管道。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -58,47 +57,43 @@ import { parseXlsxInWorker } from './office-xlsx.js'
 import { MAX_PDF_SOURCE_BYTES, formatPdfReference, processPdf } from './pdf-ingest.js'
 import type { VisionUsageEvent } from './vision-fallback.js'
 
-/** A content part resolved from a file reference. Same types the AI SDK
- *  accepts in user message `content` arrays, so callers can splice these
- *  directly into a UserModelMessage. */
+/** 从一个文件引用解析出的 content part。类型与 AI SDK 在用户消息
+ *  `content` 数组中接受的一致，所以调用方可以把它们直接拼进
+ *  UserModelMessage。 */
 export type IngestedPart = TextPart | ImagePart | FilePart
 
 export { classifyFile }
 export type { FileKind }
 
-/** Paths the user pointed at, either via `@file` or a bare absolute path. */
+/** 用户指向的路径，要么通过 `@file`，要么是裸绝对路径。 */
 export interface FileReference {
-  /** Original token from the user's input (for echoing/UI). */
+  /** 来自用户输入的原始 token（用于回显 / UI）。 */
   raw: string
-  /** Resolved absolute path. */
+  /** 解析后的绝对路径。 */
   absolutePath: string
 }
 
-/** Max bytes a single inlined file can contribute to a user message before
- *  we replace its content with a help message. Picked at 256 KB to mirror
- *  Claude Code's Read-tool default — large enough for typical configs and
- *  source files, small enough that even a multi-file paste can't blow past
- *  a 1M context window.
+/** 单个内联文件在【被替换成帮助消息之前】最多能塞进用户消息的字节数。
+ *  取 256 KB 以对齐 Claude Code 的 Read-tool 默认值——对典型配置和源文件
+ *  够大，对多文件粘贴也小到不会撑爆 1M 上下文窗口。
  *
- *  Without this cap, `@really-large-file.txt` (or a bare absolute path like
- *  `D:\novels\book.txt`) silently shoves the entire file into the user
- *  message, since `buildUserContent` bypasses the readFile tool's per-call
- *  line guard. The model never gets a chance to react — the request just
- *  fails at the API with `context_length_exceeded`. With the cap, the model
- *  sees a short hint instead and can call readFile with offset/limit or
- *  grep to narrow down. */
+ *  没有这个上限的话，`@really-large-file.txt`（或像 `D:\novels\book.txt`
+ *  这样的裸绝对路径）会静默地把整个文件塞进用户消息，因为
+ *  `buildUserContent` 绕过了 readFile 工具每次调用的行守卫。模型根本没有
+ *  机会反应——请求直接在 API 处以 `context_length_exceeded` 失败。有了这个
+ *  上限，模型看到的是简短提示，可以改用带 offset/limit 的 readFile 或
+ *  grep 来缩小范围。 */
 export const MAX_ATTACHMENT_TEXT_BYTES = 1024 * 1024
 export const MAX_ATTACHMENT_MEDIA_PARTS = 10
 export const MAX_ATTACHMENT_WIRE_BYTES = 21 * 1024 * 1024
 
 export { MAX_INGEST_BYTES, MAX_IMAGE_SOURCE_BYTES, MAX_OFFICE_SOURCE_BYTES, MAX_PDF_SOURCE_BYTES }
 
-/** The human/model-facing message we substitute when an attachment is too
- *  large to inline. Mirrors Claude Code's `MaxFileReadTokenExceededError`
- *  message but adds the sub-agent escape hatch — for "summarize this whole
- *  novel" / "review this entire log" requests, chunk-by-chunk readFile
- *  iteration burns the parent context fast (each tool_result sticks around).
- *  Delegating to a sub-agent keeps only the summary in the parent. */
+/** 当附件太大无法内联时，展示给人类/模型的消息。对齐 Claude Code 的
+ *  `MaxFileReadTokenExceededError` 消息，但加上了 sub-agent 逃生通道——
+ *  对「总结整本小说」/「审查整份日志」这类请求，逐块的 readFile 迭代会
+ *  很快烧掉父上下文（每个 tool_result 都会留在原地）。委派给 sub-agent
+ *  则只把摘要留在父上下文里。 */
 function tooLargeMessage(filePath: string, sizeBytes: number, cap: number = MAX_INGEST_BYTES): string {
   return (
     `[File ${filePath} is too large to inline (${formatBytes(sizeBytes)}, ` +
@@ -132,8 +127,8 @@ function measureAttachment(parts: IngestedPart[]): AttachmentUsage {
       (total, part) => total + (part.type === 'text' ? Buffer.byteLength(part.text, 'utf-8') : 0),
       0,
     ),
-    // This is the persisted/session representation and therefore includes
-    // Base64 expansion, JSON escaping, filenames, and media-type metadata.
+    // 这是持久化/会话表示，因此包含 Base64 膨胀、JSON 转义、
+    // 文件名和媒体类型元数据。
     wireBytes: Buffer.byteLength(JSON.stringify(parts), 'utf-8'),
   }
 }
@@ -158,20 +153,16 @@ function addUsage(current: AttachmentUsage, added: AttachmentUsage): void {
 }
 
 /**
- * Extract plain-text references from a user prompt. Two syntaxes are
- * recognized:
+ * 从用户提示词中提取纯文本引用。识别两种语法：
  *
- *   1. `@path` — the `@` prefix marks an explicit attachment. Paths with
- *      whitespace may be wrapped in single or double quotes. Honors Windows
- *      (`D:\foo\bar`) and POSIX (`/etc/foo`) absolute paths.
+ *   1. `@path` —— `@` 前缀标记显式附件。含空白的路径可用单引号或双引号
+ *      包裹。认可 Windows（`D:\foo\bar`）和 POSIX（`/etc/foo`）绝对路径。
  *
- *   2. Bare absolute paths — a single non-whitespace token that looks like
- *      `C:\…`, `D:\…`, or starts with `/`, with an extension. Paths containing
- *      whitespace must be quoted. This keeps prose, routes, regex and SQL from
- *      being merged into false file references.
+ *   2. 裸绝对路径 —— 形如 `C:\…`、`D:\…`，或以 `/` 开头、带扩展名的单个
+ *      非空白 token。含空白的路径必须加引号。这能把散文、路由、正则和 SQL
+ *      挡在错误的文件引用之外。
  *
- * Duplicates are de-duplicated by absolute path so a file referenced twice
- * only gets ingested once.
+ * 重复项按绝对路径去重，所以被引用两次的文件只会被摄取一次。
  */
 function isWhitespace(value: string): boolean {
   return value === ' ' || value === '\t' || value === '\n' || value === '\r'
@@ -223,8 +214,8 @@ export function extractFileReferences(input: string): FileReference[] {
     refs.set(absolutePath, { raw, absolutePath })
   }
 
-  // Explicit mentions may quote a path containing whitespace. The boundary
-  // rule keeps email addresses and package version specifiers out.
+  // 显式提及可以用引号包裹含空白的路径。边界规则把邮箱地址和
+  // 包版本说明符挡在外面。
   for (let index = 0; index < input.length; index++) {
     if (input[index] !== '@' || !isReferenceBoundary(input, index)) continue
     const valueStart = index + 1
@@ -241,8 +232,7 @@ export function extractFileReferences(input: string): FileReference[] {
     index = Math.max(index, end - 1)
   }
 
-  // Quoted bare paths are common when a shell copies a path containing
-  // whitespace into the prompt.
+  // 当 shell 把含空白的路径复制进提示词时，带引号的裸路径很常见。
   for (let index = 0; index < input.length; index++) {
     if (!isReferenceBoundary(input, index)) continue
     const quoted = readQuotedPath(input, index)
@@ -251,8 +241,8 @@ export function extractFileReferences(input: string): FileReference[] {
     index = quoted.end - 1
   }
 
-  // Scan each token once. Besides avoiding regex backtracking on route-heavy
-  // prompts, this deliberately requires quotes for paths containing spaces.
+  // 每个 token 只扫描一次。除了避免在路由密集的提示词上出现正则回溯，
+  // 这也刻意要求含空格的路径必须加引号。
   const trailingPunctuation = new Set(['.', ',', ':', ';', '!', '?', ')', ']', '}'])
   for (let start = 0; start < input.length; ) {
     while (start < input.length && isWhitespace(input[start] ?? '')) start++
@@ -269,9 +259,8 @@ export function extractFileReferences(input: string): FileReference[] {
   return [...refs.values()]
 }
 
-/** Read a file as a numbered text block — the same format the read-file
- *  tool produces, so the model sees a consistent representation whether
- *  the file was inlined up-front or fetched on demand. */
+/** 把文件读成带行号的文本块——与 read-file 工具产出的格式一致，
+ *  这样无论文件是提前内联还是按需获取，模型看到的表示都一致。 */
 async function readTextFile(filePath: string, abortSignal?: AbortSignal): Promise<string> {
   const buffer = await readFileWithinLimit(filePath, MAX_INGEST_BYTES, abortSignal)
   const classification = await inspectFileBuffer(filePath, buffer, abortSignal)
@@ -406,7 +395,7 @@ async function extractZippedOfficeText(archive: Buffer, kind: OfficeKind, abortS
 
 export type OfficeExtractionResult = { ok: true; text: string } | { ok: false; text: string }
 
-/** Extract text from an Office document with bounded, format-specific parsers. */
+/** 用有界的格式专用解析器从 Office 文档提取文本。 */
 export async function extractOfficeTextResult(
   filePath: string,
   abortSignal?: AbortSignal,
@@ -454,18 +443,18 @@ export async function extractOfficeText(
 }
 
 /**
- * Resolve a single file reference into one or more content parts, taking
- * the active provider's multi-modal capabilities into account.
+ * 把一个文件引用解析成一个或多个 content part，并考虑当前提供商
+ * 的多模态能力。
  *
- * Contract:
- *  - Text, Office, and text-bearing PDFs always collapse to a single
- *    TextPart — cheapest path, works for every provider.
- *  - Images: image-only FilePart if the provider can see images; otherwise
- *    OCR'd TextPart annotated as a fallback.
- *  - Scanned/visual PDF pages: standard images for the active vision model,
- *    local OCR otherwise.
- *  - Missing/unreadable files return a TextPart carrying the error so the
- *    model can acknowledge the failure rather than silently ignore it.
+ * 契约：
+ *  - 文本、Office 和带文本的 PDF 总是坍缩成单个 TextPart ——
+ *    最便宜的路径，适用于所有提供商。
+ *  - 图片：若提供商能看图片，则为仅图片的 FilePart；否则返回
+ *    标注为回退的 OCR 文本 TextPart。
+ *  - 扫描/纯视觉 PDF 页：给当前视觉模型的是一张张标准图片，
+ *    否则做本地 OCR。
+ *  - 缺失/不可读的文件返回一个携带错误的 TextPart，好让模型
+ *    能确认失败，而不是静默忽略它。
  */
 export async function ingestFile(
   ref: FileReference,
@@ -529,8 +518,8 @@ export async function ingestFile(
   }
 
   if (kind === 'text') {
-    // Source size is only a cheap precheck. Line numbers, UTF conversion and
-    // the source wrapper are measured again before the result is admitted.
+    // 源文件大小只是廉价的预检。行号、UTF 转换和源文件包装会在结果
+    // 被接纳之前再次测量。
     if (stats.size > MAX_INGEST_BYTES) {
       return [{ type: 'text', text: tooLargeMessage(ref.absolutePath, stats.size) }]
     }
@@ -547,9 +536,8 @@ export async function ingestFile(
     const extraction = await extractOfficeTextResult(ref.absolutePath, abortSignal, mediaType)
     if (!extraction.ok) return [{ type: 'text', text: extraction.text }]
     const { text } = extraction
-    // Office binaries are usually much larger than their extracted text
-    // (compression + media), so check post-extraction. A book-length .docx
-    // can still exceed the cap.
+    // Office 二进制通常比提取出的文本大得多（压缩 + 媒体），所以在提取后
+    // 检查。一本长篇的 .docx 仍可能超过上限。
     const textBytes = Buffer.byteLength(text, 'utf-8')
     if (textBytes > MAX_INGEST_BYTES) {
       return [{ type: 'text', text: tooLargeMessage(ref.absolutePath, textBytes) }]
@@ -583,12 +571,11 @@ export async function ingestFile(
     return parts
   }
 
-  // Audio always stays local: only timestamped transcription text enters the
-  // model message, regardless of provider wire capabilities.
+  // 音频始终留在本地：无论提供商的线上能力如何，进入模型消息的只有
+  // 带时间戳的转录文本。
   if (kind === 'audio') {
-    // Keep repeated native notices out of the UI without discarding changing
-    // download/transcription percentages. The CLI renders these notices in a
-    // single live status line, so forwarding progress does not flood history.
+    // 把重复的原生提示挡在 UI 之外，又不丢弃变化的下载/转录百分比。
+    // CLI 在单行实时状态行里渲染这些提示，所以转发进度不会淹没历史。
     let lastNotice = ''
     const deduplicatedNotice = onNotice
       ? (msg: string) => {
@@ -615,9 +602,8 @@ export async function ingestFile(
     )
   }
 
-  // Image bytes are normalized before either model delivery or OCR. This is
-  // the shared safety gate for disguised formats, decompression bombs and
-  // provider-rejected BMP/TIFF payloads.
+  // 图片字节在送模型或 OCR 之前先归一化。这是针对伪装格式、解压炸弹
+  // 和提供商拒绝的 BMP/TIFF 负载的共享安全闸门。
   try {
     const buffer = await readFileWithinLimit(ref.absolutePath, MAX_IMAGE_SOURCE_BYTES, abortSignal)
     const effectiveMime = (await sniffImageMime(buffer)) ?? mediaType ?? 'application/octet-stream'
@@ -663,8 +649,8 @@ export async function ingestFile(
       return parts
     }
 
-    // Text-only providers receive local OCR. The file is not forwarded to a
-    // different configured provider without an explicit product-level opt-in.
+    // 纯文本提供商接收本地 OCR。没有显式的产品级 opt-in，文件不会被
+    // 转发给另一个已配置的提供商。
     const ocr = await ocrImage(compressed.data, { abortSignal })
     const ocrBytes = Buffer.byteLength(ocr, 'utf-8')
     if (ocrBytes > MAX_INGEST_BYTES) {
@@ -685,10 +671,9 @@ export async function ingestFile(
 }
 
 /**
- * Compose the content parts for a user message: original text first, then
- * one or more parts per ingested file. Returns a plain string when no
- * files were referenced, so simple prompts stay on the string fast path
- * (keeps existing provider behavior / caching semantics unchanged).
+ * 组装用户消息的 content parts：先是原文，然后每个已摄取文件一个或多个
+ * part。当没有引用任何文件时返回纯字符串，让简单提示词保持在字符串
+ * 快路径上（保持现有提供商行为 / 缓存语义不变）。
  */
 export async function buildUserContent(
   text: string,

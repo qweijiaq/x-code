@@ -23,7 +23,7 @@ export interface SubmitOptions {
   toolFilter?: AgentOptions['toolFilter']
   maxTurns?: number
   signal?: AbortSignal
-  /** Goal execution owns its submit sequence, so idle draining here would race the next goal turn. */
+  /** 目标执行拥有它自己的提交序列，所以这里的空闲排水会与下一个目标回合竞争。 */
   skipIdleDrain?: boolean
   owner?: TurnOwner
   lease?: TurnLease
@@ -38,7 +38,7 @@ export interface PendingPermission {
   toolCallId: string
   toolName: string
   input: Record<string, unknown>
-  /** Resolved MCP identity used by the permission dialog instead of the mangled tool name. */
+  /** 权限对话框使用的、已解析的 MCP 身份，而不是被混淆的工具名。 */
   mcp?: { serverName: string; rawName: string }
 }
 
@@ -55,14 +55,14 @@ export interface PendingQuestion {
   question: string
   options: { label: string; description: string; freeform?: boolean; preview?: string[] }[]
   resolve: (answer: string) => void
-  /** Value supplied when the active turn is aborted so the agent loop can unblock. */
+  /** 当活跃回合被中止时提供的值，让 agent 循环可以解除阻塞。 */
   abortAnswer: string
-  /** User-opened pickers may be dismissed; model questions must receive an explicit answer. */
+  /** 用户打开的选择器可以被关闭；模型问题必须收到一个显式回答。 */
   dismissible?: boolean
   layout?: 'compact' | 'compact-vertical'
 }
 
-/** An in-flight tool call rendered in the live UI area. */
+/** 一个正在实时 UI 区域渲染的进行中工具调用。 */
 export interface ActiveToolCall {
   id: string
   toolName: string
@@ -71,12 +71,12 @@ export interface ActiveToolCall {
   subToolHistory?: string[]
 }
 
-/** A user message queued while an agent turn is in flight. */
+/** 一条在 agent 回合进行中排队等待的用户消息。 */
 export interface QueuedMessage {
   id: string
-  /** Text rendered in the pending list and committed to scrollback. */
+  /** 在待处理列表中渲染、并提交到 scrollback 的文本。 */
   text: string
-  /** Optional content sent to the model when it differs from the display text. */
+  /** 当与显示文本不同时，发送给模型的可选内容。 */
   inject?: string
 }
 
@@ -88,36 +88,36 @@ export interface AgentState {
   permissionQueue: PendingPermission[]
   authorityRequest?: PendingAuthority | null
   pendingQuestion: PendingQuestion | null
-  /** Inputs waiting for the next tool boundary or idle drain. */
+  /** 等待下一个工具边界或空闲排水的输入。 */
   queuedMessages: QueuedMessage[]
-  /** One-shot request to restore queued text to the input after an aborted turn. */
+  /** 一次性的请求：在一个回合被中止后，把排队的文本恢复到输入框。 */
   restoredDraft: { text: string; nonce: number } | null
   usage: TokenUsage
   usageBreakdown: UsageBreakdown
   cacheMissSummary: CacheMissSummary
   error: string | null
-  /** Live model identifier, mirrored from the agent ref for UI updates. */
+  /** 实时模型标识符，从 agent ref 镜像过来用于 UI 更新。 */
   modelId: string
-  /** Live approval mode for the current session. */
+  /** 当前会话的实时审批模式。 */
   permissionMode: PermissionMode
-  /** Live checklist maintained by the model. */
+  /** 由模型维护的实时检查清单。 */
   todos: TodoItem[]
-  /** Keeps the reading status stable across consecutive read-only tool calls. */
+  /** 让读取状态在连续的只读工具调用之间保持稳定。 */
   bufferingReads: boolean
-  /** Current context-compression phase, when compression is active. */
+  /** 当前的上下文压缩阶段，当压缩处于活跃状态时。 */
   compressionLabel: string | null
-  /** Current local attachment-processing phase, including model download progress. */
+  /** 当前的本地附件处理阶段，包括模型下载进度。 */
   ingestLabel: string | null
-  /** Transient provider stream recovery status. */
+  /** 瞬时的 provider 流恢复状态。 */
   reconnectLabel: string | null
   goalStatus: GoalState | null
   goalRunnerActive: boolean
   goalVerificationActive: boolean
-  /** Per-step usage snapshots recorded after each agent-loop invocation. */
+  /** 在每次 agent 循环调用后记录的每步用量快照。 */
   stepStats: StepStats[]
-  /** Persistent transcript-derived security indicator. */
+  /** 从转录本派生的持久安全指示器。 */
   peerInfluenced?: boolean
-  /** Display-only state projected from the active shell event hub. */
+  /** 从活跃 shell 事件中心投影出来的、仅显示用的状态。 */
   backgroundTerminals: BackgroundTerminalView[]
   shellWaitStreak: ShellWaitStreak | null
 }

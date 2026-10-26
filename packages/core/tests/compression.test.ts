@@ -1,4 +1,4 @@
-// Tests for agent/compression.ts — progress callbacks and token stats
+// 测试 agent/compression.ts —— 进度回调与 token 统计
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { generateText } from 'ai'
@@ -31,7 +31,7 @@ vi.mock('../src/agent/session-store.js', () => ({
   markBoundaryAndReflush: vi.fn().mockResolvedValue(undefined),
 }))
 
-// ── Helpers ──
+// ── 辅助函数 ──
 
 function makeCallbacks(overrides: Partial<AgentCallbacks> = {}): AgentCallbacks {
   return {
@@ -55,8 +55,8 @@ function makeCallbacks(overrides: Partial<AgentCallbacks> = {}): AgentCallbacks 
 
 const fakeModel = {} as LanguageModel
 
-// Each message pair is ~10K chars → ~3.3K tokens. This ensures a
-// modest count exceeds KEEP_RECENT_TOKENS (20K) so compaction triggers.
+// 每对消息约 10K 字符 → 约 3.3K token。这确保一个适中的数量
+// 就能超过 KEEP_RECENT_TOKENS（20K），从而触发压缩。
 const PAD_SIZE = 5000
 
 function padMessages(count: number): ModelMessage[] {
@@ -87,7 +87,7 @@ describe('compressMessages', () => {
 
   it('calls generateText and returns summary + recent messages', async () => {
     vi.mocked(generateText).mockResolvedValue({ text: 'Summary of old conversation' } as any)
-    // 10 pairs × ~10K chars = ~100K chars → ~33K tokens, exceeds 20K budget
+    // 10 对 × 约 10K 字符 = 约 100K 字符 → 约 33K token，超过 20K 预算
     const msgs = padMessages(10)
     const result = await compressMessages(msgs, fakeModel)
 
@@ -223,7 +223,7 @@ describe('compressMessages', () => {
   })
 })
 
-// ── checkAndCompressContext (proactive) ──
+// ── checkAndCompressContext（主动）──
 
 describe('checkAndCompressContext', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -383,7 +383,7 @@ describe('checkAndCompressContext', () => {
   })
 })
 
-// ── handleContextTooLong (reactive) ──
+// ── handleContextTooLong（被动）──
 
 describe('handleContextTooLong', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -422,10 +422,9 @@ describe('handleContextTooLong', () => {
   })
 
   it('bails (no retry) when compression cannot shrink the kept recent messages', async () => {
-    // Anti-spin guard: tiny old history that summarizes to almost nothing, but
-    // a huge message inside the KEEP_RECENT window that compression keeps
-    // verbatim (mirrors a giant tool-result the provider rejected). Token count
-    // barely drops → retrying would loop forever → must return false.
+    // 防自旋护栏：旧历史很小、总结后几乎没有内容，但 KEEP_RECENT 窗口内
+    // 有一条压缩会原样保留的巨消息（对应被提供方拒绝的巨型 tool-result）。
+    // token 数几乎不下降 → 重试会无限循环 → 必须返回 false。
     vi.mocked(generateText).mockResolvedValue({ text: 'tiny summary' } as any)
     const state = createLoopState()
     const huge = 'z'.repeat(200_000)
@@ -437,14 +436,14 @@ describe('handleContextTooLong', () => {
       { role: 'user', content: 'e' },
       { role: 'assistant', content: 'f' },
       { role: 'user', content: 'g' },
-      { role: 'assistant', content: huge }, // kept verbatim — the unshrinkable bloat
+      { role: 'assistant', content: huge }, // 原样保留 —— 无法压缩的膨胀部分
     ]
 
     const cb = makeCallbacks()
     const result = await handleContextTooLong(state, fakeModel, cb)
 
     expect(result).toBe(false)
-    // Bailed before announcing a retry.
+    // 在宣布重试之前就退出。
     expect(cb.onContextCompressed).not.toHaveBeenCalled()
   })
 })

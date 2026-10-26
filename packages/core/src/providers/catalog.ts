@@ -1,27 +1,24 @@
-// @x-code-cli/core — Provider metadata catalog
+// @x-code-cli/core — provider 元数据目录
 //
-// Single source of truth for everything statically known about each
-// provider: env var, default model, curated /model picker entries,
-// API-key console URL, multi-endpoint options, reasoning-effort tiers.
-// Adding a provider = one PROVIDERS entry (+ a constructor branch in
-// registry.ts). The PROVIDER_* records at the bottom are derived views
-// kept byte-compatible for existing consumers.
+// 每个 provider 静态已知信息的唯一事实来源：环境变量、默认模型、
+// 精选的 /model 选择器条目、API-key 控制台 URL、多端点选项、推理强度档位。
+// 添加 provider = 一条 PROVIDERS 条目（+ registry.ts 中的一个构造函数分支）。
+// 底部的 PROVIDER_* 记录是派生视图，为既有调用方保持字节兼容。
 
-// ─── Types ───
+// ─── 类型 ───
 
 export interface ProviderModel {
-  /** Full `<provider>:<model>` id passed to AI SDK */
+  /** 传给 AI SDK 的完整 `<provider>:<model>` id */
   id: string
-  /** Short display label shown in the picker */
+  /** 选择器中显示的简短标签 */
   label: string
-  /** One-line description shown under the label */
+  /** 标签下显示的一行描述 */
   description: string
-  /** True if this specific model can natively SEE images (multimodal), not
-   *  just whether its provider's API accepts image parts. Drives the browser
-   *  agent's visual gating (modelSupportsVision) so a text-only model never
-   *  gets `--caps vision` / screenshots. Set per-model because providers mix
-   *  vision and text-only models under one id namespace (e.g. DeepSeek Flash
-   *  vs V4 Pro, Qwen-VL vs Qwen-Max, GLM-4V vs GLM-5). */
+  /** 该具体模型能否原生看图（多模态），而不只是其 provider 的 API 是否接受
+   *  图片片段。驱动浏览器 agent 的视觉把关（modelSupportsVision），使纯文本
+   *  模型永远不会获得 `--caps vision` / 截图。按模型设置是因为 provider 会在
+   *  同一 id 命名空间下混用视觉与纯文本模型（如 DeepSeek Flash 对 V4 Pro、
+   *  Qwen-VL 对 Qwen-Max、GLM-4V 对 GLM-5）。 */
   vision: boolean
 }
 
@@ -37,57 +34,51 @@ export interface ReasoningTierOption {
 }
 
 export interface ReasoningTierProfile {
-  /** Restrict this profile to matching model ids. Omit for a provider-wide profile. */
+  /** 将本档位限制为匹配的模型 id。省略则作用于整个 provider。 */
   modelPattern?: RegExp
   options: readonly ReasoningTierOption[]
-  /** Lowest valid effort for models that reject disabling reasoning. */
+  /** 对拒绝关闭推理的模型，其最低有效强度。 */
   offValue?: string
 }
 
 export interface ProviderInfo {
-  /** Provider key used in `<provider>:<model>` ids and config maps. */
+  /** 用于 `<provider>:<model>` id 和配置映射中的 provider 键。 */
   name: string
-  /** Environment variable the API key is read from (never stored on disk). */
+  /** 读取 API key 的环境变量（从不写盘）。 */
   envKey: string
-  /** Model used when this provider wins smart-default detection. */
+  /** 该 provider 在智能默认检测中胜出时使用的模型。 */
   defaultModel: string
-  /** Console page where the user can mint an API key. */
+  /** 用户可以申领 API key 的控制台页面。 */
   keyUrl: string
-  /** Hand-curated models shown in the interactive `/model` picker. Users can
-   *  still type any full id into `/model <provider>:<model>` for variants
-   *  not listed here. Vision flags reflect model FAMILY: Claude / GPT /
-   *  Gemini / Grok flagships, DeepSeek Flash, and Kimi K2.x are multimodal;
-   *  Qwen-Max / GLM text flagships and DeepSeek V4 Pro are text-only; the
-   *  dedicated *-VL / GLM-4V / *-vision-preview models see images. */
+  /** 交互式 `/model` 选择器中展示的手工精选模型。用户仍可对未在此列出的
+   *  变体，在 `/model <provider>:<model>` 中直接输入完整 id。vision 标志
+   *  反映的是模型家族：Claude / GPT / Gemini / Grok 旗舰、DeepSeek Flash、
+   *  Kimi K2.x 为多模态；Qwen-Max / GLM 文本旗舰与 DeepSeek V4 Pro 为纯文本；
+   *  专门的 *-VL / GLM-4V / *-vision-preview 模型可看图。 */
   models: readonly ProviderModel[]
-  /** Providers that serve multiple endpoints for the same API (regional
-   *  platforms, plan-specific gateways, etc.). When a user picks a model
-   *  from such a provider, the /model flow shows a picker so they can
-   *  choose the right endpoint. The chosen URL is persisted in
-   *  UserConfig.baseUrls and is the single source of truth — no env var
-   *  involved. */
+  /** 为同一 API 提供多个端点的 provider（区域平台、套餐专属网关等）。
+   *  当用户从这类 provider 选择模型时，/model 流程会弹出选择器让其选择
+   *  正确端点。所选 URL 持久化在 UserConfig.baseUrls 中，是唯一事实来源——
+   *  不涉及环境变量。 */
   baseUrlOptions?: readonly ProviderBaseUrlOption[]
-  /** Providers that expose a granular reasoning-effort knob (beyond binary
-   *  on/off). After picking a model from such a provider, /model shows a
-   *  second picker so the user can choose the effort level. The chosen
-   *  level is persisted per-model in UserConfig.modelReasoningEffort.
+  /** 暴露细粒度推理强度旋钮（超出二元的开/关）的 provider。从这类 provider
+   *  选择模型后，/model 会再弹出一个选择器让用户选择强度档位。所选档位按
+   *  模型持久化在 UserConfig.modelReasoningEffort 中。
    *
-   *  Providers with no entry here (alibaba) only support the binary
-   *  /thinking toggle — skip the tier picker.
+   *  此处无条目的 provider（alibaba）仅支持二元的 /thinking 开关——跳过
+   *  档位选择器。
    *
-   *  `modelPattern` gates each profile to the models that actually honor it:
-   *  within a provider, only some model families expose the granular knob
-   *  (e.g. thinkingLevel is Gemini 3-only, Kimi's reasoningEffort is
-   *  K3-only). Models that don't match fall back to the binary /thinking
-   *  toggle. */
+   *  `modelPattern` 把每个档位限制在实际遵循它的模型上：同一 provider 内
+   *  只有部分模型家族暴露细粒度旋钮（如 thinkingLevel 仅 Gemini 3、
+   *  Kimi 的 reasoningEffort 仅 K3）。不匹配的模型回退到二元 /thinking
+   *  开关。 */
   reasoningTiers?: readonly ReasoningTierProfile[]
 }
 
-// ─── The table ───
+// ─── 数据表 ───
 //
-// Entry order = display order in the /model picker (PROVIDER_MODELS key
-// order is observable UI). Smart-default detection uses DETECTION_ORDER
-// below instead.
+// 条目顺序 = /model 选择器中的展示顺序（PROVIDER_MODELS 的键序是可观察的
+// UI）。智能默认检测改用下方的 DETECTION_ORDER。
 
 export const PROVIDERS: readonly ProviderInfo[] = [
   {
@@ -263,7 +254,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     ],
     reasoningTiers: [
       {
-        // Flash and V4 Pro support low/high/max; medium/xhigh map to high server-side.
+        // Flash 与 V4 Pro 支持 low/high/max；medium/xhigh 在服务端映射到 high。
         modelPattern: /deepseek-(?:flash|v4)/,
         options: [
           { label: 'Low', value: 'low', description: 'Faster, less reasoning' },
@@ -574,7 +565,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     ],
     reasoningTiers: [
       {
-        // reasoning_effort is K3-only; K2.x uses the binary thinking switch.
+        // reasoning_effort 仅 K3 支持；K2.x 使用二元 thinking 开关。
         modelPattern: /kimi-k3/,
         options: [
           { label: 'Low', value: 'low', description: 'Faster, concise reasoning' },
@@ -586,7 +577,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   },
 ]
 
-// ─── Model aliases ───
+// ─── 模型别名 ───
 
 export const MODEL_ALIASES: Record<string, string> = {
   fable: 'anthropic:claude-fable-5-1',
@@ -605,10 +596,10 @@ export const MODEL_ALIASES: Record<string, string> = {
   kimi: 'moonshotai:kimi-k3',
 }
 
-// ─── Derived views (legacy shapes kept for existing consumers) ───
+// ─── 派生视图（为既有调用方保留的旧形态）───
 
-/** Smart-default detection order: first provider with a key wins. This is
- *  NOT the table/display order — deepseek deliberately probes first. */
+/** 智能默认检测顺序：第一个有 key 的 provider 胜出。这不是表格/展示顺序——
+ *  deepseek 有意排在探测首位。 */
 const DETECTION_ORDER = ['deepseek', 'anthropic', 'openai', 'alibaba', 'google', 'xai', 'zhipu', 'moonshotai'] as const
 
 export const PROVIDER_DETECTION_ORDER = DETECTION_ORDER.map((name) => {
@@ -630,9 +621,8 @@ export const PROVIDER_REASONING_PROFILES: Record<string, readonly ReasoningTierP
   PROVIDERS.filter((p) => p.reasoningTiers).map((p) => [p.name, p.reasoningTiers!]),
 )
 
-/** Legacy provider-wide view retained for public API compatibility. Internal
- * model selection uses PROVIDER_REASONING_PROFILES so each family gets only
- * the effort values it actually supports. */
+/** 为公共 API 兼容性保留的旧版 provider 级视图。内部模型选择使用
+ *  PROVIDER_REASONING_PROFILES，使每个家族只获得其实际支持的强度值。 */
 export const PROVIDER_REASONING_TIERS: Record<
   string,
   { modelPattern?: RegExp; options: readonly ReasoningTierOption[] }

@@ -22,8 +22,8 @@ describe('expandEnvString', () => {
   })
 
   it('leaves non-matching $ patterns alone', () => {
-    // Single-$ patterns and unterminated ${ should pass through untouched —
-    // we don't support shell-style $VAR.
+    // 单个 $ 的模式和未闭合的 ${ 应原样通过 ——
+    // 我们不支持 shell 风格的 $VAR。
     expect(expandEnvString('cost: $5', {} as NodeJS.ProcessEnv)).toBe('cost: $5')
     expect(expandEnvString('${unfinished', {} as NodeJS.ProcessEnv)).toBe('${unfinished')
   })

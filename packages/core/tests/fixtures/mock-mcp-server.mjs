@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Minimal stdio MCP server used by integration tests. Implements just
-// enough of the protocol that McpClient can complete a handshake,
-// enumerate one tool, and round-trip a callTool / readResource.
+// 集成测试使用的最小 stdio MCP 服务器。只实现刚好足够的协议，
+// 让 McpClient 能完成握手、枚举一个工具，并往返一次
+// callTool / readResource。
 //
-// Wire format: newline-delimited JSON-RPC 2.0 on stdin/stdout. No batching.
+// 传输格式：stdin/stdout 上按行分隔的 JSON-RPC 2.0，不支持批处理。
 
 let buf = ''
 
@@ -49,7 +49,7 @@ function handle(msg) {
 
     case 'notifications/initialized':
     case 'notifications/cancelled':
-      // Notifications have no id → no response.
+      // 通知没有 id，因此不返回响应。
       return
 
     case 'tools/list':
@@ -113,9 +113,8 @@ function handle(msg) {
       return
 
     default:
-      // SDK probes for some optional methods (logging/setLevel,
-      // resources/subscribe, …). Respond with method-not-found so the
-      // SDK falls back gracefully rather than hanging on a missing reply.
+      // SDK 会探测一些可选方法（logging/setLevel、resources/subscribe 等）。
+      // 返回 method-not-found 让 SDK 优雅降级，而不是因为缺少响应而挂住。
       if (typeof id !== 'undefined') {
         error(id, -32601, `Method not found: ${method}`)
       }

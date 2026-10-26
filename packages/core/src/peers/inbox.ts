@@ -339,8 +339,8 @@ class InMemoryPeerInbox implements PeerInbox {
     }
   }
 
-  /** Resolve a live claim or produce the failure result (not-found/expired),
-   *  performing the same cleanup the two public claim endpoints relied on. */
+  /** 解析存活声明或产出失败结果（not-found/expired），并执行两个公开声明
+   *  端点所依赖的同一清理。 */
   private requireLiveClaim(claimId: string): KeyClaim | InboxClaimResult {
     const claim = this.acceptedClaims.get(claimId)
     if (!claim) {
@@ -681,7 +681,7 @@ class InMemoryPeerInbox implements PeerInbox {
       try {
         this.onListenerError?.(error)
       } catch {
-        // Diagnostics must never acquire queue ownership or break the producer.
+        // 诊断绝不能获取队列所有权或破坏生产者。
       }
     }
   }

@@ -1,12 +1,11 @@
-// @x-code-cli/core — Hook registry
+// @x-code-cli/core — Hook 注册表
 //
-// In-memory map from event name → ordered list of `RegisteredHook`s.
-// Built once at CLI startup by [[buildHookRegistry]] and held by the
-// HookBus for the session. Same byte-stability constraint as the rest
-// of the plugin pipeline: hooks must not change between turns (a hook
-// list change should go through `/plugin refresh` + systemPromptCache
-// invalidation, even though hooks themselves don't appear in the
-// prompt — keeping the rule uniform avoids special cases).
+// 从事件名 → 有序 `RegisteredHook` 列表的内存映射。
+// 由 [[buildHookRegistry]] 在 CLI 启动时构建一次，由
+// HookBus 持有整个会话。与插件管线的其余部分一样受字节稳定约束：
+// hook 不能在轮次之间变化（hook 列表变化应通过 `/plugin refresh` +
+// systemPromptCache 失效进行，尽管 hook 本身并不出现在提示词里 ——
+// 统一这条规则可避免特例）。
 import type { HookConfig, HookEventName, RegisteredHook } from './types.js'
 
 export class HookRegistry {
@@ -21,19 +20,19 @@ export class HookRegistry {
     }
   }
 
-  /** Hooks bound to a given event, in registration order. */
+  /** 绑定到某个事件的 hook，按注册顺序。 */
   get(event: HookEventName): readonly RegisteredHook[] {
     return this.byEvent.get(event) ?? []
   }
 
-  /** Cheap check the bus uses to skip event-payload construction when
-   *  no hook is listening — every emit-site is in a hot path. */
+  /** 总线用来在没有任何 hook 监听时跳过事件负载构造的廉价检查 ——
+   *  每个发射点都在热路径上。 */
   has(event: HookEventName): boolean {
     return (this.byEvent.get(event)?.length ?? 0) > 0
   }
 
-  /** Every registered hook. Used by `/plugin doctor` to list what's
-   *  active alongside which plugin contributed it. */
+  /** 每个已注册的 hook。`/plugin doctor` 用它列出当前
+   *  激活项及其贡献插件。 */
   list(): readonly RegisteredHook[] {
     const all: RegisteredHook[] = []
     for (const arr of this.byEvent.values()) all.push(...arr)
@@ -41,9 +40,9 @@ export class HookRegistry {
   }
 }
 
-/** Build a registry from per-plugin hook configs. Iteration order of
- *  the input array determines emit order — the caller (integration.ts)
- *  is responsible for handing us plugins in a stable order. */
+/** 从各插件的 hook 配置构建注册表。输入数组的迭代顺序
+ *  决定发射顺序 —— 调用方（integration.ts）负责
+ *  以稳定顺序把插件交给我们。 */
 export function buildHookRegistry(
   pluginHooks: ReadonlyArray<{ pluginId: string; pluginDir: string; config: HookConfig }>,
 ): HookRegistry {

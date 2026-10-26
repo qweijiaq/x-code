@@ -1,31 +1,26 @@
-// @x-code-cli/core — LLM-generated session summaries (used by the agent
-// loop's deep compaction path).
+// @x-code-cli/core — LLM 生成的会话摘要（用于 agent loop 的深度压缩路径）。
 //
-// What used to live here: `saveSessionSummary` + `loadLatestSession`,
-// which wrote `<sessionId>.json` and `latest.json` into
-// `.x-code/sessions/`. Both are gone — the full session transcript now
-// lives in a single `.jsonl` per session (see `agent/session-store.ts`),
-// and compaction summaries are embedded as `compact-boundary` meta lines
-// inside that same jsonl. One file per session, no out-of-band siblings.
+// 这里曾经的职责：`saveSessionSummary` + `loadLatestSession`，它们把
+// `<sessionId>.json` 和 `latest.json` 写进 `.x-code/sessions/`。两者都已移除——
+// 完整会话转录如今存放在每个会话一个的 `.jsonl` 里（见 `agent/session-store.ts`），
+// 压缩摘要则作为 `compact-boundary` meta 行嵌入同一个 jsonl。
+// 每会话一个文件，没有带外的伴生文件。
 //
-// What remains: `generateSessionSummary` — a small isolated `generateText`
-// call that the loop invokes when context overflows and needs to be
-// compressed into a paragraph. The result is fed to `markBoundaryAndReflush`
-// (in session-store) and also wrapped into a "[Previous conversation
-// summary]" user message that replaces the discarded prefix in
-// `state.messages`.
+// 留下的部分：`generateSessionSummary`——一个小的、隔离的 `generateText` 调用，
+// 当上下文溢出、需要压缩成一段话时由 loop 调用。结果交给 `markBoundaryAndReflush`
+// （在 session-store 中），同时被包成一条 "[Previous conversation summary]" 用户消息，
+// 替换 `state.messages` 中被丢弃的前缀。
 import { generateText } from 'ai'
 import type { LanguageModel, ModelMessage } from 'ai'
 
 import type { SessionSummary } from '../types/index.js'
 
-/** Number of recent messages to include when generating session summaries */
+/** 生成会话摘要时纳入的最近消息数量 */
 const SESSION_SUMMARY_MESSAGE_COUNT = 20
 
-/** Generate a session summary from messages using the model. Returns the
- *  full structured `SessionSummary` (title + status + key results +
- *  pendingWork + decisions) — callers typically want the `summary` field
- *  for context replacement and the rest for picker / display purposes. */
+/** 使用模型从消息生成会话摘要。返回完整结构化的 `SessionSummary`
+ *  （title + status + key results + pendingWork + decisions）——调用方通常用
+ *  `summary` 字段做上下文替换，其余用于选择器 / 展示。 */
 export async function generateSessionSummary(
   messages: ModelMessage[],
   model: LanguageModel,

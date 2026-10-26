@@ -182,7 +182,7 @@ function wrapSyncDecoder(decoder: SyncStreamingAudioDecoder): BoundedStreamingAu
 }
 
 async function createFlacDecoder(): Promise<BoundedStreamingAudioDecoder> {
-  // The convenience decoder concatenates every frame found in one input chunk before returning PCM.
+  // 便捷解码器会先把单个输入块中找到的所有帧拼接起来，再返回 PCM。
   const [{ FLACDecoder }, { default: CodecParser }] = await Promise.all([
     import('@wasm-audio-decoders/flac'),
     import('codec-parser'),
@@ -280,7 +280,7 @@ function validateVorbisHeader(header: VorbisHeader): void {
 }
 
 async function createVorbisDecoder(): Promise<BoundedStreamingAudioDecoder> {
-  // decodeOggPages() batches every packet it receives, so pass it at most one audio packet at a time.
+  // decodeOggPages() 会把它收到的每个 packet 批量处理，因此一次最多只传一个音频 packet。
   const [{ OggVorbisDecoder }, { default: CodecParser }] = await Promise.all([
     import('@wasm-audio-decoders/ogg-vorbis'),
     import('codec-parser'),
@@ -569,11 +569,10 @@ async function readInput(handle: Awaited<ReturnType<typeof fs.open>>, size: numb
 }
 
 async function decodeM4a(source: Buffer, resampler: StreamingResampler): Promise<'AAC' | 'ALAC'> {
-  // This addon's incremental API cannot resume an MP4 demux after an
-  // insufficient-data boundary. prepareM4aForDecode therefore validates the
-  // codec config, every sample table/range and the native allocation budget
-  // before the single append. AAC has a fixed packet size; ALAC may end with a
-  // valid remainder packet that produces fewer frames than its stts duration.
+  // 这个 addon 的增量 API 无法在“数据不足”的边界上恢复 MP4 解复用。
+  // 因此 prepareM4aForDecode 会在单次 append 之前先校验编解码器配置、
+  // 每个 sample 表/范围以及原生分配预算。AAC 的 packet 大小固定；
+  // ALAC 可能以一个合法的余数 packet 收尾，其产生的帧数少于它的 stts 时长。
   const prepared = prepareM4aForDecode(source)
   const { Decoder } = await import('@napi-audio/decoder')
   const decoder = new Decoder({ fileExtension: 'm4a', mimeType: 'audio/mp4' })
@@ -656,7 +655,7 @@ export async function decodeAudioToPcm(inputPath: string, pcmPath: string): Prom
     try {
       decoder?.free()
     } catch {
-      // The isolated process is disposable; preserve the original decode error.
+      // 该隔离进程是一次性的；保留原始的解码错误。
     }
     await output?.close().catch(() => {})
     await input.close().catch(() => {})

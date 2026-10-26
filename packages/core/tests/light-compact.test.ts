@@ -1,4 +1,4 @@
-// Tests for agent/light-compact.ts
+// 测试 agent/light-compact.ts
 import { describe, expect, it } from 'vitest'
 
 import type { ModelMessage } from 'ai'
@@ -49,7 +49,7 @@ describe('lightCompactMessages', () => {
     ]
     const out = lightCompactMessages(messages)
     expect(out.dropped).toBeGreaterThan(0)
-    // The tool-result message should be gone
+    // tool-result 消息应当消失
     const hasToolResult = out.messages.some((m) => m.role === 'tool')
     expect(hasToolResult).toBe(false)
   })
@@ -92,7 +92,7 @@ describe('lightCompactMessages', () => {
       toolResultMsg('bad', '[loop-guard] blocked retry'),
     ]
     const out = lightCompactMessages(messages)
-    // 'good' tool-result must still be present
+    // 'good' tool-result 必须仍然存在
     const survivors = out.messages.filter((m) => m.role === 'tool')
     expect(survivors).toHaveLength(1)
     const survivor = survivors[0].content as Array<{ toolCallId?: string }>

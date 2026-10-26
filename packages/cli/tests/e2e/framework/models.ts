@@ -1,5 +1,5 @@
-// Detect API keys from env (and optionally .env), map to a flat list of model
-// ids the user can pick to drive the e2e suite.
+// 从环境变量（可选地还有 .env）检测 API key，映射为用户可选的模型 id
+// 扁平列表，用于驱动 e2e 套件。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,8 +9,8 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..')
 
 export const DEFAULT_MODEL = 'deepseek:deepseek-flash'
 
-/** Provider env-var → list of model ids that can be selected when that key is set.
- *  Keep aligned with `packages/core/src/types/index.ts::PROVIDER_DETECTION_ORDER`. */
+/** 提供方环境变量 → 当该 key 被设置时可选中的模型 id 列表。
+ *  保持与 `packages/core/src/types/index.ts::PROVIDER_DETECTION_ORDER` 对齐。 */
 const PROVIDER_MODELS: Record<string, string[]> = {
   DEEPSEEK_API_KEY: ['deepseek:deepseek-flash', 'deepseek:deepseek-v4-pro'],
   ANTHROPIC_API_KEY: [
@@ -55,8 +55,8 @@ const PROVIDER_MODELS: Record<string, string[]> = {
   ],
 }
 
-/** Short aliases — accepted on CLI `--model` flag. Aligns with product's
- *  `MODEL_ALIASES` table; keep them in sync. */
+/** 短别名 — 用于 CLI 的 `--model` 标志。与产品的
+ *  `MODEL_ALIASES` 表对齐；保持同步。 */
 export const ALIASES: Record<string, string> = {
   fable: 'anthropic:claude-fable-5-1',
   sonnet: 'anthropic:claude-sonnet-5',
@@ -78,8 +78,8 @@ export function resolveModelArg(input: string): string {
   return ALIASES[input] ?? input
 }
 
-/** Best-effort .env loader. Does NOT overwrite values already in process.env.
- *  Returns the merged env after loading. */
+/** 尽力而为的 .env 加载器。不会覆盖 process.env 中已存在的值。
+ *  加载后返回合并后的 env。 */
 export async function loadDotenv(): Promise<Record<string, string>> {
   const envPath = path.join(REPO_ROOT, '.env')
   let parsed: Record<string, string> = {}
@@ -92,20 +92,20 @@ export async function loadDotenv(): Promise<Record<string, string>> {
       if (eq < 0) continue
       const key = line.slice(0, eq).trim()
       let value = line.slice(eq + 1).trim()
-      // Strip optional surrounding quotes.
+      // 剥离可选的外层引号。
       if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
         value = value.slice(1, -1)
       }
       parsed[key] = value
     }
   } catch {
-    // No .env — that's fine.
+    // 没有 .env — 没关系。
   }
-  // Don't overwrite already-set process.env keys.
+  // 不覆盖 process.env 中已设置的 key。
   for (const [k, v] of Object.entries(parsed)) {
     if (process.env[k] == null) process.env[k] = v
   }
-  // Build a return env that has only string values.
+  // 构建只含字符串值的返回 env。
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) {
     if (typeof v === 'string') env[k] = v
@@ -118,8 +118,8 @@ export interface ModelOption {
   providerEnvKey: string
 }
 
-/** Given the current env, return the flat list of (modelId, sourceEnvKey)
- *  pairs the user can pick. */
+/** 根据当前 env，返回用户可选的 (modelId, sourceEnvKey)
+ *  对的扁平列表。 */
 export function availableModels(env: Record<string, string>): ModelOption[] {
   const out: ModelOption[] = []
   for (const [envKey, models] of Object.entries(PROVIDER_MODELS)) {
@@ -127,14 +127,14 @@ export function availableModels(env: Record<string, string>): ModelOption[] {
       for (const modelId of models) out.push({ modelId, providerEnvKey: envKey })
     }
   }
-  // OpenAI-compatible custom endpoint
+  // OpenAI 兼容的自定义端点
   if (env.OPENAI_COMPATIBLE_API_KEY && env.OPENAI_COMPATIBLE_BASE_URL) {
     out.push({ modelId: 'custom:default', providerEnvKey: 'OPENAI_COMPATIBLE_API_KEY' })
   }
   return out
 }
 
-/** Pretty-printable summary of detected keys. Returns lines for direct printing. */
+/** 检测到的 key 的可打印摘要。返回可直接打印的行。 */
 export function describeDetectedKeys(env: Record<string, string>): string[] {
   const lines: string[] = []
   for (const [envKey, models] of Object.entries(PROVIDER_MODELS)) {

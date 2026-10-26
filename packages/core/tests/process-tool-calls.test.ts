@@ -1,4 +1,4 @@
-// Tests for processToolCalls — ghost-call skip path
+// processToolCalls 的测试 —— 幽灵调用跳过路径
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -106,10 +106,10 @@ describe('processToolCalls ghost-call skip', () => {
   })
 
   it('skips a ghost tool whose id is not in the assistant message', async () => {
-    // Simulates the deepseek tool-error path: SDK rejected the tool_call
-    // and excluded it from response.messages, but result.toolCalls still
-    // surfaces it. We must NOT execute the ghost — for write/shell that
-    // would be a real side effect for a call the model never committed.
+    // 模拟 deepseek 工具错误路径：SDK 拒绝了该 tool_call
+    // 并将其从 response.messages 中排除，但 result.toolCalls 仍
+    // 暴露它。我们不能执行这个幽灵调用 —— 对 write/shell 而言
+    // 这会是模型从未提交的调用的真实副作用。
     const state = createLoopState()
     state.messages.push({ role: 'user', content: 'hi' } as ModelMessage, assistantWithToolCalls(['tc-real']))
     const onAskUser = vi.fn().mockResolvedValue('a')
@@ -145,8 +145,8 @@ describe('processToolCalls ghost-call skip', () => {
       stubModel,
     )
     expect(onAskUser).toHaveBeenCalledTimes(1)
-    // No tool_result should have been pushed for the ghost — its
-    // assistant message has no matching tool_call to anchor against.
+    // 不应为幽灵调用推送任何 tool_result —— 它对应的 assistant
+    // 消息没有可锚定的匹配 tool_call。
     const ghostResult = state.messages.find(
       (m) =>
         m.role === 'tool' &&
@@ -187,11 +187,10 @@ describe('processToolCalls ghost-call skip', () => {
   })
 
   it('only inspects assistant messages from the current turn (stops at the previous user message)', async () => {
-    // A tool_call id from an OLDER turn must not satisfy the activeIds
-    // check for a CURRENT-turn ghost — turn boundaries are user-role
-    // messages, so we walk back from end-of-messages and stop the first
-    // time we see role==='user'. Without this stop, a ghost call could
-    // sneak in by re-using a stale id.
+    // 来自较早轮次的 tool_call id 不应满足当前轮次幽灵调用的
+    // activeIds 检查 —— 轮次边界是 user 角色消息，因此我们从
+    // 消息末尾向前回溯，第一次遇到 role==='user' 就停止。没有
+    // 这个停止，幽灵调用就能通过复用过期 id 混进来。
     const state = createLoopState()
     state.messages.push(
       { role: 'user', content: 'turn 1' } as ModelMessage,
@@ -237,7 +236,7 @@ describe('processToolCalls ghost-call skip', () => {
       callbacks,
       stubModel,
     )
-    // new-id runs; old-id is from a prior turn, must be treated as ghost.
+    // new-id 会执行；old-id 来自之前的轮次，必须当作幽灵调用处理。
     expect(onAskUser).toHaveBeenCalledTimes(1)
   })
 })
@@ -383,8 +382,8 @@ describe('processToolCalls relative write paths', () => {
     )
 
     expect(await fs.readFile(expected, 'utf8')).toBe('anchored\n')
-    // The cwd-shadow copy must NOT exist — before the fix the write went
-    // to process.cwd() while checkpoint tracking used projectCwd.
+    // cwd 影子副本必须不存在 —— 修复前写入会落到 process.cwd()，
+    // 而检查点跟踪用的是 projectCwd。
     await expect(fs.access(path.resolve(relative))).rejects.toThrow()
     expect(state.filesModified.has(expected)).toBe(true)
   })
@@ -856,13 +855,12 @@ describe('processToolCalls skip-fulfilled (SDK already produced a tool-result)',
   })
 
   it('skips writeFile when the SDK auto-rejected it as unavailable', async () => {
-    // Real failure case from the disk-info sub-agent in a.log: the
-    // general-purpose agent's tool filter excluded writeFile, but the
-    // model emitted a writeFile tool_call anyway. The SDK auto-emitted
-    // an `error-text` tool-result for the unavailable tool. Without the
-    // skip-fulfilled check we'd dispatch executeWriteTool by name (it
-    // doesn't consult the filter), creating a real file AND pushing a
-    // duplicate tool-result that DeepSeek then 400s on.
+    // a.log 中 disk-info 子代理的真实失败案例：general-purpose 代理的
+    // 工具过滤器排除了 writeFile，但模型仍发出了 writeFile tool_call。
+    // SDK 为不可用工具自动发出了 `error-text` tool-result。没有
+    // skip-fulfilled 检查，我们会按名称分发 executeWriteTool（它
+    // 不查过滤器），既创建真实文件，又推送一条重复的 tool-result，
+    // 导致 DeepSeek 随后 400。
     const state = createLoopState()
     state.messages.push(
       { role: 'user', content: 'hi' } as ModelMessage,
@@ -894,10 +892,9 @@ describe('processToolCalls skip-fulfilled (SDK already produced a tool-result)',
       callbacks,
       stubModel,
     )
-    // Permission must NOT have been asked — that would mean we were
-    // about to run the tool.
+    // 一定不能询问权限 —— 那将意味着我们即将运行该工具。
     expect(askPermission).not.toHaveBeenCalled()
-    // No second tool-result for tc-write should have been appended.
+    // 不应为 tc-write 追加第二条 tool-result。
     const toolResults = state.messages.filter(
       (m) =>
         m.role === 'tool' &&
@@ -908,11 +905,11 @@ describe('processToolCalls skip-fulfilled (SDK already produced a tool-result)',
   })
 
   it('skips an auto-executed tool whose result already lives in state.messages', async () => {
-    // readFile/grep/listDir/etc. are auto-executed by the SDK and their
-    // result is in `response.messages` before processToolCalls runs.
-    // Re-running here would either no-op (executeWriteOrShell returns
-    // null for these names) or, in the worst case, trigger the
-    // loop-guard which used to push a user message mid-iteration.
+    // readFile/grep/listDir 等由 SDK 自动执行，其结果在
+    // processToolCalls 运行前已存在于 `response.messages` 中。
+    // 在这里重新运行要么是空操作（executeWriteOrShell 对这些
+    // 名字返回 null），要么在最坏情况下触发 loop-guard（它过去
+    // 会在迭代中途压入一条 user 消息）。
     const state = createLoopState()
     state.messages.push(
       { role: 'user', content: 'hi' } as ModelMessage,
@@ -964,7 +961,7 @@ describe('processToolCalls skip-fulfilled (SDK already produced a tool-result)',
       stubModel,
     )
     expect(onAskUser).toHaveBeenCalledTimes(1)
-    // Only one tool-result for tc-read should exist (the original).
+    // tc-read 应只有一条 tool-result（原始那条）。
     const readResults = state.messages.filter(
       (m) =>
         m.role === 'tool' &&
@@ -975,14 +972,12 @@ describe('processToolCalls skip-fulfilled (SDK already produced a tool-result)',
   })
 
   it('runs consecutive task tool-calls in a single parallel batch', async () => {
-    // The whole point of partition + Promise.all: 3 task tool-calls
-    // emitted in one assistant turn must launch concurrently, not wait
-    // for each previous one to finish. We don't have a real
-    // subAgentRegistry in this test, so handleTask short-circuits to
-    // '[Sub-agent system not initialized]' and pushToolResult fires
-    // immediately for each. Track the order in which tool-results land
-    // — for a parallel batch the registry-missing branch is synchronous
-    // enough that all three fire before processToolCalls returns.
+    // partition + Promise.all 的全部意义：一个 assistant 轮次里发出的
+    // 3 个 task tool-call 必须并发启动，而不是等待前一个完成。此测试
+    // 没有真实的 subAgentRegistry，所以 handleTask 短路为
+    // '[Sub-agent system not initialized]'，pushToolResult 会立即为
+    // 每个调用触发。记录 tool-result 落地的顺序 —— 对并行批次而言，
+    // registry 缺失分支足够同步，三个都在 processToolCalls 返回前触发。
     const state = createLoopState()
     const ids = ['tc-task-1', 'tc-task-2', 'tc-task-3']
     state.messages.push(
@@ -1019,12 +1014,12 @@ describe('processToolCalls skip-fulfilled (SDK already produced a tool-result)',
   })
 
   it('flushes deferred messages AFTER all tool-results — no user message between assistant and a tool result', async () => {
-    // The bug we're guarding against: a user-role message inserted
-    // between assistant.tool_calls and a later tool-result. DeepSeek
-    // 400s with "Messages with role 'tool' must be a response to a
-    // preceding message with 'tool_calls'". We test the deferred-flush
-    // path by making an already-fulfilled call trip the loop guard, then
-    // checking message-shape invariants after the next live call returns.
+    // 我们要防御的 bug：在 assistant.tool_calls 和后续 tool-result 之间
+    // 插入了一条 user 角色消息。DeepSeek 会 400，报错
+    // "Messages with role 'tool' must be a response to a preceding
+    // message with 'tool_calls'"。我们通过让一个已完成的调用触发
+    // loop guard 来测试延迟刷新路径，然后在下一个实时调用返回后
+    // 检查消息形状不变量。
     const state = createLoopState()
     const readInput = { filePath: '/x' }
     const askInput = {
@@ -1034,8 +1029,8 @@ describe('processToolCalls skip-fulfilled (SDK already produced a tool-result)',
         { label: 'no', description: 'stop' },
       ],
     }
-    // Two prior identical calls make the already-fulfilled readFile below
-    // trip the soft loop guard, which queues a deferred user message.
+    // 之前两次相同调用会让下方已完成的 readFile 触发
+    // 软 loop guard，从而排队一条延迟 user 消息。
     recordToolCall(state, 'readFile', readInput)
     recordToolCall(state, 'readFile', readInput)
     state.messages.push(
@@ -1047,7 +1042,7 @@ describe('processToolCalls skip-fulfilled (SDK already produced a tool-result)',
           { type: 'tool-call', toolCallId: 'tc-ask', toolName: 'askUser', input: askInput },
         ],
       } as ModelMessage,
-      toolResult('tc-read', 'readFile', 'file contents'), // already fulfilled by SDK
+      toolResult('tc-read', 'readFile', 'file contents'), // 已被 SDK 完成
     )
     const onAskUser = vi.fn().mockResolvedValue('yes')
     const callbacks = makeCallbacks({ onAskUser })
@@ -1066,9 +1061,9 @@ describe('processToolCalls skip-fulfilled (SDK already produced a tool-result)',
       role: 'user',
       content: expect.stringContaining('[loop-guard]'),
     })
-    // Walk the messages — every tool-role message must have an
-    // assistant-role message earlier in the array (no user message
-    // between an assistant.tool_calls and a tool result).
+    // 遍历消息 —— 每条 tool 角色消息都必须有一条更早的 assistant
+    // 角色消息（在 assistant.tool_calls 和 tool result 之间不能有
+    // user 消息）。
     let lastAssistantWithToolCalls = -1
     let lastUserMessage = -1
     for (let i = 0; i < state.messages.length; i++) {
@@ -1079,8 +1074,7 @@ describe('processToolCalls skip-fulfilled (SDK already produced a tool-result)',
         if (hasToolCall) lastAssistantWithToolCalls = i
       }
       if (m.role === 'tool') {
-        // The most-recent assistant.tool_calls must come AFTER the
-        // most-recent user message.
+        // 最近的 assistant.tool_calls 必须晚于最近的 user 消息。
         expect(lastAssistantWithToolCalls).toBeGreaterThan(lastUserMessage)
       }
     }
@@ -1183,8 +1177,8 @@ describe('partitionToolCalls', () => {
   it('breaks the parallel batch when a non-task slips between tasks', () => {
     // [task, task, shell, task, task] →
     //   [[task, task], [shell], [task, task]]
-    // The shell must run alone and serialize what comes before/after,
-    // because shell mutates parent UI state (stdout streaming).
+    // shell 必须单独运行，并串行化其前后的内容，
+    // 因为 shell 会改变父级 UI 状态（stdout 流式输出）。
     const calls = [tc('task', '1'), tc('task', '2'), tc('shell', '3'), tc('task', '4'), tc('task', '5')]
     const batches = partitionToolCalls(calls)
     expect(batches.map((b) => b.map((c) => c.toolCallId))).toEqual([['1', '2'], ['3'], ['4', '5']])

@@ -49,7 +49,7 @@ function markInstalled(view: SkillMarketEntryView, installed: Set<string>): Skil
 
 // ─── SkillHub ───
 
-/** Install id: `@namespace/publicSlug` when the catalog provides a namespace. */
+/** 安装 id：当目录提供 namespace 时为 `@namespace/publicSlug`。 */
 export function parseSkillHubId(id: string): { namespace?: string; slug: string } {
   const trimmed = id.trim()
   const scoped = trimmed.match(/^@([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/)
@@ -58,8 +58,8 @@ export function parseSkillHubId(id: string): { namespace?: string; slug: string 
   throw new Error('无效的 SkillHub 技能 ID')
 }
 
-/** Human-facing SkillHub page. The API's `homepage` field points at
- *  api.skillhub.cn endpoints, which are not useful in a browser. */
+/** 面向人类的 SkillHub 页面。API 的 `homepage` 字段指向
+ *  api.skillhub.cn 端点，它们在浏览器中无用。 */
 export function skillHubPageUrl(handle: string | undefined, publicSlug: string): string {
   const encoded = encodeURIComponent(publicSlug)
   return handle
@@ -129,7 +129,7 @@ async function searchSkillHub(
   }
 }
 
-// ─── SkillsMP (remote MCP, JSON-RPC over HTTP) ───
+// ─── SkillsMP（远程 MCP，JSON-RPC over HTTP）───
 
 export function parseSkillsMpSearch(payload: unknown, installed: Set<string>): SkillMarketEntryView[] {
   const skills =
@@ -170,7 +170,7 @@ function rpcPayload(text: string): RpcResponse | null {
   const trimmed = text.trim()
   if (!trimmed) return null
   if (trimmed.startsWith('{')) return JSON.parse(trimmed) as RpcResponse
-  // Streamable HTTP servers may answer with SSE frames.
+  // Streamable HTTP 服务器可能以 SSE 帧应答。
   for (const block of trimmed.split(/\r?\n\r?\n/)) {
     const data = block
       .split(/\r?\n/)
@@ -181,7 +181,7 @@ function rpcPayload(text: string): RpcResponse | null {
     try {
       return JSON.parse(data) as RpcResponse
     } catch {
-      // Keep scanning frames.
+      // 继续扫描帧。
     }
   }
   return null
@@ -259,7 +259,7 @@ async function searchSkillsMp(
   return { provider: 'skillsmp', entries: parseSkillsMpSearch(payload, installed) }
 }
 
-// ─── Public search API ───
+// ─── 公共搜索 API ───
 
 export interface SearchSkillMarketOptions {
   fetchImpl?: FetchLike
@@ -297,7 +297,7 @@ export function clearSkillMarketCache(): void {
   searchCache.clear()
 }
 
-// ─── Install ───
+// ─── 安装 ───
 
 export function assertGitHubSkillUrl(raw: string): string {
   let url: URL
@@ -315,8 +315,8 @@ export function assertGitHubSkillUrl(raw: string): string {
   return `${url.origin}${url.pathname}`
 }
 
-/** Download a SkillHub zip, verify its shape, and copy the skill into the user
- *  skill directory. Never extracts outside the temp directory. */
+/** 下载 SkillHub zip，校验其结构，并把技能复制到用户
+ *  技能目录。绝不解压到临时目录之外。 */
 export async function installSkillHubSkill(
   id: string,
   version: string | undefined,
@@ -370,7 +370,7 @@ export async function extractZipBuffer(buffer: Buffer, targetDir: string): Promi
       try {
         archive?.close()
       } catch {
-        // Already closed.
+        // 已关闭。
       }
       reject(error)
     }

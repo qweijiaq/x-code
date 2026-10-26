@@ -1,4 +1,4 @@
-// Tests for agent loop (mock LLM responses)
+// 测试 agent loop（mock LLM 响应）
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import os from 'node:os'
@@ -17,7 +17,7 @@ import { buildKnowledgeContext } from '../src/knowledge/loader.js'
 import type { LateRecallSignals, MemoryRecallAttachment } from '../src/knowledge/memory/types.js'
 import type { AgentCallbacks, TokenUsage } from '../src/types/index.js'
 
-// Mock cheerio + turndown (pulled in via toolRegistry → webFetch)
+// Mock cheerio + turndown（通过 toolRegistry → webFetch 引入）
 vi.mock('cheerio', () => ({
   load: vi.fn(() => {
     const $ = () => ({ remove: vi.fn(), first: vi.fn(() => ({ length: 0, html: () => '' })), html: () => '' })
@@ -33,7 +33,7 @@ vi.mock('turndown', () => ({
   },
 }))
 
-// Mock AI SDK
+// 模拟 AI SDK
 vi.mock('ai', async () => {
   const actual = await vi.importActual('ai')
   return {
@@ -43,7 +43,7 @@ vi.mock('ai', async () => {
   }
 })
 
-// Mock knowledge modules to avoid filesystem side effects
+// Mock knowledge 模块，避免文件系统副作用
 vi.mock('../src/knowledge/loader.js', () => ({
   buildKnowledgeContext: vi.fn().mockResolvedValue(''),
 }))
@@ -63,9 +63,8 @@ vi.mock('../src/agent/browser/visual-check.js', () => ({
   }),
 }))
 
-// Block jsonl persistence — keep tests free of fs side effects in the
-// project's `.x-code/sessions/` (which would leak between runs and pollute
-// developers' repos when they execute the suite locally).
+// 阻断 jsonl 持久化 —— 让测试避免在项目的 `.x-code/sessions/` 产生文件系统副作用
+//（否则会在多次运行间泄漏，并在开发者本地执行测试套件时污染他们的仓库）。
 vi.mock('../src/agent/session-store.js', () => ({
   appendHeader: vi.fn().mockResolvedValue(undefined),
   appendUsage: vi.fn().mockResolvedValue(undefined),
@@ -1036,7 +1035,7 @@ describe('agent loop', () => {
   })
 
   it('reports error when max turns exceeded', async () => {
-    // Force tool-calls finish reason to keep looping
+    // 强制 tool-calls 结束原因，让循环继续
     vi.mocked(streamText).mockReturnValue({
       stream: {
         async *[Symbol.asyncIterator]() {
@@ -1062,10 +1061,9 @@ describe('agent loop', () => {
   })
 
   it('turn counter resets between submits sharing the same LoopState', async () => {
-    // Regression: turnCount used to live on LoopState and accumulate across
-    // every user submit within the same CLI session — after ~100 cumulative
-    // turns every subsequent submit hit the cap immediately. Now it's a
-    // per-invocation local, so two clean turns in a row each report 1.
+    // 回归修复：turnCount 过去存放在 LoopState 上，会在同一个 CLI 会话的
+    // 每次用户提交之间累加 —— 累计约 100 轮之后，后续每次提交都会立刻触发上限。
+    // 现在它是每次调用独立的局部变量，因此连续两次干净轮次各自报告 1。
     vi.mocked(streamText).mockReturnValue({
       stream: {
         async *[Symbol.asyncIterator]() {
@@ -1084,15 +1082,15 @@ describe('agent loop', () => {
     const firstInstructions = vi.mocked(streamText).mock.calls[0]?.[0].instructions
     expect(firstInstructions).toBe(first.state.systemPromptCache)
 
-    // Re-enter with the same LoopState — simulates a second user submit.
+    // 用同一个 LoopState 再次进入 —— 模拟第二次用户提交。
     const second = await agentLoop('msg 2', {} as any, opts, mockCallbacks, first.state)
     expect(second.turnCount).toBe(1)
     expect(vi.mocked(streamText).mock.calls[1]?.[0].instructions).toBe(firstInstructions)
   })
 
   it('omitted maxTurns runs without a cap', async () => {
-    // The fix also makes maxTurns optional. When unset, the loop runs to
-    // a natural finish — no "Reached maximum turns" error.
+    // 该修复同时让 maxTurns 变为可选。未设置时，循环会运行到自然结束 ——
+    // 不会出现「Reached maximum turns」错误。
     vi.mocked(streamText).mockReturnValue({
       stream: {
         async *[Symbol.asyncIterator]() {
@@ -1152,9 +1150,8 @@ describe('agent loop', () => {
   })
 
   it('injects queued user messages at the tool-call boundary', async () => {
-    // Steering: the user types while tools run. The queued text must land
-    // in state.messages BEFORE the next streamText call, merged into one
-    // user message — never interleaved with pending tool_results.
+    // 引导：用户在工具运行时输入。排队文本必须在下次 streamText 调用之前
+    // 写入 state.messages，合并为一条用户消息 —— 绝不与挂起的 tool_results 交错。
     const stopResult = {
       stream: {
         async *[Symbol.asyncIterator]() {
@@ -1197,14 +1194,13 @@ describe('agent loop', () => {
 
     expect(turnCount).toBe(2)
     const injected = state.messages.filter((m) => m.role === 'user').map((m) => m.content)
-    // Multiple queued texts merge into ONE user message (back-to-back user
-    // turns break some providers' tool-call sequencing), wrapped with the
-    // mid-turn temporal marker so the model knows it arrived mid-task.
+    // 多条排队文本合并为一条用户消息（连续的用户轮次会破坏部分提供方的
+    // tool-call 顺序），并用轮次中间的时间标记包裹，让模型知道它是在任务中途到达的。
     const merged = injected.find((c) => typeof c === 'string' && c.includes('first queued\n\nsecond queued'))
     expect(merged).toBeDefined()
     expect(merged).toContain('while you were working')
     expect(injected.filter((c) => typeof c === 'string' && c.includes('first queued')).length).toBe(1)
-    // The second API request must have carried the injected message.
+    // 第二次 API 请求必须携带注入的消息。
     const secondCallMessages = vi.mocked(streamText).mock.calls[1][0].messages as { role: string; content: unknown }[]
     expect(
       secondCallMessages.some(
@@ -1215,8 +1211,8 @@ describe('agent loop', () => {
   })
 
   it('follows up on stop when messages are still queued', async () => {
-    // needs_follow_up: a message queued while the final reply streams must
-    // keep the loop alive instead of returning to the UI idle.
+    // needs_follow_up：在最终回复流式输出期间排队的消息必须
+    // 让循环继续，而不是返回 UI 空闲状态。
     vi.mocked(streamText).mockReturnValue({
       stream: {
         async *[Symbol.asyncIterator]() {

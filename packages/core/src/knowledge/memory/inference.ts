@@ -122,11 +122,9 @@ export function resetMemoryInferenceState(): void {
   rejectedTemperature.clear()
 }
 
-/** Shared structured-output stream wrapper used by the extractor and the
- *  selector. ChatGPT's Codex transport requires streaming even for background
- *  inference; awaiting output + usage still exposes a single completed result
- *  to callers. Inference settings are spread last so budget/reasoning
- *  fallbacks always win over call-site defaults. */
+/** 供提取器和选择器共用的结构化输出流封装。ChatGPT 的 Codex 传输即使是后台
+ *  推理也要求流式；await 输出 + usage 仍向调用方暴露单个已完成结果。推理
+ *  设置在最后展开，使预算/推理回退始终胜过调用点的默认值。 */
 export function generateStructuredObject(input: {
   model: LanguageModel
   instructions: string

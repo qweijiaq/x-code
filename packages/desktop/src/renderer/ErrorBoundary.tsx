@@ -11,7 +11,7 @@ interface State {
   copied: boolean
 }
 
-/** Last-resort UI when a render error would otherwise leave a blank window. */
+/** 渲染错误否则会留下空白窗口时的兜底 UI。 */
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null, diagnosticsPath: '', copied: false }
 

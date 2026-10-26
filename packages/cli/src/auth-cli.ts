@@ -103,7 +103,7 @@ export async function logoutChatGPT(signal?: AbortSignal): Promise<LogoutChatGPT
     try {
       credentials = await readOpenAIChatGPTCredentials()
     } catch {
-      // A missing or malformed credential still needs to be removed locally.
+      // 缺失或损坏的凭据仍需要在本地移除。
     }
     let revokeFailed = false
     if (credentials) {

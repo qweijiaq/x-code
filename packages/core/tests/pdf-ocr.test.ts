@@ -10,7 +10,7 @@ vi.mock('../src/agent/pdf-ingest.js', () => ({
   processPdf: (...args: unknown[]) => processPdf(...args),
 }))
 
-// Page 1 and 3 have no usable text layer; page 2 is a normal text page.
+// 第 1 页和第 3 页没有可用的文本层，第 2 页是普通文本页。
 vi.mock('pdf-parse', () => ({
   PDFParse: class {
     async getInfo(): Promise<{ total: number }> {

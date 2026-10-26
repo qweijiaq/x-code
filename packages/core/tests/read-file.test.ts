@@ -65,7 +65,7 @@ describe('readFile tool', () => {
   it('truncates large files and hints at ranges', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-rf-'))
     const filePath = path.join(tmpDir, 'big.ts')
-    // Threshold is 2000 lines (bumped from 500 to align with Claude Code).
+    // 阈值是 2000 行（从 500 提升，以与 Claude Code 对齐）。
     const lines = Array.from({ length: 2500 }, (_, i) => `// line ${i + 1}`)
     await fs.writeFile(filePath, lines.join('\n'))
 
@@ -80,8 +80,8 @@ describe('readFile tool', () => {
   it('does NOT head-truncate when offset/limit is specified', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-rf-'))
     const filePath = path.join(tmpDir, 'big2.ts')
-    // 2500 lines × ~12 bytes/line ≈ 30 KB — well under the 256 KB byte cap,
-    // so the whole requested range comes back without further trimming.
+    // 2500 行 × 约 12 字节/行 ≈ 30 KB —— 远低于 256 KB 字节上限，
+    // 因此整个请求范围直接返回，无需进一步裁剪。
     const lines = Array.from({ length: 2500 }, (_, i) => `// line ${i + 1}`)
     await fs.writeFile(filePath, lines.join('\n'))
 
@@ -92,22 +92,20 @@ describe('readFile tool', () => {
     await fs.rm(tmpDir, { recursive: true })
   })
 
-  // Regression: a model that asked for a giant explicit range used to dump
-  // the entire slice into context and blow past the model's context window
-  // on the next turn. Now we hard-cap at MAX_READ_BYTES (256 KB) and tell
-  // the model exactly where to resume.
+  // 回归：模型请求一个巨大的显式范围时，过去会把整个切片塞进上下文，
+  // 在下一轮击穿模型的上下文窗口。现在我们硬限制在 MAX_READ_BYTES
+  // （256 KB），并精确告诉模型从哪里继续。
   it('caps explicit-range reads at 256 KB and points at the next offset', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-rf-'))
     const filePath = path.join(tmpDir, 'huge.txt')
-    // 4000 lines × ~100 bytes/line ≈ 400 KB > 256 KB cap.
+    // 4000 行 × 约 100 字节/行 ≈ 400 KB > 256 KB 上限。
     const lines = Array.from({ length: 4000 }, (_, i) => `${i + 1}: ${'x'.repeat(95)}`)
     await fs.writeFile(filePath, lines.join('\n'))
 
     const result = (await exec({ filePath, offset: 1, limit: 4000 })) as string
     expect(result).toContain('output capped at 256 KB')
     expect(result).toMatch(/Call readFile again with offset=\d+/)
-    // Sanity: byte cap actually enforced — output well under 300 KB even
-    // with the trailing hint.
+    // 合理性检查：字节上限确实生效 —— 即便加上尾部提示，输出也远低于 300 KB。
     expect(Buffer.byteLength(result, 'utf-8')).toBeLessThan(300 * 1024)
 
     await fs.rm(tmpDir, { recursive: true })
@@ -319,7 +317,7 @@ describe('readFile — Jupyter notebooks', () => {
     expect(result).toContain('print("hi")')
     expect(result).toContain('<Figure>')
     expect(result).toContain('[image/png output omitted]')
-    // The base64 image payload must NOT reach the model.
+    // base64 图像负载绝不能到达模型。
     expect(result).not.toContain('BASE64DATA')
 
     await fs.rm(tmpDir, { recursive: true })
@@ -379,8 +377,8 @@ describe('readFile — read de-dup cache', () => {
   it('does NOT cache a head-truncated read (large file stays re-readable)', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-dd-'))
     const filePath = path.join(tmpDir, 'big.txt')
-    // 2500 lines triggers head-truncation: the full content is NOT in context,
-    // so a second read must return content again, not a misleading stub.
+    // 2500 行会触发头部截断：完整内容不在上下文中，
+    // 因此第二次读取必须再次返回内容，而不是误导性的占位。
     await fs.writeFile(filePath, Array.from({ length: 2500 }, (_, i) => `line ${i + 1}`).join('\n'))
     const cache: ReadFileCache = new Map()
     const tool = createReadFileTool(cache)
@@ -436,7 +434,7 @@ describe('readFile — read de-dup cache', () => {
     const cache: ReadFileCache = new Map()
     const tool = createReadFileTool(cache)
 
-    await execWith(tool, { filePath }) // whole-file read populates the cache
+    await execWith(tool, { filePath }) // 整文件读取会填充缓存
     const ranged = (await execWith(tool, { filePath, offset: 1, limit: 1 })) as string
     expect(ranged).toContain('l1')
     expect(ranged).not.toContain('unchanged since')

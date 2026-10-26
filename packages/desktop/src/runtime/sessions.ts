@@ -64,7 +64,7 @@ function mediaTagPath(text: string): string | undefined {
   return match ? decodeMediaAttribute(match[1]!) : undefined
 }
 
-/** Attachment paths the desktop server appended to the prompt as `@"path"`. */
+/** 桌面服务端以 `@"path"` 形式追加到提示中的附件路径。 */
 function attachmentRefPaths(content: ModelMessage['content']): string[] {
   const parts = Array.isArray(content) ? (content as ContentPartLike[]) : []
   const paths = new Set<string>()
@@ -87,9 +87,9 @@ function base64FromPart(part: ContentPartLike): string | undefined {
   return undefined
 }
 
-/** Human-visible user text from a model message. Media tags, extracted
- *  attachment text, and model-only notes are dropped, while merged queued
- *  prompts and their separators are preserved. */
+/** 模型消息中人类可见的用户文本。媒体标签、提取的
+ *  附件文本和仅模型可见的笔记被丢弃，而合并的排队
+ *  提示及其分隔符被保留。 */
 function displayUserText(content: ModelMessage['content'], attachmentPaths: Set<string>): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
@@ -154,9 +154,9 @@ function attachmentViewsFromContent(content: ModelMessage['content'], refPaths: 
     const name = filename || (filePath ? basenameOf(filePath) : '') || `attachment-${attachmentIndex}`
     pendingPath = undefined
     const data = base64FromPart(raw)
-    // Prefer the on-disk attachment: the renderer can load it lazily through
-    // app:image-preview. Embedding base64 in every session:load makes image-heavy
-    // transcripts large and keeps copies in renderer memory.
+    // 优先使用磁盘上的附件：renderer 可以通过 app:image-preview
+    // 懒加载它。把 base64 嵌入每个 session:load 会使图片密集的
+    // 记录变大，并在 renderer 内存中保留副本。
     const canLoadFromDisk = Boolean(filePath && existsSync(filePath))
     const dataUrl =
       data && mime?.startsWith('image/') && !canLoadFromDisk && data.length <= MAX_RESTORED_IMAGE_BASE64
@@ -189,8 +189,8 @@ function readToolOutput(part: ContentPartLike): { output: string; isError: boole
   return { output: '', isError: false }
 }
 
-/** Port of the CLI's modelMessagesToDisplay, producing serializable view
- *  messages for the desktop transcript. */
+/** 移植 CLI 的 modelMessagesToDisplay，为桌面记录生成
+ *  可序列化的视图消息。 */
 export function toSessionMessages(messages: ModelMessage[]): SessionMessage[] {
   const toolResults = new Map<string, { output: string; isError: boolean }>()
   for (const message of messages) {
@@ -288,9 +288,9 @@ export async function loadSessionView(
   }
 }
 
-/** Full-text search across the workspace's session transcripts. Reads files
- *  asynchronously with bounded concurrency so a large history cannot block the
- *  runtime's request loop; malformed/oversized transcripts are skipped. */
+/** 对工作区的会话记录做全文搜索。以有界并发异步读取文件，
+ *  使大量历史记录不会阻塞运行时的请求循环；
+ *  格式损坏/过大的记录会被跳过。 */
 export async function searchSessionItems(workspace: string, query: string, limit = 20): Promise<SessionSearchResult[]> {
   const needle = query.trim().toLowerCase()
   if (needle.length < 2) return []

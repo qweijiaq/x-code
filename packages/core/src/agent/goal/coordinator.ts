@@ -50,7 +50,7 @@ export function createGoalRunCoordinator(): GoalRunCoordinator {
       try {
         await active.promise
       } catch {
-        // The active runner owns user-facing error reporting.
+        // 面向用户的错误上报由活跃的 runner 负责。
       }
     },
   }

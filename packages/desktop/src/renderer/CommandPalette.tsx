@@ -13,7 +13,7 @@ export interface PaletteAction {
   id: string
   label: string
   hint?: string
-  /** Extra search terms (synonyms, English names, examples). */
+  /** 额外搜索词（同义词、英文名、示例）。 */
   keywords?: string[]
   run: () => void | Promise<void>
 }
@@ -127,7 +127,7 @@ export function CommandPalette({
     hint: file.isDirectory ? t('目录') : '',
     run: () => {
       onClose()
-      // The palette closes first so the file panel can take focus.
+      // 先关闭命令面板，让文件面板可以获取焦点。
       setTimeout(() => window.dispatchEvent(new CustomEvent('xcode:open-file', { detail: file.path })), 0)
     },
   }))

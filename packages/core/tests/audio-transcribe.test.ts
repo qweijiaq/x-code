@@ -9,8 +9,8 @@ import {
 } from '../src/agent/audio-transcribe.js'
 import { classifyFile } from '../src/agent/file-ingest.js'
 
-// Don't load the actual native whisper module in unit tests — only test
-// the pure-logic helpers (isAudioFile, formatTranscription, classifyFile).
+// 在单元测试中不要加载真实的原生 whisper 模块 —— 只测试
+// 纯逻辑辅助函数（isAudioFile、formatTranscription、classifyFile）。
 vi.mock('@fugood/whisper.node', () => ({}))
 
 beforeEach(() => {

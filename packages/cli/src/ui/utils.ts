@@ -1,34 +1,31 @@
-// @x-code-cli/cli — Shared UI utilities.
+// @x-code-cli/cli — 共享 UI 工具函数。
 //
-// Small helpers used by multiple modules. Extracted here to avoid
-// copy-paste drift across files.
+// 多个模块共用的小辅助函数。抽取到这里以避免各文件间复制粘贴导致漂移。
 import type { DisplayToolCall } from '@x-code-cli/core'
 import { getShellProvider } from '@x-code-cli/core'
 
-// ── Layout constants ───────────────────────────────────────────────────
+// ── 布局常量 ───────────────────────────────────────────────────
 
-/** Indent for tool-result rows so the body aligns under the `   ⎿  `
- *  bracket (3 spaces + bracket + 2 spaces = 6 cells). Used by both the
- *  scrollback writer (stdout-writer) and the diff renderer (render-diff). */
+/** 工具结果行的缩进，让正文对齐到 `   ⎿  ` 括号下方
+ *  （3 空格 + 括号 + 2 空格 = 6 个单元格）。滚动区写入器（stdout-writer）
+ *  和 diff 渲染器（render-diff）都在用。 */
 export const RESULT_INDENT = '      '
 
-// ── Line-ending normalization ──────────────────────────────────────────
+// ── 行尾规范化 ──────────────────────────────────────────
 
-/** Normalize line endings to `\n`. Critical before any terminal write:
- *  Windows pastes / clipboard content commonly arrive with `\r\n` or bare
- *  `\r`, and a bare `\r` in the terminal means "move cursor to column 0
- *  of the current row" — subsequent characters OVERWRITE whatever was
- *  previously printed on that row. */
+/** 把行尾规范化为 `\n`。在任何终端写入前都至关重要：Windows 粘贴 / 剪贴板
+ *  内容通常带 `\r\n` 或裸 `\r`，而终端里的裸 `\r` 表示「把光标移到当前行
+ *  第 0 列」——后续字符会覆盖该行之前打印的内容。 */
 export function normalizeLineEndings(s: string): string {
   return s.replace(/\r\n?/g, '\n')
 }
 
-// ── Boolean argument parsing ───────────────────────────────────────────
+// ── 布尔参数解析 ───────────────────────────────────────────
 
-/** Parse a string as a boolean for CLI argument consumption.
- *  Accepts `on/true/1/enable/enabled` → true,
- *  `off/false/0/disable/disabled` → false,
- *  everything else → null (caller can show an error). */
+/** 把字符串解析为布尔值供 CLI 参数使用。
+ *  接受 `on/true/1/enable/enabled` → true，
+ *  `off/false/0/disable/disabled` → false，
+ *  其余 → null（调用方可显示错误）。 */
 export function parseBooleanArg(s: string): boolean | null {
   const trimmed = s.trim().toLowerCase()
   if (trimmed === 'on' || trimmed === 'true' || trimmed === '1' || trimmed === 'enable' || trimmed === 'enabled')
@@ -38,21 +35,20 @@ export function parseBooleanArg(s: string): boolean | null {
   return null
 }
 
-// ── Duration formatting ────────────────────────────────────────────────
+// ── 时长格式化 ────────────────────────────────────────────────
 
 export interface DurationFmtOptions {
-  /** Sub-second precision: number of decimal places for the seconds
-   *  field when duration < 60s. Default 1. */
+  /** 亚秒精度：时长 < 60s 时，秒字段保留的小数位数。默认 1。 */
   precision?: number
-  /** When true, omit trailing 's' on seconds fields. Default false. */
+  /** 为 true 时，秒字段省略末尾的 's'。默认 false。 */
   compact?: boolean
 }
 
 /**
- * Format a millisecond duration into a human-readable string.
+ * 把毫秒时长格式化为人类可读字符串。
  *   <1s  → `"120ms"`
- *   <60s → `"3.5s"` (precision from options)
- *   >=60s → `"2m 15s"` (or `"2m"` when compact && secs === 0)
+ *   <60s → `"3.5s"`（精度来自 options）
+ *   >=60s → `"2m 15s"`（compact && secs === 0 时为 `"2m"`）
  */
 export function formatDuration(ms: number, opts: DurationFmtOptions = {}): string {
   const { precision = 1, compact = false } = opts
@@ -65,15 +61,15 @@ export function formatDuration(ms: number, opts: DurationFmtOptions = {}): strin
   return `${minutes}m ${secs}s`
 }
 
-// ── Tool display helpers ───────────────────────────────────────────────
+// ── 工具展示辅助 ───────────────────────────────────────────────
 
 function normalizeToolName(name: string): string {
   return name.toLowerCase().replace(/[_-]/g, '')
 }
 
-/** True for the shell-command tools on any provider (zsh / bash /
- *  powershell). Used to route command previews through shell syntax
- *  highlighting — codex-style colored strings/flags in `Zsh(...)` rows. */
+/** 对任意 provider 的 shell 命令工具（zsh / bash / powershell）返回 true。
+ *  用于把命令预览路由到 shell 语法高亮——`Zsh(...)` 行里 codex 风格的
+ *  彩色字符串/标志。 */
 export function isShellToolName(toolName: string): boolean {
   const n = normalizeToolName(toolName)
   return n === 'shell' || n === 'bash'
@@ -166,7 +162,7 @@ export function getToolInputPreview(toolName: string, input: Record<string, unkn
     return firstLine
   }
 
-  // Last resort: show first string value (NOT JSON.stringify)
+  // 兜底：显示第一个字符串值（不用 JSON.stringify）
   for (const val of Object.values(input)) {
     if (typeof val === 'string' && val.length <= 100) return val
   }
@@ -246,12 +242,10 @@ export function getToolResultSummary(toolName: string, output: string | undefine
   if (status === 'denied') return 'Denied by user'
   if (!output) return 'Done'
 
-  // Per-tool success summaries below are written for the happy path
-  // (e.g. "Wrote file", "Applied changes"). When the tool errored —
-  // permission denial, hook deny, exception — those cheery messages
-  // are misleading; the bullet is rendered red but the text still
-  // reads success. Surface the bounded error text instead so the user sees
-  // the real cause without opening a debug log.
+  // 下面的每工具成功摘要都是为正常路径写的（如 "Wrote file"、
+  // "Applied changes"）。当工具出错时——权限拒绝、hook 拒绝、异常——
+  // 这些欢快的消息具有误导性：符号渲染成红色，但文字仍读作成功。
+  // 改为展示有界的错误文本，让用户不开调试日志也能看到真正原因。
   if (status === 'error' || /^Error(?:\s|:)/i.test(output.trimStart())) {
     const lines = output
       .trim()

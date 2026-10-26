@@ -1,4 +1,4 @@
-// Tests for installer (local source path) + loader integration
+// 安装器（本地源路径）+ 加载器集成的测试
 import { execa } from 'execa'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -37,7 +37,7 @@ afterEach(() => {
   else process.env.XC_PLUGINS_DIR = originalPluginsDir
 })
 
-// ── installer ──────────────────────────────────────────────────────────
+// ── 安装器 ──────────────────────────────────────────────────────────
 
 describe('installPlugin (local source)', () => {
   it('copies a local plugin into the cache + records it', async () => {
@@ -52,7 +52,7 @@ describe('installPlugin (local source)', () => {
     expect(result.manifest.name).toBe('demo')
     expect(result.rootDir).toBe(pluginCacheDir('local', 'demo', '1.0.0'))
 
-    // Cached manifest should be present
+    // 缓存的 manifest 应存在
     expect(
       await fs
         .access(path.join(result.rootDir, 'plugin.json'))
@@ -60,7 +60,7 @@ describe('installPlugin (local source)', () => {
         .catch(() => false),
     ).toBe(true)
 
-    // Record landed
+    // 记录已落地
     const installed = await listInstalledPlugins()
     expect(installed).toHaveLength(1)
     expect(installed[0]!.id).toBe('demo@local')
@@ -97,14 +97,14 @@ describe('installPlugin (local source)', () => {
     const src1 = await makeTempPlugin({ name: 'demo', version: '1.0.0' })
     await installPlugin({ source: { kind: 'local', path: src1 }, marketplace: 'local' })
 
-    // Stash a marker file in the cache dir
+    // 在缓存目录里放一个标记文件
     const dir = pluginCacheDir('local', 'demo', '1.0.0')
     await fs.writeFile(path.join(dir, 'stale.txt'), 'should not survive')
 
     const src2 = await makeTempPlugin({ name: 'demo', version: '1.0.0', description: 'updated' })
     await installPlugin({ source: { kind: 'local', path: src2 }, marketplace: 'local' })
 
-    // Stale file should be gone after the wipe-and-replace
+    // 清理替换后，过期文件应已消失
     const staleExists = await fs
       .access(path.join(dir, 'stale.txt'))
       .then(() => true)
@@ -131,8 +131,8 @@ describe('installPlugin (local source)', () => {
     ).toBe(true)
   })
 
-  // Creating real symlinks is not reliably available to unprivileged Windows
-  // CI jobs; the production code still handles Windows junctions/symlinks.
+  // 无特权 Windows CI 任务无法可靠创建真实符号链接；
+  // 生产代码仍会处理 Windows junction/符号链接。
   it.skipIf(process.platform === 'win32')('drops symlinks that escape the plugin source tree', async () => {
     const src = await makeTempPlugin({ name: 'demo', version: '1.0.0' })
     const outside = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'xc-plugin-outside-')), 'secret.txt')
@@ -146,9 +146,9 @@ describe('installPlugin (local source)', () => {
 })
 
 describe('install policy gates (strictKnownMarketplaces + blockedPlugins)', () => {
-  // These two known_marketplaces.json fields exist to give admins
-  // enforceable control over what gets installed. Both used to be
-  // parsed but never checked — these tests pin the new enforcement.
+  // known_marketplaces.json 的这两个字段是为了给管理员对安装内容
+  // 施加可执行的控制。两者过去都被解析但从未被检查 ——
+  // 这些测试钉住新的强制行为。
 
   it('strictKnownMarketplaces rejects installs from a non-subscribed marketplace', async () => {
     const file = path.join(process.env.XC_PLUGINS_DIR!, 'known_marketplaces.json')
@@ -189,9 +189,9 @@ describe('install policy gates (strictKnownMarketplaces + blockedPlugins)', () =
   })
 
   it('blockedPlugins also matches bare plugin name (block-everywhere shortcut)', async () => {
-    // Admins reasonably expect `blockedPlugins: ['demo']` to block
-    // every marketplace's "demo" plugin in one shot, npm-ignore style.
-    // The fully-qualified form is still accepted for precision.
+    // 管理员合理地期望 `blockedPlugins: ['demo']` 能一次性拦截
+    // 每个 marketplace 的 "demo" 插件，类似 npm-ignore。
+    // 全限定形式仍被接受以提供精确性。
     const file = path.join(process.env.XC_PLUGINS_DIR!, 'known_marketplaces.json')
     await fs.mkdir(path.dirname(file), { recursive: true })
     await fs.writeFile(file, JSON.stringify({ marketplaces: [], blockedPlugins: ['demo'] }))
@@ -203,8 +203,8 @@ describe('install policy gates (strictKnownMarketplaces + blockedPlugins)', () =
   })
 
   it('blockedPlugins does not match a different plugin sharing a prefix', async () => {
-    // Make sure the bare-name match is strict equality, not substring —
-    // blocking "demo" should not block "demo-extra".
+    // 确保裸名称匹配是严格相等而非子串 ——
+    // 拦截 "demo" 不应拦截 "demo-extra"。
     const file = path.join(process.env.XC_PLUGINS_DIR!, 'known_marketplaces.json')
     await fs.mkdir(path.dirname(file), { recursive: true })
     await fs.writeFile(file, JSON.stringify({ marketplaces: [], blockedPlugins: ['demo'] }))
@@ -233,7 +233,7 @@ describe('uninstallPlugin', () => {
   })
 })
 
-// ── loader ─────────────────────────────────────────────────────────────
+// ── 加载器 ─────────────────────────────────────────────────────────────
 
 describe('loadAllPlugins', () => {
   it('returns empty registry when disabled', async () => {
@@ -253,7 +253,7 @@ describe('loadAllPlugins', () => {
     const list = result.registry.listAll()
     expect(list).toHaveLength(1)
     expect(list[0]!.id).toBe('demo@local')
-    expect(list[0]!.enabled).toBe(true) // default-enable
+    expect(list[0]!.enabled).toBe(true) // 默认启用
 
     const contrib = result.contributions.get('demo@local')
     expect(contrib?.skillsDir).toBe(path.resolve(list[0]!.rootDir, './skills'))
@@ -319,7 +319,7 @@ describe('loadAllPlugins', () => {
     const list = result.registry.listAll()
     expect(list).toHaveLength(1)
     expect(list[0]!.enabled).toBe(false)
-    expect(result.registry.list()).toHaveLength(0) // hidden by .list() filter
+    expect(result.registry.list()).toHaveLength(0) // 被 .list() 过滤器隐藏
   })
 })
 
@@ -350,8 +350,7 @@ describe('resolveContributions', () => {
   })
 
   it('auto-discovers commands/ agents/ skills/ when manifest omits them (Claude Code convention)', async () => {
-    // Build a real on-disk plugin so the convention-based fs.stat
-    // probes have something to find.
+    // 构建一个真实的磁盘插件，让基于约定的 fs.stat 探测有东西可找。
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-resolve-conv-'))
     await fs.writeFile(path.join(root, 'plugin.json'), JSON.stringify({ name: 'demo', version: '1.0.0' }))
     await fs.mkdir(path.join(root, 'commands'), { recursive: true })
@@ -372,12 +371,12 @@ describe('resolveContributions', () => {
     const c = await resolveContributions(plugin)
     expect(c.commandsDir).toBe(path.join(root, 'commands'))
     expect(c.agentsDir).toBe(path.join(root, 'agents'))
-    expect(c.skillsDir).toBeUndefined() // no skills/ dir → undefined
+    expect(c.skillsDir).toBeUndefined() // 无 skills/ 目录 → undefined
     expect(c.mcpServers).toEqual({ kind: 'path', path: path.join(root, '.mcp.json') })
   })
 })
 
-// ── userConfig install-time prompt ─────────────────────────────────────
+// ── userConfig 安装时提示 ─────────────────────────────────────
 
 describe('installPlugin (userConfig prompt)', () => {
   it('passes manifest userConfig fields to the callback and persists the returned values', async () => {
@@ -401,11 +400,11 @@ describe('installPlugin (userConfig prompt)', () => {
       },
     })
 
-    // Callback saw both fields verbatim.
+    // 回调原样看到了两个字段。
     expect(Array.isArray(receivedFields)).toBe(true)
     expect((receivedFields as Array<{ key: string }>).map((f) => f.key)).toEqual(['API_KEY', 'BASE_URL'])
 
-    // Persisted to user-config.json under the plugin id.
+    // 持久化到插件 id 下的 user-config.json。
     const stored = await getPluginUserConfig(result.pluginId)
     expect(stored).toEqual({ API_KEY: 'sk-test', BASE_URL: 'https://override' })
   })
@@ -425,7 +424,7 @@ describe('installPlugin (userConfig prompt)', () => {
       }),
     ).rejects.toThrow(/userConfig/)
 
-    // No cache entry created (aborted before move).
+    // 未创建缓存条目（在移动前已中止）。
     const installed = await listInstalledPlugins()
     expect(installed).toHaveLength(0)
   })
@@ -445,16 +444,16 @@ describe('installPlugin (userConfig prompt)', () => {
   })
 })
 
-// ── /plugin refresh hot reload ─────────────────────────────────────────
+// ── /plugin refresh 热重载 ─────────────────────────────────────────
 
 describe('refreshPluginContributions', () => {
   it('detects an added plugin between two scans and folds it into the skill registry', async () => {
     const { refreshPluginContributions } = await import('../src/plugins/refresh.js')
     const { createSkillRegistry } = await import('../src/skills/registry.js')
 
-    // Install one plugin with a skill, build registries from that snapshot.
+    // 安装一个带 skill 的插件，从该快照构建注册表。
     const src1 = await makeTempPlugin({ name: 'p1', version: '1.0.0' })
-    // Add a skill dir so resolveContributions auto-detects it.
+    // 添加 skill 目录，使 resolveContributions 自动检测它。
     await fs.mkdir(path.join(src1, 'skills', 'hello'), { recursive: true })
     await fs.writeFile(
       path.join(src1, 'skills', 'hello', 'SKILL.md'),
@@ -469,8 +468,8 @@ describe('refreshPluginContributions', () => {
     const skillRegistry = await createSkillRegistry({ extraDirs: initialIntegration.skillsDirs })
     expect(skillRegistry.get('hello')).toBeDefined()
 
-    // Install a second plugin AFTER initial load. The new skill should
-    // NOT show up until /plugin refresh runs.
+    // 在初始加载后再安装第二个插件。新 skill 在 /plugin refresh
+    // 运行前不应出现。
     const src2 = await makeTempPlugin({ name: 'p2', version: '1.0.0' })
     await fs.mkdir(path.join(src2, 'skills', 'world'), { recursive: true })
     await fs.writeFile(
@@ -481,14 +480,14 @@ describe('refreshPluginContributions', () => {
     await installPlugin({ source: { kind: 'local', path: src2 }, marketplace: 'local' })
     expect(skillRegistry.get('world')).toBeUndefined()
 
-    // Refresh: rebuilds plugin registry and folds new skills in.
+    // 刷新：重建插件注册表并并入新 skill。
     const summary = await refreshPluginContributions({
       pluginRegistry: initialLoad.registry,
       skillRegistry,
     })
     expect(summary.plugins.added).toContain('p2@local')
     expect(skillRegistry.get('world')).toBeDefined()
-    // Existing plugin still loaded.
+    // 既有插件仍然加载。
     expect(skillRegistry.get('hello')).toBeDefined()
   })
 
@@ -496,10 +495,9 @@ describe('refreshPluginContributions', () => {
     const { refreshPluginContributions } = await import('../src/plugins/refresh.js')
     const { McpRegistry } = await import('../src/mcp/registry.js')
 
-    // Install a plugin that declares an inline mcpServer. We use an
-    // unreachable stdio command so the server fails to connect — that's
-    // fine because we only need to verify that restartAll was called with
-    // the plugin's server in the merged map.
+    // 安装一个声明了内联 mcpServer 的插件。我们使用一个不可达的
+    // stdio 命令让服务器连接失败 —— 没关系，因为我们只需验证
+    // restartAll 被调用时合并映射中包含该插件的服务器。
     const src = await makeTempPlugin({
       name: 'mcp-bringing-plugin',
       version: '1.0.0',
@@ -510,8 +508,8 @@ describe('refreshPluginContributions', () => {
     await installPlugin({ source: { kind: 'local', path: src }, marketplace: 'local' })
 
     const initialLoad = await loadAllPlugins({ cwd: process.cwd() })
-    // Build a stub McpRegistry whose restartAll just records what it saw,
-    // so the test doesn't depend on real MCP child processes spawning.
+    // 构建一个 stub McpRegistry，其 restartAll 只记录所见内容，
+    // 这样测试不依赖真实的 MCP 子进程启动。
     const seenConfigs: Array<Map<string, unknown>> = []
     const stub = Object.create(McpRegistry.prototype)
     stub.restartAll = async (configs: Map<string, unknown>) => {
@@ -522,8 +520,8 @@ describe('refreshPluginContributions', () => {
     const summary = await refreshPluginContributions({
       pluginRegistry: initialLoad.registry,
       mcpRegistry: stub,
-      // askUser never actually fires because the test has no project-level
-      // MCP config to trust. Provide a stub that throws if invoked.
+      // askUser 实际不会触发，因为测试没有可信的项目级
+      // MCP 配置。提供一个被调用就抛错的 stub。
       askUser: async () => {
         throw new Error('askUser should not be invoked when project mcpServers is empty')
       },
@@ -549,14 +547,13 @@ describe('refreshPluginContributions', () => {
   })
 })
 
-/** Spin up a local git repo with one commit and return both its path
- *  (usable as a `kind: 'git'` source URL — `git clone /path` works) and
- *  the resulting HEAD sha. Lets us test sha verification without needing
- *  network or a real GitHub repo. */
+/** 启动一个本地 git 仓库并提交一次，返回其路径
+ *  （可作为 `kind: 'git'` 的源 URL —— `git clone /path` 可行）以及
+ *  最终的 HEAD sha。这样无需网络或真实 GitHub 仓库即可测试 sha 校验。 */
 async function makeLocalGitRepo(manifest: Record<string, unknown>): Promise<{ url: string; sha: string }> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-git-src-'))
-  // `git init -b` needs Git 2.28; macOS still ships older builds on some
-  // machines. Rename the unborn branch instead.
+  // `git init -b` 需要 Git 2.28；部分 macOS 机器仍自带旧版本。
+  // 改为重命名尚未出生的分支。
   await execa('git', ['init', '-q'], { cwd: root })
   await execa('git', ['symbolic-ref', 'HEAD', 'refs/heads/main'], { cwd: root })
   await execa('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
@@ -569,9 +566,9 @@ async function makeLocalGitRepo(manifest: Record<string, unknown>): Promise<{ ur
   return { url: root, sha }
 }
 
-// Windows CI process startup can consume most of Vitest's five-second default
-// before the local clone itself runs. Keep this real Git integration bounded,
-// but give it enough room to test installer behavior rather than runner load.
+// Windows CI 的进程启动可能吃掉 Vitest 五秒默认超时的大部分，
+// 甚至在本地 clone 真正运行之前就超时。为这个真实 Git 集成保持界限，
+// 但给它足够空间测试安装器行为而非 runner 负载。
 const GIT_INTEGRATION_TIMEOUT_MS = 15_000
 
 describe('install sha integrity check (marketplace.json `sha` field)', () => {
@@ -615,7 +612,7 @@ describe('install sha integrity check (marketplace.json `sha` field)', () => {
     'skips the check entirely when no sha is declared (back-compat with sha-less marketplaces)',
     async () => {
       const result = await installPlugin({
-        source: { kind: 'git', url: repo.url }, // no expectedSha
+        source: { kind: 'git', url: repo.url }, // 无 expectedSha
         marketplace: 'local',
       })
       expect(result.pluginId).toBe('demo@local')

@@ -20,8 +20,8 @@ const bridge: XcodeBridge = {
     ipcRenderer.send('ui-smoke:progress', name)
   },
   copyText(text: string): void {
-    // Sandboxed preloads cannot access the clipboard module; the main
-    // process owns it.
+    // 沙箱化的 preload 无法访问剪贴板模块；主进程
+    // 拥有它。
     ipcRenderer.send('app:copy-text', text)
   },
   pathForFile(file: unknown): string {

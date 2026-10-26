@@ -22,8 +22,8 @@ export function toPermissionRuleView(rule: AllowRule): PermissionRuleView {
   }
 }
 
-/** Rules stored in one project's permissions.json; shell rules belong to the
- *  project they were approved in, so only show the ones bound to `workspace`. */
+/** 某个项目 permissions.json 中存储的规则；shell 规则属于其
+ *  获批的项目，因此只显示绑定到 `workspace` 的那些。 */
 export function visiblePermissionRules(rules: AllowRule[], workspace: string): PermissionRuleView[] {
   const root = path.resolve(workspace)
   return rules
@@ -32,8 +32,8 @@ export function visiblePermissionRules(rules: AllowRule[], workspace: string): P
     .sort((a, b) => a.tool.localeCompare(b.tool) || a.type.localeCompare(b.type) || a.pattern.localeCompare(b.pattern))
 }
 
-/** Validate a user-authored rule and bind shell rules to the project. Only
- *  shell understands exact/prefix matching; other tools are tool-wide. */
+/** 校验用户编写的规则并把 shell 规则绑定到项目。只有
+ *  shell 支持精确/前缀匹配；其他工具是工具级。 */
 export function normalizeNewPermissionRule(
   toolName: string,
   type: PermissionRuleType,

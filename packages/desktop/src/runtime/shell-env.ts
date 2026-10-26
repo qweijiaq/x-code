@@ -1,8 +1,7 @@
-// GUI-launched Electron does not inherit the PATH a terminal app starts with:
-// tools installed later (Homebrew, nvm, uv, ...) are invisible to the agent's
-// shell until the app restarts. Resolve the login shell's environment on demand
-// and merge it into the runtime process without clobbering app-managed values
-// such as stored API keys or X_CODE_HOME.
+// 从 GUI 启动的 Electron 不会继承终端应用启动时的 PATH：
+// 后来安装的工具（Homebrew、nvm、uv 等）在应用重启前对 agent 的
+// shell 不可见。按需解析登录 shell 的环境并合并进运行时进程，
+// 同时不覆盖应用管理的值（如存储的 API key 或 X_CODE_HOME）。
 import { execFile } from 'node:child_process'
 import os from 'node:os'
 import { promisify } from 'node:util'
@@ -16,9 +15,9 @@ const PROBE_TIMEOUT_MS = 5_000
 export interface ShellEnvironmentResult {
   refreshed: boolean
   shell: string
-  /** Number of variables that were absent before the refresh. */
+  /** 刷新前不存在的变量数量。 */
   added: number
-  /** Variables whose value was updated (currently PATH). */
+  /** 值被更新的变量（目前是 PATH）。 */
   updated: string[]
   error?: string
 }
@@ -39,8 +38,8 @@ export function parseLoginShellEnv(stdout: string): Record<string, string> | nul
 
 const NEVER_IMPORT = new Set(['PWD', 'OLDPWD', 'SHLVL', '_', 'XCODE_SHELL_ENV_PROBE'])
 
-/** Merge a login-shell snapshot. Existing values win except for PATH, so keys
- *  injected by the desktop settings/`.env` are never overwritten by the shell. */
+/** 合并登录 shell 快照。除 PATH 外已有值优先，因此桌面设置/`.env`
+ *  注入的 key 绝不会被 shell 覆盖。 */
 export function applyLoginShellEnv(
   current: NodeJS.ProcessEnv,
   captured: Record<string, string>,
@@ -68,8 +67,8 @@ export function resetShellEnvironmentCache(): void {
   cached = null
 }
 
-/** Re-read the user's interactive login shell environment. Cached briefly so
- *  opening terminal tabs or submitting turns does not spawn a shell each time. */
+/** 重新读取用户的交互式登录 shell 环境。短暂缓存，
+ *  这样打开终端标签页或提交轮次时不必每次都拉起一个 shell。 */
 export async function refreshShellEnvironment(options: { force?: boolean } = {}): Promise<ShellEnvironmentResult> {
   if (process.env.XCODE_SKIP_SHELL_ENV_REFRESH === '1') {
     return { refreshed: false, shell: process.env.SHELL ?? '', added: 0, updated: [], error: 'disabled' }
@@ -113,7 +112,7 @@ export async function refreshShellEnvironment(options: { force?: boolean } = {})
       updated: [],
       error: message.slice(0, 200),
     }
-    // Cache failures too, otherwise every turn retries a slow/broken rc file.
+    // 失败也要缓存，否则每轮都会重试缓慢/损坏的 rc 文件。
     cached = { at: Date.now(), result }
     return result
   }

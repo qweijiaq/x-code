@@ -1,6 +1,6 @@
-// Integration tests for the grep tool's new output modes / filters. These run
-// the bundled ripgrep against real temp files to verify the schema → rg flag
-// mapping end-to-end.
+// grep 工具新增输出模式 / 过滤器的集成测试。它们
+// 对真实临时文件运行内置的 ripgrep，以端到端验证 schema → rg 标志
+// 的映射。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import fs from 'node:fs/promises'

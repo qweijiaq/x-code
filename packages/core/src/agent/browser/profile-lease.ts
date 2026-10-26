@@ -1,8 +1,7 @@
-// @x-code-cli/core — Cross-process ownership for Playwright's persistent
-// browser profile. The pinned MCP server derives one profile per browser
-// channel + workspace, but only discovers contention after trying to launch
-// Chrome. Taking a small lease in that exact profile directory lets a second
-// xc process fail early with a useful message while retaining login state.
+// @x-code-cli/core — 跨进程持有 Playwright 持久浏览器 profile。
+// 固定的 MCP server 会为每个浏览器 channel + 工作区派生一个 profile，但只有在尝试启动
+// Chrome 之后才会发现冲突。在该 profile 目录里占一个小租约，可以让第二个 xc 进程尽早
+// 失败并给出有用提示，同时保留登录状态。
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -14,8 +13,8 @@ import { type FileLockLease, acquireFileLock } from '../../utils/file-lock.js'
 const PROFILE_LOCK_FILE = '.x-code-profile.lock'
 
 function browserProfileToken(browser: BrowserConfig['browser']): string {
-  // @playwright/mcp maps its `chromium` option to the chrome-for-testing
-  // channel before constructing the persistent-profile directory name.
+  // @playwright/mcp 在构造持久 profile 目录名之前，会先把 `chromium` 选项映射成
+  // chrome-for-testing channel。
   return browser === 'chromium' ? 'chrome-for-testing' : (browser ?? 'chrome')
 }
 
@@ -24,14 +23,13 @@ function playwrightProfilesRoot(): string {
   if (process.platform === 'win32') {
     return path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'), 'ms-playwright-mcp')
   }
-  // The MCP SDK's safe stdio environment passes HOME but not XDG_CACHE_HOME,
-  // so the spawned pinned server resolves this exact fallback on Linux.
+  // MCP SDK 的安全 stdio 环境会传 HOME，但不传 XDG_CACHE_HOME，
+  // 因此被拉起的 pinned server 在 Linux 上会落到这个确切的回退路径。
   return path.join(os.homedir(), '.cache', 'ms-playwright-mcp')
 }
 
-/** Mirror @playwright/mcp@0.0.79's default persistent-profile derivation.
- *  Keeping this next to PLAYWRIGHT_MCP_PACKAGE makes a future version bump
- *  review the path algorithm and the lease together. */
+/** 复刻 @playwright/mcp@0.0.79 默认的持久 profile 派生逻辑。
+ *  把它放在 PLAYWRIGHT_MCP_PACKAGE 旁边，是为了将来升级版本时能一并复核路径算法和租约。 */
 export function managedBrowserProfileDirectory(
   config: BrowserConfig,
   cwd = process.cwd(),
@@ -41,8 +39,8 @@ export function managedBrowserProfileDirectory(
   return path.join(profilesRoot, `mcp-${browserProfileToken(config.browser)}-${workspaceHash}`)
 }
 
-/** Acquire ownership before spawning the default persistent browser. Custom
- *  commands own their own lifecycle/profile and intentionally skip this. */
+/** 在启动默认持久浏览器之前先取得所有权。自定义 command 自己管理生命周期/profile，
+ *  因而有意跳过这里。 */
 export async function acquireBrowserProfileLease(
   config: BrowserConfig,
   options: { cwd?: string; profilesRoot?: string } = {},

@@ -1,12 +1,11 @@
-// Tests for `runPluginCli(['update', ...])` — both single-id and --all paths.
+// 针对 `runPluginCli(['update', ...])` 的测试 — 覆盖单个 id 与 --all 两条路径。
 //
-// The CLI subcommand is wired around the same core `installPlugin` used by
-// the slash form, so we don't reverify the install behavior here; we focus
-// on the argv-parsing and the --all aggregation: classification (updated /
-// unchanged / failed), bare-invocation rejection, and skip-on-error.
+// CLI 子命令与 slash 形式共用同一个核心 `installPlugin`，所以这里不重复验证
+// 安装行为；聚焦 argv 解析与 --all 聚合：分类（updated / unchanged / failed）、
+// 裸调用拒绝、以及出错跳过。
 //
-// Each test runs in an isolated XC_PLUGINS_DIR so installs land in a temp
-// cache and don't bleed into the user's real ~/.x-code.
+// 每个测试都在隔离的 XC_PLUGINS_DIR 中运行，安装落到临时缓存，
+// 不会污染用户真实的 ~/.x-code。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -89,8 +88,7 @@ describe('xc plugin update --all', () => {
   it("reports a real version bump as 'updated' and returns 0", async () => {
     const src = await makeTempPlugin({ name: 'demo', version: '1.0.0' })
     await installPlugin({ source: { kind: 'local', path: src }, marketplace: 'local' })
-    // Bump the source manifest in place — when update reinstalls from the
-    // recorded source path it should pick the new version up.
+    // 原地升级源清单 — update 从记录的源路径重装时应能拿到新版本。
     await fs.writeFile(path.join(src, 'plugin.json'), JSON.stringify({ name: 'demo', version: '1.1.0' }))
 
     const code = await runPluginCli(['update', '--all', '--yes'])
@@ -105,8 +103,7 @@ describe('xc plugin update --all', () => {
     const badSrc = await makeTempPlugin({ name: 'bad', version: '1.0.0' })
     await installPlugin({ source: { kind: 'local', path: goodSrc }, marketplace: 'local' })
     await installPlugin({ source: { kind: 'local', path: badSrc }, marketplace: 'local' })
-    // Delete the bad source after install — update path's `installPlugin`
-    // will fail to read from a missing dir.
+    // 安装后删除坏源 — update 路径的 `installPlugin` 会因目录缺失而读取失败。
     await fs.rm(badSrc, { recursive: true, force: true })
 
     const code = await runPluginCli(['update', '--all', '--yes'])
@@ -117,8 +114,7 @@ describe('xc plugin update --all', () => {
     expect(out).toMatch(/bad@local: failed/)
     expect(out).toMatch(/Summary: 0 updated, 1 unchanged, 1 failed/)
 
-    // Both plugins still in the registry — bulk update isn't supposed to
-    // remove failed entries, just report them.
+    // 两个插件仍在注册表中 — 批量更新不应移除失败条目，只上报。
     const records = await listInstalledPlugins()
     expect(records.map((r) => r.id).sort()).toEqual(['bad@local', 'good@local'])
   })

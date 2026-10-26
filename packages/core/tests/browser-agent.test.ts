@@ -1,7 +1,6 @@
-// Tests for the browser sub-agent: the launch-config builder (pure) and the
-// config-gated registration (the agent only appears in the registry when
-// enabled). The actual @playwright/mcp connection is NOT exercised here — it
-// would spawn npx + a browser, which is too heavy / networked for CI.
+// 测试浏览器子智能体：launch-config 构建器（纯函数）和
+// 由配置门控的注册（该智能体只有在启用时才出现在 registry 中）。
+// 这里不真正连接 @playwright/mcp —— 那会拉起 npx + 一个浏览器，对 CI 来说太重 / 太联网。
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -14,7 +13,7 @@ import { createBuiltInRegistry, createSubAgentRegistry } from '../src/agent/sub-
 describe('buildBrowserServerConfig', () => {
   it('defaults to npx @playwright/mcp on the chrome channel, headed', () => {
     const c = buildBrowserServerConfig({}) as { command: string; args: string[] }
-    // command differs by platform (cmd /c on win32); the playwright args don't.
+    // command 因平台而异（win32 上是 cmd /c）；playwright 参数不变。
     const joined = [c.command, ...c.args].join(' ')
     expect(joined).toContain(PLAYWRIGHT_MCP_PACKAGE)
     expect(joined).not.toContain('@latest')
@@ -46,7 +45,7 @@ describe('buildBrowserServerConfig', () => {
       expect((await fs.stat(outputDirectory)).mode & 0o777).toBe(0o700)
     }
 
-    // A full command override owns its argv — we do not inject --output-dir.
+    // 完整的 command 覆盖拥有自己的 argv —— 我们不注入 --output-dir。
     const override = buildBrowserServerConfig({ command: 'my-server', args: ['--port', '7'] })
     if (!('command' in override)) throw new Error('Expected a stdio browser server config')
     expect(override.args).not.toContain('--output-dir')
@@ -57,7 +56,7 @@ describe('buildBrowserServerConfig', () => {
     expect([off.command, ...off.args].join(' ')).not.toContain('--caps vision')
 
     const on = buildBrowserServerConfig({}) as { command: string; args: string[] }
-    // adjacent args, surviving the cmd /c wrapper on win32
+    // 相邻的参数，在 win32 的 cmd /c 包装后依然保留
     expect([on.command, ...on.args].join(' ')).toContain('--caps vision')
   })
 })
@@ -66,8 +65,8 @@ describe('browser sub-agent registration gating', () => {
   let home: string
   let prevHome: string | undefined
   beforeAll(async () => {
-    // Isolate from the developer's real ~/.x-code so the custom-agent disk scan
-    // and the default config gate both see an empty home.
+    // 与开发者真实的 ~/.x-code 隔离，让 custom-agent 磁盘扫描
+    // 和默认配置门控都看到一个空 home。
     prevHome = process.env.X_CODE_HOME
     home = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-browser-'))
     process.env.X_CODE_HOME = home

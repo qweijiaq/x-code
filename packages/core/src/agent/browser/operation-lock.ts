@@ -1,8 +1,7 @@
-// @x-code-cli/core — One browser transaction at a time.
+// @x-code-cli/core — 同一时刻只允许一个浏览器事务。
 //
-// Playwright MCP keeps one mutable "current tab" per connection. Individual
-// tool calls are safe to await, but interleaving two multi-call browser flows
-// lets one flow silently redirect the other one's clicks and screenshots.
+// Playwright MCP 每个连接只维护一个可变的“当前标签页”。单独等待单个工具调用是安全的，
+// 但交错执行两个多调用的浏览器流程，会让其中一个流程悄无声息地劫持另一个流程的点击和截图。
 
 interface Waiter {
   resolve: (release: () => void) => void

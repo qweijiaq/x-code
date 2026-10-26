@@ -24,7 +24,7 @@ interface DocumentPanelProps {
   onApplyHunks(accepted: number[], hash: string): Promise<boolean>
   onSaveBaseline(): Promise<void>
   focusPage: number | null
-  /** Render inside the unified inspector instead of a fixed drawer. */
+  /** 在统一检查器内渲染，而非固定抽屉。 */
   embedded?: boolean
 }
 
@@ -73,8 +73,7 @@ export function DocumentPanel({
 
   const sheet = view?.sheets?.[Math.min(sheetIndex, Math.max(0, (view.sheets?.length ?? 1) - 1))]
 
-  // Runtime notes are emitted in English by core; map the known ones so the
-  // panel follows the UI language.
+  // 运行时的提示由核心以英文输出；映射已知提示，使面板跟随 UI 语言。
   const localizeNote = (note: string): string => {
     let match = /^OCR skipped for (\d+) page\(s\)/.exec(note)
     if (match) return t('已跳过 {{count}} 页无文字层的 OCR（预览模式）', { count: Number(match[1]) })

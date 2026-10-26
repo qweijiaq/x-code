@@ -1,13 +1,12 @@
-// @x-code-cli/cli — /mcp slash command handler family.
+// @x-code-cli/cli — /mcp 斜杠命令处理器族。
 //
-// Extracted from App.tsx as a factory that closes over the registry,
-// permission store, plugin registry (for refresh's plugin-mcp merging),
-// prompt-cache invalidator, plus the four UI-side hooks (addCommandMessage,
-// addCommandResult, askQuestion).
+// 从 App.tsx 抽出来的工厂，闭包捕获注册表、权限存储、插件注册表（供 refresh
+// 的 plugin-mcp 合并用）、提示缓存失效器，外加四个 UI 侧 hook
+// （addCommandMessage、addCommandResult、askQuestion）。
 //
-// Subcommands: list / tools / auth / logout / refresh / add / add-json /
-// remove. Add/Remove use --scope=user|project; --scope project auto-trusts
-// the project for next launch.
+// 子命令：list / tools / auth / logout / refresh / add / add-json /
+// remove。Add/Remove 用 --scope=user|project；--scope project 会在下次启动时
+// 自动信任该项目。
 import {
   detectScope,
   getMcpConfigPath,
@@ -40,9 +39,8 @@ export interface McpCommandDeps {
 export function createMcpCommandHandler(deps: McpCommandDeps) {
   const { options, addCommandMessage, addCommandResult, askQuestion, invalidateSystemPromptCache } = deps
 
-  /** Shared tail of /mcp add and /mcp add-json: persist the server config,
-   *  auto-trust on project scope, then announce. `firstLine` lets the two
-   *  subcommands keep their slightly different success headers. */
+  /** /mcp add 和 /mcp add-json 共用的收尾：持久化服务器配置、项目作用域下
+   *  自动信任，然后播报。`firstLine` 让两个子命令保留各自略有不同的成功标题。 */
   async function persistAndAnnounceNewServer(
     text: string,
     name: string,
@@ -58,16 +56,15 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
       return
     }
 
-    // For project scope, auto-trust this path so the user doesn't bump
-    // into their own consent dialog on next launch (non-fatal on failure —
-    // they'll just see the trust dialog then).
+    // 项目作用域下自动信任此路径，让用户下次启动时不会撞上自己的同意对话框
+    // （失败非致命——那时他们只会看到信任对话框）。
     let autoTrusted = false
     if (scope === 'project') {
       try {
         await trustProject(process.cwd())
         autoTrusted = true
       } catch {
-        // best-effort
+        // 尽力而为
       }
     }
 
@@ -78,18 +75,15 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
     addCommandMessage(text, lines.join('\n'))
   }
 
-  /** /mcp add — write a new server to user (default) or project config.
+  /** /mcp add — 把新服务器写入 user（默认）或 project 配置。
    *
-   *  Doesn't auto-connect: tool surface changes mid-session would invalidate
-   *  the prompt cache and force a miss on the next turn (OpenAI-compatible
-   *  providers' prefix cache). User is told to `/mcp refresh` or restart
-   *  when they're ready — matches the design doc's "explicit refresh"
-   *  philosophy.
+   *  不自动连接：会话中途改变工具表面会使提示缓存失效，导致下一轮 miss
+   *  （OpenAI 兼容供应商的前缀缓存）。用户就绪时被告知 `/mcp refresh` 或重启
+   *  ——契合设计文档「显式刷新」的理念。
    *
-   *  --scope project also auto-trusts the project (the user running the
-   *  command IS the consent signal — no point making them confirm a
-   *  trust dialog for their own command on next start). Collaborators
-   *  who clone the repo still go through the dialog normally. */
+   *  --scope project 也会自动信任项目（运行命令的用户本身就是同意信号——
+   *  没必要让他们为自己的命令在下一次启动时再确认一遍信任对话框）。clone
+   *  该仓库的协作者仍照常走对话框。 */
   async function handleMcpAdd(text: string, subArgRaw: string): Promise<void> {
     const res = parseAdd(subArgRaw)
     if (!res.ok) {
@@ -98,11 +92,9 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
     }
     const { name, scope, config } = res.command
 
-    // Duplicate-check in the requested scope. We use serverExists rather
-    // than detectScope here on purpose: cross-scope name reuse is allowed
-    // (a user-scope and project-scope server can legitimately share a
-    // name — e.g. a personal vs team-shared variant). Only same-scope
-    // collisions block the add.
+    // 在请求的作用域里做重复检查。这里刻意用 serverExists 而不是 detectScope：
+    // 跨作用域的同名是允许的（user 作用域和 project 作用域的服务器可以合法地
+    // 同名——比如个人版 vs 团队共享版）。只有同作用域的冲突才拦截 add。
     if (await serverExists(name, scope, process.cwd())) {
       const existing = await readServerConfig(name, scope, process.cwd())
       const summary =
@@ -134,9 +126,9 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
     )
   }
 
-  /** /mcp add-json — same as /mcp add but takes a raw JSON object for the
-   *  config body. The escape hatch for complex configs that don't fit
-   *  command-line flags (nested env, multiple headers, custom cwd, etc.). */
+  /** /mcp add-json — 与 /mcp add 相同，但配置体直接给一个裸 JSON 对象。
+   *  复杂配置装不进命令行标志（嵌套 env、多个 header、自定义 cwd 等）时的
+   *  逃生口。 */
   async function handleMcpAddJson(text: string, subArgRaw: string): Promise<void> {
     const res = parseAddJson(subArgRaw)
     if (!res.ok) {
@@ -156,13 +148,11 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
     await persistAndAnnounceNewServer(text, name, config, scope, (path) => `Added MCP server "${name}" to ${path}.`)
   }
 
-  /** /mcp remove — delete a server from config.json. Asks y/N before doing
-   *  anything destructive (every other competitor skips this — we keep
-   *  it because a typo can nuke a real entry and the cost of one extra
-   *  keypress is near zero). Current session keeps running with whatever
-   *  it had loaded — disconnecting mid-session has more downside (live
-   *  tool calls get orphaned) than upside (the file change only matters
-   *  at next launch / refresh). */
+  /** /mcp remove — 从 config.json 删除一个服务器。做任何破坏性操作前先问 y/N
+   *  （其他竞品都跳过这步——我们保留它，因为一个拼写错误就能炸掉一条真实条目，
+   *  而多按一次键的成本几乎为零）。当前会话继续以已加载的内容运行——中途断开
+   *  的坏处（正在进行的工具调用会变成孤儿）大于好处（文件改动只在下次启动 /
+   *  refresh 时才生效）。 */
   async function handleMcpRemove(text: string, subArgRaw: string): Promise<void> {
     const res = parseRemove(subArgRaw)
     if (!res.ok) {
@@ -173,8 +163,8 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
     let scope = res.command.scope
 
     if (!scope) {
-      // Auto-detect. The ambiguous case (both scopes) forces an explicit
-      // --scope so we don't silently delete the wrong one.
+      // 自动检测。歧义情况（两个作用域都有）强制显式指定 --scope，以免静默
+      // 删掉错误的那一个。
       const detected = await detectScope(name, process.cwd())
       switch (detected.kind) {
         case 'not-found':
@@ -189,8 +179,7 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
           break
       }
     } else {
-      // Explicit scope: verify presence before bothering the user with a
-      // confirmation dialog.
+      // 显式作用域：先用存在性检查确认，再去打扰用户弹确认对话框。
       if (!(await serverExists(name, scope, process.cwd()))) {
         addCommandMessage(
           text,
@@ -221,8 +210,7 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
       return
     }
     if (!result.removed) {
-      // Race: someone deleted the file or entry between detection and
-      // remove. Idempotent path — just say so.
+      // 竞态：有人在检测与删除之间删掉了文件或条目。幂等路径——照实说明即可。
       addCommandMessage(text, `Server "${name}" was already gone from ${scope} scope.`)
       return
     }
@@ -313,18 +301,15 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
           )
           return
         }
-        // Drop stored tokens up front. If the user runs /mcp auth on a
-        // server with valid tokens, we want a forced re-auth (matches
-        // Gemini CLI semantics — running auth again is a "let me log in
-        // from scratch", not "verify my existing session"). A separate
-        // /mcp logout exists for users who just want to clear without
-        // re-authing.
+        // 先丢弃已存 token。若用户对一台带有效 token 的服务器跑 /mcp auth，
+        // 我们想要强制重新认证（对齐 Gemini CLI 语义——再跑一次 auth 表示
+        // 「让我从头登录」，而不是「验证我的现有会话」）。只想清除而不重新认证的
+        // 用户另有单独的 /mcp logout。
         try {
           await getTokenStorage().clear(subArg)
         } catch {
-          // best-effort; an unwritable token store still lets the rest
-          // of the flow run and the user will see the actual failure
-          // when finishAuth tries to save.
+          // 尽力而为；token 存储不可写时，剩下的流程仍能继续，用户会在
+          // finishAuth 尝试保存时看到真正的失败。
         }
         addCommandMessage(text, `Authenticating "${subArg}" — opening browser...`)
         try {
@@ -334,9 +319,8 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
             },
           })
           if (server.status.kind === 'connected') {
-            // Tool surface may have grown — invalidate cache so the next
-            // turn rebuilds the system prompt with the newly-available
-            // tools.
+            // 工具表面可能变多了——使缓存失效，让下一轮用新可用的工具重建
+            // 系统提示。
             invalidateSystemPromptCache()
             addCommandResult(
               `✓ Authenticated "${subArg}" — ${server.status.toolCount} tool${
@@ -378,12 +362,10 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
         }
         addCommandMessage(text, 'Re-reading MCP config and reconnecting servers...')
         try {
-          // Include plugin-contributed mcpServers in the merged map. Without
-          // this, a `/mcp refresh` run after a plugin install would silently
-          // drop every plugin-contributed server because the merged map only
-          // had user + project entries. The helper degrades to `{}` on any
-          // plugin-scan failure (logged to debug.log) so an MCP-only refresh
-          // doesn't fail because of an unrelated plugin-system hiccup.
+          // 把插件贡献的 mcpServers 并入合并 map。没有这步，插件安装后跑的
+          // `/mcp refresh` 会静默丢掉每个插件贡献的服务器，因为合并 map 只有
+          // user + project 条目。该辅助函数在插件扫描失败时降级为 `{}`（记入
+          // debug.log），所以只 refresh MCP 时不会因无关的插件系统小故障而失败。
           const extraServers = options.pluginRegistry ? await getPluginMcpServersFromDisk(process.cwd()) : undefined
           const { configs, configErrors, projectSkipped } = await loadMergedConfigsFromDisk({
             cwd: process.cwd(),

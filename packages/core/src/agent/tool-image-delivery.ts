@@ -42,7 +42,7 @@ interface ToolImageDeliveryOptions {
   unavailableFallback?: string
 }
 
-/** Route tool-result images natively or through a configured caption model. */
+/** 将工具结果图片原生传递，或通过配置的字幕模型传递。 */
 export async function deliverToolImages(
   context: ToolImageDeliveryContext,
   text: string,

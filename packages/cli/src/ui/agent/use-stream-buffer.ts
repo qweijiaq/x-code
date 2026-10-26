@@ -1,78 +1,56 @@
-// @x-code-cli/cli — Streaming-text buffer management
+// @x-code-cli/cli — 流式文本缓冲管理
 //
-// Deltas accumulate in `bufferRef`. After every delta we look for the
-// latest single-`\n` position whose prefix does NOT end inside an open
-// multi-line markdown structure (table, code fence, list, blockquote),
-// and commit everything up to that point as a `streamingChunk` message.
-// Everything after the cut point stays in the buffer, merging with
-// subsequent deltas until the next safe boundary is found (or the
-// stream ends and `flushBuffer()` force-drains the remainder).
+// 增量累积在 `bufferRef` 中。每次增量后，我们寻找最新的单个 `\n` 位置，其
+// 前缀不以开放的多行 markdown 结构（表格、代码围栏、列表、引用块）结尾，并把
+// 到该点为止的所有内容作为 `streamingChunk` 消息提交。切割点之后的一切留在
+// 缓冲中，与后续增量合并，直到找到下一个安全边界（或流结束，`flushBuffer()`
+// 强制排空剩余部分）。
 //
-// Why per-line (not per-paragraph) cuts: paragraph-break (`\n\n`) cuts
-// produce a "block-by-block" reveal — readable but visibly chunky on
-// long answers. Cutting at every safe `\n` lands content line-by-line,
-// which matches what Claude Code does (it re-renders the whole text
-// each delta and only HIDES the in-progress trailing line until the
-// next `\n` arrives). We can't re-render arbitrary scrollback once
-// committed, so per-line cuts are the closest we get within an append-
-// only architecture.
+// 为什么按行（而非按段）切割：段分隔（`\n\n`）切割产生“逐块”呈现——可读，但
+// 在长答案上明显显得块状。在每个安全的 `\n` 处切割会逐行落地内容，这与
+// Claude Code 的做法一致（它每次增量都重渲染整个文本，只是把进行中的尾行
+// 隐藏到下一个 `\n` 到来）。我们一旦提交就无法重渲染任意 scrollback，所以按行
+// 切割是我们在只追加架构里能做到的最接近方案。
 //
-// Why the open-block check: marked's lexer needs the FULL structure in
-// one parse pass for tables, code fences, list runs, and blockquotes —
-// committing `| a | b |\n` on its own parses as a paragraph (raw pipes
-// in the rendered output); committing `- item 1\n` then `- item 2\n`
-// separately parses as TWO 1-item lists with a vertical gap between
-// them instead of one cohesive list. So the boundary check holds the
-// buffer as long as the LAST line still looks like part of an open
-// structure, and only releases when a non-continuation line arrives
-// (heading, plain paragraph, or a blank line that explicitly closes
-// the block).
+// 为什么做开放块检查：marked 的词法分析器需要在一个解析遍里拿到完整结构来
+// 处理表格、代码围栏、列表串和引用块——单独提交 `| a | b |\n` 会被解析成段落
+// （渲染输出里是裸管道符）；分开提交 `- item 1\n` 再 `- item 2\n` 会被解析成
+// 两个各有一项的列表，中间带垂直空隙，而不是一个连贯的列表。所以边界检查会
+// 只要最后一行看起来仍像开放结构的一部分，就继续持有缓冲，只有当非续行到来时
+// （标题、普通段落、或明确关闭该块的空行）才释放。
 //
-// A simpler "buffer the whole response" approach kills streaming UX
-// entirely. A simpler "commit at every \n unconditionally" approach
-// breaks tables and lists. This guarded per-line cut is the middle
-// path.
+// 一个更简单的“缓冲整个响应”的方案会彻底毁掉流式 UX。一个更简单的“无条件在
+// 每个 `\n` 提交”的方案会破坏表格和列表。这个带守卫的按行切割是中间路径。
 //
-// On top of the safe-boundary cut we COALESCE successive commits inside
-// a small time window into a single appendMessage call. The model often
-// emits 2-3 short paragraphs back-to-back ("...整理：\n\n", "---\n\n",
-// "## 标题\n\n"). Without coalescing each one becomes its own setState →
-// ChatInput render → BSU/ESU [J+redraw payload, and on terminals that
-// don't perfectly atomize DEC 2026 sync (notably xterm.js inside VS Code)
-// several large redraws inside one vsync window manifest as visible
-// flicker. A ~32ms always-defer window (≈2 frames @ 60Hz) is shorter than
-// typical 80-200ms inter-delta gaps from the provider, well below human
-// perception, and lets every commit arriving in the same window ride out
-// in one React render → one stdout write.
+// 在安全边界切割之上，我们还会把一个小时间窗口内的连续提交合并成一次
+// appendMessage 调用。模型常常背靠背发出 2-3 个短段落（"...整理：\n\n"、
+// "---\n\n"、"## 标题\n\n"）。不合并的话，每个都变成自己的 setState →
+// ChatInput 渲染 → BSU/ESU [J+redraw 负载，而在不能完美原子化 DEC 2026 同步
+// 的终端上（尤其是 VS Code 内的 xterm.js），一个 vsync 窗口里的几次大重绘会
+// 表现为可见闪烁。一个约 32ms 的总是延迟窗口（60Hz 下约 2 帧）短于 provider
+// 典型的 80-200ms 增量间隙，远低于人类感知阈值，并让同一窗口内到达的每次提交
+// 都搭乘一次 React 渲染 → 一次 stdout 写。
 import { useCallback, useEffect, useRef } from 'react'
 
 import type { DisplayMessage, ModelMessage } from '@x-code-cli/core'
 import { debugLog } from '@x-code-cli/core'
 
-/** Does `text` end inside an open multi-line markdown structure that
- *  the renderer needs whole to format correctly?
+/** `text` 是否以一个开放的多行 markdown 结构结尾，而渲染器需要完整结构才能
+ *  正确格式化？
  *
- *  We hold ONLY the structures whose visual rendering genuinely breaks
- *  when split mid-block:
+ *  我们只持有那些在中途被拆分会真正破坏视觉渲染的结构：
  *
- *  - Code fence: odd number of ``` at start-of-line = fence is open.
- *    Cutting inside an open fence would render the partial code as
- *    plain prose and lose the monospace block context.
- *  - Table: last non-empty line starts with `|`. GFM tables require
- *    header + separator + rows in ONE lexer pass; cutting mid-table
- *    renders incomplete rows as raw `| a | b |` text.
+ *  - 代码围栏：行首 ``` 的数量为奇数 = 围栏开放。在开放围栏内切割会把部分代码
+ *    渲染成普通散文，并丢失等宽块上下文。
+ *  - 表格：最后一个非空行以 `|` 开头。GFM 表格要求表头 + 分隔行 + 数据行在
+ *    一次词法分析遍里；在表格中途切割会把不完整的行渲染成裸的 `| a | b |` 文本。
  *
- *  Lists (ordered, unordered) and blockquotes are deliberately NOT held
- *  here — committing them line-by-line still renders identically to
- *  the whole-block version. Each `- item N\n` parsed standalone becomes
- *  a 1-item list rendering as `• item N\n`, and concatenating those is
- *  the same byte stream as parsing the full list (`- a\n- b\n` →
- *  `• a\n• b\n`). The same holds for `> line\n` quotes (each parses
- *  to `▎ line\n`). The minor cost — a multi-line list item with a
- *  lazy continuation gets the continuation rendered as a separate
- *  indented paragraph — is rare in AI output and the streaming-feel
- *  win is large: list items appear one at a time as the model emits
- *  them instead of popping in as a finished block. */
+ *  列表（有序、无序）和引用块被刻意不在这里持有——逐行提交它们仍与整块版本
+ *  渲染一致。每个 `- item N\n` 独立解析成一个一项列表，渲染成 `• item N\n`，
+ *  把它们拼接起来与解析完整列表是同样的字节流（`- a\n- b\n` → `• a\n• b\n`）。
+ *  对 `> line\n` 引用也一样（每个解析成 `▎ line\n`）。微小的代价——带惰性续行
+ *  的多行列表项会把续行渲染成单独的缩进段落——在 AI 输出里很少见，而流式体验
+ *  的收益很大：列表项在模型发出时一项一项出现，而不是作为一个完成块弹出。 */
 export function hasOpenCodeFence(text: string): boolean {
   const fences = text.match(/^```/gm)
   return !!fences && fences.length % 2 !== 0
@@ -82,8 +60,8 @@ export function hasOpenMarkdownBlock(text: string): boolean {
   if (hasOpenCodeFence(text)) return true
 
   const lines = text.split('\n')
-  // Strip the ONE trailing '' that `split('\n')` produces for text
-  // ending in a newline — that's a split artifact, not a real blank line.
+  // 剥掉 `split('\n')` 为以换行结尾的文本产生的那一个尾随 ''——那是 split 的
+  // 伪影，不是真正的空行。
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
   if (lines.length === 0) return false
 
@@ -93,13 +71,12 @@ export function hasOpenMarkdownBlock(text: string): boolean {
   return false
 }
 
-/** Return the position just past the LATEST safe single-`\n` in `text`,
- *  or -1 if none exists. "Safe" means the prefix up to that `\n` doesn't
- *  end inside an open multi-line block — committing that prefix gives
- *  the markdown renderer something it can fully format.
+/** 返回 `text` 中最新安全单个 `\n` 之后的位置，如果不存在则返回 -1。“安全”
+ *  意味着到那个 `\n` 为止的前缀不以开放的多行块结尾——提交该前缀能给 markdown
+ *  渲染器一个它可以完整格式化的内容。
  *
- *  Scans backward from the end so the first hit IS the latest safe cut
- *  (no need to walk every newline tracking a maximum). */
+ *  从末尾向后扫描，这样第一个命中就是最新的安全切割点（无需遍历每个换行去
+ *  追踪最大值）。 */
 export function findSafeBoundary(text: string): number {
   let scan = text.length
   while (scan > 0) {
@@ -114,22 +91,19 @@ export function findSafeBoundary(text: string): number {
   return -1
 }
 
-// When a code fence is open, the normal `\n\n` safe-boundary logic holds
-// everything until the fence closes. For long code blocks (100+ lines) this
-// produces a single massive commit whose pre-scroll `\n`s leave visible blank
-// rows in the terminal scrollback. To avoid that, we force a line-based commit
-// once the buffer exceeds this threshold while inside an open code fence.
-// The markdown renderer's `code` token handler outputs raw text, so splitting
-// inside a fence is visually identical — the only difference is that the first
-// chunk carries the opening ``` (parsed as a `code` token by marked.lexer) and
-// subsequent chunks are plain text lines (rendered as-is by the fallback path).
+// 当代码围栏开放时，正常的 `\n\n` 安全边界逻辑会一直持有所有内容直到围栏
+// 关闭。对长代码块（100+ 行）这会产生一次巨大的提交，其预滚动的 `\n` 会在终端
+// scrollback 中留下可见的空行。为避免这一点，当缓冲在开放代码围栏内超过这个
+// 阈值时，我们强制一次基于行的提交。markdown 渲染器的 `code` token 处理器
+// 输出原始文本，所以围栏内拆分在视觉上完全一致——唯一区别是第一个块带开头的
+// ```（被 marked.lexer 解析为 `code` token），后续块是纯文本行（由回退路径
+// 原样渲染）。
 const CODE_FENCE_COMMIT_THRESHOLD = 800
 
 /**
- * Safety net: extract the text from the most recent assistant message in
- * the loop state. Used to display a reply when the stream produced no
- * text-delta events but the final response message still carries text
- * (e.g. some reasoning-model providers put everything in one final part).
+ * 安全网：从循环状态里最近的 assistant 消息中提取文本。用于当流没有产生任何
+ * 文本增量事件，但最终响应消息仍携带文本时显示回复（例如某些 reasoning 模型
+ * provider 把一切都放在最后一个部件里）。
  */
 export function extractLastAssistantText(messages: ModelMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -150,14 +124,13 @@ export function extractLastAssistantText(messages: ModelMessage[]): string {
 }
 
 export interface StreamBufferApi {
-  /** Accept a text delta from the agent loop. Emits a streamingChunk
-   *  message for every complete line (`\n`-terminated substring) in the
-   *  rolling buffer; the trailing partial line stays buffered. */
+  /** 接受来自 agent 循环的文本增量。为滚动缓冲中每个完整行（以 `\n` 结尾的
+   *  子串）发出一条 streamingChunk 消息；尾部的部分行保持缓冲。 */
   appendTextDelta: (delta: string) => void
-  /** Emit any remaining partial line as a final streamingChunk. Called
-   *  on tool-call / end-of-turn boundaries to drain the buffer. */
+  /** 把任何剩余的部分行作为最终 streamingChunk 发出。在工具调用 / 回合结束
+   *  边界调用以排空缓冲。 */
   flushBuffer: () => void
-  /** Discard any buffered text without emitting. */
+  /** 丢弃任何已缓冲的文本而不发出。 */
   resetBuffer: () => void
 }
 
@@ -173,25 +146,21 @@ function makeStreamChunkMessage(content: string): DisplayMessage {
   }
 }
 
-/** Always-defer window for coalescing commits. The first commit in a
- *  quiet period arms a timer; any further commits arriving before it
- *  fires join the same emit. 150ms is below the ~200ms human-perception
- *  threshold for "stuttering" but long enough to absorb most paragraph +
- *  separator + heading bursts (which usually arrive 30-150ms apart
- *  around section boundaries). Cuts the rate of large terminal-frame
- *  redraws roughly in half versus the prior 48ms window — the live
- *  scrollback area "shakes" half as often during streaming, at the cost
- *  of paragraphs appearing in slightly chunkier batches. */
+/** 用于合并提交的总是延迟窗口。安静期内的第一次提交启动一个定时器；在它触发
+ *  前到达的任何进一步提交都加入同一次发出。150ms 低于约 200ms 的人类感知
+ *  “卡顿”阈值，但足以吸收大多数段落 + 分隔符 + 标题突发（它们通常在节边界
+ *  附近以 30-150ms 的间隔到达）。相比之前的 48ms 窗口，把大规模终端帧重绘
+ *  的速率大致减半——流式期间实时 scrollback 区域“抖动”的频率减半，代价是
+ *  段落以略微更块状的批次出现。 */
 const COMMIT_BATCH_MS = 150
 
 export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): StreamBufferApi {
-  /** Accumulating buffer — holds everything since the last safe-boundary
-   *  commit (or last flush). */
+  /** 累积缓冲——持有自上次安全边界提交（或上次冲刷）以来的所有内容。 */
   const bufferRef = useRef<string>('')
-  /** Safe-boundary chunks waiting to be coalesced into one appendMessage
-   *  call. Cleared when the deferred timer fires (or flushBuffer drains). */
+  /** 等待合并进一次 appendMessage 调用的安全边界块。延迟定时器触发时（或
+   *  flushBuffer 排空时）清空。 */
   const pendingChunksRef = useRef<string[]>([])
-  /** Timer that fires the deferred emit. Null when nothing is pending. */
+  /** 触发延迟发出的定时器。无待处理时为空。 */
   const emitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const drainPending = useCallback(() => {
@@ -202,8 +171,7 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
     const chunks = pendingChunksRef.current
     if (chunks.length === 0) return
     pendingChunksRef.current = []
-    // Single chunk → reuse as-is to avoid an unnecessary join allocation
-    // (the common case once a paragraph has cleanly settled).
+    // 单个块 → 原样复用，避免不必要的 join 分配（段落干净落定后的常见情况）。
     const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
     debugLog('buffer.emit', `chunks=${chunks.length} chars=${combined.length}`)
     appendMessage(makeStreamChunkMessage(combined))
@@ -215,8 +183,7 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
       if (emitTimerRef.current === null) {
         emitTimerRef.current = setTimeout(drainPending, COMMIT_BATCH_MS)
       }
-      // Timer already armed — chunk rides out on the existing deadline so
-      // a long burst can't keep extending the wait indefinitely.
+      // 定时器已武装——块搭乘现有截止时间，这样长时间突发不会无限延长等待。
     },
     [drainPending],
   )
@@ -233,10 +200,9 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
         debugLog('buffer.commit', `chars=${chunk.length}`)
         queueChunk(chunk)
       } else if (bufferRef.current.length > CODE_FENCE_COMMIT_THRESHOLD && hasOpenCodeFence(bufferRef.current)) {
-        // Large open code fence — force an intermediate commit at the last
-        // newline so the terminal doesn't have to pre-scroll 100+ blank rows
-        // in one shot. Find the last `\n` that is NOT part of a `\n\n` pair
-        // (those are handled by findSafeBoundary above) and cut there.
+        // 大型开放代码围栏——在最后一个换行处强制一次中间提交，这样终端不必
+        // 一次性预滚动 100+ 空行。找到最后一个不属于 `\n\n` 对的 `\n`（那些由
+        // 上面的 findSafeBoundary 处理）并在那里切割。
         const lastNL = bufferRef.current.lastIndexOf('\n')
         if (lastNL > 0) {
           const chunk = bufferRef.current.slice(0, lastNL + 1)
@@ -250,12 +216,10 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
   )
 
   const flushBuffer = useCallback(() => {
-    // End-of-turn / tool-call boundary — no more deltas are coming, so
-    // drain whatever's left (even if it's an unclosed table, there's
-    // nothing more to hold for). Combine pending chunks + remainder into
-    // a single message: emitting them separately would produce two
-    // setState → render → flush cycles back-to-back, which is exactly
-    // the flicker the batching is meant to avoid.
+    // 回合结束 / 工具调用边界——不再有增量到来，所以排空剩下的任何内容（即便
+    // 是一个未关闭的表格，也没有更多可持有的了）。把待处理块 + 剩余部分合并成
+    // 一条消息：分开发出它们会产生两次背靠背的 setState → 渲染 → 冲刷循环，
+    // 而这正是批处理要避免的闪烁。
     if (emitTimerRef.current !== null) {
       clearTimeout(emitTimerRef.current)
       emitTimerRef.current = null

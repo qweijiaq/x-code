@@ -1,4 +1,4 @@
-// Tests for config module
+// 测试 config 模块
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import fs from 'node:fs'
@@ -67,16 +67,16 @@ describe('resolvePeerMessagingConfig', () => {
   })
 })
 
-// Scrub the developer's real shell keys so they can't leak into the
-// "no providers configured" assertions.
+// 清除开发者真实的 shell 密钥，以免它们泄漏进
+// “未配置任何 provider”的断言。
 function clearProviderEnvVars(): void {
   for (const key of PROVIDER_ENV_VARS) delete process.env[key]
   resetOpenAIAuthContextForTesting()
 }
 
-/** Redirect config.json reads to an empty tmpdir so the real user's
- *  ~/.x-code/config.json (possibly written by a recent /model switch)
- *  can't contaminate these assertions. */
+/** 把 config.json 的读取重定向到空的 tmpdir，这样真实用户的
+ *  ~/.x-code/config.json（可能是最近一次 /model 切换写入的）
+ *  就不会污染这些断言。 */
 function isolateUserConfig(): void {
   const tmp = path.join(os.tmpdir(), 'x-code-config-test-' + Math.random().toString(36).slice(2))
   process.env.X_CODE_HOME = tmp

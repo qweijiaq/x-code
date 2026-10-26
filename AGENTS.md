@@ -82,7 +82,7 @@ packages/
 
 - **ESM only** (`"type": "module"`), `.js` extensions on relative imports even in `.ts` files (NodeNext).
 - **No semicolons**, single quotes, trailing commas, print width 120. Import order enforced by prettier-plugin-sort-imports: `node:` → `react` → `ink` → `ai`/`@ai-sdk` → `zod` → `@x-code-cli/` → `./` relative.
-- **Comments**: reserved for _why_ (terminal-protocol workarounds, provider-specific quirks). Keep that style.
+- **Comments**: written in Simplified Chinese and reserved for _why_ (terminal-protocol workarounds, provider-specific quirks). Keep machine directives (`eslint-disable*`, `@ts-expect-error`, `prettier-ignore`, …) verbatim, and leave identifiers, code examples, paths and URLs inside comments unchanged.
 - **Commit style**: conventional commits (`feat:`, `fix:`, `refactor:`, etc.) enforced by commitlint. Additional types: `release`, `wip`.
 - **`.x-code/` at repo root is gitignored** — session summaries, auto-memory, local prefs, custom sub-agent definitions. Tests redirect via `X_CODE_HOME`.
 - **`DEBUG_STDOUT=1 xc`** writes to `~/.x-code/logs/debug.log` (10 MB rolling). `debugLog()` in core is a no-op without it.

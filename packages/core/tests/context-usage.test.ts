@@ -40,8 +40,7 @@ describe('estimateContextBreakdown', () => {
     const mcp = formatMcpCapabilities([
       { callableName: 'fs__read_file', serverName: 'filesystem', description: 'Read a file' },
     ])
-    // Mirror buildSystemPrompt's concatenation: blocks substituted into the
-    // base, knowledge appended at the end.
+    // 复刻 buildSystemPrompt 的拼接方式：各块替换进 base，knowledge 追加在末尾。
     const systemPrompt = `${base}${mcp}${skills}\n\n${knowledge}`
 
     const breakdown = estimateContextBreakdown({
@@ -54,7 +53,7 @@ describe('estimateContextBreakdown', () => {
     })
 
     const byKey = new Map(breakdown.categories.map((c) => [c.key, c.estimatedTokens]))
-    // Subtraction isolates the base; per-block ceils can drift by ±1 each.
+    // 用减法隔离出 base；各块的向上取整可能各自漂移 ±1。
     expect(byKey.get('system')).toBeGreaterThanOrEqual(estimateTextTokenCount(base) - 3)
     expect(byKey.get('system')).toBeLessThanOrEqual(estimateTextTokenCount(base) + 3)
     expect(byKey.get('rules')).toBe(estimateTextTokenCount(knowledge))
@@ -84,9 +83,8 @@ describe('estimateContextBreakdown', () => {
   })
 
   it('counts MCP tools wrapped in ai jsonSchema() (not zod)', () => {
-    // bridgeMcpTool produces exactly this shape: raw JSON Schema wrapped in
-    // ai's jsonSchema(). zodToJsonSchema would throw on it — the estimator
-    // must read the wrapped schema via the getter instead.
+    // bridgeMcpTool 正好产出这种形状：原始 JSON Schema 被包在 ai 的 jsonSchema() 里。
+    // zodToJsonSchema 遇到它会抛错 —— 估算器必须改用 getter 读取被包裹的 schema。
     const mcpTool = tool({
       description: 'Filesystem read',
       inputSchema: jsonSchema({ type: 'object', properties: { path: { type: 'string' } } }),
@@ -102,7 +100,7 @@ describe('estimateContextBreakdown', () => {
     const byKey = new Map(breakdown.categories.map((c) => [c.key, c.estimatedTokens]))
     const mcpTokens = byKey.get('mcp') ?? 0
     expect(mcpTokens).toBeGreaterThan(0)
-    // The raw JSON Schema payload is what would actually be serialized.
+    // 实际被序列化的是原始 JSON Schema 载荷。
     expect(mcpTokens).toBe(
       estimateTextTokenCount(
         JSON.stringify({
@@ -180,7 +178,7 @@ describe('estimateContextBreakdown', () => {
     const byKey = new Map(breakdown.categories.map((c) => [c.key, c.estimatedTokens]))
     expect(byKey.get('summary') ?? 0).toBeGreaterThan(0)
     expect(byKey.get('conversation') ?? 0).toBeGreaterThan(0)
-    // Summary is the first message only; the rest land in conversation.
+    // Summary 只是第一条消息；其余都归入对话。
     expect(byKey.get('summary')).toBe(estimateTextTokenCount(messages[0]!.content as string))
     expect(byKey.get('conversation')).toBe(
       estimateTextTokenCount(messages[1]!.content as string) + estimateTextTokenCount(messages[2]!.content as string),
@@ -219,9 +217,9 @@ describe('calibrateContextBreakdown', () => {
       messages: [{ role: 'user' as const, content: 'b'.repeat(300) }],
       tools: {},
     })
-    // 3000 (system) + 100 (conversation) = 3100 estimated. A real total of
-    // 3101 scales system to 3000.97 → rounds to 3001, conversation to 100 —
-    // the sum matches with zero drift, so nothing needs adjusting.
+    // 3000（system）+ 100（conversation）= 3100 估算值。真实总计 3101 会把
+    // system 缩放到 3000.97 → 四舍五入为 3001，conversation 为 100 ——
+    // 求和正好匹配且无漂移，因此无需调整。
     const calibrated = calibrateContextBreakdown(breakdown, 3101)
     expect(calibrated.reduce((sum, c) => sum + c.tokens, 0)).toBe(3101)
     expect(calibrated.find((c) => c.key === 'system')!.tokens).toBe(3001)
@@ -241,8 +239,8 @@ describe('buildContextBreakdownInput', () => {
   it('derives the deferred-tools block from the catalog', () => {
     const state = createLoopState()
     state.systemPromptCache = 'prompt'
-    // In production the catalog and the prompt cache are built in the same
-    // loop iteration, so the estimator reads the catalog already on state.
+    // 生产中 catalog 和 prompt cache 在同一次循环迭代中构建，
+    // 因此估算器直接从 state 上读取 catalog。
     state.deferredCatalog = [
       {
         name: 'webSearch',
@@ -305,9 +303,9 @@ describe('buildContextBreakdownInput', () => {
       },
     ]
     state.activatedTools = new Set(['webSearch'])
-    // standard profile skips the catalog-weight gate, so the internal rebuild
-    // keeps deferral active (webSearch stripped from base, toolSearch added)
-    // and the activated tool splices back in from the ORIGINAL catalog.
+    // standard profile 跳过了 catalog 权重门，因此内部重建会保持延迟加载有效
+    //（webSearch 从 base 中剥离，加入 toolSearch），
+    // 而被激活的工具则从原始 catalog 中拼回来。
     const options = { modelId: 'anthropic:claude-sonnet-5', toolProfile: 'standard' } as any
     const input = buildContextBreakdownInput(options, state)!
     expect(input.tools.webSearch).toBe(def)

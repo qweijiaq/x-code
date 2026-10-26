@@ -108,8 +108,8 @@ describe('getMaxOutputTokens', () => {
   })
 
   it('returns default for models without an explicit cap', () => {
-    // Current Zhipu vision models (glm-4.6v, glm-5v-turbo) don't have
-    // explicit max-output-token caps — they fall through to the default.
+    // 当前的 Zhipu 视觉模型（glm-4.6v、glm-5v-turbo）没有
+    // 显式的 max-output-token 上限 —— 它们回落到默认值。
     expect(getMaxOutputTokens('zhipu:glm-4.6v')).toBe(16384)
     expect(getMaxOutputTokens('zhipu:glm-5v-turbo')).toBe(16384)
   })

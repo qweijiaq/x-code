@@ -1,4 +1,4 @@
-// @x-code-cli/core — Shared agent loop state
+// @x-code-cli/core — 共享的 agent 循环状态
 import type { ModelMessage } from 'ai'
 
 import type { MemoryRecallAttachment, MemoryRecallTombstone, MemoryRecallTrace } from '../knowledge/memory/types.js'
@@ -25,21 +25,21 @@ import { createModelMessageView, replaceTrackedMessages } from './tracked-messag
 import { createUsageBreakdown } from './usage.js'
 import type { UsageBreakdown } from './usage.js'
 
-/** Per-user-submit token snapshot. Each `agentLoop` invocation pushes one
- *  entry recording the delta tokens and tool calls for that step. Persisted
- *  to the session jsonl so `/resume` restores the full step history. */
+/** 每次用户提交的 token 快照。每次 `agentLoop` 调用推入一条记录，
+ *  记下该步的增量 token 和工具调用。持久化到会话 jsonl，好让
+ *  `/resume` 恢复完整的步骤历史。 */
 export interface StepStats {
-  /** First 80 chars of the user message */
+  /** 用户消息的前 80 个字符 */
   prompt: string
-  /** Input tokens consumed by this step (delta, not cumulative) */
+  /** 本步消耗的输入 token（增量，非累计） */
   inputTokens: number
-  /** Output tokens consumed by this step (delta, not cumulative) */
+  /** 本步消耗的输出 token（增量，非累计） */
   outputTokens: number
-  /** Number of API turns (streamText rounds) in this step */
+  /** 本步的 API 轮次（streamText 轮）数量 */
   turnCount: number
-  /** Number of tool calls dispatched in this step */
+  /** 本步派发的工具调用数量 */
   toolCallCount: number
-  /** ISO timestamp when the step started */
+  /** 本步开始的 ISO 时间戳 */
   startedAt: string
 }
 
@@ -50,181 +50,161 @@ export interface CheckpointFileCacheEntry {
 }
 
 export interface LoopState {
-  /** Canonical transcript. Message objects and their provenance always move
-   * together; `messages` below is a storage-free compatibility projection. */
+  /** 规范转录。消息对象与其 provenance 总是一起移动；下面的 `messages`
+   *  是一个无存储的兼容投影。 */
   trackedMessages: TrackedModelMessage[]
   messages: ModelMessage[]
   contextSecurity: ContextSecurityState
   executionAuthority: ExecutionAuthority
-  /** Last fully committed transcript epoch. Undefined means a new or legacy
-   * transcript whose first mutation must be a root snapshot. */
+  /** 最后完整提交的转录 epoch。undefined 表示一条新的或旧式转录，
+   *  其首次变更必须是一个根快照。 */
   committedTranscriptEpochId?: string
   transcriptIntegrity: 'clean' | 'legacy' | 'failed'
   transcriptRequiresSnapshot: boolean
-  /** Manual tool bodies are captured when buildTools strips `execute`; this
-   * guarantees authority evaluation happens before every data-bearing tool. */
+  /** buildTools 剥离 `execute` 时会捕获手动工具体；这保证在每个携带数据的
+   *  工具执行之前都进行 authority 评估。 */
   manualToolExecutors: Map<
     string,
     (input: Record<string, unknown>, options: { toolCallId: string; abortSignal?: AbortSignal }) => Promise<unknown>
   >
   tokenUsage: TokenUsage
-  /** Cumulative usage indexed two ways. Source and model are parallel views
-   *  over the same requests and must never be added together. */
+  /** 以两种方式索引的累计用量。source 和 model 是同一批请求的并行视图，
+   *  绝不能相加。 */
   usageBreakdown: UsageBreakdown
-  /** Real input-token count from the most recent API response, used to trigger compression. */
+  /** 最近一次 API 响应报告的真实输入 token 数，用于触发压缩。 */
   lastInputTokens: number
   sessionId: string
-  /** CLI invocation cwd captured for this runtime. Shell cwd resolution and permission storage use this stable root. */
+  /** 为此运行时捕获的 CLI 调用 cwd。shell cwd 解析和权限存储使用这个稳定根。 */
   projectCwd: string
-  /** Runtime identity for lifecycle behavior that must not be inferred from
-   * tool filtering. Hydrated and ordinary states are roots; delegated agents
-   * opt in explicitly when their fresh state is created. */
+  /** 生命周期行为的运行时身份，不得从工具过滤推断。hydrated 状态和普通
+   *  状态是根；被委派的 agent 在其全新状态创建时显式 opt-in。 */
   agentRole: 'root' | 'sub-agent'
-  /** Exact transcript path. Null for new sessions until appendHeader pins
-   *  the timestamp-only path; hydrated legacy sessions preserve their
-   *  original slug-prefixed path so resume keeps appending in place. */
+  /** 精确的转录路径。新会话为 null，直到 appendHeader 钉住仅含时间戳的
+   *  路径；hydrated 的旧式会话保留其原始 slug 前缀路径，好让 resume
+   *  继续就地追加。 */
   sessionFilePath: string | null
   startedAt: string
   filesModified: Set<string>
-  /** Files changed during the current agentLoop invocation, including paths
-   *  that were already modified by an earlier submit in this session. */
+  /** 当前 agentLoop 调用期间变更过的文件，包括本会话中更早一次 submit
+   *  已经改过的路径。 */
   turnFilesModified: Set<string>
-  /** Rolling record of recently executed tool calls, keyed by a hash of the
-   *  tool name + stable-stringified input. Used by the doom-loop guard to
-   *  detect when the model is looping on the same failing call. */
+  /** 最近已执行工具调用的滚动记录，以「工具名 + 稳定序列化输入」的哈希为
+   *  键。被 doom-loop 守卫用来检测模型是否在同一个失败调用上打转。 */
   recentToolCalls: Array<{ toolName: string; hash: string }>
-  /** Visual-check attempts during the current submit since the most recent
-   *  successful file mutation. This gives screenshot QA a bounded circuit
-   *  breaker without preventing the normal edit → re-check workflow. */
+  /** 自最近一次成功文件变更以来，当前 submit 内的视觉检查尝试次数。
+   *  这给截图 QA 一个有界的熔断器，又不妨碍正常的「编辑 → 复查」流程。 */
   visualCheckCallsSinceMutation: number
-  /** Cached system prompt text — rebuilt once per session so the prefix
-   *  stays byte-stable across turns, enabling automatic prefix-caching on
-   *  OpenAI-compatible providers (DeepSeek, Moonshot, Alibaba, …).
-   *  Invalidated (set to null) on `permissionMode` change so the next turn
-   *  rebuilds it with / without the plan-mode overlay. */
+  /** 缓存的系统提示词文本——每个会话重建一次，让前缀跨轮保持字节稳定，
+   *  从而在 OpenAI 兼容提供商（DeepSeek、Moonshot、Alibaba、…）上启用自动
+   *  前缀缓存。在 `permissionMode` 变更时失效（置为 null），好让下一轮
+   *  在有/没有 plan 模式覆盖层的情况下重建它。 */
   systemPromptCache: string | null
-  /** Exact capability blocks embedded in the cached system prompt, snapshotted
-   *  at build time. The context-composition estimator (context-usage.ts)
-   *  subtracts these from the prompt to isolate per-category token counts —
-   *  recomputing them later would mismatch after a mid-session /skill or
-   *  /mcp refresh. Set together with systemPromptCache; undefined for
-   *  sub-agents and pre-first-turn states. */
+  /** 嵌入缓存系统提示词中的确切 capability 块，在构建时快照下来。
+   *  上下文构成估算器（context-usage.ts）从提示词里减去它们，以隔离出
+   *  每个类别的 token 数——稍后重新计算会在会话中途的 /skill 或 /mcp
+   *  刷新后不匹配。与 systemPromptCache 一起设置；对 sub-agent 和
+   *  首轮之前的状态为 undefined。 */
   systemPromptBlocks?: { knowledge: string; skill: string; mcpDeferred: string }
-  /** Current approval mode — flips between 'default' and 'plan' via
-   *  the /plan slash command (user) or the enterPlanMode/exitPlanMode
-   *  tools (model). Read by tool-execution to decide which system
-   *  prompt overlay applies and which tools are advertised. */
+  /** 当前审批模式——通过 /plan 斜杠命令（用户）或 enterPlanMode/exitPlanMode
+   *  工具（模型）在 'default' 和 'plan' 之间切换。工具执行时读取它来决定
+   *  应用哪个系统提示词覆盖层，以及宣传哪些工具。 */
   permissionMode: PermissionMode
-  /** Path to the plan file when in plan mode (`.x-code/plans/{sessionId}.md`),
-   *  null otherwise. Created lazily the first time the model calls
-   *  `enterPlanMode` and re-used for the remainder of that plan-mode
-   *  session. Cleared on exit. */
+  /** plan 模式下计划文件的路径（`.x-code/plans/{sessionId}.md`），
+   *  否则为 null。在模型首次调用 `enterPlanMode` 时懒创建，并在该 plan 模式
+   *  会话的剩余时间里复用。退出时清除。 */
   currentPlanPath: string | null
-  /** Lowercase-hyphen slug derived locally from the user's first message.
-   *  Used for readable plan filenames and retained in session metadata for
-   *  legacy resume lookups; transcript filenames are timestamp-only. */
+  /** 从用户首条消息本地推导出的小写连字符 slug。用于可读的计划文件名，
+   *  并保留在会话元数据里供旧式 resume 查找；转录文件名只含时间戳。 */
   taskSlug: string
-  /** Current checklist maintained by the model via the `todoWrite`
-   *  tool. Full-replacement semantics — every todoWrite call rewrites
-   *  this array. In-memory only, never persisted. Auto-cleared back
-   *  to [] when the model submits a list with all items completed.
-   *  Cleared on `/clear` and `/resume` (the new LoopState starts
-   *  fresh with []); preserved across `/compact` so a multi-step
-   *  task survives history summarisation. */
+  /** 模型通过 `todoWrite` 工具维护的当前清单。全量替换语义——每次
+   *  todoWrite 调用都重写这个数组。仅内存，永不持久化。当模型提交一份
+   *  所有条目都完成的列表时，自动清空回 []。在 `/clear` 和 `/resume` 时
+   *  清空（新的 LoopState 以 [] 全新开始）；跨 `/compact` 保留，好让
+   *  多步任务在历史摘要后存活。 */
   todos: TodoItem[]
-  /** Per-user-message snapshots backing the `/rewind` command. Pushed by
-   *  `createCheckpoint` (snapshot.ts) right after each user message lands
-   *  in `messages`. In-memory: ring-buffered at 100 entries. Cleared by
-   *  `markBoundaryAndReflush` — compaction rewrites the message array
-   *  in place, invalidating every prior `messageCount` anchor. Persisted
-   *  to the jsonl as `meta:checkpoint` lines; the loader's
-   *  "everything-after-last-boundary wins" rule naturally drops pre-
-   *  compaction entries on resume. */
+  /** 支撑 `/rewind` 命令的逐用户消息快照。由 `createCheckpoint`
+   *  （snapshot.ts）在每条用户消息落入 `messages` 之后立即推入。仅内存：
+   *  环形缓冲 100 条。被 `markBoundaryAndReflush` 清空——压缩会就地重写
+   *  消息数组，使之前每个 `messageCount` 锚点失效。以 `meta:checkpoint`
+   *  行持久化到 jsonl；加载器的「最后边界之后的一切胜出」规则会在
+   *  resume 时自然丢弃压缩前的条目。 */
   checkpoints: CheckpointEntry[]
-  /** Last successfully hashed metadata for files covered by `/rewind`.
-   *  Unchanged files reuse their content hash in the next checkpoint. */
+  /** `/rewind` 覆盖的文件的最后成功哈希元数据。未变更的文件在下一个
+   *  检查点复用其内容哈希。 */
   checkpointFileCache: Map<string, CheckpointFileCacheEntry>
-  /** Number of messages already persisted to the session jsonl file.
-   *  The agent loop calls `flushPendingMessages` at turn boundaries,
-   *  which appends `state.messages.slice(persistedMessageCount)` and
-   *  bumps the counter. Reset to `state.messages.length` after any
-   *  compaction (light or deep) — those rewritten messages get
-   *  re-flushed after a `compact-boundary` line so the loader's
-   *  "everything-after-last-boundary wins" rule reconstructs the same
-   *  in-memory state on resume. See `agent/session-store.ts`. */
+  /** 已持久化到会话 jsonl 文件的消息数。agent 循环在轮边界调用
+   *  `flushPendingMessages`，它会追加
+   *  `state.messages.slice(persistedMessageCount)` 并递增计数器。
+   *  在任何压缩（轻量或深度）后重置为 `state.messages.length`——那些
+   *  重写的消息会在一条 `compact-boundary` 行之后重新 flush，好让加载器
+   *  的「最后边界之后的一切胜出」规则在 resume 时重建相同的内存状态。
+   *  见 `agent/session-store.ts`。 */
   persistedMessageCount: number
-  /** Tail of the LoopState-level transcript transaction chain. Both state
-   *  derivation (parent epoch/message range) and durable I/O run inside this
-   *  chain, so concurrent turn-final and exit-time flushes cannot create
-   *  sibling epochs. `saveSession` awaits this full state commit. */
+  /** LoopState 级转录事务链的尾部。状态派生（父 epoch/消息范围）和持久
+   *  I/O 都在这条链内运行，所以并发的「轮末」和「退出时」flush 无法创建
+   *  兄弟 epoch。`saveSession` 等待这次完整状态提交。 */
   pendingFlush: Promise<void> | null
 
-  // ── Cache break detection ──
+  // ── 缓存命中中断检测 ──
 
-  /** Per-turn cache-read token count from the previous turn. Used to
-   *  detect unexpected cache misses (e.g. a code change that broke
-   *  system prompt byte-stability). */
+  /** 上一轮的每轮缓存读取 token 数。用于检测意外的缓存未命中
+   *  （例如某个代码改动破坏了系统提示词的字节稳定性）。 */
   prevTurnCacheRead: number
-  /** When true, the next turn's cache-read drop is expected (e.g. after
-   *  compaction or permissionMode change) and should not trigger a
-   *  warning. Automatically cleared after one turn. */
+  /** 为 true 时，下一轮的缓存读取下降是预期的（例如压缩或
+   *  permissionMode 变更之后），不应触发警告。一轮之后自动清除。 */
   expectCacheMiss: boolean
-  /** Structured reasons consumed by the next main provider request. */
+  /** 供下一个主提供商请求消费的结构化原因。 */
   expectedCacheMissReasons: Set<CacheMissReason>
-  /** Main-request samples only; auxiliary usage snapshots never enter this list. */
+  /** 仅主请求样本；辅助用量快照永不进入此列表。 */
   providerTurns: ProviderTurnUsage[]
-  /** Incrementally maintained diagnostic summary. Updating it only compares
-   *  the newest provider turn with its immediate predecessor. */
+  /** 增量维护的诊断摘要。更新它只需把最新的提供商轮次与其直接前驱
+   *  比较。 */
   cacheMissSummary: CacheMissSummary
 
-  // ── Sub-agent support (set once in agentLoop, read by tool-execution) ──
+  // ── Sub-agent 支持（在 agentLoop 里设置一次，工具执行时读取） ──
 
-  /** Cached knowledge context for sub-agent system prompts. Set once in
-   *  agentLoop after buildKnowledgeContext resolves; transparent to
-   *  sub-agent loops (they don't call buildKnowledgeContext themselves). */
+  /** 用于 sub-agent 系统提示词的缓存知识上下文。在 agentLoop 里
+   *  buildKnowledgeContext 解析后设置一次；对 sub-agent 循环透明
+   *  （它们自己不会调用 buildKnowledgeContext）。 */
   knowledgeContext?: string
-  /** Whether cwd is a git repo. Cached for sub-agent system prompts. */
+  /** cwd 是否是 git 仓库。为 sub-agent 系统提示词缓存。 */
   isGitRepo?: boolean
 
-  /** Session-scoped read de-dup cache (absolute path → last-delivered mtime+size).
-   *  readFile returns a short stub instead of re-sending full content when a
-   *  file is re-read unchanged, saving context tokens. Sub-agents get their
-   *  own (fresh LoopState) so caches never cross agents. In-memory only. */
+  /** 会话范围的读取去重缓存（绝对路径 → 最后投递的 mtime+size）。
+   *  当文件未变更被重复读取时，readFile 返回短 stub 而不是重发全文，
+   *  以节省上下文 token。sub-agent 有自己的（全新 LoopState），所以
+   *  缓存绝不跨 agent。仅内存。 */
   readFileCache: ReadFileCache
 
-  /** Unified runtime-only shell manager. Its managerInstanceId is regenerated on every create/hydrate. */
+  /** 统一的仅运行时 shell 管理器。其 managerInstanceId 在每次 create/hydrate 时重新生成。 */
   shellSessions: ShellSessionController
 
-  /** Session-scoped durable goal. Mutated by /goal and by getGoal/updateGoal
-   *  tools. Dynamic goal details are intentionally kept out of the cached
-   *  system prompt; models inspect them through tools or continuation inputs. */
+  /** 会话范围的持久目标。由 /goal 和 getGoal/updateGoal 工具变更。
+   *  动态目标细节刻意排除在缓存的系统提示词之外；模型通过工具或
+   *  续接输入来检查它们。 */
   goal: GoalState | null
-  /** Durable queued inputs for the goal runner. These are ordinary user
-   *  messages once promoted, but tracked separately so pause/resume/crash
-   *  recovery can continue at a safe boundary. */
+  /** 供 goal runner 用的持久排队输入。一旦提升就是普通用户消息，
+   *  但被单独跟踪，好让暂停/恢复/崩溃恢复能在安全的边界继续。 */
   goalInputs: GoalInput[]
 
-  /** Per-step token usage snapshots. One entry per `agentLoop` invocation
-   *  (= one user submit). Persisted to the session jsonl; restored on
-   *  `/resume`. Cleared on `/clear`. */
+  /** 每步 token 用量快照。每次 `agentLoop` 调用（= 一次用户 submit）
+   *  一条。持久化到会话 jsonl；在 `/resume` 时恢复。在 `/clear` 时清空。 */
   stepStats: StepStats[]
 
-  // ── Deferred tools / toolSearch (top-level agent only) ──
+  // ── Deferred 工具 / toolSearch（仅顶层 agent） ──
 
-  /** Catalog of deferred tools the model can discover via `toolSearch` but
-   *  that are NOT in the request tool list until activated. Built once by
-   *  buildTools at loop start. Undefined for sub-agents (they keep full tool
-   *  injection over their curated, small tool set). */
+  /** 模型可以通过 `toolSearch` 发现、但在激活之前【不在】请求工具列表里的
+   *  deferred 工具目录。由 buildTools 在循环启动时构建一次。对 sub-agent
+   *  为 undefined（它们在策划过的、较小的工具集上保持完整工具注入）。 */
   deferredCatalog?: DeferredToolEntry[]
-  /** Names of deferred tools the model has loaded via `toolSearch` this
-   *  session. composeTurnTools splices their definitions into the request
-   *  tool set every turn. Persists for the whole session — a loaded tool
-   *  stays loaded (matches Claude Code / Codex "discovered tools" semantics).
-   *  In-memory only; Set iteration order is insertion order, keeping the
-   *  spliced-in tail of the tools map stable across turns. */
+  /** 模型本会话中已通过 `toolSearch` 加载的 deferred 工具名。
+   *  composeTurnTools 每轮把它们的定义拼进请求工具集。整个会话持续——
+   *  已加载的工具保持已加载（对齐 Claude Code / Codex 的「discovered
+   *  tools」语义）。仅内存；Set 的迭代顺序即插入顺序，让拼进工具映射
+   *  尾部的部分跨轮保持稳定。 */
   activatedTools: Set<string>
 
-  // ── Memory v2 dynamic recall ──
+  // ── Memory v2 动态召回 ──
 
   memoryGeneration: number
   memoryRecallAttachments: MemoryRecallAttachment[]
@@ -234,12 +214,11 @@ export interface LoopState {
   lastMemoryRecallTrace: MemoryRecallTrace | null
 }
 
-/** Generate a human-skimmable session id: `YYYYMMDD-HHMMSS-mmm` (local
- *  time, milliseconds tail for uniqueness across rapid successive
- *  starts). Replaces the old `Date.now().toString(36)` (`mohbm95d`)
- *  which was unreadable in `ls .x-code/sessions/` — the timestamp shape
- *  matches plan-file naming so the two directory listings sort and
- *  scan the same way. */
+/** 生成一个人类可扫读的会话 id：`YYYYMMDD-HHMMSS-mmm`（本地时间，
+ *  毫秒尾数用于在快速连续启动之间保证唯一性）。取代旧的
+ *  `Date.now().toString(36)`（`mohbm95d`）——它在 `ls .x-code/sessions/`
+ *  里不可读。时间戳形状与计划文件命名一致，好让两个目录列表以相同方式
+ *  排序和扫读。 */
 
 export interface CreateLoopStateOptions {
   ownerSessionId?: string
@@ -284,10 +263,9 @@ export function createLoopState(
     systemPromptCache: null,
     systemPromptBlocks: undefined,
     permissionMode: initialMode,
-    // Plan path is derived LAZILY from the user's task text once a
-    // message lands — done in agentLoop / enterPlanMode handler. We
-    // can't slugify here because the user's intent isn't visible at
-    // session-construction time.
+    // 计划路径在消息落地后从用户的任务文本【懒】推导——在
+    // agentLoop / enterPlanMode 处理器里完成。这里不能做 slugify，
+    // 因为会话构建时用户意图尚不可见。
     currentPlanPath: null,
     taskSlug: '',
     todos: [],

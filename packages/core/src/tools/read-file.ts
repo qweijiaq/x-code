@@ -1,9 +1,8 @@
-// @x-code-cli/core — readFile tool
+// @x-code-cli/core — readFile 工具
 //
-// Text files are returned with line numbers. Images and locally rendered PDF
-// pages use tagged image FileParts only when the injected model supports
-// vision; otherwise the shared pipeline returns local OCR text. Original
-// PDF/audio/general binary bytes are never emitted as file-data.
+// 文本文件带行号返回。图片和本地渲染的 PDF 页面只在注入的模型支持视觉时，
+// 才用带标签的图片 FileParts；否则共享管线返回本地 OCR 文本。原始
+// PDF/音频/一般二进制字节从不作为 file-data 输出。
 import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -41,33 +40,28 @@ import { knownMediaTypeFor } from '../utils/media-type.js'
 import { formatToolError } from '../utils/tool-errors.js'
 import { reportProgress } from './progress.js'
 
-/** Default cap on lines returned by a no-args readFile call. Aligned with
- *  Claude Code's MAX_LINES_TO_READ — picked empirically: 2000 lines is a
- *  realistic ceiling for "skim the whole thing", anything bigger is almost
- *  always used with grep first. Was 500 originally, bumped after observing
- *  that 500 forced too many round-trips for legitimate "read this whole
- *  module" cases (4× more calls than CC for the same coverage). */
+/** 无参数 readFile 调用返回行数的默认上限。对齐 Claude Code 的
+ *  MAX_LINES_TO_READ —— 凭经验挑的：2000 行是“通读整个文件”的现实上限，
+ *  再大的几乎总是先用 grep。原来是 500，后来观察到 500 会让合法的“读整个
+ *  模块”场景被迫做太多往返（同等覆盖下比 CC 多 4 倍调用），于是上调。 */
 const LARGE_FILE_LINE_THRESHOLD = 2000
 
-/** Byte cap on a single tool-result payload. Mirrors the @-attach ingest cap
- *  in file-ingest.ts and Claude Code's Read-tool 25K-token default (~100 KB
- *  English / ~75 KB CJK; 256 KB gives headroom). Applies to BOTH the
- *  default head case AND the explicit offset/limit case — without this,
- *  a model that asks for `limit: 90000` on a multi-MB file gets the entire
- *  thing dumped into context and the next turn fails with
- *  context_length_exceeded. CC enforces the same invariant via
- *  `validateContentTokens`. */
+/** 单次工具结果载荷的字节上限。对应 file-ingest.ts 里 @-attach 的摄入上限，
+ *  以及 Claude Code Read 工具 25K-token 默认值（约 100 KB 英文 / 约 75 KB
+ *  CJK；256 KB 留了余量）。同时作用于默认的头部情形和显式的 offset/limit
+ *  情形 —— 没有这个，模型对多 MB 文件请求 `limit: 90000` 时，整份内容会被
+ *  倒进上下文，下一轮就以 context_length_exceeded 失败。CC 通过
+ *  `validateContentTokens` 执行同样的不变量。 */
 const MAX_READ_BYTES = 256 * 1024
 
-/** Per-file fingerprint used by the delivered-content de-dup cache. */
+/** 每个文件的指纹，供已交付内容去重缓存使用。 */
 export interface ReadFileCacheEntry {
   mtimeMs: number
   size: number
 }
-/** Session-scoped map of absolute path → last-delivered fingerprint. Lives on
- *  LoopState so each agent (including sub-agents, which get a fresh
- *  LoopState) has its own isolated cache and one agent's reads never make
- *  another agent's reads return a stub for a file it never saw. */
+/** 会话作用域的映射：绝对路径 → 最近交付的指纹。放在 LoopState 上，这样每个
+ *  agent（包括拿到全新 LoopState 的子 agent）都有自己隔离的缓存，一个
+ *  agent 的读取永远不会让另一个 agent 对一个它从没见过的文件返回占位桩。 */
 export type ReadFileCache = Map<string, ReadFileCacheEntry>
 
 export interface ReadFileToolOptions {
@@ -222,14 +216,12 @@ async function readTextResult(
   return { text: body, complete: !userSpecifiedRange }
 }
 
-// ── Read de-dup ──
-// Re-reading a file whose complete text was already delivered this session —
-// either by attachment ingestion or readFile — wastes context. Returning a
-// short stub instead can save thousands of tokens and avoids repeated local
-// transcription. Only whole-file text-producing reads de-dup; an explicit
-// text range always re-reads, while image/PDF reads remain available for a
-// deliberate visual revisit. An edit/write bumps the file's mtime, so the next
-// read naturally misses the cache and returns fresh content.
+// ── 读取去重 ──
+// 重新读一个本次会话已交付完整文本的文件 —— 无论是经附件摄入还是 readFile
+// —— 都浪费上下文。改为返回一个短占位桩，可以省下成千上万个 token，也避免
+// 反复做本地转写。只有产出文本的整文件读取才去重；显式文本范围总是重新读，
+// 而图片/PDF 读取仍可用于刻意的再次视觉查看。一次编辑/写入会改变文件的
+// mtime，所以下一次读取自然错过缓存、返回新鲜内容。
 type ReadCacheVerdict = { hit: true; stub: string } | { hit: false; entry: ReadFileCacheEntry } | null
 
 async function checkReadCache(
@@ -239,7 +231,7 @@ async function checkReadCache(
 ): Promise<ReadCacheVerdict> {
   if (!cache || isRangeRead) return null
   const stat = await fs.stat(filePath).catch(() => null)
-  if (!stat) return null // let the normal read path surface the error
+  if (!stat) return null // 让正常读取路径去暴露错误
   const prev = cache.get(filePath)
   if (prev && prev.mtimeMs === stat.mtimeMs && prev.size === stat.size) {
     return {
@@ -254,11 +246,10 @@ async function checkReadCache(
   return { hit: false, entry: { mtimeMs: stat.mtimeMs, size: stat.size } }
 }
 
-/** Build the readFile tool. The optional `cache` enables session-scoped
- *  read de-dup (see checkReadCache). buildTools injects the per-session
- *  cache from LoopState; the bare `readFile` export below passes none, so
- *  it behaves exactly as before (no de-dup) for any caller that imports it
- *  directly (tests, etc.). */
+/** 构建 readFile 工具。可选的 `cache` 开启会话作用域的读取去重（见
+ *  checkReadCache）。buildTools 从 LoopState 注入每会话缓存；下面裸导出的
+ *  `readFile` 不传任何缓存，因此对任何直接导入它的调用方（测试等）行为与
+ *  之前完全一致（不去重）。 */
 export function createReadFileTool(cache?: ReadFileCache, options: ReadFileToolOptions = {}) {
   return tool({
     description: `Read a file from the local filesystem. Assume this tool can read all files on the machine.
@@ -302,9 +293,9 @@ Usage:
 
         if ((pages || pdfMode) && kind !== 'pdf') return 'pages and pdfMode are only valid for PDF files.'
 
-        // Jupyter notebooks are JSON — render cells instead of dumping raw
-        // base64-laden JSON. Classification first ensures a renamed binary is
-        // never decoded as notebook text.
+        // Jupyter notebook 是 JSON —— 渲染单元格，而不是倾倒满是 base64 的
+        // 原始 JSON。先分类可确保一个被改名的二进制文件永远不会被当成
+        // notebook 文本解码。
         if (kind === 'notebook') {
           const stats = await fs.stat(filePath)
           if (stats.size > MAX_NOTEBOOK_SOURCE_BYTES) {
@@ -353,7 +344,7 @@ Usage:
           }
           const mime = (await sniffImageMime(buffer)) ?? classification.mediaType ?? knownMediaTypeFor(filePath)
           if (!mime?.startsWith('image/')) return `[Image ${filePath} has an unsupported or unrecognized format.]`
-          // Same byte budget as user-attached images (ATTACH_BYTE_BUDGET).
+          // 与用户附件图片相同的字节预算（ATTACH_BYTE_BUDGET）。
           const compressed = await compressImage(buffer, mime, {
             byteBudget: ATTACH_BYTE_BUDGET,
             abortSignal,
@@ -450,7 +441,7 @@ Usage:
           return `[Unsupported binary file: ${filePath} (${classification.mediaType ?? 'unknown media type'}, ${stats.size} bytes).]`
         }
 
-        // Text → read with bounded output.
+        // 文本 → 用有界输出读取。
         const verdict = await checkReadCache(cache, filePath, isRangeRead)
         if (verdict && verdict.hit) return verdict.stub
         const { text, complete } = await readTextResult(
@@ -469,6 +460,6 @@ Usage:
   })
 }
 
-/** Default, cache-less readFile (used by the static registry export and any
- *  direct importer). buildTools overrides this with a cache-backed instance. */
+/** 默认、无缓存的 readFile（供静态注册表导出和任何直接导入方使用）。
+ *  buildTools 会用带缓存实例覆盖它。 */
 export const readFile = createReadFileTool()

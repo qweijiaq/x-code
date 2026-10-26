@@ -1,5 +1,5 @@
-// Tests for the deferred-tool / toolSearch machinery: keyword scoring,
-// the select: exact-load path, catalog construction, and per-turn composition.
+// 延迟工具 / toolSearch 机制的测试：关键字打分、
+// select: 精确加载路径、目录构建，以及每轮工具组合。
 import { describe, expect, it, vi } from 'vitest'
 
 import { createLoopState } from '../src/agent/loop-state.js'
@@ -18,8 +18,8 @@ import { runToolSearch } from '../src/agent/tool-search/resolve.js'
 import { searchDeferredTools } from '../src/agent/tool-search/search.js'
 import { emptyRegistry } from '../src/mcp/registry.js'
 
-// catalog.ts imports toolRegistry, which transitively pulls webFetch →
-// cheerio + turndown. Mock them so the import doesn't fail in the test env.
+// catalog.ts 导入 toolRegistry，后者会传递性地拉入 webFetch →
+// cheerio + turndown。把它们 mock 掉，避免在测试环境中导入失败。
 vi.mock('cheerio', () => ({
   load: vi.fn(() => {
     const $ = () => ({ remove: vi.fn(), first: vi.fn(() => ({ length: 0, html: () => '' })), html: () => '' })
@@ -35,7 +35,7 @@ vi.mock('turndown', () => ({
   },
 }))
 
-/** Build a synthetic catalog entry — searchText is what the scorer matches on. */
+/** 构建一个合成目录条目——searchText 是打分器匹配的内容。 */
 function entry(
   name: string,
   description: string,
@@ -66,7 +66,7 @@ describe('searchDeferredTools', () => {
   })
 
   it('scores name-part matches above description-only matches', () => {
-    // "issue" is in two github tool names; "create" disambiguates to create_issue.
+    // "issue" 出现在两个 github 工具名里；"create" 消歧到 create_issue。
     const r = searchDeferredTools('create issue', CATALOG, 5)
     expect(r[0]).toBe('mcp__github__create_issue')
   })
@@ -114,8 +114,8 @@ describe('runToolSearch', () => {
   })
 
   it('treats bare comma-joined exact names as an implicit select', () => {
-    // The model listing names ("webSearch,mcp__slack__send_message") instead of
-    // using select: must NOT fall into fuzzy scoring (which would miss).
+    // 模型列出名字（"webSearch,mcp__slack__send_message"）而不是
+    // 用 select: 时，绝不能落入模糊打分（那会漏掉）。
     const r = runToolSearch('webSearch,mcp__slack__send_message', 5, CATALOG)
     expect(r.activated).toEqual(['webSearch', 'mcp__slack__send_message'])
     expect(r.text).toContain('Loaded 2 tool(s)')
@@ -127,11 +127,11 @@ describe('runToolSearch', () => {
   })
 
   it('falls through to keyword search when not every bare token is an exact name', () => {
-    // "create" alone is not a tool name → no implicit select; keyword scoring
-    // still resolves it to the create_issue tool.
+    // "create" 本身不是工具名 → 不触发隐式 select；关键字打分
+    // 仍能把它解析到 create_issue 工具。
     const r = runToolSearch('create issue', 5, CATALOG)
     expect(r.activated).toContain('mcp__github__create_issue')
-    // A mix of one exact name + one unknown token also stays on the keyword path.
+    // 一个精确名 + 一个未知 token 的混合也保持在关键字路径上。
     const mixed = runToolSearch('webSearch bogusname', 5, CATALOG)
     expect(mixed.activated).not.toContain('bogusname')
   })
@@ -257,8 +257,7 @@ describe('buildDeferredCatalog', () => {
     expect(dbTool).toBeDefined()
     expect(dbTool!.source).toBe('mcp')
     expect(dbTool!.serverName).toBe('db')
-    // schema property names ("sql") are searchable even though the description
-    // doesn't mention them.
+    // schema 属性名（"sql"）即使 description 没提到，也是可搜索的。
     expect(dbTool!.searchText).toContain('sql')
     expect(searchDeferredTools('sql', catalog, 5)).toContain('mcp__db__query_rows')
   })

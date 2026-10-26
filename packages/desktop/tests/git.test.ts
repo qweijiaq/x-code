@@ -68,13 +68,13 @@ describe('git panel', () => {
   })
 
   it('undoes only the turn and preserves earlier user changes', async () => {
-    // Pre-existing state before the turn: a user edit plus an untracked file.
+    // 本轮之前的既有状态：一处用户编辑加一个未跟踪文件。
     write('base.txt', 'base\nuser change\n')
     write('keep.txt', 'keep me\n')
     const checkpoint = await createTurnCheckpoint(root, 'turn-1')
     expect(checkpoint).not.toBeNull()
 
-    // The turn: rewrites the tracked file and creates a new untracked file.
+    // 本轮：重写已跟踪文件，并新建一个未跟踪文件。
     write('base.txt', 'base\nagent change\n')
     write('turn-file.txt', 'created by the agent\n')
 

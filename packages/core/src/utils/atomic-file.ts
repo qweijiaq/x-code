@@ -1,6 +1,5 @@
-// @x-code-cli/core — Durable file writes: same-directory temp file, fsync,
-// atomic rename. Used by the memory stores and any other state file that
-// must never be observed half-written.
+// @x-code-cli/core — 可靠的文件写入：同目录临时文件、fsync、原子重命名。
+// 供内存存储以及任何绝不允许被读到半写入状态的状态文件使用。
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'

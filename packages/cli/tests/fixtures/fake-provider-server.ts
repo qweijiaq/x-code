@@ -162,8 +162,8 @@ export async function startFakeProvider(initialResponses: ScriptedResponse[] = [
         const parsed = JSON.parse(rawBody) as unknown
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed as Record<string, unknown>
       } catch {
-        // Keep malformed bodies observable in rawBody; the fake endpoint still
-        // responds so the client failure remains deterministic.
+        // 让畸形请求体在 rawBody 中可观测；假端点仍会响应，
+        // 使客户端失败保持确定性。
       }
 
       const messages = Array.isArray(body.messages) ? body.messages : []

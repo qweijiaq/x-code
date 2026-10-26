@@ -1,47 +1,42 @@
-// @x-code-cli/core — Plugin userConfig storage
+// @x-code-cli/core — 插件 userConfig 存储
 //
-// Each plugin can declare a `userConfig` block in its manifest — a list of
-// fields the plugin needs from the user (API keys, account ids, working
-// directories, etc). At install time the CLI prompts for each field's
-// value; this module owns the on-disk persistence layer.
+// 每个插件都可以在自己的 manifest 里声明一个 `userConfig` 块——一份它需要
+// 用户提供的字段清单（API key、账号 id、工作目录等）。安装时 CLI 逐个字段
+// 提示输入值；本模块负责磁盘持久层。
 //
-// Layout:
+// 布局：
 //
 //   ~/.x-code/plugins/user-config.json    →  {
 //                                              [pluginId]: { [key]: <value> }
 //                                            }
 //
-// Storage format is a plain JSON map; the file is created with 0600
-// (owner-read-write only) so a process in another user's session can't
-// read sensitive values. This is NOT a substitute for a real OS keychain
-// (macOS Keychain / Windows Credential Manager / Linux libsecret) — it's
-// a pragmatic v1 that avoids the native-build complexity. The
-// `sensitive: true` field still drives mask-on-input at prompt time; only
-// the at-rest storage shares one file.
+// 存储格式是普通 JSON map；文件以 0600（仅属主可读写）创建，让其它用户
+// 会话里的进程读不到敏感值。这并不能替代真正的操作系统 keychain
+// （macOS Keychain / Windows Credential Manager / Linux libsecret）——
+// 它是一个务实的 v1，避开了原生构建的复杂度。`sensitive: true` 字段仍会在
+// 提示时驱动掩码输入；只是落盘存储共用同一个文件。
 //
-// A future enhancement will move `sensitive` entries to a real keychain.
-// The reader merges from both sources, so adding it later is a non-
-// breaking change.
+// 未来的增强会把 `sensitive` 条目挪进真正的 keychain。读取方会从两个来源
+// 合并，所以日后加入它属于非破坏性变更。
 //
-// Why not split sensitive vs non-sensitive into separate files: it would
-// just multiply file IO without raising the security bar (both files live
-// in the same dir with the same perms). Real protection requires a real
-// keychain; until then, one file is honest about what we're doing.
+// 为什么不把 sensitive 与非 sensitive 拆成两个文件：那只会成倍增加文件 IO
+// 却抬不高安全门槛（两个文件都在同一目录、权限相同）。真正的保护需要真正
+// 的 keychain；在那之前，单个文件如实说明我们在做什么。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { debugLog } from '../utils.js'
 import { pluginsRoot } from './paths.js'
 
-/** Value type for a single field. The manifest `type` field (string /
- *  number / boolean) is enforced at prompt time, but we round-trip
- *  through JSON which only knows these three primitives anyway. */
+/** 单个字段的值类型。manifest 的 `type` 字段（string / number / boolean）
+ *  在提示时被强制执行，但我们本来就经 JSON 往返，而 JSON 只认得这三种
+ *  原始类型。 */
 export type UserConfigValue = string | number | boolean
 
-/** Per-plugin user-config map: keyed by the manifest's `key` field. */
+/** 每个插件的 user-config map：以 manifest 的 `key` 字段为键。 */
 export type PluginUserConfig = Record<string, UserConfigValue>
 
-/** Full file layout: { [pluginId]: PluginUserConfig }. */
+/** 完整文件布局：{ [pluginId]: PluginUserConfig }。 */
 type UserConfigFile = Record<string, PluginUserConfig>
 
 function userConfigPath(): string {
@@ -64,31 +59,28 @@ async function readFile(): Promise<UserConfigFile> {
 async function writeFile(data: UserConfigFile): Promise<void> {
   const p = userConfigPath()
   await fs.mkdir(path.dirname(p), { recursive: true })
-  // 0600 keeps the file readable only by the owning user. On Windows
-  // this is a no-op (fs.chmod doesn't translate to ACLs the same way) —
-  // there's nothing meaningful we can do without shelling out to icacls.
-  // The keychain followup will solve Windows properly.
+  // 0600 让文件只对属主用户可读。在 Windows 上是空操作（fs.chmod 不会
+  // 同样地映射成 ACL）——不借助 icacls 的话我们做不了什么有意义的事。
+  // 后续的 keychain 方案会妥善解决 Windows。
   await fs.writeFile(p, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 })
 }
 
-/** Read the saved config for one plugin. Returns an empty object when
- *  the plugin has no saved config yet — caller can default keys from
- *  the manifest. */
+/** 读取某个插件已保存的配置。当插件还没有保存过配置时返回空对象——调用方
+ *  可从 manifest 为各键取默认值。 */
 export async function getPluginUserConfig(pluginId: string): Promise<PluginUserConfig> {
   const all = await readFile()
   return all[pluginId] ?? {}
 }
 
-/** Write the config for one plugin. Merges with existing fields rather
- *  than replacing — caller can call this once per field if they want
- *  (e.g. interactive prompt loop). */
+/** 写入某个插件的配置。与既有字段合并而非整体替换——调用方想的话可以
+ *  每个字段调用一次（例如交互式提示循环）。 */
 export async function setPluginUserConfig(pluginId: string, values: PluginUserConfig): Promise<void> {
   const all = await readFile()
   all[pluginId] = { ...(all[pluginId] ?? {}), ...values }
   await writeFile(all)
 }
 
-/** Drop the config for one plugin (e.g. on uninstall). */
+/** 丢弃某个插件的配置（例如卸载时）。 */
 export async function clearPluginUserConfig(pluginId: string): Promise<void> {
   const all = await readFile()
   if (!(pluginId in all)) return
@@ -96,10 +88,9 @@ export async function clearPluginUserConfig(pluginId: string): Promise<void> {
   await writeFile(all)
 }
 
-/** Materialise a plugin's user-config map as an env-var record ready to
- *  be merged into a child process's environment. Each manifest key
- *  becomes the env var name; numbers and booleans coerce to their
- *  string forms. Unset fields are skipped (env vars left untouched). */
+/** 把某个插件的 user-config map 物化为 env-var 记录，准备合并进子进程的
+ *  环境。每个 manifest key 成为 env var 名；数字和布尔被强转成其字符串
+ *  形式。未设置的字段被跳过（对应 env var 保持不动）。 */
 export async function getPluginUserConfigEnv(pluginId: string): Promise<Record<string, string>> {
   const cfg = await getPluginUserConfig(pluginId)
   const env: Record<string, string> = {}

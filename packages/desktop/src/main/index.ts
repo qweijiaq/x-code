@@ -34,8 +34,8 @@ import type {
 } from '../shared/protocol.js'
 import { downloadUpdateArtifact, parseReleaseInfo, pickUpdateArtifact } from './update.js'
 
-/** Renderer and event-handler errors are appended here even without
- *  DEBUG_STDOUT so a support report has a local trail. */
+/** 即使没有 DEBUG_STDOUT，renderer 和事件处理器错误也会追加到这里，
+ *  使支持报告有本地轨迹。 */
 function logDesktopError(kind: string, detail: string): void {
   try {
     const root = process.env.X_CODE_HOME?.trim() || path.join(os.homedir(), '.x-code')
@@ -44,7 +44,7 @@ function logDesktopError(kind: string, detail: string): void {
     const line = `${new Date().toISOString()} [${kind}] ${detail.replace(/\s+$/, '')}\n`
     fs.appendFileSync(path.join(dir, 'desktop-errors.log'), line, 'utf-8')
   } catch {
-    // Logging must never break the app.
+    // 日志绝不能破坏应用。
   }
 }
 
@@ -52,25 +52,25 @@ const isSmoke = process.argv.includes('--smoke-test')
 const isUiSmoke = process.argv.includes('--ui-smoke')
 const isHeadlessSmoke = isSmoke || isUiSmoke
 
-// Headless smokes must not read or mutate the user's real ~/.x-code settings
-// or secrets. An isolated home also makes approval-related checks
-// deterministic regardless of the user's persisted trust settings.
+// 无头冒烟绝不能读取或修改用户真实的 ~/.x-code 设置
+// 或 secrets。隔离的 home 也使审批相关检查
+// 无论用户持久化的信任设置如何都确定。
 if (isHeadlessSmoke) {
   const originalHome = process.env.X_CODE_HOME?.trim() || path.join(os.homedir(), '.x-code')
   const smokeHome = path.join(os.tmpdir(), 'xcode-desktop-smoke-home')
   process.env.X_CODE_HOME = smokeHome
-  // Keep headless smokes deterministic: the user's rc files may export
-  // provider keys or tools that change model/provider selection.
+  // 保持无头冒烟确定：用户的 rc 文件可能导出会改变
+  // 模型/provider 选择的 provider key 或工具。
   process.env.XCODE_SKIP_SHELL_ENV_REFRESH = '1'
   try {
     fs.rmSync(smokeHome, { recursive: true, force: true })
   } catch {
-    // Best-effort cleanup.
+    // 尽力清理。
   }
-  // Reuse locally cached OCR language data so smoke runs do not depend on
-  // downloading tessdata; CI without a cache still falls back to the network.
-  // The verifier points X_CODE_HOME at its own temp dir, so also try the real
-  // user cache when that directory has no tessdata.
+  // 复用本地缓存的 OCR 语言数据，使冒烟运行不依赖
+  // 下载 tessdata；没有缓存的 CI 仍回退到网络。
+  // 验证器把 X_CODE_HOME 指向自己的临时目录，因此当该目录没有
+  // tessdata 时也尝试真实的用户缓存。
   const tessSources = [path.join(originalHome, 'tessdata'), path.join(os.homedir(), '.x-code', 'tessdata')]
   for (const source of tessSources) {
     try {
@@ -78,12 +78,12 @@ if (isHeadlessSmoke) {
       fs.cpSync(source, path.join(smokeHome, 'tessdata'), { recursive: true })
       break
     } catch {
-      // Try the next cache location.
+      // 尝试下一个缓存位置。
     }
   }
-  // Sessions, plugins, and workspace scans resolve against the workspace.
-  // Keep them inside the disposable smoke home so a test run never writes
-  // into the user's project.
+  // 会话、插件和工作区扫描相对于工作区解析。
+  // 把它们留在一次性冒烟 home 内，使测试运行绝不会写入
+  // 用户的项目。
   const smokeWorkspace = path.join(smokeHome, 'workspace')
   fs.mkdirSync(path.join(smokeWorkspace, 'src'), { recursive: true })
   fs.writeFileSync(path.join(smokeWorkspace, 'README.md'), '# Smoke workspace\n\nAttachment smoke content.\n')
@@ -124,8 +124,8 @@ if (isHeadlessSmoke) {
   )
   const pdfFixture = path.join(__dirname, '../../tests/fixtures/smoke.pdf')
   if (fs.existsSync(pdfFixture)) fs.copyFileSync(pdfFixture, path.join(smokeWorkspace, 'sample.pdf'))
-  // A real repository lets the UI smoke exercise the Git panel and per-turn
-  // checkpoints. Git is a dev dependency of these smokes; failures are ignored.
+  // 真实的仓库让 UI 冒烟能演练 Git 面板和每轮
+  // 检查点。Git 是这些冒烟的开发依赖；失败被忽略。
   try {
     const env = {
       ...process.env,
@@ -146,7 +146,7 @@ if (isHeadlessSmoke) {
       env,
     })
   } catch {
-    // Git unavailable: the Git panel check reports the workspace as non-repo.
+    // Git 不可用：Git 面板检查把工作区报告为非仓库。
   }
   process.env.X_CODE_WORKSPACE = smokeWorkspace
   process.env.X_CODE_EXPORT_DIR = path.join(smokeHome, 'exports')
@@ -163,9 +163,9 @@ const IMAGE_PREVIEW_MIME: Record<string, string> = {
 }
 const LONG_REQUEST_TIMEOUT_MS = 15 * 60_000
 
-/** Agent turns and document/network work can legitimately outlive the default
- *  IPC timeout. `agent:submit` has no timer at all: its response arrives when
- *  the turn ends, and the runtime's exit path rejects pending requests. */
+/** agent 轮次和文档/网络工作可以合法地超过默认
+ *  IPC 超时。`agent:submit` 根本没有计时器：其响应在
+ *  轮次结束时到达，运行时的退出路径会拒绝待处理请求。 */
 function timeoutFor(method: string): number | null {
   if (method === 'agent:submit') return null
   if (
@@ -181,8 +181,8 @@ function timeoutFor(method: string): number | null {
   ) {
     return LONG_REQUEST_TIMEOUT_MS
   }
-  // These re-bootstrap providers/plugins/MCP servers for a workspace, and an
-  // MCP server that is slow to hand-shake is normal, not a hung request.
+  // 这些会为一个工作区重新引导 provider/插件/MCP 服务器，而
+  // MCP 服务器握手慢是正常的，不是挂起的请求。
   if (
     method === 'workspace:switch' ||
     method === 'settings:reload' ||
@@ -211,20 +211,20 @@ interface RuntimeContext {
   ready: boolean
   readyWaiters: Array<() => void>
   pending: Map<string, PendingRequest>
-  /** Workspace explicitly requested when this window was created. */
+  /** 创建此窗口时显式请求的工作区。 */
   workspacePath?: string
-  /** Workspace reported by the runtime after initialization. */
+  /** 运行时在初始化后上报的工作区。 */
   workspace?: string
-  /** Session files open in this window's tabs (canonical paths). */
+  /** 在此窗口标签页中打开的会话文件（规范路径）。 */
   sessionFiles: Set<string>
 }
 
-/** Every window owns its own AgentHost runtime so sessions can run in
- *  parallel without sharing a turn/busy flag. */
+/** 每个窗口拥有自己的 AgentHost 运行时，使会话可以
+ *  并行运行而不共享轮次/忙标志。 */
 const runtimeContexts = new Map<number, RuntimeContext>()
 
-/** Installers downloaded and checksum-verified in this process; the renderer
- *  may only ask the main process to open paths from this set. */
+/** 在此进程中下载并校验过校验和的安装器；renderer
+ *  只能要求主进程打开此集合中的路径。 */
 const downloadedUpdateFiles = new Set<string>()
 let activeUpdateDownload: AbortController | null = null
 
@@ -263,8 +263,8 @@ function failPending(context: RuntimeContext, code: string, message: string): vo
   context.pending.clear()
 }
 
-/** Render HTML to PDF with a hidden window. Used by the runtime's
- *  documentExport tool through the main-request channel. */
+/** 用隐藏窗口把 HTML 渲染为 PDF。供运行时的
+ *  documentExport 工具通过 main-request 通道使用。 */
 async function renderPdfBase64(html: string): Promise<string> {
   const window = new BrowserWindow({
     show: false,
@@ -286,15 +286,15 @@ async function renderPdfBase64(html: string): Promise<string> {
 
 function currentAppVersion(): string {
   if (app.isPackaged) return app.getVersion()
-  // Unpackaged Electron reports Electron's own version; the desktop package's
-  // version is the one users compare against a release feed.
+  // 未打包的 Electron 上报 Electron 自身的版本；桌面包
+  // 的版本才是用户与版本源比较的对象。
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../../package.json'), 'utf-8')) as {
       version?: string
     }
     if (pkg.version) return pkg.version
   } catch {
-    // Fall through to Electron's version.
+    // 回退到 Electron 的版本。
   }
   return app.getVersion()
 }
@@ -308,7 +308,7 @@ function onRuntimeMessage(message: RuntimeOutbound, context: RuntimeContext): vo
         try {
           context.runtime?.postMessage({ kind: 'main-response', id: message.id, ...payload })
         } catch {
-          // Runtime is already gone.
+          // 运行时可能已经消失。
         }
       }
       try {
@@ -316,8 +316,8 @@ function onRuntimeMessage(message: RuntimeOutbound, context: RuntimeContext): vo
           const title = typeof message.params?.title === 'string' ? message.params.title : ''
           const body = typeof message.params?.body === 'string' ? message.params.body : ''
           if (!title) throw new Error('Notification title is required')
-          // Smoke runs must stay silent and headless CI has no notification
-          // permission; the focused window also makes the notification noise.
+          // 冒烟运行必须保持静默，无头 CI 没有通知
+          // 权限；聚焦窗口也会制造通知噪音。
           if (
             isSmoke ||
             isUiSmoke ||
@@ -435,8 +435,8 @@ function onRuntimeMessage(message: RuntimeOutbound, context: RuntimeContext): vo
   }
 }
 
-/** Directory with model files shipped inside the app (extraResources in
- *  packaged builds, build/whisper for local development). */
+/** 应用内随附的模型文件目录（打包构建中的 extraResources，
+ *  本地开发中的 build/whisper）。 */
 function bundledWhisperDir(): string | null {
   const dir = app.isPackaged ? path.join(process.resourcesPath, 'whisper') : path.join(__dirname, '../../build/whisper')
   return fs.existsSync(path.join(dir, 'ggml-tiny.bin')) ? dir : null
@@ -597,7 +597,7 @@ function saveWindowState(window: BrowserWindow | null): void {
     fs.mkdirSync(path.dirname(windowStatePath()), { recursive: true })
     fs.writeFileSync(windowStatePath(), JSON.stringify(state, null, 2) + '\n', 'utf-8')
   } catch {
-    // Window state is a convenience only.
+    // 窗口状态只是便利。
   }
 }
 
@@ -617,8 +617,8 @@ function openWorkspaceWindowsPath(): string {
   return path.join(app.getPath('userData'), 'open-workspaces.json')
 }
 
-/** Explicitly bound workspace windows (branch worktrees, moved sessions).
- *  Blank windows and the primary window are represented by lastWorkspace. */
+/** 显式绑定的工作区窗口（分支 worktree、移动的会话）。
+ *  空白窗口和主窗口由 lastWorkspace 表示。 */
 function loadOpenWorkspaceWindows(): string[] {
   if (isHeadlessSmoke) return []
   try {
@@ -642,7 +642,7 @@ function saveOpenWorkspaceWindows(): void {
     fs.mkdirSync(path.dirname(openWorkspaceWindowsPath()), { recursive: true })
     fs.writeFileSync(openWorkspaceWindowsPath(), JSON.stringify([...workspaces], null, 2) + '\n', 'utf-8')
   } catch {
-    // Workspace restoration is a convenience only.
+    // 工作区恢复只是便利。
   }
 }
 
@@ -657,8 +657,8 @@ async function restoreWorkspaceWindows(primary: RuntimeContext): Promise<void> {
     if (!state.ok) return
     seen.add(canonicalDirectory((state.result as { workspace: string }).workspace))
   } catch {
-    // Without the primary workspace we cannot tell whether a saved path is
-    // already open; leave restoration for the next launch.
+    // 没有主工作区，我们无法判断已保存路径是否
+    // 已打开；把恢复留到下次启动。
     return
   }
   for (const savedPath of saved) {
@@ -676,9 +676,9 @@ async function restoreWorkspaceWindows(primary: RuntimeContext): Promise<void> {
   saveOpenWorkspaceWindows()
 }
 
-/** Requests that change settings shared by every window. After one succeeds,
- *  the other renderers reload their own runtime so keys, tools and plugin
- *  state do not silently diverge. */
+/** 更改每个窗口共享设置的请求。一个成功后，
+ *  其他 renderer 重新加载自己的运行时，使 key、工具和插件
+ *  状态不会悄然分叉。 */
 const SHARED_SETTINGS_METHODS = new Set<string>([
   'settings:set-api-key',
   'settings:set-custom-model',
@@ -806,8 +806,8 @@ function createWindow(show = true, search = '', workspacePath?: string): Runtime
   })
 
   window.on('closed', () => {
-    // Approvals are fail-closed: a closed window must not leave a tool call
-    // waiting on a decision that can never arrive.
+    // 审批是失败关闭的：关闭的窗口绝不能留下一个
+    // 等待永远不会到来的决定的工具调用。
     void forwardRequest({ id: `cancel-${Date.now()}`, method: 'approvals:cancel-all', params: {} }, context)
     context.runtime?.kill()
     runtimeContexts.delete(window.id)
@@ -873,12 +873,12 @@ function createTray(): void {
 }
 
 function finishSmoke(report: SmokeReport): void {
-  // Only `--smoke-test` turns a diagnostics result into process exit. In the
-  // normal app, the same event is forwarded to the renderer for display.
+  // 只有 `--smoke-test` 会把诊断结果变成进程退出。在
+  // 正常应用中，同一事件被转发给 renderer 显示。
   if (!isSmoke) return
   if (smokeFinished) return
   smokeFinished = true
-  // Machine-readable line consumed by scripts/check-desktop-smoke.
+  // 供 scripts/check-desktop-smoke 消费的机器可读行。
   console.log(`SMOKE_RESULT ${JSON.stringify(report)}`)
   const code = report.ok ? 0 : 1
   setTimeout(() => app.exit(code), 50)
@@ -899,7 +899,7 @@ async function runSmoke(): Promise<void> {
       })
       return
     }
-    // The runtime also emits a smoke:result event; finishSmoke is idempotent.
+    // 运行时也会发出 smoke:result 事件；finishSmoke 是幂等的。
     finishSmoke(response.result as SmokeReport)
   } catch (error) {
     finishSmoke({
@@ -1111,8 +1111,8 @@ function installIpc(): void {
       }
       const target = path.join(os.tmpdir(), `x-code-region-${Date.now()}-${process.pid}.png`)
       try {
-        // Let the composer repaint after closing the capture menu, but keep the
-        // app visible so the user can select a region of the project itself.
+        // 关闭捕获菜单后让 composer 重绘，但保持应用可见，
+        // 以便用户选择项目本身的某个区域。
         await new Promise((resolve) => setTimeout(resolve, 150))
         const exitCode = await new Promise<number>((resolve) => {
           const child = spawn('screencapture', ['-i', '-x', '-t', 'png', target], { stdio: 'ignore' })
@@ -1271,8 +1271,8 @@ function installIpc(): void {
       activeUpdateDownload = controller
       try {
         if (!feed.startsWith('https://')) throw new Error('更新源必须是 https URL')
-        // net.fetch uses Chromium's network stack, so the system proxy works
-        // even though Node's global fetch ignores it.
+        // net.fetch 使用 Chromium 的网络栈，因此系统代理工作，
+        // 即使 Node 的全局 fetch 忽略它。
         const response = await net.fetch(feed, {
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
           headers: { Accept: 'application/json' },
@@ -1463,9 +1463,9 @@ function installIpc(): void {
             error: { code: 'invalid-workspace', message: `Workspace does not exist: ${workspacePath}` },
           }
         }
-        // A blank window for a workspace that is already open just focuses it.
-        // Moving a session is different: the sender closes its tab, so a new
-        // window is created even when another window uses the same workspace.
+        // 为已打开工作区创建的空白窗口只是聚焦它。
+        // 移动会话则不同：发送方关闭其标签页，因此即使另一个窗口
+        // 使用同一工作区，也会创建新窗口。
         if (!sessionFilePath) {
           const existing = [...runtimeContexts.values()].find(
             (entry) =>
@@ -1483,8 +1483,8 @@ function installIpc(): void {
       }
       const query = new URLSearchParams({ fresh: '1' })
       if (sessionFilePath) {
-        // The session is being moved out of the sender: release its claim
-        // before the new renderer asks to load the same file.
+        // 会话正被移出发送方：在新 renderer 请求加载同一文件之前
+        // 释放它的归属。
         if (context) context.sessionFiles.delete(canonicalDirectory(sessionFilePath))
         query.set('session', sessionFilePath)
       }
@@ -1592,14 +1592,14 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    // Bring the last focused window forward, or recreate one so a second
-    // launch never disappears silently.
+    // 把最后聚焦的窗口带到前台，或重建一个，使第二次
+    // 启动绝不会悄无声息地消失。
     showMainWindow()
   })
 
   app.whenReady().then(() => {
     installIpc()
-    // Chromium-level media permission; the OS (TCC) still prompts separately.
+    // Chromium 级媒体权限；OS（TCC）仍会单独提示。
     session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
       callback(permission === 'media')
     })
@@ -1611,8 +1611,8 @@ if (!gotLock) {
       startUiSmoke()
       return
     }
-    // Development aids for visual inspection: open the terminal drawer or
-    // auto-submit a demo prompt. Production launches start clean.
+    // 用于视觉检查的开发辅助：打开终端抽屉或
+    // 自动提交演示提示。生产启动保持干净。
     const search = new URLSearchParams()
     if (process.env.X_CODE_OPEN_TERMINAL === '1') search.set('terminal', '1')
     if (process.env.X_CODE_OPEN_SETTINGS === '1') search.set('settings', '1')
@@ -1624,7 +1624,7 @@ if (!gotLock) {
     try {
       globalShortcut.register('CommandOrControl+Shift+Space', showMainWindow)
     } catch {
-      // The shortcut can be taken by another app; the tray still works.
+      // 快捷键可能被其他应用占用；托盘仍可用。
     }
 
     app.on('activate', () => {
@@ -1633,10 +1633,10 @@ if (!gotLock) {
   })
 
   app.on('window-all-closed', () => {
-    // Single-window app: closing the window quits the process. This also
-    // prevents a hidden zombie instance from blocking the next launch via the
-    // single-instance lock. Headless smokes may create transient windows
-    // (PDF rendering); their exit path is the smoke result, not this event.
+    // 单窗口应用：关闭窗口即退出进程。这也
+    // 防止隐藏的僵尸实例通过单实例锁阻塞下次启动。
+    // 无头冒烟可能创建临时窗口（PDF 渲染）；它们的退出路径是
+    // 冒烟结果，而不是此事件。
     if (isHeadlessSmoke) return
     app.quit()
   })
@@ -1653,13 +1653,13 @@ if (!gotLock) {
       try {
         child.postMessage({ kind: 'shutdown' } satisfies RuntimeInbound)
       } catch {
-        // Runtime may already be gone.
+        // 运行时可能已经消失。
       }
       setTimeout(() => {
         try {
           child.kill()
         } catch {
-          // Already dead.
+          // 已死。
         }
       }, 500)
     }

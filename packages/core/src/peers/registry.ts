@@ -238,8 +238,8 @@ export function createPeerRegistry(options: PeerRegistryOptions = {}): PeerRegis
         await handle.close()
         handle = undefined
         await fs.rename(tempPath, finalPath)
-        // Windows cannot flush directory handles (fsync returns EPERM).
-        // The registration file itself has already been flushed above.
+        // Windows 无法刷新目录句柄（fsync 返回 EPERM）。注册文件本身已在
+        // 上面被刷新过。
         if (process.platform !== 'win32') {
           const directory = await fs.open(registryDir, 'r')
           try {
@@ -330,8 +330,8 @@ export function createPeerRegistry(options: PeerRegistryOptions = {}): PeerRegis
               registrations.push(candidate)
             }
           } catch {
-            // A live PID may have a blocked event loop. Ping failure hides it
-            // from this live view but never authorizes registration/socket deletion.
+            // 存活的 PID 可能事件循环被阻塞。Ping 失败只是把它从这份存活视图
+            // 中隐藏，绝不会授权删除注册记录/套接字。
             partial = true
           }
         }

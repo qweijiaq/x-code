@@ -1,21 +1,18 @@
-// Tests for the per-session JSONL transcript store.
+// 每个会话的 JSONL transcript 存储的测试。
 //
-// The module is the source of truth for resume — both the CLI startup
-// flags (`-c`, `-r`) and the in-app `/resume` command load via
-// `loadSession`, and every assistant turn appends through
-// `flushPendingMessages` / `appendUsage`. The invariants we care most
-// about:
+// 该模块是恢复（resume）的事实来源 —— CLI 启动标志（`-c`、`-r`）
+// 和应用内 `/resume` 命令都通过 `loadSession` 加载，每个 assistant
+// 轮次通过 `flushPendingMessages` / `appendUsage` 追加。我们最关心的
+// 不变量：
 //
-//   1. Round-trip:    write a header + N messages + usage, load it back;
-//                     messages and tokenUsage match exactly.
-//   2. Boundary:      every `compact-boundary` clears the in-load
-//                     accumulator so the loaded view reflects only
-//                     post-last-boundary content.
-//   3. Sanitisation:  trailing assistant tool_calls without paired
-//                     tool_results are trimmed; the next API request
-//                     can't observe an orphan.
-//   4. CJK fallback:  empty taskSlug falls back to timestamp-only
-//                     filenames (mirrors plan files).
+//   1. 往返：        写入头部 + N 条消息 + usage，再加载回来；
+//                     消息和 tokenUsage 完全一致。
+//   2. 边界：        每个 `compact-boundary` 都会清空加载中的累加器，
+//                     使加载视图只反映最后一个边界之后的内容。
+//   3. 消毒：        末尾没有配对 tool_results 的 assistant tool_calls
+//                     会被裁剪；下一次 API 请求看不到孤儿。
+//   4. CJK 回退：    空 taskSlug 回退为仅含时间戳的文件名
+//                     （与 plan 文件一致）。
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -54,8 +51,8 @@ let originalCwd: string
 const itPosix = it.runIf(process.platform !== 'win32')
 
 beforeEach(() => {
-  // Each test gets a clean tmp cwd so jsonl writes don't pollute the
-  // dev's actual repo (`.x-code/sessions/` is at process.cwd()).
+  // 每个测试都使用干净的临时 cwd，避免 jsonl 写入污染开发者的
+  // 真实仓库（`.x-code/sessions/` 位于 process.cwd()）。
   tempDir = mkdtempSync(join(tmpdir(), 'xc-session-store-'))
   originalCwd = process.cwd()
   process.chdir(tempDir)
@@ -283,7 +280,7 @@ describe('session-store: round-trip', () => {
     await flushPendingMessages(state)
     expect(state.persistedMessageCount).toBe(3)
 
-    // Idempotent — re-flush with no new messages is a no-op.
+    // 幂等 —— 没有新消息时再次 flush 是空操作。
     await flushPendingMessages(state)
     expect(state.persistedMessageCount).toBe(3)
 
@@ -347,7 +344,7 @@ describe('session-store: compact boundary', () => {
     state.sessionId = '20260101-120000-000'
     state.taskSlug = 'compaction'
 
-    // Pre-compaction: 4 messages get persisted normally.
+    // 压缩前：4 条消息正常持久化。
     state.messages = [
       { role: 'user', content: 'q1' },
       { role: 'assistant', content: 'a1' },
@@ -358,10 +355,9 @@ describe('session-store: compact boundary', () => {
     await flushPendingMessages(state)
     expect(state.persistedMessageCount).toBe(4)
 
-    // Compaction shrinks the in-memory array. markBoundaryAndReflush
-    // writes a boundary line + the trimmed messages, and resets the
-    // counter to the new length so subsequent flushes diff against
-    // post-boundary state.
+    // 压缩会收缩内存数组。markBoundaryAndReflush 写入一行边界 +
+    // 裁剪后的消息，并把计数器重置为新长度，使后续 flush
+    // 针对边界后的状态做差分。
     state.messages = [
       { role: 'user', content: '[Previous summary]\nDiscussed q1 and q2' },
       { role: 'assistant', content: 'a2' },
@@ -414,11 +410,11 @@ describe('session-store: compact boundary', () => {
     await appendHeader(state, 'anthropic:claude-sonnet-5', 'q1')
     await flushPendingMessages(state)
 
-    // First boundary
+    // 第一个边界
     state.messages = [{ role: 'user', content: 'after-first-boundary' }]
     await markBoundaryAndReflush(state, 'first summary')
 
-    // Add more, then a second boundary
+    // 追加更多，然后第二个边界
     state.messages.push({ role: 'assistant', content: 'mid' })
     await flushPendingMessages(state)
 
@@ -437,8 +433,8 @@ describe('session-store: orphan tool-call sanitisation', () => {
     state.sessionId = '20260101-120000-000'
     state.taskSlug = 'orphan-tail'
 
-    // Resolved tool-call (followed by a matching tool result) — must be kept.
-    // Then an orphan tool_call at the very end — must be trimmed.
+    // 已完成的 tool-call（后面跟着匹配的 tool result）—— 必须保留。
+    // 然后是末尾的孤儿 tool_call —— 必须裁剪。
     state.messages = [
       { role: 'user', content: 'work on something' },
       {
@@ -460,7 +456,7 @@ describe('session-store: orphan tool-call sanitisation', () => {
     await flushPendingMessages(state)
 
     const loaded = await loadSession(getSessionFilePath(state))
-    // The orphan tool_call assistant message at index 3 is dropped.
+    // 索引 3 处的孤儿 tool_call assistant 消息被丢弃。
     expect(loaded!.messages).toHaveLength(3)
     expect(loaded!.transcriptRequiresSnapshot).toBe(true)
     const lastAssistant = loaded!.messages[1]
@@ -520,10 +516,10 @@ describe('session-store: serialized binary part repair', () => {
     expect((loaded!.messages[0]!.content as unknown[])[1]).toEqual(imagePart)
   })
 
-  // Older builds put raw Buffer instances into attachment parts;
-  // JSON.stringify turned them into {"type":"Buffer","data":[...]} (or the
-  // numeric-keys Uint8Array form), which fails the SDK's ModelMessage schema
-  // on resume. loadSession must restore them to base64 strings.
+  // 较旧的构建会把原始 Buffer 实例放进 attachment 部分；
+  // JSON.stringify 会把它变成 {"type":"Buffer","data":[...]}（或
+  // 数字键的 Uint8Array 形式），这在恢复时会因不符合 SDK 的
+  // ModelMessage schema 而失败。loadSession 必须把它们还原为 base64 字符串。
   it('restores image/file parts persisted as JSON-serialized Buffers', async () => {
     const state = createLoopState()
     state.sessionId = '20260101-120000-000'
@@ -613,15 +609,15 @@ describe('session-store: concurrent appends', () => {
     state.taskSlug = 'race'
     await appendHeader(state, 'anthropic:claude-sonnet-5', 'race')
 
-    // A large message widens the window in which concurrent appendFile calls
-    // would interleave without the per-file write queue.
+    // 较大的消息会拉大窗口，没有按文件的写队列时，并发的 appendFile
+    // 调用会在其中交错。
     state.messages = [{ role: 'user', content: 'x'.repeat(2 * 1024 * 1024) }]
     await Promise.all([flushPendingMessages(state), appendUsage(state, 'm'), appendUsage(state, 'm')])
 
     const raw = await readFile(getSessionFilePath(state), 'utf-8')
     const lines = raw.split('\n').filter((l) => l.trim())
-    // Header + the four-line committed snapshot epoch + two usage entries;
-    // every line must remain a complete JSON document under concurrent writes.
+    // 头部 + 四行的已提交快照纪元 + 两条 usage 条目；
+    // 并发写入下每一行都必须保持为完整 JSON 文档。
     expect(lines).toHaveLength(7)
     for (const line of lines) {
       expect(() => JSON.parse(line)).not.toThrow()
@@ -870,7 +866,7 @@ describe('session-store: malformed input', () => {
     const filePath = join(sessionsDir, 'orphan.jsonl')
     await writeFile(filePath, '{"t":"msg","message":{"role":"user","content":"x"},"ts":"now"}\n', { flag: 'wx' }).catch(
       async () => {
-        // Directory may not exist — let appendHeader create it via a probe call.
+        // 目录可能不存在 —— 让 appendHeader 通过探测调用创建它。
         const state = createLoopState()
         state.sessionId = 'probe'
         state.taskSlug = 'probe'
@@ -889,7 +885,7 @@ describe('session-store: malformed input', () => {
     state.messages = [{ role: 'user', content: 'real' }]
     await appendHeader(state, 'anthropic:claude-sonnet-5', 'real')
     await flushPendingMessages(state)
-    // Append a corrupt line.
+    // 追加一行损坏数据。
     const fp = getSessionFilePath(state)
     await writeFile(fp, '{not json\n', { flag: 'a' })
     state.messages.push({ role: 'assistant', content: 'reply' })
@@ -954,8 +950,8 @@ describe('session-store: listSessions / pickLatestSession', () => {
   })
 
   it('lists sessions newest first', async () => {
-    // Create two sessions with distinct slugs and a delay between them
-    // so mtime ordering is deterministic.
+    // 创建两个 slug 不同、且间隔一定延迟的会话，
+    // 使 mtime 排序可确定。
     const s1 = createLoopState()
     s1.sessionId = '20260101-120000-000'
     s1.taskSlug = 'older'
@@ -1331,8 +1327,8 @@ describe('session-store: forkSession', () => {
     expect(source.goalInputs[0]?.promotedAt).toBe(promoted!.promotedAt)
     expect(snapshot.goalInputs[0]?.promotedAt).toBeUndefined()
 
-    // Simulate the active request compacting/replacing the transcript and
-    // mutating every other durable subsystem after the boundary was captured.
+    // 模拟在边界被捕获后，活动请求压缩/替换 transcript 并
+    // 改动其他所有持久化子系统。
     source.messages = [
       { role: 'user', content: '[Previous conversation summary]\nchanged by document A' },
       { role: 'user', content: 'generate document A' },

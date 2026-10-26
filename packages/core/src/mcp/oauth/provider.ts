@@ -1,24 +1,22 @@
-// @x-code-cli/core — OAuthClientProvider implementation
+// @x-code-cli/core — OAuthClientProvider 实现
 //
-// Hooks the MCP SDK's auth flow up to our persistence + UX:
+// 把 MCP SDK 的认证流程接到我们的持久化 + UX 上：
 //
-//   - tokens()                 — read from McpTokenStorage
-//   - saveTokens()             — write to McpTokenStorage
-//   - clientInformation()      — read from McpTokenStorage
-//   - saveClientInformation()  — write to McpTokenStorage (covers
-//                                RFC 7591 dynamic registration result)
-//   - codeVerifier() / save    — kept in-process memory; PKCE verifier
-//                                is single-use per auth flow
-//   - redirectUrl              — set to a freshly-started local
-//                                callback server's URL
-//   - redirectToAuthorization  — open the URL in the user's browser
+//   - tokens()                 — 从 McpTokenStorage 读取
+//   - saveTokens()             — 写入 McpTokenStorage
+//   - clientInformation()      — 从 McpTokenStorage 读取
+//   - saveClientInformation()  — 写入 McpTokenStorage（涵盖
+//                                RFC 7591 动态注册结果）
+//   - codeVerifier() / save    — 保存在进程内存中；PKCE verifier
+//                                每次认证流程只使用一次
+//   - redirectUrl              — 设为刚启动的本地回调服务器 URL
+//   - redirectToAuthorization  — 在用户浏览器中打开 URL
 //
-// One instance per server. Built lazily by the factory in loader.ts.
+// 每个服务器一个实例。由 loader.ts 中的工厂惰性构建。
 //
-// External browser launcher: we use `node:child_process` to spawn the
-// platform-default opener (`start` on Windows, `open` on macOS,
-// `xdg-open` on Linux). No npm dep — the cross-platform `open` package
-// is nice but pulls in another 200KB.
+// 外部浏览器启动器：我们用 `node:child_process` 来 spawn 平台默认的打开器
+// （Windows 上 `start`，macOS 上 `open`，Linux 上 `xdg-open`）。不引入
+// npm 依赖——跨平台的 `open` 包虽好，但会多拉入 200KB。
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
 import type {
   OAuthClientInformationMixed,
@@ -44,50 +42,44 @@ export interface CreateProviderOptions {
   serverName: string
   serverUrl: string
   storage: McpTokenStorage
-  /** Callback that should be invoked just before the browser opens,
-   *  e.g. to print "Opening browser for sentry auth..." to the CLI UI. */
+  /** 应在浏览器打开前一刻调用的回调，
+   *  例如向 CLI UI 打印 "Opening browser for sentry auth..."。 */
   onOpenBrowser?: (url: string) => void
 }
 
-/** Concrete provider, wired up to fetched persisted state + a callback
- *  server that gets started on demand. Reused across multiple connect /
- *  refresh attempts for the same server. */
+/** 具体 provider，接上读取的持久化状态 + 一个按需启动的回调服务器。
+ *  跨同一服务器的多次 connect / refresh 尝试复用。 */
 export class McpOAuthProvider implements OAuthClientProvider {
-  /** Currently-running callback server. We keep a handle so a second
-   *  call to redirectToAuthorization (after a failed first attempt)
-   *  reuses the same port instead of opening another listener. */
+  /** 当前运行中的回调服务器。我们保留句柄，使（第一次尝试失败后的）第二次
+   *  redirectToAuthorization 调用复用同一端口，而不是再开一个监听器。 */
   private callbackServer: RunningCallbackServer | null = null
-  /** PKCE verifier — kept in memory only, replaced on each new flow. */
+  /** PKCE verifier——仅保存在内存中，每次新流程都会替换。 */
   private memoryCodeVerifier: string | null = null
-  /** Pending callback that the SDK will consume via `finishAuth` on
-   *  the transport. Caller of `waitForAuthCode()` retrieves it. */
+  /** SDK 将在 transport 上通过 `finishAuth` 消费的待处理回调。
+   *  `waitForAuthCode()` 的调用方会取走它。 */
   private pendingCode: Promise<{ code: string; state?: string }> | null = null
-  /** Whether `redirectToAuthorization` should actually launch a browser.
-   *  Default false — booting the CLI with an HTTP MCP server that has
-   *  no stored token must NOT silently open a browser window. The flag
-   *  is flipped on for the duration of `connectWithOAuth` (driven by
-   *  `/mcp auth <name>`) and back off in `finally`. */
+  /** `redirectToAuthorization` 是否真的应该启动浏览器。
+   *  默认 false——带着一个没有存储 token 的 HTTP MCP 服务器启动 CLI
+   *  绝不能悄悄打开浏览器窗口。该标志在 `connectWithOAuth` 期间（由
+   *  `/mcp auth <name>` 驱动）翻转为 true，并在 `finally` 中翻回 false。 */
   private interactive = false
 
   constructor(private readonly opts: CreateProviderOptions) {}
 
-  /** Caller (client.ts:connectWithOAuth) toggles this around an
-   *  authenticated dance. Outside that window we stay passive. */
+  /** 调用方（client.ts:connectWithOAuth）在一段认证流程前后切换它。
+   *  在该窗口之外我们保持被动。 */
   setInteractive(value: boolean): void {
     this.interactive = value
   }
 
-  /** Eagerly start the callback server, so the real loopback port is
-   *  available to `redirectUrl` and `clientMetadata.redirect_uris`
-   *  BEFORE the SDK constructs the dynamic-registration request.
+  /** 提前启动回调服务器，使真实的 loopback 端口在 SDK 构建动态注册请求
+   *  *之前*就可用于 `redirectUrl` 和 `clientMetadata.redirect_uris`。
    *
-   *  Why this matters: Sentry (and any auth server that doesn't follow
-   *  RFC 8252 §7.3 strictly) validates the auth-URL `redirect_uri` against
-   *  the value the client registered with. If we register with the
-   *  port-less placeholder and then redirect to a concrete port, the
-   *  server replies "Invalid redirect URI" and the whole flow dies.
-   *  Pre-starting the server ensures registration and authorization use
-   *  the SAME concrete `http://127.0.0.1:<port>/callback`. */
+   *  为什么重要：Sentry（以及任何不严格遵循 RFC 8252 §7.3 的认证服务器）
+   *  会用客户端注册时的值校验认证 URL 的 `redirect_uri`。如果我们用无端口
+   *  占位符注册，随后重定向到具体端口，服务器会回复 "Invalid redirect URI"，
+   *  整个流程就失败了。预先启动服务器可保证注册与授权使用*同一个*具体的
+   *  `http://127.0.0.1:<port>/callback`。 */
   async prepareForAuth(): Promise<void> {
     this.interactive = true
     await this.ensureCallbackServer()
@@ -96,28 +88,24 @@ export class McpOAuthProvider implements OAuthClientProvider {
   // ── OAuthClientProvider ────────────────────────────────────────────────
 
   get redirectUrl(): string {
-    // The SDK actually reads `redirectUrl` BEFORE `redirectToAuthorization`
-    // fires (e.g. while constructing the authorize URL during the very
-    // first connect attempt with no stored token). An earlier version
-    // threw here, which surfaced HTTP servers as `failed` instead of the
-    // intended `needs_auth` on the first launch after `/mcp add`.
+    // SDK 实际上是在 `redirectToAuthorization` 触发*之前*读取 `redirectUrl`
+    // 的（例如在没有任何存储 token 的首次连接尝试期间构造授权 URL 时）。
+    // 早先的版本在这里抛出，导致 HTTP 服务器在 `/mcp add` 后的首次启动时
+    // 表现为 `failed` 而非预期的 `needs_auth`。
     //
-    // We return the same loopback placeholder `clientMetadata.redirect_uris`
-    // already uses. RFC 8252 §7.3 says authorisation servers MUST accept any
-    // port on a registered loopback redirect_uri, so the placeholder being
-    // port-less is fine for the registration roundtrip; `redirectToAuthorization`
-    // rewrites the actual `redirect_uri` query param with the real port
-    // right before launching the browser.
+    // 我们返回 `clientMetadata.redirect_uris` 已经在用的同一个 loopback
+    // 占位符。RFC 8252 §7.3 说授权服务器必须接受已注册 loopback redirect_uri
+    // 上的任何端口，所以无端口的占位符对注册往返来说是没问题的；
+    // `redirectToAuthorization` 会在启动浏览器之前，用真实端口重写实际的
+    // `redirect_uri` 查询参数。
     return this.callbackServer?.url ?? 'http://127.0.0.1/callback'
   }
 
   get clientMetadata(): OAuthClientMetadata {
     return {
       ...CLIENT_METADATA_BASE,
-      // Filled in by redirectToAuthorization once the server is up.
-      // Until then the SDK may inspect this object during dynamic
-      // registration — we use a placeholder; the SDK will overwrite
-      // the registration response anyway.
+      // 服务器起来后由 redirectToAuthorization 填充。在那之前，SDK 可能在
+      // 动态注册期间检查此对象——我们用占位符；反正 SDK 会覆盖注册响应。
       redirect_uris: [this.callbackServer?.url ?? 'http://127.0.0.1/callback'],
     }
   }
@@ -152,50 +140,44 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    // Passive (boot) mode: the SDK is in the middle of a "lazy" first
-    // connect with no stored token. We must NOT open a browser window
-    // unprompted — every other MCP-aware CLI (Claude Code, Gemini,
-    // OpenCode) waits for explicit user action before doing that, and
-    // a CLI start-up that hijacks the user's browser is a hostile
-    // surprise. Returning here is enough: the SDK will throw
-    // UnauthorizedError next, the registry classifies it as
-    // `needs_auth`, and `/mcp auth <name>` can drive the real flow
-    // (after setInteractive(true) flips us into the interactive path
-    // below).
+    // 被动（启动）模式：SDK 正处在没有存储 token 的"惰性"首次连接中途。
+    // 我们绝不能未经提示就打开浏览器窗口——其他每个 MCP 感知的 CLI
+    // （Claude Code、Gemini、OpenCode）都会等用户明确操作后才这么做，
+    // 而一个劫持用户浏览器的 CLI 启动是充满敌意的惊吓。这里直接返回即可：
+    // SDK 接下来会抛出 UnauthorizedError，registry 把它归类为 `needs_auth`，
+    // 而 `/mcp auth <name>` 可以驱动真正的流程（在 setInteractive(true)
+    // 把我们翻转到下面的交互路径之后）。
     if (!this.interactive) {
       return
     }
 
-    // Lazy-start the callback server right before we hand the auth URL
-    // to the browser, so the URL we advertise (via `redirectUrl`)
-    // matches what we'll listen on. We rebuild the auth URL with the
-    // updated redirect_uri reflecting our actual port.
+    // 在把认证 URL 交给浏览器前一刻惰性启动回调服务器，使我们（通过
+    // `redirectUrl`）宣告的 URL 与我们实际监听的 URL 一致。我们用反映真实
+    // 端口的更新后 redirect_uri 重建认证 URL。
     await this.ensureCallbackServer()
     authorizationUrl.searchParams.set('redirect_uri', this.callbackServer!.url)
 
     this.opts.onOpenBrowser?.(authorizationUrl.toString())
     await openInBrowser(authorizationUrl.toString())
 
-    // Stash the pending callback so the caller can `await` it through
-    // `waitForAuthCode()` while the transport machinery handles the
-    // token-exchange step.
+    // 暂存待处理回调，使调用方能通过 `waitForAuthCode()` await 它，
+    // 同时 transport 机制处理 token 交换步骤。
     this.pendingCode = this.callbackServer!.waitForCallback()
   }
 
-  // ── Helpers used by /mcp auth handler ─────────────────────────────────
+  // ── /mcp auth 处理器使用的辅助方法 ─────────────────────────────────
 
-  /** Block until the auth server has redirected back. Resolves with the
-   *  captured code; the caller then calls `transport.finishAuth(code)`
-   *  on the SDK's StreamableHTTPClientTransport.
+  /** 阻塞直到认证服务器重定向回来。以捕获的 code resolve；调用方随后在
+   *  SDK 的 StreamableHTTPClientTransport 上调用
+   *  `transport.finishAuth(code)`。
    *
-   *  We close the callback server here because we already have the code
-   *  — Sentry won't call us back again on this flow. But we leave
-   *  `memoryCodeVerifier` alive: the SDK reads it during
-   *  `transport.finishAuth(code)`, which the caller runs AFTER this
-   *  promise resolves. Nulling the verifier in this finally block was
-   *  the cause of "No PKCE verifier set — auth flow not in progress".
-   *  Cleanup of the verifier happens either via `cancel()` (abort
-   *  path) or naturally on the next `saveCodeVerifier(...)` call. */
+   *  这里关闭回调服务器是因为我们已经拿到 code——Sentry 不会在此流程中
+   *  再次回调我们。但我们保留 `memoryCodeVerifier`：SDK 会在
+   *  `transport.finishAuth(code)` 期间读取它，而调用方是在此 promise
+   *  resolve *之后*才运行的。曾在这个 finally 块中置空 verifier，正是
+   *  "No PKCE verifier set — auth flow not in progress" 的成因。
+   *  verifier 的清理要么通过 `cancel()`（中止路径）完成，要么在下一次
+   *  `saveCodeVerifier(...)` 调用时自然完成。 */
   async waitForAuthCode(): Promise<{ code: string; state?: string }> {
     if (!this.pendingCode) {
       throw new Error('Auth flow not started — redirectToAuthorization was never invoked')
@@ -209,7 +191,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  /** Drop any in-progress flow without saving. Safe to call any time. */
+  /** 丢弃任何进行中的流程而不保存。任何时候调用都安全。 */
   cancel(): void {
     this.callbackServer?.close()
     this.callbackServer = null
@@ -217,7 +199,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
     this.memoryCodeVerifier = null
   }
 
-  // ── internals ──────────────────────────────────────────────────────────
+  // ── 内部实现 ──────────────────────────────────────────────────────────
 
   private async ensureCallbackServer(): Promise<void> {
     if (this.callbackServer) return
@@ -225,48 +207,42 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
 }
 
-/** Best-effort cross-platform `open <url>`. Detached so the CLI doesn't
- *  block on the browser process; stdio piped to /dev/null so output
- *  doesn't smear into our terminal UI. Failures are logged but never
- *  thrown — the user can still copy/paste the URL by hand. */
+/** 尽力而为的跨平台 `open <url>`。detached 使 CLI 不会阻塞在浏览器进程上；
+ *  stdio 接到 /dev/null，使输出不会抹脏我们的终端 UI。失败会记录日志但
+ *  绝不抛出——用户仍可手工复制/粘贴 URL。 */
 async function openInBrowser(url: string): Promise<void> {
   try {
     if (process.platform === 'win32') {
-      // We deliberately AVOID `cmd /c start` here. cmd.exe treats `&`
-      // as a command separator, so an OAuth URL like
+      // 这里刻意避开 `cmd /c start`。cmd.exe 把 `&` 当作命令分隔符，所以像
       //   https://x.com/auth?response_type=code&client_id=abc&code_challenge=...
-      // got silently truncated to `https://x.com/auth?response_type=code`
-      // — the user's browser landed on a URL with no client_id /
-      // redirect_uri / PKCE challenge and Sentry replied "Invalid
-      // redirect URI". Node's argv quoting doesn't quote `&` (it's not
-      // a Windows-native special char, only a cmd-builtin special char)
-      // so even passing the URL as a separate arg didn't save us.
+      // 这样的 OAuth URL 会被悄悄截断成
+      // `https://x.com/auth?response_type=code`——用户的浏览器落在一个没有
+      // client_id / redirect_uri / PKCE challenge 的 URL 上，Sentry 回复
+      // "Invalid redirect URI"。Node 的 argv 引号处理不会给 `&` 加引号
+      // （它不是 Windows 原生特殊字符，只是 cmd 内置特殊字符），所以即使
+      // 把 URL 作为单独参数传递也无济于事。
       //
-      // `rundll32 url.dll,FileProtocolHandler <url>` is the documented
-      // Win32 way to invoke the default browser's protocol handler.
-      // It bypasses cmd entirely, so `&` passes through verbatim.
+      // `rundll32 url.dll,FileProtocolHandler <url>` 是调用默认浏览器协议
+      // 处理器的文档化 Win32 方式。它完全绕过 cmd，因此 `&` 原样透传。
       spawnDetached('rundll32', ['url.dll,FileProtocolHandler', url])
       return
     }
     if (process.platform === 'darwin') {
-      // macOS `open` is rock-solid for URLs, no quirks.
+      // macOS 的 `open` 处理 URL 非常可靠，没有怪癖。
       spawnDetached('open', [url])
       return
     }
 
-    // Linux / *BSD: no single command works everywhere. xdg-utils
-    // (`xdg-open`) is the de-facto standard but missing on minimal
-    // containers and many server distros; `gio open` covers newer
-    // GNOME stacks; `wslview` covers WSL → Windows browser (when
-    // xdg-open inside WSL doesn't reach the host); `kde-open` and
-    // `gnome-open` cover their respective legacy desktops.
+    // Linux / *BSD：没有哪一条命令到处都管用。xdg-utils（`xdg-open`）
+    // 是事实标准，但在最小容器和许多服务器发行版上缺失；`gio open` 覆盖
+    // 较新的 GNOME 栈；`wslview` 覆盖 WSL → Windows 浏览器（当 WSL 内的
+    // xdg-open 到不了宿主机时）；`kde-open` 和 `gnome-open` 覆盖各自遗留的
+    // 桌面。
     //
-    // We try each in turn, falling through on ENOENT or non-zero exit.
-    // Failing silently with no opener would leave the user staring at
-    // the CLI scrollback wondering why nothing happened — we surface a
-    // `mcp.browser-open-no-opener` debug entry so the situation is at
-    // least diagnosable, and the CLI's "Opened …" line already gave
-    // them the URL to copy/paste by hand.
+    // 我们逐个尝试，遇到 ENOENT 或非零退出就落到下一个。找不到打开器时
+    // 静默失败会让用户盯着 CLI 回滚区纳闷为何什么都没发生——我们输出一条
+    // `mcp.browser-open-no-opener` 调试条目，使该情况至少可诊断，而 CLI 的
+    // "Opened …" 一行已经给了他们可手工复制/粘贴的 URL。
     const candidates: Array<[string, string[]]> = [
       ['xdg-open', [url]],
       ['gio', ['open', url]],
@@ -283,20 +259,18 @@ async function openInBrowser(url: string): Promise<void> {
   }
 }
 
-/** Fire a child process, detach, walk away. Used on Windows/macOS where
- *  the command is known-good — failure-detection is just a debug log. */
+/** 起一个子进程，detach，然后走人。用于 Windows/macOS 上命令已知可靠的情况
+ *  ——失败检测只是一条调试日志。 */
 function spawnDetached(cmd: string, args: string[]): void {
   const child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true })
   child.unref()
   child.on('error', (err) => debugLog('mcp.browser-open-failed', String(err)))
 }
 
-/** Try one Linux URL opener candidate. Resolves true if the binary
- *  exists and either exited cleanly OR is still alive after a brief
- *  grace window (most openers exec into a browser and exit ~immediately,
- *  but a few — notably wslview on cold start — fork and stay running for
- *  a moment). Resolves false on ENOENT or non-zero exit, signalling the
- *  caller to try the next candidate. */
+/** 尝试一个 Linux URL 打开器候选。若二进制存在，且要么干净退出、要么在短暂
+ *  宽限窗口后仍存活，则 resolve true（多数打开器 exec 进浏览器并几乎立即
+ *  退出，但少数——尤其是冷启动的 wslview——会 fork 并保持运行片刻）。
+ *  遇到 ENOENT 或非零退出则 resolve false，示意调用方尝试下一个候选。 */
 function trySpawnOpener(cmd: string, args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false
@@ -321,10 +295,9 @@ function trySpawnOpener(cmd: string, args: string[]): Promise<boolean> {
         settle(false)
       }
     })
-    // Grace window for openers that fork-and-stay-alive. 500 ms is well
-    // under any user-perceptible delay yet covers the slowest reasonable
-    // launch path; anything still alive at this point is almost certainly
-    // the real browser-launching process.
+    // 为 fork 后仍存活的打开器设置的宽限窗口。500 ms 远低于用户可感知的
+    // 延迟，却覆盖了最慢的合理启动路径；到此时仍存活的几乎肯定是真正启动
+    // 浏览器的进程。
     setTimeout(() => {
       if (!settled) {
         child.unref()
@@ -334,8 +307,8 @@ function trySpawnOpener(cmd: string, args: string[]): Promise<boolean> {
   })
 }
 
-/** Factory used by loader.ts. Returns undefined for stdio servers — the
- *  loader skips OAuth construction for those. */
+/** loader.ts 使用的工厂。对 stdio 服务器返回 undefined——loader 会为它们
+ *  跳过 OAuth 构造。 */
 export function createOAuthProviderFactory(
   storage: McpTokenStorage,
   onOpenBrowser?: (serverName: string, url: string) => void,

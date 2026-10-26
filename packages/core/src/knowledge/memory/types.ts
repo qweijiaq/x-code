@@ -2,9 +2,9 @@ export type MemoryType = 'user' | 'portfolio' | 'feedback' | 'workflow' | 'proje
 export type MemoryStatus = 'active' | 'stale'
 export type EvidenceKind = 'explicit' | 'validated' | 'observed'
 
-/** Shared slug format for topic IDs and fact IDs. */
+/** 主题 ID 与事实 ID 共用的 slug 格式。 */
 export const MEMORY_ID_RE = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/
-/** Characters allowed in a durable job ID (also used as its filename). */
+/** 持久化 job ID 允许的字符（也用作其文件名）。 */
 export const SAFE_JOB_ID_RE = /^[A-Za-z0-9._-]{1,200}$/
 
 export interface MemoryEvidence {

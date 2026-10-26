@@ -3,8 +3,7 @@ import type { GoalState, SessionForkOrigin, TokenUsage } from '@x-code-cli/core'
 
 import { GLYPH_FORK_ARROW } from '../render/terminal-glyphs.js'
 
-/** Lineage hint for picker rows: `↳ fork of <parent name or prompt>`, falling
- *  back to the parent id prefix when the parent session was deleted. */
+/** 选择器行的谱系提示：`↳ fork of <父名或提示>`；父会话被删除时回退到父 id 前缀。 */
 export function forkLineageHint(
   entry: { forkedFrom?: SessionForkOrigin },
   sessionsById: ReadonlyMap<string, { name?: string; firstPrompt: string }>,
@@ -17,9 +16,8 @@ export function forkLineageHint(
   return `${GLYPH_FORK_ARROW} fork of ${label}`
 }
 
-/** askQuestion matches the user's pick by label string, so duplicate labels
- *  (e.g. two forks given the same name) would make later entries
- *  unselectable. Append the sessionId to repeats to keep every row unique. */
+/** askQuestion 靠 label 字符串匹配用户的选择，所以重复 label（例如两个同名 fork）
+ *  会让后面的条目无法选中。给重复项追加 sessionId，让每行保持唯一。 */
 export function dedupeChoiceLabels<T extends { label: string; sessionId: string }>(choices: T[]): T[] {
   const seen = new Set<string>()
   return choices.map((choice) => {

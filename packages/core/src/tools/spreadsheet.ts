@@ -1,9 +1,8 @@
-// @x-code-cli/core — spreadsheet tool
+// @x-code-cli/core — spreadsheet 工具
 //
-// Reads and writes .xlsx locally (ExcelJS). Reading is capped at 100 rows × 50
-// columns per call; querying supports filters and group aggregates; writing is
-// limited to explicit cell ranges or appended rows and requires permission.
-// Charts are rendered as a small SVG file from label/value arrays.
+// 本地读写 .xlsx（ExcelJS）。读取每次上限 100 行 × 50 列；查询支持过滤和
+// 分组聚合；写入仅限于明确的单元格范围或追加行，且需要权限。图表从
+// 标签/值数组渲染成一个小型 SVG 文件。
 import ExcelJS from 'exceljs'
 
 import fs from 'node:fs/promises'

@@ -507,7 +507,7 @@ export function useGoalController({
         goalStatus: loopStateRef.current?.goal ? { ...loopStateRef.current.goal } : null,
       }))
     } catch {
-      // A non-active terminal goal does not need abort-time state changes.
+      // 一个非活跃的终止目标不需要中止时的状态变更。
     }
   }, [loopStateRef, setState])
 

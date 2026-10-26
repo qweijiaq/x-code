@@ -1,8 +1,7 @@
-/** Normalize an AI-generated session title before persisting it.
+/** 在持久化前规范化 AI 生成的会话标题。
  *
- *  Models sometimes wrap the answer in quotes, prefix it with "Title:" or
- *  emit multiple lines. Keep the first meaningful line, strip wrapping
- *  punctuation and cap the length the sidebar can display.
+ *  模型有时会给答案加引号、前缀 "Title:" 或输出多行。
+ *  保留第一行有意义的文字，去掉包裹标点，并限制侧栏可显示的长度。
  */
 export function cleanSessionTitle(raw: string): string {
   const firstLine = raw

@@ -1,10 +1,10 @@
-// @x-code-cli/core — user/project hooks.json loading
+// @x-code-cli/core — user/project hooks.json 加载
 //
-// Plugin hooks come from plugin manifests. Users can also author hooks
-// directly in `~/.x-code/hooks.json` (user scope) or
-// `<workspace>/.x-code/hooks.json` (project scope). Both use the same schema
-// as plugin hooks and are registered before plugin hooks so a project can
-// observe/inject around them deterministically.
+// 插件 hook 来自插件 manifest。用户也可以直接在
+// `~/.x-code/hooks.json`（user 作用域）或
+// `<workspace>/.x-code/hooks.json`（project 作用域）编写 hook。
+// 两者使用与插件 hook 相同的模式，并在插件 hook 之前注册，
+// 这样项目能确定性地围绕它们进行观察 / 注入。
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -40,15 +40,15 @@ function errorMessage(error: unknown): string {
 }
 
 export interface LoadLocalHooksOptions {
-  /** Project hooks are code execution with the user's privileges; callers
-   *  must opt in after the user trusts the workspace. Defaults to false. */
+  /** 项目 hook 是以用户权限执行的代码；调用方必须在
+   *  用户信任该工作区之后显式选择加入。默认 false。 */
   allowProjectHooks?: boolean
 }
 
-/** Read both scopes without throwing. A malformed file contributes an error
- *  string and an empty config so one broken scope cannot disable the other.
- *  Project hooks are only registered when `allowProjectHooks` is true, but
- *  their config is still returned so the UI can preview/trust them. */
+/** 不抛异常地读取两个作用域。格式损坏的文件会贡献一条错误
+ *  字符串和一个空配置，这样一个损坏的作用域不会禁用另一个。
+ *  只有当 `allowProjectHooks` 为 true 时才注册项目 hook，但
+ *  其配置仍会返回，以便 UI 预览 / 信任它们。 */
 export function loadLocalHookConfigs(workspace: string, options: LoadLocalHooksOptions = {}): LocalHooksResult {
   const paths = localHookPaths(workspace)
   const sources: LocalHookSource[] = []

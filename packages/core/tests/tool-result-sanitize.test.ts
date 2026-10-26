@@ -1,4 +1,4 @@
-// Tests for agent/tool-result-sanitize.ts
+// agent/tool-result-sanitize.ts 的测试
 import { describe, expect, it } from 'vitest'
 
 import type { ModelMessage } from 'ai'
@@ -42,7 +42,7 @@ function toolMsg(toolName: string, value: string): ModelMessage {
 
 describe('truncateToolResultsInMessages', () => {
   it('truncates an oversized readFile result in place', () => {
-    const huge = 'line\n'.repeat(5000) // 5000 lines, over default 2000
+    const huge = 'line\n'.repeat(5000) // 5000 行，超过默认的 2000
     const messages: ModelMessage[] = [toolMsg('readFile', huge)]
     truncateToolResultsInMessages(messages)
     const after = (messages[0].content as unknown as Array<{ output: { value: string } }>)[0].output.value
@@ -55,7 +55,7 @@ describe('truncateToolResultsInMessages', () => {
     const messages: ModelMessage[] = [toolMsg('grep', lines)]
     truncateToolResultsInMessages(messages)
     const after = (messages[0].content as unknown as Array<{ output: { value: string } }>)[0].output.value
-    // grep policy is head-only; the tail should NOT be preserved
+    // grep 策略是只保留头部；尾部不应被保留
     expect(after).toContain('match-0')
     expect(after).not.toContain('match-1999')
   })
@@ -110,10 +110,9 @@ describe('repairOrphanToolCalls', () => {
   })
 
   it('drops a tool_result whose toolCallId never appeared in any assistant message', () => {
-    // SDK rejected the model's malformed tool input → no tool_call in
-    // response.messages, but processToolCalls still ran the tool and
-    // pushed a tool_result. The orphan must not survive into the next
-    // API request body.
+    // SDK 拒绝了模型的畸形 tool input → response.messages 中没有
+    // tool_call，但 processToolCalls 仍然运行了工具并推送了一个
+    // tool_result。这个孤儿绝不能进入下一次 API 请求体。
     const messages: ModelMessage[] = [
       { role: 'user', content: 'hi' } as ModelMessage,
       { role: 'assistant', content: 'plain reply, no tool call' } as ModelMessage,
@@ -125,9 +124,9 @@ describe('repairOrphanToolCalls', () => {
   })
 
   it('keeps a tool_result whose toolCallId is fulfilled and drops only the orphan part', () => {
-    // Mixed tool message: one valid result + one orphan in the same
-    // tool message. Only the orphan should be filtered; the valid part
-    // (and the surrounding message structure) must survive.
+    // 混合 tool 消息：同一个 tool 消息里一个有效结果 + 一个孤儿。
+    // 只有孤儿应该被过滤；有效部分（以及周围的
+    // 消息结构）必须保留。
     const messages: ModelMessage[] = [
       assistantToolCallMsg('tc-valid', 'readFile'),
       {
@@ -164,7 +163,7 @@ describe('repairOrphanToolCalls', () => {
     const first = messages.length
     repairOrphanToolCalls(messages)
     expect(messages.length).toBe(first)
-    // Forward-orphan synthetic result for tc1 must still be present.
+    // tc1 的前向孤儿合成结果必须仍然存在。
     const ids = messages
       .flatMap((m) => (Array.isArray(m.content) ? (m.content as unknown as Array<{ toolCallId?: string }>) : []))
       .map((p) => p.toolCallId)
@@ -185,10 +184,10 @@ describe('repairOrphanToolCalls', () => {
     expect(JSON.stringify(messages)).toBe(before)
   })
 
-  // Bug 1: tool message that's only orphan and sits between two
-  // assistants must NOT be spliced — that would leave assistant→assistant,
-  // which Anthropic 400s with "messages: roles must alternate". Replace
-  // with a user-text placeholder instead.
+  // Bug 1：只含孤儿、且夹在两个 assistant 之间的 tool 消息绝不能
+  // 被 splice——那会留下 assistant→assistant，Anthropic 会以
+  // "messages: roles must alternate" 返回 400。改用
+  // user 文本占位符替换。
   it('replaces empty-orphan tool message with user placeholder when between two assistants', () => {
     const messages: ModelMessage[] = [
       { role: 'user', content: 'hi' } as ModelMessage,
@@ -207,9 +206,9 @@ describe('repairOrphanToolCalls', () => {
     }
   })
 
-  // Bug 1 boundary: when at least one neighbor is not assistant,
-  // dropping the orphan tool message is still the right call (no
-  // assistant→assistant gap is created by the splice).
+  // Bug 1 边界：当至少一个邻居不是 assistant 时，
+  // 丢弃孤儿 tool 消息仍然是正确的（splice 不会制造
+  // assistant→assistant 的间隔）。
   it('still splices the orphan tool message when neighbors are not both assistant', () => {
     const messages: ModelMessage[] = [
       { role: 'user', content: 'hi' } as ModelMessage,
@@ -221,11 +220,10 @@ describe('repairOrphanToolCalls', () => {
     expect(messages[1].role).toBe('assistant')
   })
 
-  // Bug 2: multiple forward-orphan tool_calls must collapse into ONE
-  // trailing tool message, not N adjacent tool messages. The Anthropic
-  // SDK happens to merge consecutive same-role messages today, but the
-  // Google converter does not — emitting one tool message is the
-  // provider-agnostic safe shape.
+  // Bug 2：多个前向孤儿 tool_call 必须折叠成一条
+  // 尾随 tool 消息，而不是 N 条相邻 tool 消息。Anthropic
+  // SDK 目前恰好会合并连续同角色消息，但 Google 转换器不会——
+  // 只发一条 tool 消息才是与 provider 无关的安全形态。
   it('collapses multiple forward-orphan synthetics into a single tool message', () => {
     const messages: ModelMessage[] = [
       { role: 'user', content: 'do two things' } as ModelMessage,
@@ -249,10 +247,10 @@ describe('repairOrphanToolCalls', () => {
     }
   })
 
-  // Bug 2 defense in depth: if a tool message already sits at the tail
-  // (e.g. processToolCalls pushed real results for the fulfilled
-  // tool_calls in the same turn), orphan synthetics merge into it
-  // instead of producing a new adjacent tool message.
+  // Bug 2 纵深防御：如果尾部已经有一条 tool 消息
+  // （例如 processToolCalls 在同一轮为已满足的 tool_call
+  // 推送了真实结果），孤儿合成结果应合并进它，
+  // 而不是生成新的相邻 tool 消息。
   it('merges synthetic results into an existing trailing tool message', () => {
     const messages: ModelMessage[] = [
       { role: 'user', content: 'hi' } as ModelMessage,
@@ -292,7 +290,7 @@ describe('repairOrphanToolCalls', () => {
       toolResultMsg('tc2', 'task', 'sub-agent result'),
     ]
     repairOrphanToolCalls(messages)
-    // user message must come AFTER all tool results
+    // user 消息必须出现在所有 tool 结果之后
     const roles = messages.map((m) => m.role)
     expect(roles).toEqual(['user', 'assistant', 'tool', 'tool', 'user'])
   })

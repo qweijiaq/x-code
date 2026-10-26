@@ -1,11 +1,9 @@
-// @x-code-cli/core — MCP startup loader
+// @x-code-cli/core — MCP 启动加载器
 //
-// One-shot orchestration called from the CLI entry: read user + project
-// configs, apply the trust gate to anything project-level, expand env
-// vars, spawn / dial every enabled server in parallel, build a registry
-// that can later be mutated by `/mcp refresh` and `/mcp auth`. Failures
-// on individual servers are recorded but never abort the boot —
-// `/mcp list` is the user's window into what went wrong.
+// 从 CLI 入口调用的一次性编排：读取用户 + 项目配置，对项目级内容应用
+// 信任门，展开环境变量，并行 spawn / 拨号每个启用的服务器，构建一个
+// 之后可被 `/mcp refresh` 和 `/mcp auth` 变更的 registry。单个服务器的
+// 失败会被记录但绝不中止启动——`/mcp list` 是用户查看问题所在的窗口。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -27,57 +25,51 @@ import { type McpResourceEntry, type McpServerConfig, type McpToolEntry } from '
 
 const MAX_MCP_CONFIG_BYTES = 1024 * 1024
 
-// Re-export for legacy callers that imported the type from this module.
+// 为从本模块导入该类型的旧调用方重新导出。
 export type { OAuthProviderFactory }
 export type { RegisteredServer, ConnectResult }
 export type { McpResourceEntry, McpToolEntry }
 
 export interface LoadOptions {
-  /** mcpServers from ~/.x-code/config.json. Trusted implicitly. */
+  /** 来自 ~/.x-code/config.json 的 mcpServers。隐式信任。 */
   userServers: Record<string, McpServerConfig> | undefined
-  /** mcpServers from <project>/.x-code/config.json. Requires consent. */
+  /** 来自 <project>/.x-code/config.json 的 mcpServers。需要同意。 */
   projectServers: Record<string, McpServerConfig> | undefined
-  /** mcpServers contributed by enabled plugins. Trusted implicitly —
-   *  the user already consented to the plugin at install time, so
-   *  re-running the project-MCP trust dialog for plugin servers would
-   *  be a duplicate prompt. Merged at the same precedence as
-   *  `userServers` (project entries still override on name collision). */
+  /** 由已启用插件贡献的 mcpServers。隐式信任——用户在安装时已同意该插件，
+   *  所以为插件服务器再跑一次项目 MCP 信任对话框会是重复提示。以与
+   *  `userServers` 相同的优先级合并（名字冲突时项目条目仍会覆盖）。 */
   extraServers?: Record<string, McpServerConfig>
-  /** Absolute project path (cwd at CLI start). Used as the trust key. */
+  /** 绝对项目路径（CLI 启动时的 cwd）。用作信任键。 */
   projectPath: string
-  /** Renders the trust dialog. Same shape as `AgentCallbacks.onAskUser`. */
+  /** 渲染信任对话框。形状与 `AgentCallbacks.onAskUser` 相同。 */
   askUser: (question: string, options: Array<{ label: string; description: string }>) => Promise<string>
-  /** Factory for OAuth providers. Optional — pass undefined to disable
-   *  OAuth (HTTP servers requiring auth will be marked `needs_auth`). */
+  /** OAuth provider 工厂。可选——传 undefined 以禁用 OAuth（需要认证的
+   *  HTTP 服务器会被标记为 `needs_auth`）。 */
   oauthProviderFor?: OAuthProviderFactory
-  /** Called after the loader decides to terminate the process — the CLI
-   *  layer wires this to a clean shutdown path. Defaults to no-op
-   *  (caller is responsible). */
+  /** 在 loader 决定终止进程后调用——CLI 层把它接到干净的关闭路径。
+   *  默认 no-op（由调用方负责）。 */
   onExitRequested?: () => void
 }
 
 export interface LoadResult {
   registry: McpRegistry
-  /** Configuration / parse errors collected before any server was even
-   *  contacted. Surfaced in `/mcp list` so users see typos in their
-   *  config alongside actual connection failures. */
+  /** 在联系任何服务器之前收集的配置 / 解析错误。在 `/mcp list` 中展示，
+   *  使用户在真实的连接失败旁边也能看到配置里的笔误。 */
   configErrors: Array<{ name: string; message: string }>
-  /** True iff project-level mcpServers were skipped because the user
-   *  declined trust. The CLI uses this to print a heads-up message. */
+  /** 当项目级 mcpServers 因用户拒绝信任而被跳过时为 true。
+   *  CLI 用它打印一条提醒信息。 */
   projectSkipped: boolean
 }
 
-/** Load the standard config files from disk + invoke the loader.
- *  Convenience wrapper used by the CLI entry point so it doesn't have
- *  to know about file paths. */
+/** 从磁盘加载标准配置文件 + 调用 loader。CLI 入口使用的便捷封装，
+ *  使其不必了解文件路径。 */
 export async function loadMcpFromDisk(opts: {
   cwd: string
   askUser: LoadOptions['askUser']
   oauthProviderFor?: OAuthProviderFactory
   onExitRequested?: () => void
-  /** Plugin-contributed mcpServers — already-trusted, merged into the
-   *  effective config alongside user-level servers. Built by
-   *  packages/core/src/plugins/integration.ts. */
+  /** 插件贡献的 mcpServers——已受信任，与用户级服务器一起合并进有效配置。
+   *  由 packages/core/src/plugins/integration.ts 构建。 */
   extraServers?: Record<string, McpServerConfig>
 }): Promise<LoadResult> {
   const userServers = await readMcpServersFromFile(getUserConfigPath())
@@ -93,14 +85,12 @@ export async function loadMcpFromDisk(opts: {
   })
 }
 
-/** Phase-1 loader for async startup: reads configs from disk, runs the
- *  trust dialog, builds a McpRegistry with all servers in `connecting`
- *  state (no tools yet). The caller is expected to follow up with
- *  `registry.connectAll()` to actually establish connections — this lets
- *  the CLI render UI immediately while connections happen in the background.
+/** 异步启动的第一阶段 loader：从磁盘读取配置、运行信任对话框、构建一个
+ *  所有服务器都处于 `connecting` 状态（还没有工具）的 McpRegistry。调用方
+ *  应随后调用 `registry.connectAll()` 真正建立连接——这样 CLI 可以在连接
+ *  于后台进行的同时立即渲染 UI。
  *
- *  Returns the same shape as `loadMcpFromDisk` so the CLI can use either
- *  path interchangeably. */
+ *  返回与 `loadMcpFromDisk` 相同的结构，使 CLI 可以互换使用两条路径。 */
 export async function loadMcpConfigsFromDisk(opts: {
   cwd: string
   askUser: LoadOptions['askUser']
@@ -115,9 +105,9 @@ export async function loadMcpConfigsFromDisk(opts: {
   })
 
   if (opts.onExitRequested && projectSkipped) {
-    // The trust dialog returned 'exit' — honour the caller's shutdown hook.
-    // loadMergedConfigsFromDisk maps 'exit' to 'skip' (for /mcp refresh
-    // safety), so we re-check projectSkipped here for the CLI boot path.
+    // 信任对话框返回了 'exit'——执行调用方的关闭钩子。loadMergedConfigsFromDisk
+    // 会把 'exit' 映射为 'skip'（为了 /mcp refresh 的安全），所以这里
+    // 为 CLI 启动路径重新检查 projectSkipped。
   }
 
   if (configs.size === 0) {
@@ -128,7 +118,7 @@ export async function loadMcpConfigsFromDisk(opts: {
     }
   }
 
-  // Build a registry with servers in `connecting` state (no actual connection yet).
+  // 构建一个所有服务器都处于 `connecting` 状态（尚无实际连接）的 registry。
   const pendingServers: RegisteredServer[] = [...configs.entries()].map(([name, cfg]) => ({
     name,
     client: new McpClient(name, cfg),
@@ -146,17 +136,16 @@ export async function loadMcpConfigsFromDisk(opts: {
   return { registry, configErrors, projectSkipped }
 }
 
-/** Re-read configs from disk + apply the trust gate, but DON'T spawn any
- *  servers. Used by `/mcp refresh` so the caller can hand the resulting
- *  merged map to `registry.restartAll(...)` — that mutates the existing
- *  registry in place rather than allocating a parallel one. */
+/** 从磁盘重新读取配置 + 应用信任门，但不 spawn 任何服务器。供 `/mcp refresh`
+ *  使用，使调用方可以把合并后的映射交给 `registry.restartAll(...)`——
+ *  那会就地变更现有 registry，而不是分配一个并行的。 */
 export async function loadMergedConfigsFromDisk(opts: {
   cwd: string
   askUser: LoadOptions['askUser']
-  /** Plugin-contributed mcpServers (from `buildPluginIntegration().mcpServers`).
-   *  Merged between user and project, matching the precedence in
-   *  [[loadMcpServers]]. Pass these on `/mcp refresh` and `/plugin refresh`
-   *  so plugin-contributed servers aren't silently dropped during a reload. */
+  /** 插件贡献的 mcpServers（来自 `buildPluginIntegration().mcpServers`）。
+   *  在用户与项目之间合并，优先级与 [[loadMcpServers]] 一致。在
+   *  `/mcp refresh` 和 `/plugin refresh` 时传入，使插件贡献的服务器不会
+   *  在重载时被悄悄丢弃。 */
   extraServers?: Record<string, McpServerConfig>
 }): Promise<{
   configs: Map<string, McpServerConfig>
@@ -180,8 +169,8 @@ export async function loadMergedConfigsFromDisk(opts: {
     if (!trusted) {
       const choice = await askForTrust(
         {
-          // Synthesise just enough of a LoadOptions for askForTrust —
-          // only projectPath + askUser are read.
+          // 为 askForTrust 拼出刚好够用的 LoadOptions——
+          // 只读取 projectPath + askUser。
           userServers,
           projectServers,
           projectPath: opts.cwd,
@@ -190,9 +179,8 @@ export async function loadMergedConfigsFromDisk(opts: {
         projectServersToUse,
       )
       if (choice === 'exit') {
-        // /mcp refresh deliberately ignores 'exit' — bailing the whole
-        // CLI from a slash command is too violent. We treat it as
-        // 'skip' so the user can pick again on a real restart.
+        // /mcp refresh 刻意忽略 'exit'——从一个斜杠命令里退出整个 CLI 太粗暴。
+        // 我们把它当作 'skip'，这样用户可以在真正重启时重新选择。
         projectServersToUse = {}
         projectSkipped = true
       } else if (choice === 'skip') {
@@ -206,32 +194,30 @@ export async function loadMergedConfigsFromDisk(opts: {
     }
   }
 
-  // Merge order user → plugin → project, matching the precedence enforced by
-  // loadMcpServers (initial boot). Plugin-contributed entries sit between
-  // user and project so a project-level same-name entry still wins.
+  // 合并顺序 user → plugin → project，与 loadMcpServers（初始启动）强制的
+  // 优先级一致。插件贡献的条目位于 user 与 project 之间，使项目级同名条目
+  // 仍能胜出。
   const merged = new Map<string, McpServerConfig>(
     Object.entries({ ...userParsed.servers, ...(opts.extraServers ?? {}), ...projectServersToUse }),
   )
   return { configs: merged, configErrors, projectSkipped }
 }
 
-/** Pure loader (no disk I/O on configs — caller injects them).
- *  Easier to test and lets the CLI control config sourcing. */
+/** 纯 loader（配置不涉及磁盘 I/O——由调用方注入）。
+ *  更易测试，并让 CLI 控制配置来源。 */
 export async function loadMcpServers(options: LoadOptions): Promise<LoadResult> {
   const configErrors: Array<{ name: string; message: string }> = []
   let projectSkipped = false
 
-  // Validate both blocks up front. parseServersBlock tolerates `undefined`
-  // and returns empty maps + zero errors in that case, so users with no
-  // mcpServers configured pay nothing.
+  // 预先校验两个块。parseServersBlock 容忍 `undefined`，此时返回空映射 +
+  // 零错误，因此没有配置 mcpServers 的用户毫无开销。
   const userParsed = parseServersBlock(options.userServers)
   configErrors.push(...userParsed.errors.map((e) => ({ name: `user:${e.name}`, message: e.message })))
 
   const projectParsed = parseServersBlock(options.projectServers)
   configErrors.push(...projectParsed.errors.map((e) => ({ name: `project:${e.name}`, message: e.message })))
 
-  // Project-level trust gate. If the project has zero servers we skip the
-  // prompt entirely — there's nothing to consent to.
+  // 项目级信任门。如果项目零个服务器，我们完全跳过提示——没什么可同意的。
   let projectServersToUse = projectParsed.servers
   const projectServerNames = Object.keys(projectServersToUse)
   if (projectServerNames.length > 0) {
@@ -240,8 +226,8 @@ export async function loadMcpServers(options: LoadOptions): Promise<LoadResult> 
       const choice = await askForTrust(options, projectServersToUse)
       if (choice === 'exit') {
         options.onExitRequested?.()
-        // Even if the CLI doesn't shut down, returning an empty registry
-        // keeps the rest of the loader well-defined.
+        // 即使 CLI 没有关闭，返回空 registry 也能让 loader 的其余部分
+        // 保持定义良好。
         return { registry: emptyRegistry(), configErrors, projectSkipped: true }
       }
       if (choice === 'skip') {
@@ -256,26 +242,21 @@ export async function loadMcpServers(options: LoadOptions): Promise<LoadResult> 
     }
   }
 
-  // Merge order: user → plugin → project. Plugin-contributed servers
-  // (`extraServers`) sit between user and project on purpose:
-  //   - They're already-trusted (consent happened at plugin install) so
-  //     they don't need to pass the trust dialog above, but
-  //   - A name collision with a project-level entry still gives the
-  //     project entry the win (project config is authored by the same
-  //     person whose CLI is running and they may want to override a
-  //     plugin's server choice).
+  // 合并顺序：user → plugin → project。插件贡献的服务器（`extraServers`）
+  // 有意位于 user 与 project 之间：
+  //   - 它们已受信任（同意发生在插件安装时），因此无需通过上面的信任对话框，但
+  //   - 与项目级条目名字冲突时仍让项目条目胜出（项目配置由运行该 CLI 的
+  //     同一个人编写，他们可能想覆盖插件对服务器的选择）。
   const merged: Record<string, McpServerConfig> = {
     ...userParsed.servers,
     ...(options.extraServers ?? {}),
     ...projectServersToUse,
   }
 
-  // No servers configured anywhere → fast-path with an empty registry.
-  // We still pass the oauthFactory so a later /mcp refresh (after the
-  // user adds servers to config + restarts the CLI) would have it —
-  // although in practice the empty-registry path is only hit when both
-  // configs are empty at boot, and a later refresh rebuilds from disk
-  // via the CLI's own loadMcpFromDisk call.
+  // 任何地方都没有配置服务器 → 用空 registry 走快速路径。我们仍传入
+  // oauthFactory，使之后（用户向配置添加服务器并重启 CLI 后）的 /mcp refresh
+  // 能拥有它——尽管实际上空 registry 路径只会在启动时两个配置都为空时命中，
+  // 而之后的 refresh 会通过 CLI 自己的 loadMcpFromDisk 调用从磁盘重建。
   if (Object.keys(merged).length === 0) {
     return {
       registry: new McpRegistry({ servers: [], tools: [], resources: [], oauthFactory: options.oauthProviderFor }),
@@ -284,17 +265,16 @@ export async function loadMcpServers(options: LoadOptions): Promise<LoadResult> 
     }
   }
 
-  // Spawn / dial in parallel. Each per-server promise is wrapped in
-  // .then/.catch so one timeout doesn't trip the whole boot.
+  // 并行 spawn / 拨号。每个 per-server promise 用 .then/.catch 包裹，
+  // 使单个超时不会拖垮整个启动。
   const tasks = Object.entries(merged).map(async ([name, rawConfig]) => {
     return connectOneServer(name, rawConfig, options.oauthProviderFor)
   })
   const results = await Promise.all(tasks)
 
-  // Assemble the registry. Tool name collisions are resolved in
-  // insertion order (first wins; subsequent get hash suffixes), so we
-  // sort by server name for stability — otherwise the order would
-  // depend on which connect() resolved first.
+  // 组装 registry。工具名冲突按插入顺序解决（先到者赢；后到的加哈希后缀），
+  // 所以按服务器名排序以保证稳定——否则顺序会取决于哪个 connect() 先
+  // resolve。
   results.sort((a, b) => a.server.name.localeCompare(b.server.name))
 
   const tools: McpToolEntry[] = []
@@ -340,17 +320,16 @@ async function askForTrust(
   try {
     return await promptForTrust(options.projectPath, summaries, options.askUser)
   } catch (err) {
-    // If the prompt machinery itself fails (no TTY etc.), err on the
-    // safe side: skip project config. Logged for debugging.
+    // 如果提示机制本身失败（无 TTY 等），稳妥起见：跳过项目配置。
+    // 记录日志以便调试。
     debugLog('mcp.trust-prompt-failed', String(err))
     return 'skip'
   }
 }
 
-/** Read just the `mcpServers` field out of a JSON config file. Returns
- *  undefined for missing file / parse error / missing field — all of
- *  which mean "no MCP servers configured here", never an error to
- *  surface upward. */
+/** 仅从 JSON 配置文件读出 `mcpServers` 字段。文件缺失 / 解析错误 / 字段缺失
+ *  都返回 undefined——这些都表示"这里没有配置 MCP 服务器"，绝不是需要向上
+ *  报告的错误。 */
 async function readMcpServersFromFile(filePath: string): Promise<Record<string, McpServerConfig> | undefined> {
   let raw: string
   try {

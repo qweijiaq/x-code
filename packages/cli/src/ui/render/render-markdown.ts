@@ -1,17 +1,15 @@
-// @x-code-cli/cli — Markdown-to-ANSI renderer (token-based)
+// @x-code-cli/cli — Markdown 到 ANSI 的渲染器（基于 token）
 //
-// Port of Claude Code's formatToken() in src/utils/markdown.ts, adapted for
-// direct stdout writing (no React/Ink wrapper). Uses marked.lexer() to parse
-// Markdown into an AST, then recursively renders each token to ANSI-styled
-// text using chalk.
+// 移植自 Claude Code 的 src/utils/markdown.ts 里 formatToken()，适配为直接
+// 写 stdout（无 React/Ink 包装）。用 marked.lexer() 把 Markdown 解析成 AST，
+// 再用 chalk 把每个 token 递归渲染成 ANSI 样式文本。
 //
-// Style choices: h1 is bold+underline, h2/h3+ bold (Codex's scale — CC's
-// bold+italic+underline triple-stack reads heavy). Blockquote uses
-// U+258E ▎ as a muted prefix bar with italic text, code blocks emit raw
-// text without indent, inline code and links use the brand `primary`
-// token, list bullets sit on the `textDim` gray rung (color is reserved
-// for semantics), and links become OSC 8 hyperlinks. All colors resolve
-// through tokens.ts so `/theme` switches apply to committed markdown too.
+// 样式选择：h1 是 bold+underline，h2/h3+ 是 bold（Codex 的档位——CC 的
+// bold+italic+underline 三重叠加读起来太重）。引用用 U+258E ▎ 作为低调的
+// 前缀竖条并配斜体文本，代码块原样输出文本且不缩进，行内代码和链接用品牌
+// `primary` token，列表符号落在 `textDim` 灰色档（颜色保留给语义），链接
+// 变成 OSC 8 超链接。所有颜色都通过 tokens.ts 解析，因此 `/theme` 切换对
+// 已提交的 markdown 同样生效。
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { type Token, type Tokens, marked } from 'marked'
 
@@ -31,8 +29,8 @@ let markedConfigured = false
 function configureMarked(): void {
   if (markedConfigured) return
   markedConfigured = true
-  // Disable strikethrough: the model often writes ~N for "approximately N"
-  // and almost never means real strikethrough. Matches Claude Code.
+  // 禁用删除线：模型经常用 ~N 表示「大约 N」，几乎从不是真正的删除线。
+  // 与 Claude Code 一致。
   marked.use({
     tokenizer: {
       del() {
@@ -42,15 +40,14 @@ function configureMarked(): void {
   })
 }
 
-// Fast path: skip full lexer when the text contains no Markdown markers.
-// Covers short plain-sentence assistant replies (the common case).
+// 快速路径：当文本不含任何 Markdown 标记时跳过完整 lexer。
+// 覆盖短平句式的助手回复（最常见的情况）。
 const MD_SYNTAX_RE = /[#*`|[>_~\-]|\n\n|^\d+\. |\n\d+\. /
 function hasMarkdownSyntax(s: string): boolean {
   return MD_SYNTAX_RE.test(s.length > 500 ? s.slice(0, 500) : s)
 }
 
-// Strip renderer-generated CSI and OSC 8 sequences so visual width
-// calculations only count printable cells.
+// 去掉渲染器生成的 CSI 和 OSC 8 序列，让视觉宽度计算只统计可打印单元格。
 const ANSI_RE = /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])/g
 function stripAnsi(str: string): string {
   return str.replace(ANSI_RE, '')
@@ -134,11 +131,9 @@ function padAligned(
   return content + ' '.repeat(padding)
 }
 
-// Table layout calls `visualWidth` from text-width.js — single source of
-// truth so headers like `运算` count consistently with the chat-input
-// frame and scrollback diff. Without that, the table's right border
-// walks leftward on each subsequent row whenever a CJK char on one
-// renderer's wide-list is missing from another's.
+// 表格布局调用 text-width.js 的 `visualWidth`——唯一事实来源，让 `运算`
+// 这类表头与 chat-input 帧和滚动区 diff 的计数一致。没有它，只要某个
+// 渲染器的宽字符表缺少另一个渲染器有的 CJK 字符，表格右边框就会逐行左移。
 
 function formatToken(
   token: Token,
@@ -159,21 +154,18 @@ function formatToken(
     case 'code': {
       const code = token as Tokens.Code
       const text = code.text ?? ''
-      // Map the fence language hint (` ```typescript`, ` ```bash`, etc.)
-      // to one of our supported tokenisers. Unknown / missing langs fall
-      // through to plain text — same as the prior behavior, just no
-      // longer the universal default.
-      // Prefer the shiki engine (TextMate grammars, ~50 langs, cross-line
-      // state) once warmed up; it returns null for unknown langs, oversized
-      // blocks, or the `ansi` palette — all of which fall through to the
-      // in-house regex path below.
+      // 把围栏语言提示（` ```typescript`、` ```bash` 等）映射到我们支持的
+      // 某个分词器。未知 / 缺失的语言落到纯文本——与之前的行为一致，
+      // 只是不再是全局默认。
+      // 引擎预热后优先用 shiki（TextMate 语法，约 50 种语言，跨行状态）；
+      // 它对未知语言、超大代码块或 `ansi` 调色板返回 null——这些都会落到
+      // 下面的内置正则路径。
       const shikiHighlighted = highlightCodeShiki(text, code.lang)
       if (shikiHighlighted !== null) return shikiHighlighted + EOL
       const lang = detectFenceLanguage(code.lang)
       if (!lang) return text + EOL
-      // Highlight per-line so embedded \n in `text` don't get fed into
-      // the tokeniser as if they were source content (the tokenisers'
-      // regexes are line-oriented).
+      // 逐行高亮，这样 `text` 里内嵌的 \n 不会被当成源码内容喂给分词器
+      // （分词器的正则都是面向行的）。
       const highlighted = text
         .split('\n')
         .map((line) => highlightLine(line, lang))
@@ -193,11 +185,10 @@ function formatToken(
     case 'heading': {
       const h = token as Tokens.Heading
       const content = (h.tokens ?? []).map((t) => formatToken(t, 0, null, null)).join('')
-      // Always emit a blank line after the heading. marked never produces a
-      // `space` token between a heading and the following block — even when
-      // the source has `# H\n\nbody`, the blank is folded into the heading's
-      // own `raw`. Without this second EOL, `# H\nbody` rendered as two
-      // adjacent rows with no separation. Matches Claude Code.
+      // 标题后始终输出一个空行。即使源码是 `# H\n\nbody`，marked 也从不
+      // 在标题和后续块之间产生 `space` token——空白被折进标题自己的 `raw`。
+      // 没有这第二个 EOL，`# H\nbody` 会渲染成两个相邻且无间隔的行。
+      // 与 Claude Code 一致。
       if (h.depth === 1) {
         return c.bold.underline(content) + EOL + EOL
       }
@@ -205,10 +196,9 @@ function formatToken(
     }
 
     case 'hr': {
-      // Full-width muted rule (Codex's turn separator proportions), not
-      // an arbitrary fixed-length dash run. `---` needs its own
-      // terminator — missing it made `hr` emit no newline, and the next
-      // block's content landed on the same row as the rule.
+      // 全宽的低调分隔线（Codex 的轮次分隔比例），而非任意固定长度的横线。
+      // `---` 需要自己的换行终止符——缺了它会让 `hr` 不输出换行，下一个
+      // 块的内容就会落到与分隔线同一行。
       const cols = Math.max(20, (process.stdout.columns ?? 80) - 1)
       return paint('textMuted')('─'.repeat(cols)) + EOL
     }
@@ -225,12 +215,10 @@ function formatToken(
       const href = l.href ?? ''
       const plain = stripAnsi(linkText)
       const styled = c.underline(paint('primary')(plain && plain !== href ? linkText : href))
-      // OSC 8 hyperlink: modern terminals render the display text as a
-      // clickable link that reveals `href` on hover / Ctrl+click. Older
-      // terminals that don't support OSC 8 strip the escape bytes and
-      // just show the underlined display text — graceful degradation in
-      // both directions. Emitting the raw URL inline produced a cluttered
-      // `text (url)text (url)...` output for web-fetch results.
+      // OSC 8 超链接：现代终端把显示文本渲染成可点击链接，悬停 / Ctrl+点击
+      // 时显示 `href`。不支持 OSC 8 的旧终端会剥掉转义字节，只显示带下划线
+      // 的显示文本——两个方向都是优雅降级。内联输出原始 URL 会让 web-fetch
+      // 结果变成杂乱的 `text (url)text (url)...`。
       const safeHref = safeHyperlinkHref(href)
       return safeHref ? `\x1b]8;;${safeHref}\x1b\\${styled}\x1b]8;;\x1b\\` : styled
     }
@@ -261,19 +249,15 @@ function formatToken(
     case 'text': {
       const tx = token as Tokens.Text
       if (parent?.type === 'link') {
-        // Inside a link — don't wrap again; the link handler already emitted
-        // the OSC 8 sequence.
+        // 链接内部——不要再包一层；link 处理器已经输出 OSC 8 序列。
         return tx.text
       }
       if (parent?.type === 'list_item') {
-        // Visually distinct bullet so the rendered output can't be
-        // confused with the raw markdown source. Unordered items get a
-        // U+2022 • on the textDim gray rung; ordered items keep "N."
-        // dimmed the same way. Markers deliberately DON'T take a hue —
-        // color is reserved for semantics (Codex/Kimi convention), and a
-        // unicode marker already makes it obvious marked.lexer parsed
-        // the list (otherwise users see `-` both before and after
-        // rendering and assume nothing happened).
+        // 视觉上可区分的符号，让渲染输出不会与原始 markdown 源码混淆。
+        // 无序项在 textDim 灰色档得到 U+2022 •；有序项保留「N.」并以同样
+        // 方式压暗。标记刻意不上色——颜色保留给语义（Codex/Kimi 约定），
+        // 而且 unicode 标记已经能让人一眼看出 marked.lexer 解析过这个列表
+        // （否则用户在渲染前后都看到 `-`，会以为什么都没发生）。
         const marker =
           orderedListNumber === null
             ? paint('textDim')(GLYPH_LIST_BULLET)
@@ -300,8 +284,7 @@ function formatToken(
         return Math.max(max, 3)
       })
 
-      // Box-drawing characters: a proper CLI table instead of echoing
-      // the markdown pipes back to the user.
+      // 制表符：画一个真正的 CLI 表格，而不是把 markdown 的竖线原样回显给用户。
       const TL = '\u250c',
         TR = '\u2510',
         TM = '\u252c'
@@ -349,9 +332,8 @@ function formatToken(
       })
 
       out += dim(makeDivider(BL, BM, BR))
-      // `out` already ends with EOL from the final divider — returning
-      // `out + EOL` added an extra blank row that the adjacent `space`
-      // token then doubled up.
+      // `out` 已经以最后一条分隔线的 EOL 结尾——返回 `out + EOL` 会多加
+      // 一个空行，然后相邻的 `space` token 又再翻一倍。
       return out
     }
 
@@ -367,11 +349,10 @@ function formatToken(
 }
 
 /**
- * Lightweight inline-only markdown-to-ANSI pass.
+ * 轻量的仅行内 markdown 到 ANSI 的转换。
  *
- * Handles **bold**, *italic*, and `code` — nothing block-level.
- * Returns a string containing ANSI escape sequences suitable for
- * consumption by ansiTextToCells().
+ * 处理 **bold**、*italic* 和 `code`——不处理块级内容。
+ * 返回含 ANSI 转义序列的字符串，适合交给 ansiTextToCells() 使用。
  */
 export function renderInlineMarkdown(text: string): string {
   if (!text) return ''
@@ -379,20 +360,20 @@ export function renderInlineMarkdown(text: string): string {
 
   return (
     text
-      // bold: **text** or __text__
+      // bold：**text** 或 __text__
       .replace(/(\*\*|__)(.+?)\1/g, (_m, _d, inner) => c.bold(inner as string))
-      // italic: *text* or _text_ (but not inside a word for _)
+      // italic：*text* 或 _text_（但 _ 不匹配词内）
       .replace(/(?<!\w)(\*|_)(?!\s)(.+?)(?<!\s)\1(?!\w)/g, (_m, _d, inner) => c.italic(inner as string))
-      // inline code: `code`
+      // 行内代码：`code`
       .replace(/`([^`]+)`/g, (_m, inner) => paint('primary')(inner as string))
   )
 }
 
 /**
- * Convert a Markdown string to ANSI-styled terminal text.
+ * 把 Markdown 字符串转换为 ANSI 样式的终端文本。
  *
- * Preserves trailing newlines emitted by the token formatters — the caller
- * (stdout-writer) relies on them for the streaming-chunk boundary logic.
+ * 保留 token 格式化器输出的末尾换行——调用方（stdout-writer）依赖它们
+ * 做流式块边界判断。
  */
 export function renderMarkdown(text: string): string {
   if (!text) return ''
@@ -401,15 +382,14 @@ export function renderMarkdown(text: string): string {
   configureMarked()
 
   try {
-    // Fast path — single paragraph for plain text
+    // 快速路径——纯文本的单段落
     if (!hasMarkdownSyntax(text)) {
       return text + EOL
     }
     const tokens = marked.lexer(text) as Token[]
     return tokens.map((t) => formatToken(t, 0, null, null)).join('')
   } catch {
-    // Partial/invalid Markdown during streaming — fall back to raw text so
-    // the user still sees something.
+    // 流式传输中出现部分/无效 Markdown——回退到原始文本，让用户仍能看到内容。
     return text
   }
 }

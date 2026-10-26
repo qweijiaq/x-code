@@ -1,10 +1,9 @@
-// @x-code-cli/cli — /browser slash command: toggle the interactive browser agent.
+// @x-code-cli/cli — /browser 斜杠命令：切换交互式浏览器 agent。
 //
-// Interactive browser automation is opt-in, like every comparable CLI (claude-code's
-// --chrome / CLAUDE_CODE_ENABLE_CFC, gemini's settings override, codex's plugin
-// install). `/browser on|off` controls the browser agent; `/browser check-on`
-// and `/browser check-off` control the independent one-shot local visual check.
-// The shared browser closes only when both consumers are off.
+// 交互式浏览器自动化是 opt-in 的，就像每一个同类 CLI（claude-code 的 --chrome /
+// CLAUDE_CODE_ENABLE_CFC、gemini 的设置覆盖、codex 的插件安装）。`/browser on|off`
+// 控制浏览器 agent；`/browser check-on` 和 `/browser check-off` 控制独立的
+// 一次性本地视觉检查。共享浏览器只有在两个消费者都关闭时才关闭。
 import { loadUserConfig, saveUserConfig, shutdownBrowserMcp } from '@x-code-cli/core'
 import type { AgentOptions } from '@x-code-cli/core'
 
@@ -69,14 +68,13 @@ export function createBrowserCommandHandler(deps: BrowserCommandDeps) {
       return
     }
 
-    // Persist (merge into any existing browser config so headless/channel
-    // overrides survive) so the choice sticks across restarts.
+    // 持久化（合并进任何已有的 browser 配置，让 headless/channel 覆盖得以保留），
+    // 这样选择在重启后依然生效。
     saveUserConfig({ browser: { ...loadUserConfig().browser, enabled: enable } })
-    // Add / remove the browser agent in place — keeps the registry's object
-    // identity (captured options.subAgentRegistry refs stay valid) and skips a
-    // full custom/plugin re-scan.
+    // 就地添加 / 移除 browser agent——保持 registry 的对象身份（捕获的
+    // options.subAgentRegistry 引用仍有效），并跳过一次完整的 custom/plugin 重扫。
     options.subAgentRegistry.setBrowserEnabled(enable)
-    // The task tool's agent list (in the byte-stable system prompt) changed.
+    // task 工具的 agent 列表（在字节稳定的系统提示里）变了。
     invalidateSystemPromptCache()
 
     if (enable) {

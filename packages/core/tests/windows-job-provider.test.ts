@@ -304,7 +304,7 @@ describe.skipIf(!isWindows)('Windows Job Object shell provider', () => {
         try {
           process.kill(childPid)
         } catch {
-          // The expected Job kill already removed the descendant.
+          // 预期的 Job 终止已经移除了后代。
         }
       }
     }

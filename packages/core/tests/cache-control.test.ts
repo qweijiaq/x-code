@@ -1,4 +1,4 @@
-// Tests for providers/cache-control.ts
+// 测试 providers/cache-control.ts
 import { describe, expect, it } from 'vitest'
 
 import type { ModelMessage } from 'ai'
@@ -46,7 +46,7 @@ describe('applyCacheControl', () => {
           ?.anthropic?.cacheControl
         expect(opts?.type).toBe('ephemeral')
       }
-      // Earliest user should NOT have cache_control
+      // 最早的用户消息不应有 cache_control
       const earliest = out.messages[0]
       const earliestOpts = (earliest as { providerOptions?: Record<string, unknown> }).providerOptions
       expect(earliestOpts).toBeUndefined()
@@ -71,7 +71,7 @@ describe('applyCacheControl', () => {
         modelId: 'anthropic:claude-opus-4-8',
         sessionId: 'abc',
       })
-      // Each original message object has no providerOptions mutation
+      // 每个原始消息对象都不应有 providerOptions 变更
       for (let i = 0; i < frozenSource.length; i++) {
         const before = snapshot[i]
         const after = frozenSource[i]
@@ -95,7 +95,7 @@ describe('applyCacheControl', () => {
         sessionId: 'abc',
       })
       expect(out.tools).toBeDefined()
-      // Earlier tools should not have providerOptions
+      // 更早的工具不应有 providerOptions
       expect((out.tools!.read as { providerOptions?: unknown }).providerOptions).toBeUndefined()
       expect((out.tools!.write as { providerOptions?: unknown }).providerOptions).toBeUndefined()
       const lastOpts = (out.tools!.edit as { providerOptions?: { anthropic?: { cacheControl?: { type: string } } } })
@@ -146,8 +146,8 @@ describe('applyCacheControl', () => {
           providerOptions?: { anthropic?: { cacheControl?: { type: string }; deferLoading?: boolean } }
         }
       ).providerOptions?.anthropic
-      // Our ephemeral mark overrides whatever was there, but unrelated keys
-      // (deferLoading) are preserved.
+      // 我们的 ephemeral 标记会覆盖原有内容，但无关的键
+      //（deferLoading）会被保留。
       expect(writeOpts?.cacheControl?.type).toBe('ephemeral')
       expect(writeOpts?.deferLoading).toBe(true)
     })

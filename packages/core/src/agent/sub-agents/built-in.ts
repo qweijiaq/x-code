@@ -1,4 +1,4 @@
-// @x-code-cli/core — Built-in sub-agent definitions
+// @x-code-cli/core — 内置子代理定义
 import type { SubAgentDefinition } from './types.js'
 
 const SHELL_DENY_KEYWORDS = [
@@ -31,10 +31,9 @@ const SHELL_DENY_KEYWORDS = [
   'docker rmi',
 ]
 
-// Shared lead-in for sub-agents whose final message is the entire payload
-// the parent agent sees. The parent has no access to anything the
-// sub-agent read or computed mid-loop, so we reinforce "inline everything"
-// in one place rather than repeating near-identical copy per agent.
+// 那些“最终消息就是父代理看到的全部内容”的子代理共用的引导语。父代理无法访问子代理在
+// 循环中途读取或计算出的任何东西，所以我们在一个地方强调“全部内联”，而不是为每个代理
+// 重复几乎相同的文案。
 const FINAL_MESSAGE_CONTRACT_HEADER =
   "CRITICAL — your final message is ALL the parent agent sees. It will NOT re-read files you've already read."
 
@@ -157,12 +156,10 @@ Rules:
   },
 ]
 
-/** The `browser` sub-agent. Registered only when `config.browser.enabled` is
- *  true (see createSubAgentRegistry) — kept OUT of `builtInAgents` so the
- *  default agent list (and the task-tool text baked into the byte-stable
- *  system prompt) is unchanged for users who haven't opted in. Its tools come
- *  from the @playwright/mcp server wired in by runSubAgent, not the static
- *  toolRegistry, so they never touch the main loop's tool surface. */
+/** `browser` 子代理。仅在 `config.browser.enabled` 为 true 时注册（见 createSubAgentRegistry）——
+ *  有意放在 `builtInAgents` 之外，这样未 opt-in 用户的默认代理列表（以及固化进字节稳定
+ *  系统提示词的 task 工具文案）保持不变。它的工具来自 runSubAgent 接入的 @playwright/mcp
+ *  server，而非静态 toolRegistry，因此永远不会触碰主循环的工具面。 */
 export const browserAgent: SubAgentDefinition = {
   name: 'browser',
   description:
@@ -191,20 +188,16 @@ ${FINAL_MESSAGE_CONTRACT_HEADER} The parent cannot see the pages you visited or 
 - The URL(s) you ended on
 - If you couldn't finish, exactly what blocked you (login wall, captcha, element not found, terminal browser error) so the parent can decide what to do next`,
   tools: ['*'],
-  // A browser agent keeps read-only local tools (readFile/grep/glob/listDir) +
-  // webFetch/webSearch + the browser_* tools, but NOT the local-mutating ones —
-  // it has no business editing files or running shell.
+  // 浏览器代理保留只读本地工具（readFile/grep/glob/listDir）+ webFetch/webSearch +
+  // browser_* 工具，但不保留会改动本地的那些——它没有理由编辑文件或运行 shell。
   disallowedTools: ['writeFile', 'edit', 'shell', 'shellOutput', 'killShell'],
   maxTurns: 40,
   source: 'built-in',
 }
 
-/** Appended to the browser agent's prompt ONLY when visual browsing is live
- *  (the `--caps vision` tools are connected and the agent runs on a
- *  vision-capable model — see runSubAgent). Without it the agent never hears
- *  about screenshots, so a tree-only setup keeps the original tree-first copy
- *  verbatim. Keeps the tree as the default and scopes screenshots to the cases
- *  the tree genuinely can't reach. */
+/** 仅当视觉浏览可用时（`--caps vision` 工具已连接，且代理运行在支持视觉的模型上——
+ *  见 runSubAgent）才追加到浏览器代理提示词。没有它，代理就不会得知截图，因此纯树形
+ *  配置保持原始的“树优先”文案不变。让无障碍树保持默认，并把截图限定在树确实够不着的场景。 */
 export const BROWSER_VISION_ADDENDUM = `
 
 Visual fallback (available this session):
@@ -215,10 +208,8 @@ Visual fallback (available this session):
 - Screenshot the VIEWPORT, not the full page — do NOT set fullPage. A full-page screenshot of a long page is a huge image that burns a lot of tokens. If the target is below the fold, scroll to it first, then screenshot the viewport.
 - The pattern is see-then-act: take a screenshot to locate the target, then act on it with a coordinate click/drag. After it changes the page, take a fresh screenshot (and/or snapshot) before the next action — same one-action-at-a-time rule as the tree.`
 
-/** Appended only when visual browsing is live through a caption fallback
- *  because the active model cannot receive raw images. Providers that accept
- *  tool media natively or via a following user image message use
- *  BROWSER_VISION_ADDENDUM instead. */
+/** 仅当视觉浏览经由 caption 回退可用时追加——因为当前模型无法接收原始图像。能原生接受
+ *  工具媒体、或通过后续用户图像消息接受的 provider，改用 BROWSER_VISION_ADDENDUM。 */
 export const BROWSER_VISION_CAPTION_ADDENDUM = `
 
 Visual inspection (available this session, returned as text):
@@ -228,10 +219,8 @@ Visual inspection (available this session, returned as text):
 - Take screenshots WITHOUT a filename. Screenshot the VIEWPORT, not the full page — do NOT set fullPage; if the target is below the fold, scroll to it first, then screenshot.
 - The description's coordinates are APPROXIMATE. Prefer ref-based actions from the snapshot whenever the element exists there; use coordinate clicks only for surfaces the tree can't reach, treating the coordinates as a starting estimate. After any page-changing action, take a fresh snapshot (and/or screenshot) before acting again.`
 
-/** Appended to the browser agent's prompt when the active model is TEXT-ONLY
- *  (cannot see images — DeepSeek, Qwen-Max, etc.). Visual tools are not
- *  connected for these models; this makes the limit explicit so the agent
- *  doesn't waste a turn screenshotting something it can't read. */
+/** 当当前模型是纯文本模型时（看不到图像——DeepSeek、Qwen-Max 等）追加到浏览器代理提示词。
+ *  这些模型不接视觉工具；这里把限制讲明，代理就不会浪费一轮去截图自己读不了的东西。 */
 export const BROWSER_TREE_ONLY_NOTE = `
 
 Important — this model cannot see images:

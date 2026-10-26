@@ -10,7 +10,7 @@ export interface ToolExecutionControl {
   stopTurn: boolean
 }
 
-/** Mutable per-call context shared by permission, preparation, and dispatch stages. */
+/** 权限、准备与分发阶段共享的可变每调用上下文。 */
 export interface ToolHandlerContext {
   toolName: string
   input: Record<string, unknown>

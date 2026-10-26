@@ -1,11 +1,9 @@
-// @x-code-cli/cli — Mid-turn input queue for useAgent.
+// @x-code-cli/cli — useAgent 的中途回合输入队列。
 //
-// Plain-text submits (and peer messages) that arrive while a turn is in
-// flight live here until the agent loop drains them at the next tool
-// boundary (steering). The ref is the source of truth: `consumeQueuedInputs`
-// is called synchronously by the agent loop between awaits, where reading
-// React state would see a stale closure — every mutation mirrors into
-// `state.queuedMessages` in the same tick.
+// 在回合进行中到达的纯文本提交（以及 peer 消息）住在这里，直到 agent 循环在
+// 下一个工具边界把它们排水（转向）。ref 是事实来源：`consumeQueuedInputs` 由
+// agent 循环在 await 之间同步调用，此时读取 React state 会看到过期的闭包——
+// 每次变更都在同一个 tick 里镜像进 `state.queuedMessages`。
 import { useCallback, useRef } from 'react'
 
 import type { QueuedAgentInput } from '@x-code-cli/core'
@@ -15,8 +13,8 @@ import type { AgentState, QueuedMessage } from './types.js'
 
 type SetState = (update: AgentState | ((previous: AgentState) => AgentState)) => void
 
-/** Project the internal mixed queue (user + peer entries) into the
- *  display-side pending list — only user entries are shown. */
+/** 把内部混合队列（用户 + peer 条目）投影到显示侧的待处理列表——只显示用户
+ *  条目。 */
 function toQueuedUserMessages(queued: readonly QueuedAgentInput[]): QueuedMessage[] {
   return queued
     .filter((message): message is Extract<QueuedAgentInput, { source: 'user' }> => message.source === 'user')
@@ -24,18 +22,17 @@ function toQueuedUserMessages(queued: readonly QueuedAgentInput[]): QueuedMessag
 }
 
 export function useInputQueue(setState: SetState) {
-  /** Source of truth for the mid-turn message queue. The React state
-   *  mirror (`state.queuedMessages`) drives ChatInput's pending list. */
+  /** 中途回合消息队列的事实来源。React state 镜像（`state.queuedMessages`）
+   *  驱动 ChatInput 的待处理列表。 */
   const queuedMessagesRef = useRef<QueuedAgentInput[]>([])
   const consumedPeerInboxKeysRef = useRef<Set<string>>(new Set())
-  /** Monotonic id source for queued messages / draft restores. Date.now()
-   *  collides within the same millisecond (and `length` repeats after a
-   *  pop), which breaks React keys, pop-by-id, and nonce comparisons. */
+  /** 排队消息 / 草稿恢复的单调 id 来源。Date.now() 在同一毫秒内会碰撞（而且
+   *  `length` 在 pop 之后会重复），这会破坏 React key、按 id 弹出以及 nonce
+   *  比较。 */
   const queueSeqRef = useRef(0)
 
-  /** Queue a plain-text submit that arrived while a turn was in flight.
-   *  The agent loop drains it at the next tool boundary (or on `stop`).
-   *  `inject` overrides what the model sees (display text stays clean). */
+  /** 把一条在回合进行中到达的纯文本提交排队。agent 循环在下一个工具边界
+   *  （或 `stop` 时）把它排水。`inject` 覆盖模型看到的内容（显示文本保持干净）。 */
   const queueMessage = useCallback(
     (text: string, inject?: string) => {
       const entry: QueuedAgentInput = {
@@ -50,7 +47,7 @@ export function useInputQueue(setState: SetState) {
     [setState],
   )
 
-  /** Remove one queued message by id (ChatInput's ↑-to-pop-back editing). */
+  /** 按 id 移除一条排队消息（ChatInput 的 ↑-回弹编辑）。 */
   const popQueuedMessage = useCallback(
     (id: string) => {
       queuedMessagesRef.current = queuedMessagesRef.current.filter(
@@ -61,11 +58,9 @@ export function useInputQueue(setState: SetState) {
     [setState],
   )
 
-  /** Drain the queue: move every queued message into scrollback as a
-   *  regular user message and return the texts for injection into
-   *  `state.messages`. Passed to agentLoop as `consumeQueuedInputs` —
-   *  MUST stay atomic (read + clear in one synchronous step) so a
-   *  message can never be injected twice. */
+  /** 排空队列：把每条排队消息作为普通用户消息移到 scrollback，并返回要注入到
+   *  `state.messages` 的文本。作为 `consumeQueuedInputs` 传给 agentLoop——必须
+   *  保持原子（在一个同步步骤里读 + 清空），这样一条消息绝不会被注入两次。 */
   const consumeQueuedInputs = useCallback((): QueuedAgentInput[] | undefined => {
     const queued = queuedMessagesRef.current
     if (queued.length === 0) return undefined
@@ -118,10 +113,9 @@ export function useInputQueue(setState: SetState) {
     return next
   }, [setState])
 
-  /** Move every still-queued message back into the input box as a single
-   *  merged draft (Codex's input_restore semantics — zero loss on Esc).
-   *  Used by abort() and by submit's aborted-completion path for messages
-   *  that raced in after abort() already ran. */
+  /** 把所有仍排队的消息作为单个合并草稿移回输入框（Codex 的 input_restore
+   *  语义——Esc 时零丢失）。由 abort() 以及 submit 的中止完成路径使用，用于
+   *  在 abort() 已经运行之后竞态进入的消息。 */
   const restoreQueueToDraft = useCallback(() => {
     const queued = queuedMessagesRef.current
     if (queued.length === 0) return

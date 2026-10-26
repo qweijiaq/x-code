@@ -1,29 +1,26 @@
-// @x-code-cli/core — Resolve a toolSearch query against the deferred catalog
+// @x-code-cli/core — 把 toolSearch 查询解析到延迟目录上
 //
-// Activation model (differs from Claude Code / Codex): they rely on a
-// provider-side `defer_loading` + tool_reference / tool_search_output handshake
-// to expand a discovered tool's schema server-side. We go through the Vercel AI
-// SDK across many providers, which exposes none of that — so we simply splice
-// the matched tools into the request `tools` map (see composeTurnTools) and
-// they become callable on the NEXT step. Same end result, provider-agnostic, at
-// the cost of one extra round-trip per first-use.
+// 激活模型（与 Claude Code / Codex 不同）：它们依赖 provider 侧的 `defer_loading` +
+// tool_reference / tool_search_output 握手，在服务端展开被发现的工具 schema。我们跨多个
+// provider 走 Vercel AI SDK，它暴露不了这些——于是我们直接把匹配到的工具拼进请求的
+// `tools` map（见 composeTurnTools），让它们在下一步变得可调用。最终效果相同、与 provider
+// 无关，代价是每个工具首次使用时多一次往返。
 //
-// This function is PURE: the caller (tool-execution.ts) owns the
-// activatedTools mutation and the tool_result push.
+// 该函数是纯函数：activatedTools 的变更和 tool_result 的推送由调用方（tool-execution.ts）
+// 负责。
 import type { DeferredToolEntry } from './catalog.js'
 import { searchDeferredTools } from './search.js'
 
 export interface ToolSearchResult {
-  /** Model-facing tool_result text. */
+  /** 面向模型的 tool_result 文本。 */
   text: string
-  /** Callable names to add to LoopState.activatedTools. */
+  /** 要加入 LoopState.activatedTools 的 callable 名称。 */
   activated: string[]
 }
 
-/** Resolve a toolSearch query against the catalog. Handles both the `select:`
- *  exact-load path and the keyword path. `pendingServers` (if provided) is
- *  surfaced when no match is found — tells the model some MCP servers are
- *  still connecting and it should retry shortly. */
+/** 在目录上解析 toolSearch 查询。同时处理 `select:` 精确加载路径和关键词路径。
+ *  当没找到匹配时，把 `pendingServers`（若提供）呈现出来——告诉模型有些 MCP server
+ *  还在连接中，应稍后重试。 */
 export function runToolSearch(
   query: string,
   maxResults: number,
@@ -32,7 +29,7 @@ export function runToolSearch(
 ): ToolSearchResult {
   const byName = new Map(catalog.map((e) => [e.name, e]))
 
-  // ── select:<name>,<name> — exact load by name ──
+  // ── select:<name>,<name> — 按名称精确加载 ──
   const selectMatch = query.match(/^select:(.+)$/i)
   if (selectMatch) {
     const requested = selectMatch[1]!
@@ -61,13 +58,11 @@ export function runToolSearch(
     return { text: formatLoaded(matched, byName, missing), activated: matched }
   }
 
-  // ── bare tool name(s) — implicit select ──
-  // The model often lists exact tool names AS the query ("webSearch,webFetch"
-  // or "webSearch webFetch") instead of using select:. Fuzzy keyword scoring
-  // drops these — a concatenated name like "websearch" doesn't match the split
-  // name parts "web"/"search" — so the search returns nothing and the model
-  // burns a round-trip re-calling with select:. If EVERY token resolves to a
-  // known deferred tool, treat the whole query as an implicit select.
+  // ── 裸工具名（若干）——隐式 select ──
+  // 模型经常直接把精确工具名当作查询（"webSearch,webFetch" 或 "webSearch webFetch"），
+  // 而不是用 select:。模糊关键词打分会把它们丢掉——像 "websearch" 这样的连写名称匹配不到
+  // 拆开后的 "web"/"search" 两部分——于是搜索返回空，模型还得再花一轮用 select: 重调。
+  // 如果每个 token 都能解析到某个已知延迟工具，就把整个查询当作隐式 select。
   const bareTokens = query
     .split(/[\s,]+/)
     .map((s) => s.trim())
@@ -86,7 +81,7 @@ export function runToolSearch(
     if (allResolved) return { text: formatLoaded(bareMatched, byName, []), activated: bareMatched }
   }
 
-  // ── keyword search ──
+  // ── 关键词搜索 ──
   const matched = searchDeferredTools(query, catalog, maxResults)
   if (matched.length === 0) {
     return {

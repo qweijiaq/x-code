@@ -1,30 +1,25 @@
-// @x-code-cli/core — Plugin startup loader
+// @x-code-cli/core — 插件启动加载器
 //
-// One-shot orchestration called from the CLI entry. Two passes:
+// 从 CLI 入口调用的一次性编排。两轮：
 //
-//   Pass 1 — user-scope installs from installed_plugins.json. Each
-//            record points at a versioned cache dir; we load whichever
-//            version the record names. Orphan records (record present but
-//            cache dir missing) surface as PluginLoadError.
+//   Pass 1 —— 来自 installed_plugins.json 的 user 作用域安装。每条记录
+//            指向一个带版本的缓存目录；我们加载记录所指的那个版本。孤儿
+//            记录（记录存在但缓存目录缺失）会以 PluginLoadError 浮现。
 //
-//   Pass 2 — project-local plugins under <cwd>/.x-code/plugins/<name>/.
-//            These aren't tracked in installed_plugins.json — they're
-//            committed to the repo as in-tree plugins. Marketplace name
-//            is always "local" for these.
+//   Pass 2 —— <cwd>/.x-code/plugins/<name>/ 下的项目本地插件。它们不在
+//            installed_plugins.json 中跟踪——而是作为仓库内插件提交进仓库。
+//            这些插件的市场名恒为 "local"。
 //
-// `installed_plugins.json` is the source of truth for user-scope installs.
-// Orphan cache dirs (no record) are silently ignored — they'll be cleaned
-// up next time the user runs `/plugin uninstall`.
+// `installed_plugins.json` 是 user 作用域安装的事实来源。孤儿缓存目录
+// （无记录）被静默忽略——它们会在用户下次运行 `/plugin uninstall` 时清理。
 //
-// One broken plugin (bad JSON, missing manifest, schema violation) never
-// aborts the boot — errors collect into a `PluginLoadError[]` for
-// `/plugin doctor` to surface.
+// 单个坏插件（坏 JSON、缺 manifest、schema 违规）绝不中止启动——错误收集
+// 进 `PluginLoadError[]`，供 `/plugin doctor` 呈现。
 //
-// The returned `PluginRegistry` is meant to be frozen for the session
-// (same byte-stability constraint as MCP / skills — see CLAUDE.md). The
-// CLI calls `loadAllPlugins()` once at startup and stashes the result on
-// `AgentOptions`. `/plugin refresh` swaps the in-memory state via
-// `registry.reload(...)` and invalidates `systemPromptCache`.
+// 返回的 `PluginRegistry` 意在本次会话内冻结（与 MCP / skills 相同的字节
+// 稳定约束——见 CLAUDE.md）。CLI 在启动时调用一次 `loadAllPlugins()`，并把
+// 结果挂在 `AgentOptions` 上。`/plugin refresh` 通过 `registry.reload(...)`
+// 换掉内存状态，并使 `systemPromptCache` 失效。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -45,41 +40,36 @@ import type {
 } from './types.js'
 
 export interface LoadOptions {
-  /** Current working directory. Used to find project-local plugins. */
+  /** 当前工作目录。用于查找项目本地插件。 */
   cwd: string
-  /** Skip plugin loading entirely. Wired to the `--no-plugins` startup
-   *  flag. Returns an empty registry. */
+  /** 完全跳过插件加载。接到 `--no-plugins` 启动标志上。返回空 registry。 */
   disabled?: boolean
 }
 
 export interface LoadResult {
   registry: PluginRegistry
-  /** Per-plugin resolved contribution paths. Workflow B (skill / agent /
-   *  mcp loader integration) reads from here to merge in plugin-provided
-   *  content. Keyed by plugin id. */
+  /** 每个插件解析后的贡献路径。Workflow B（skill / agent / mcp loader
+   *  集成）从这里读取，以并入插件提供的内容。以插件 id 为键。 */
   contributions: Map<string, ResolvedContributions>
 }
 
-/** A plugin's manifest contributions, with relative paths resolved
- *  against `rootDir`. The `path` / `inline` discriminator on `mcpServers`
- *  and `hooks` reflects the manifest's union — authors can either point
- *  at a file or inline the config. */
+/** 插件的 manifest 贡献，相对路径已按 `rootDir` 解析。`mcpServers` 与
+ *  `hooks` 上的 `path` / `inline` 判别符反映了 manifest 的联合类型——作者
+ *  要么指向文件，要么内联配置。 */
 export interface ResolvedContributions {
-  /** Absolute path to the plugin's skills directory, if any. Each
-   *  subdir under here is expected to follow the existing
-   *  `<name>/SKILL.md` layout (so the skill loader can scan it
-   *  without changes). */
+  /** 插件的 skills 目录绝对路径（若有）。其下每个子目录都应按既有的
+   *  `<name>/SKILL.md` 布局组织（这样 skill loader 无需改动即可扫描）。 */
   skillsDir?: string
-  /** Absolute path to the plugin's sub-agent .md files dir. */
+  /** 插件 sub-agent .md 文件目录的绝对路径。 */
   agentsDir?: string
-  /** Absolute path to the plugin's slash-command .md files dir. */
+  /** 插件 slash 命令 .md 文件目录的绝对路径。 */
   commandsDir?: string
-  /** mcpServers contribution — either a path to a JSON file shaped like
-   *  `{ mcpServers: { ... } }` or the inline record (matches the
-   *  ~/.x-code/config.json `mcpServers` shape). */
+  /** mcpServers 贡献——要么是形如 `{ mcpServers: { ... } }` 的 JSON 文件
+   *  路径，要么是内联记录（与 ~/.x-code/config.json 的 `mcpServers` 形状
+   *  一致）。 */
   mcpServers?: { kind: 'path'; path: string } | { kind: 'inline'; data: InlineMcpServers }
-  /** hooks contribution — path to hooks.json or inline object. Schema
-   *  validation lives in packages/core/src/hooks (workflow C). */
+  /** hooks 贡献——hooks.json 的路径或内联对象。schema 校验位于
+   *  packages/core/src/hooks（workflow C）。 */
   hooks?: { kind: 'path'; path: string } | { kind: 'inline'; data: InlineHookConfig }
 }
 
@@ -93,7 +83,7 @@ export async function loadAllPlugins(opts: LoadOptions): Promise<LoadResult> {
   const errors: PluginLoadError[] = []
   const contributions = new Map<string, ResolvedContributions>()
 
-  // ── Pass 1: user-scope installs ────────────────────────────────────────
+  // ── Pass 1：user 作用域安装 ────────────────────────────────────────
   const installed = await listInstalledPlugins()
   for (const record of installed) {
     const rootDir = pluginCacheDir(record.marketplace, record.name, record.version)
@@ -110,21 +100,20 @@ export async function loadAllPlugins(opts: LoadOptions): Promise<LoadResult> {
     })
   }
 
-  // ── Pass 2: project-local plugins ──────────────────────────────────────
+  // ── Pass 2：项目本地插件 ──────────────────────────────────────
   const projectRoot = projectPluginsDir(opts.cwd)
   let projectEntries: import('node:fs').Dirent[] = []
   try {
     projectEntries = await fs.readdir(projectRoot, { withFileTypes: true })
   } catch {
-    /* no project plugins dir — common case */
+    /* 没有项目插件目录——常见情况 */
   }
   for (const entry of projectEntries) {
     if (!entry.isDirectory()) continue
     const pluginRoot = path.join(projectRoot, entry.name)
     await loadOnePlugin({
       rootDir: pluginRoot,
-      // Provisional id from dirname; overridden by manifest.name when we
-      // parse it.
+      // 由目录名派生的临时 id；解析 manifest 后会被 manifest.name 覆盖。
       fallbackId: `${entry.name}@local`,
       marketplace: 'local',
       scope: 'project',
@@ -184,10 +173,8 @@ async function loadOnePlugin(args: LoadOneArgs): Promise<void> {
       return
     }
 
-    // Canonical id always comes from the manifest, never from the cache
-    // dir name. For installed plugins this matches the recorded id; for
-    // project-local plugins it may differ from the dirname and the
-    // manifest wins.
+    // 规范 id 始终来自 manifest，而非缓存目录名。对已安装插件，它与记录
+    // 的 id 一致；对项目本地插件，它可能与目录名不同，此时 manifest 优先。
     const id = `${manifest.name}@${args.marketplace}`
     const enableResolution = args.enableState.resolve(id)
 
@@ -213,28 +200,26 @@ async function loadOnePlugin(args: LoadOneArgs): Promise<void> {
   }
 }
 
-/** Resolve a plugin's manifest contribution fields into absolute paths
- *  (or inline objects). Exported because individual callers occasionally
- *  need to recompute this (e.g. `/plugin info` for a single plugin).
+/** 把插件的 manifest 贡献字段解析成绝对路径（或内联对象）。之所以导出，
+ *  是因为个别调用方偶尔需要重算（例如 `/plugin info` 针对单个插件）。
  *
- *  **Two discovery passes per contribution kind:**
+ *  **每种贡献类型有两轮发现：**
  *
- *  1. **Manifest-declared** — if the manifest names a path (e.g.
- *     `"skills": "./my-skills"`), use that.
- *  2. **Convention-based fallback** — if not declared, probe the
- *     conventional directory (`skills/`, `agents/`, `commands/`) and
- *     the conventional file (`hooks/hooks.json`, `.mcp.json`,
- *     `mcp.json`). This is how real Claude Code plugins work — their
- *     manifests typically only carry `name`/`version`/`description` and
- *     drop the contributions next to it.
+ *  1. **manifest 声明** —— 若 manifest 指名了路径（如
+ *     `"skills": "./my-skills"`），就用它。
+ *  2. **基于约定的回退** —— 若未声明，就探测约定目录（`skills/`、
+ *     `agents/`、`commands/`）和约定文件（`hooks/hooks.json`、
+ *     `.mcp.json`、`mcp.json`）。真实 Claude Code 插件就是这样工作的——
+ *     它们的 manifest 通常只有 `name`/`version`/`description`，并把贡献
+ *     文件放在旁边。
  *
- *  Async because the convention probe has to stat directories. */
+ *  之所以是 async，是因为约定探测需要 stat 目录。 */
 export async function resolveContributions(plugin: LoadedPlugin): Promise<ResolvedContributions> {
   const m = plugin.manifest
   const root = plugin.rootDir
   const result: ResolvedContributions = {}
 
-  // skills / agents / commands — directory contributions
+  // skills / agents / commands —— 目录类贡献
   if (m.skills) {
     result.skillsDir = path.resolve(root, m.skills)
   } else if (await isDir(path.join(root, 'skills'))) {
@@ -251,8 +236,7 @@ export async function resolveContributions(plugin: LoadedPlugin): Promise<Resolv
     result.commandsDir = path.join(root, 'commands')
   }
 
-  // mcpServers — either declared (path / inline) or auto-discovered
-  // from a conventional file
+  // mcpServers —— 要么已声明（路径 / 内联），要么从约定文件自动发现
   if (m.mcpServers !== undefined) {
     if (typeof m.mcpServers === 'string') {
       result.mcpServers = { kind: 'path', path: path.resolve(root, m.mcpServers) }
@@ -260,9 +244,8 @@ export async function resolveContributions(plugin: LoadedPlugin): Promise<Resolv
       result.mcpServers = { kind: 'inline', data: m.mcpServers }
     }
   } else {
-    // Claude Code convention: `.mcp.json` at plugin root. We also
-    // accept `mcp.json` (without dot) as a pragmatic fallback —
-    // some authors use the visible form.
+    // Claude Code 约定：插件根目录下的 `.mcp.json`。我们也接受不带点的
+    // `mcp.json` 作为实用回退——有些作者用这种可见形式。
     for (const conv of ['.mcp.json', 'mcp.json']) {
       const p = path.join(root, conv)
       if (await isFile(p)) {
@@ -272,7 +255,7 @@ export async function resolveContributions(plugin: LoadedPlugin): Promise<Resolv
     }
   }
 
-  // hooks — same pattern, conventional file `hooks/hooks.json`
+  // hooks —— 同样的模式，约定文件为 `hooks/hooks.json`
   if (m.hooks !== undefined) {
     if (typeof m.hooks === 'string') {
       result.hooks = { kind: 'path', path: path.resolve(root, m.hooks) }

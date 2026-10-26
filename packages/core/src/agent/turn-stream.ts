@@ -38,7 +38,7 @@ export type TurnOutcome =
 
 export type FinalTurnOutcome = Exclude<TurnOutcome, { kind: 'stream-error' }>
 
-/** Consume provider stream chunks and project user-visible events to callbacks. */
+/** 消费提供方流 chunk，并把用户可见事件投影到回调。 */
 export async function streamChunksToUI(
   result: StreamResult,
   callbacks: AgentCallbacks,
@@ -136,7 +136,7 @@ export async function streamChunksToUI(
   tracker.suppressedReplay = textFilter.suppressedReplay()
 }
 
-/** Collect the completed response and usage into canonical session state. */
+/** 把已完成的响应与用量收集进规范会话状态。 */
 export async function collectTurnResponse(
   result: StreamResult,
   state: LoopState,

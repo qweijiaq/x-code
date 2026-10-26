@@ -1,4 +1,4 @@
-// Tests for marketplace parsing + known_marketplaces.json registry
+// marketplace 解析 + known_marketplaces.json 注册表的测试
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -43,11 +43,11 @@ describe('parseMarketplace', () => {
   })
 
   it('normalises every real Claude Code source variant', () => {
-    // This is the regression test for the v0.x bug where our schema
-    // only accepted {kind: 'git'|'github'|'local'} objects and rejected
-    // every real-world Claude Code marketplace. The wire-format shapes
-    // below were sampled from anthropics/claude-code and
-    // anthropics/claude-plugins-official as of April 2026.
+    // 这是针对 v0.x bug 的回归测试：当时我们的 schema 只接受
+    // {kind: 'git'|'github'|'local'} 对象，拒绝了所有真实世界的
+    // Claude Code marketplace。下面的线格式形状采样自
+    // anthropics/claude-code 和 anthropics/claude-plugins-official
+    // （截至 2026 年 4 月）。
     const raw = JSON.stringify({
       name: 'mixed',
       plugins: [
@@ -98,10 +98,10 @@ describe('parseMarketplace', () => {
   })
 
   it('relative source without marketplaceCloneUrl context surfaces a helpful error', () => {
-    // When marketplace was fetched from a raw HTTPS URL (no repo to
-    // subdir into) but the JSON contains "./plugins/foo" entries, the
-    // per-entry error should mention the missing context — and the
-    // overall parse still throws because no plugin entries succeeded.
+    // 当 marketplace 从原始 HTTPS URL 获取（没有可进入子目录的
+    // 仓库）但 JSON 中含 "./plugins/foo" 条目时，逐条目的错误应
+    // 提及缺失的上下文 —— 且整体解析仍然抛出，因为没有插件条目
+    // 成功。
     const raw = JSON.stringify({
       name: 'no-ctx',
       plugins: [{ name: 'rel', source: './plugins/foo' }],
@@ -110,9 +110,8 @@ describe('parseMarketplace', () => {
   })
 
   it('skips individual bad source entries when other entries succeed', () => {
-    // Real-world marketplaces sometimes carry one weird entry the
-    // schema doesn't recognise — that one should be dropped, not kill
-    // the whole catalog.
+    // 真实世界的 marketplace 有时会带一个 schema 无法识别的怪条目
+    // —— 该条目应被丢弃，而不是毁掉整个目录。
     const raw = JSON.stringify({
       name: 'mixed-bad',
       plugins: [
@@ -125,7 +124,7 @@ describe('parseMarketplace', () => {
   })
 
   it('rejects schema violations with field-path message', () => {
-    const raw = JSON.stringify({ name: 'official', plugins: [{ name: 'foo' }] }) // missing source
+    const raw = JSON.stringify({ name: 'official', plugins: [{ name: 'foo' }] }) // 缺少 source
     try {
       parseMarketplace(raw, 'official')
       throw new Error('expected throw')
@@ -157,9 +156,9 @@ describe('parseMarketplace', () => {
           name: 'p-github',
           source: { source: 'github', owner: 'foo', repo: 'bar', ref: 'main', sha: '1ec5865abc' },
         },
-        // No sha — must remain undefined, not coerced to anything
+        // 没有 sha —— 必须保持 undefined，不能强制转换成任何东西
         { name: 'p-no-sha', source: 'github:foo/baz' },
-        // Garbage sha — must be dropped, not silently passed to installer
+        // 垃圾 sha —— 必须丢弃，不能静默传给安装器
         { name: 'p-bad-sha', source: { source: 'github', owner: 'foo', repo: 'qux', sha: 'not-a-hash' } },
       ],
     })
@@ -184,13 +183,12 @@ describe('parseMarketplace', () => {
   })
 
   it('Marketplace.name is the subscription alias (sourceLabel), not the upstream `name`', () => {
-    // Regression: the v0.x bug where `parseMarketplace` returned the
-    // upstream marketplace.json `name` as `Marketplace.name`, which
-    // broke `plugin marketplace info <subscription-alias>` and tagged
-    // `plugin search` results with the upstream name instead of the
-    // alias the user typed. Storage paths, install ids, and lookups
-    // all key off the subscription alias, so the returned Marketplace
-    // must do the same.
+    // 回归：v0.x 的 bug 里 `parseMarketplace` 把上游 marketplace.json
+    // 的 `name` 当作 `Marketplace.name` 返回，导致
+    // `plugin marketplace info <subscription-alias>` 崩溃，并让
+    // `plugin search` 结果带上上游名称而非用户输入的别名。存储路径、
+    // 安装 id 和查找都以订阅别名为主键，因此返回的 Marketplace
+    // 也必须如此。
     const raw = JSON.stringify({
       name: 'claude-plugins-official',
       plugins: [{ name: 'linear', source: 'github:foo/linear' }],
@@ -260,7 +258,7 @@ describe('addKnownMarketplace + removeKnownMarketplace', () => {
   })
 
   it('preserves unrelated fields in known_marketplaces.json on write', async () => {
-    // Pre-write a file with extra fields the loader knows nothing about.
+    // 预写入一个含加载器一无所知额外字段的文件。
     const file = knownMarketplacesPath()
     await fs.mkdir(path.dirname(file), { recursive: true })
     await fs.writeFile(
@@ -278,7 +276,7 @@ describe('readAllCachedMarketplaces', () => {
   it('reads cached marketplace.json for each subscribed marketplace', async () => {
     await addKnownMarketplace({ name: 'community', source: 'github:foo/community' })
 
-    // Hand-place a cached marketplace.json
+    // 手工放置一个缓存的 marketplace.json
     const cached = JSON.stringify({
       name: 'community',
       plugins: [{ name: 'foo', source: { kind: 'local', path: '/tmp/foo' } }],
@@ -315,7 +313,7 @@ describe('resolveCloneUrl', () => {
   })
 
   it('preserves an existing .git suffix as a single suffix', () => {
-    // github:foo/bar.git → still ends in single .git, not double
+    // github:foo/bar.git → 仍以单个 .git 结尾，而不是两个
     expect(resolveCloneUrl('github:foo/bar.git')).toBe('https://github.com/foo/bar.git')
   })
 })

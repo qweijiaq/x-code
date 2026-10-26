@@ -1,13 +1,12 @@
-// @x-code-cli/core — activateSkill tool
+// @x-code-cli/core — activateSkill 工具
 //
-// Injected into the tool registry only when a SkillRegistry is present
-// (i.e. at least one SKILL.md was found). The model calls this when it
-// decides the current task matches a skill's description; the tool
-// returns the skill's Markdown body wrapped in XML tags, which the model
-// then sees as a tool-result and follows as instructions.
+// 仅当存在 SkillRegistry（即至少找到一个 SKILL.md）时才注入工具注册表。
+// 模型判断当前任务匹配某个 skill 的描述时调用它；工具把该 skill 的
+// Markdown 正文用 XML 标签包起来返回，模型随后把它当作工具结果并按其中的
+// 指令执行。
 //
-// This mirrors Gemini CLI's activate_skill tool and Claude Code's inline
-// SkillTool — the common pattern across all major competitors.
+// 这对应 Gemini CLI 的 activate_skill 工具和 Claude Code 的内联 SkillTool
+// —— 是各主要竞品共用的通用模式。
 import { tool } from 'ai'
 
 import { z } from 'zod'

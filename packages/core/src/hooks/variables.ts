@@ -1,24 +1,23 @@
-// @x-code-cli/core — Hook command variable expansion
+// @x-code-cli/core — Hook 命令变量展开
 //
-// Substitutes `${name}` and `${env:NAME}` patterns inside a hook command
-// string. Unknown variables are left as the literal `${name}` so a typo
-// surfaces in the resulting shell command's error message rather than
-// silently expanding to an empty string (which would produce confusing
-// "command not found" errors that don't point at the variable).
+// 替换 hook 命令字符串中的 `${name}` 与 `${env:NAME}` 模式。
+// 未知变量保留为字面的 `${name}`，这样拼写错误会在最终 shell 命令的
+// 报错信息里暴露出来，而不是静默展开成空字符串（那会产生令人困惑、
+// 且不指向变量的 "command not found" 错误）。
 //
-// Supported variables (cf. [[plugin-marketplace-design]] §8.4):
+// 支持的变量（参见 [[plugin-marketplace-design]] §8.4）：
 //
-//    ${pluginDir}      absolute path to the owning plugin's installed dir
-//                      (versioned cache dir; wiped on reinstall / upgrade)
-//    ${pluginDataDir}  absolute path to the plugin's persistent data dir
-//                      (~/.x-code/plugins/data/<sanitised-plugin-id>/) —
-//                      survives uninstall+reinstall and version upgrades.
-//                      Created on demand by the caller before expansion;
-//                      this module just substitutes the string.
-//    ${cwd}            current working directory
-//    ${homedir}        user home dir
-//    ${sep}            OS-specific path separator (`\` Windows, `/` elsewhere)
-//    ${env:NAME}       process env var `NAME` (empty string when unset)
+//    ${pluginDir}      所属插件安装目录的绝对路径
+//                      （带版本号的缓存目录；重装 / 升级时清空）
+//    ${pluginDataDir}  插件持久化数据目录的绝对路径
+//                      （~/.x-code/plugins/data/<sanitised-plugin-id>/）——
+//                      卸载后重装及版本升级仍保留。
+//                      由调用方在展开前按需创建；
+//                      本模块只做字符串替换。
+//    ${cwd}            当前工作目录
+//    ${homedir}        用户主目录
+//    ${sep}            操作系统相关的路径分隔符（Windows 为 `\`，其余为 `/`）
+//    ${env:NAME}       进程环境变量 `NAME`（未设置时为空字符串）
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -27,18 +26,18 @@ import { pluginDataDir as pluginDataDirPath } from '../plugins/paths.js'
 
 export interface VariableContext {
   pluginDir: string
-  /** Persistent per-plugin data directory. Pre-created by
-   *  [[buildVariableContext]] when a `pluginId` is supplied. */
+  /** 插件持久化数据目录。提供 `pluginId` 时由
+   *  [[buildVariableContext]] 预先创建。 */
   pluginDataDir?: string
   cwd: string
   homedir?: string
   sep?: string
 }
 
-/** Default variables derived from the current process + caller context.
- *  Pass `pluginId` to enable `${pluginDataDir}` — we'll resolve the
- *  per-plugin data dir path and `mkdir -p` it so the plugin can write
- *  there immediately. mkdirSync on an existing dir is a cheap no-op. */
+/** 由当前进程 + 调用方上下文派生的默认变量。
+ *  传入 `pluginId` 以启用 `${pluginDataDir}` —— 我们会解析
+ *  每个插件的数据目录路径并 `mkdir -p` 它，这样插件可以立即
+ *  写入。对已存在目录执行 mkdirSync 是廉价的空操作。 */
 export function buildVariableContext(input: { pluginDir: string; cwd: string; pluginId?: string }): VariableContext {
   let dataDir: string | undefined
   if (input.pluginId) {
@@ -46,9 +45,9 @@ export function buildVariableContext(input: { pluginDir: string; cwd: string; pl
     try {
       fs.mkdirSync(dataDir, { recursive: true })
     } catch {
-      // mkdir failure (permissions, disk full) leaves the dir missing —
-      // the plugin script will get a sane shell error when it tries to
-      // write there. Better than throwing here and wedging the hook.
+      // mkdir 失败（权限、磁盘满）会让目录缺失 ——
+      // 插件脚本在尝试写入时会得到合理的 shell 错误。
+      // 比在这里抛错并卡死 hook 更好。
     }
   }
   return {
@@ -60,8 +59,8 @@ export function buildVariableContext(input: { pluginDir: string; cwd: string; pl
   }
 }
 
-/** Expand `${pluginDir}` / `${pluginDataDir}` / `${cwd}` / `${homedir}` /
- *  `${sep}` / `${env:NAME}` references. Unknown patterns are left verbatim. */
+/** 展开 `${pluginDir}` / `${pluginDataDir}` / `${cwd}` / `${homedir}` /
+ *  `${sep}` / `${env:NAME}` 引用。未知模式保持原样。 */
 export function expandVariables(source: string, ctx: VariableContext): string {
   return source.replace(/\$\{([^}]+)\}/g, (whole, expr: string) => {
     const colonIdx = expr.indexOf(':')
@@ -69,7 +68,7 @@ export function expandVariables(source: string, ctx: VariableContext): string {
       const ns = expr.slice(0, colonIdx)
       const key = expr.slice(colonIdx + 1)
       if (ns === 'env') return process.env[key] ?? ''
-      // Unknown namespace — leave verbatim
+      // 未知命名空间 —— 保持原样
       return whole
     }
     switch (expr) {

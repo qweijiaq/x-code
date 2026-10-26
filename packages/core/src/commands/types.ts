@@ -1,47 +1,46 @@
-// @x-code-cli/core — File-based slash command types
+// @x-code-cli/core — 基于文件的斜杠命令类型
 //
-// A "command" is a markdown file shipped by a plugin (or, in future,
-// authored directly under ~/.x-code/commands/) that turns into a slash
-// command at startup. Real Claude Code plugins ship them as
-// `commands/<name>.md` next to their plugin.json — `code-review.md`
-// inside `code-review` plugin's `commands/` registers as `/code-review`.
+// “命令”是一个由插件提供的 markdown 文件（将来也可能直接写在
+// ~/.x-code/commands/ 下），在启动时转成斜杠命令。真正的 Claude Code
+// 插件将其作为 `commands/<name>.md` 与 plugin.json 放在一起 ——
+// `code-review` 插件 `commands/` 下的 `code-review.md` 注册为 `/code-review`。
 //
-// File format (matches Claude Code spec verified against
-// anthropics/claude-code real plugin contents):
+// 文件格式（与 anthropics/claude-code 真实插件内容核对过的
+// Claude Code 规范一致）：
 //
 //     ---
 //     description: Code review a pull request
-//     allowed-tools: Bash(gh pr view:*), …      # ignored by us today
+//     allowed-tools: Bash(gh pr view:*), …      # 我们目前忽略此项
 //     ---
 //
-//     <body — a prompt template the model executes>
+//     <body — 模型要执行的提示词模板>
 //
-//     Substitutions applied to the body before sending to the model:
-//       $ARGUMENTS                — text typed after the command name
-//       ${ARGUMENTS}              — same, brace form
-//       ${CLAUDE_PLUGIN_ROOT}     — absolute path to the plugin root
-//                                   (so command bodies can reference
-//                                   bundled scripts via shell)
+//     发送给模型前对 body 应用的替换：
+//       $ARGUMENTS                — 命令名之后输入的文本
+//       ${ARGUMENTS}              — 同上，花括号形式
+//       ${CLAUDE_PLUGIN_ROOT}     — 插件根目录的绝对路径
+//                                   （这样命令体可通过 shell
+//                                   引用打包的脚本）
 
 export interface CommandDefinition {
-  /** Command invocation name without the leading slash. Derived from
-   *  the filename (`code-review.md` → `code-review`). */
+  /** 不含前导斜杠的命令调用名。由文件名派生
+   *  （`code-review.md` → `code-review`）。 */
   name: string
-  /** Short one-line summary from the frontmatter `description` field —
-   *  used by `/help` and `/plugin info` to label the command. */
+  /** frontmatter `description` 字段里的一行简短摘要 ——
+   *  `/help` 和 `/plugin info` 用它来标注命令。 */
   description?: string
-  /** The prompt template (everything after the frontmatter), trimmed. */
+  /** 提示词模板（frontmatter 之后的所有内容），已去除首尾空白。 */
   body: string
-  /** Where this command came from. `'user'` = `~/.x-code/commands/*.md`,
-   *  `'project'` = `<repo-root>/.x-code/commands/*.md`, `'plugin'` =
-   *  plugin-contributed `commands/*.md`. Mirrors SkillDefinition / SubAgentDefinition. */
+  /** 该命令的来源。`'user'` = `~/.x-code/commands/*.md`，
+   *  `'project'` = `<repo-root>/.x-code/commands/*.md`，`'plugin'` =
+   *  插件贡献的 `commands/*.md`。与 SkillDefinition / SubAgentDefinition 对应。 */
   source: 'user' | 'project' | 'plugin'
-  /** When source === 'plugin', the owning plugin's id
-   *  (`name@marketplace`). Used by `/plugin info` and to set
-   *  `${CLAUDE_PLUGIN_ROOT}` correctly. */
+  /** 当 source === 'plugin' 时，所属插件的 id
+   *  （`name@marketplace`）。用于 `/plugin info` 和正确设置
+   *  `${CLAUDE_PLUGIN_ROOT}`。 */
   pluginId?: string
-  /** Absolute path to the plugin's root dir. Substituted in for
-   *  `${CLAUDE_PLUGIN_ROOT}` in the body — so command bodies that
-   *  reference bundled scripts can resolve them correctly. */
+  /** 插件根目录的绝对路径。会替换 body 中的
+   *  `${CLAUDE_PLUGIN_ROOT}` —— 这样引用打包脚本的命令体
+   *  能正确解析它们。 */
   pluginRoot?: string
 }

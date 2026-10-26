@@ -1,20 +1,16 @@
-// @x-code-cli/core — Skill registry
+// @x-code-cli/core — 技能注册表
 //
-// Built once at CLI startup and reused across the session. The skill list
-// is embedded in two byte-stable surfaces — the system prompt's
-// `## Available Skills` block and the `activateSkill` tool description —
-// both cached on LoopState.systemPromptCache. Adding, removing, enabling,
-// or disabling a skill therefore needs to either (a) run before the next
-// streamText call AND invalidate that cache, or (b) wait for a CLI
-// restart. The /skill disable|enable|remove handlers do (b) — they write
-// settings to disk and print a "Restart the CLI to apply." hint. The
-// /skill refresh handler does (a) — it calls `reloadSkillRegistry()` on
-// this object to rebuild the internal map in place, then triggers a
-// systemPromptCache invalidation so the next turn picks up the change.
-// Keeping the same SkillRegistry object reference across refresh means
-// every other code path that captured `options.skillRegistry` (agent
-// loop's buildTools, App.tsx's slash-command tab completion, …) stays
-// pointed at the right thing without needing to be re-wired.
+// 在 CLI 启动时构建一次，并在整个会话中复用。技能列表嵌入两个字节稳定的
+// 表面——系统提示的 `## Available Skills` 块和 `activateSkill` 工具描述——
+// 两者都缓存在 LoopState.systemPromptCache 上。因此添加、移除、启用或禁用
+// 技能需要要么 (a) 在下一次 streamText 调用之前运行并让该缓存失效，要么
+// (b) 等待 CLI 重启。/skill disable|enable|remove 处理器走 (b)——它们把
+// 设置写入磁盘并打印 "Restart the CLI to apply." 提示。/skill refresh 处理器
+// 走 (a)——它调用本对象上的 `reloadSkillRegistry()` 原地重建内部映射，然后
+// 触发 systemPromptCache 失效，使下一轮拾取变更。刷新时保持同一个
+// SkillRegistry 对象引用，意味着所有捕获了 `options.skillRegistry` 的其他
+// 代码路径（agent loop 的 buildTools、App.tsx 的斜杠命令补全……）都继续
+// 指向正确的东西，无需重新接线。
 import { type ReloadSummary, diffNamedEntries } from '../registry-diff.js'
 import { type LoadSkillsOptions, loadSkills } from './loader.js'
 import { loadDisabledSkillsSet } from './settings.js'
@@ -24,22 +20,18 @@ export interface SkillDefinition {
   description: string
   content: string
   source: 'user' | 'project'
-  /** Absolute path to the skill's directory (the one containing SKILL.md).
-   *  Used at activation time so the model can resolve relative paths to
-   *  bundled scripts / references / assets. */
+  /** 技能目录的绝对路径（即包含 SKILL.md 的目录）。在激活时使用，以便模型
+   *  能解析相对自身 scripts / references / assets 的相对路径。 */
   dir: string
-  /** Relative paths of files in the skill directory, excluding SKILL.md and
-   *  hidden / heavy directories. Listed at activation time alongside the body
-   *  so the model knows what bundled resources exist without globbing. Capped
-   *  at MAX_LISTED_FILES — long lists get truncated with a "... N more" marker. */
+  /** 技能目录中文件的相对路径，排除 SKILL.md 以及隐藏 / 大目录。在激活时
+   *  与正文一起列出，让模型无需 glob 就知道存在哪些自带资源。上限为
+   *  MAX_LISTED_FILES——过长的列表会被截断并附加 "... N more" 标记。 */
   files: string[]
-  /** When this skill comes from a plugin contribution, the owning plugin's
-   *  id (`name@marketplace`). UI shows this as "(from plugin: …)" and
-   *  `/skill uninstall` redirects to `/plugin uninstall`. */
+  /** 当此技能来自插件贡献时，所属插件的 id（`name@marketplace`）。UI 显示为
+   *  "(from plugin: …)"，`/skill uninstall` 会重定向到 `/plugin uninstall`。 */
   pluginId?: string
-  /** Desktop-managed isolated runtime (dependency env, interpreter paths).
-   *  Appended to the activation payload so the model installs/runs skill
-   *  dependencies in the runtime directory instead of the project. */
+  /** 桌面管理的隔离运行时（依赖环境、解释器路径）。追加到激活载荷中，使模型
+   *  在运行时目录中安装 / 运行技能依赖，而不是在项目目录中。 */
   runtimeHint?: string
 }
 
@@ -47,9 +39,9 @@ export interface SkillEntry extends SkillDefinition {
   disabled: boolean
 }
 
-/** Summary returned by `reloadSkillRegistry()`. Drives the message
- *  surface in /skill refresh — caller can show "added: a, b" /
- *  "removed: c" / "unchanged: d, e" the same way /mcp refresh does. */
+/** `reloadSkillRegistry()` 返回的摘要。驱动 /skill refresh 中的消息表面——
+ *  调用方能像 /mcp refresh 那样展示 "added: a, b" / "removed: c" /
+ *  "unchanged: d, e"。 */
 export type SkillReloadSummary = ReloadSummary
 
 export class SkillRegistry {
@@ -57,20 +49,18 @@ export class SkillRegistry {
 
   constructor(skills: SkillDefinition[], disabled: ReadonlySet<string> = new Set()) {
     this.byName = new Map()
-    // Last-write wins: project skills override user-scope skills of the
-    // same name because loadSkills() returns user-scope first, then project.
+    // 后写者胜出：项目技能覆盖同名用户域技能，因为 loadSkills() 先返回用户域，
+    // 再返回项目。
     for (const skill of skills) {
       this.byName.set(skill.name, { ...skill, disabled: disabled.has(skill.name) })
     }
   }
 
-  /** Replace the in-memory skill list with a fresh load. Used by
-   *  /skill refresh — keeps the same SkillRegistry object identity so
-   *  every cached `options.skillRegistry` reference (agent loop, CLI
-   *  slash completion, App.tsx handlers) keeps pointing at the right
-   *  thing. Returns a per-name diff vs the previous state so the
-   *  caller can render an "added / removed / changed / unchanged"
-   *  summary in the user-facing message. */
+  /** 用一次全新加载替换内存中的技能列表。供 /skill refresh 使用——保持同一个
+   *  SkillRegistry 对象身份，让每个缓存的 `options.skillRegistry` 引用（agent
+   *  loop、CLI 斜杠补全、App.tsx 处理器）继续指向正确的东西。返回与先前状态的
+   *  逐名称 diff，让调用方能在面向用户的消息中渲染 "added / removed / changed /
+   *  unchanged" 摘要。 */
   reload(skills: SkillDefinition[], disabled: ReadonlySet<string>): SkillReloadSummary {
     const previous = this.byName
     const next = new Map<string, SkillEntry>()
@@ -90,27 +80,26 @@ export class SkillRegistry {
     return summary
   }
 
-  /** Enabled skill by name. Disabled skills are hidden from the agent loop
-   *  and slash-command dispatch — use `getEntry()` if you need to inspect
-   *  the disabled flag (the /skill list handler does). */
+  /** 按名称获取已启用的技能。禁用的技能对 agent loop 和斜杠命令派发隐藏——
+   *  若需检查 disabled 标志（/skill list 处理器会这么做），使用 `getEntry()`。 */
   get(name: string): SkillDefinition | undefined {
     const entry = this.byName.get(name)
     if (!entry || entry.disabled) return undefined
     return entry
   }
 
-  /** Enabled skills only. */
+  /** 仅已启用的技能。 */
   list(): SkillDefinition[] {
     return [...this.byName.values()].filter((s) => !s.disabled)
   }
 
-  /** Enabled skill names only. */
+  /** 仅已启用技能的名称。 */
   names(): string[] {
     return [...this.byName.values()].filter((s) => !s.disabled).map((s) => s.name)
   }
 
-  /** Every loaded skill, with `disabled` flag. Used by /skill list and the
-   *  disable/enable/remove handlers so they can act on disabled skills too. */
+  /** 每个已加载的技能，带 `disabled` 标志。供 /skill list 和 disable/enable/
+   *  remove 处理器使用，让它们也能对禁用技能操作。 */
   listAll(): SkillEntry[] {
     return [...this.byName.values()]
   }
@@ -120,18 +109,16 @@ export class SkillRegistry {
   }
 }
 
-/** Hard upper bound mirrored from loader's MAX_LISTED_FILES — the
- *  injection formatter caps the rendered file list at the same value so
- *  the two stay aligned. Loader sorts + truncates first, this function
- *  treats `skill.files` as already-bounded. */
+/** 从 loader 的 MAX_LISTED_FILES 镜像来的硬上限——注入格式化器以同样的值
+ *  截断渲染的文件列表，使两者保持一致。loader 先排序 + 截断，本函数把
+ *  `skill.files` 视为已是有界的。 */
 const MAX_RENDERED_FILES = 50
 
-/** Build the exact text that goes inside `<activated_skill name="...">...</activated_skill>`
- *  for both activation paths (model self-decide via `activateSkill` tool, and
- *  user explicit `/<skillname>`). Format follows Opencode's convention: body
- *  first, then a footer with base directory + relative-paths hint + file list.
- *  Sharing one formatter between the two call sites keeps the byte stream the
- *  model sees identical regardless of who triggered activation. */
+/** 构建放进 `<activated_skill name="...">...</activated_skill>` 的精确文本，
+ *  用于两条激活路径（模型通过 `activateSkill` 工具自行决定，以及用户显式
+ *  `/<skillname>`）。格式遵循 Opencode 的惯例：先正文，然后是带基础目录 +
+ *  相对路径提示 + 文件列表的页脚。两个调用点共享一个格式化器，使模型看到的
+ *  字节流保持一致，无论谁触发了激活。 */
 export function formatSkillActivationBody(skill: SkillDefinition): string {
   const lines: string[] = [skill.content.trim(), '']
   lines.push(`Base directory for this skill: ${skill.dir}`)
@@ -150,9 +137,8 @@ export function formatSkillActivationBody(skill: SkillDefinition): string {
   return lines.join('\n')
 }
 
-/** Wrap a skill's activation body in the `<activated_skill name="X">`
- *  XML envelope. Used by both activation paths so the wrapper is byte-
- *  identical regardless of trigger. */
+/** 把技能的激活正文包进 `<activated_skill name="X">` XML 外壳。两条激活路径
+ *  都使用它，使外壳字节一致，无论触发者是谁。 */
 export function wrapActivatedSkill(skill: SkillDefinition): string {
   return `<activated_skill name="${skill.name}">\n${formatSkillActivationBody(skill)}\n</activated_skill>`
 }
@@ -162,10 +148,9 @@ export async function createSkillRegistry(opts: LoadSkillsOptions = {}): Promise
   return new SkillRegistry(skills, disabled)
 }
 
-/** Re-scan skill directories + settings.json, then mutate the given
- *  registry in place. Caller is responsible for invalidating any
- *  systemPromptCache that embedded the previous skill list — the
- *  /skill refresh handler does exactly this. */
+/** 重新扫描技能目录 + settings.json，然后原地修改给定的 registry。调用方负责
+ *  使任何内嵌了先前技能列表的 systemPromptCache 失效——/skill refresh 处理器
+ *  正是这么做的。 */
 export async function reloadSkillRegistry(
   registry: SkillRegistry,
   opts: LoadSkillsOptions = {},

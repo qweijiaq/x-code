@@ -1,5 +1,5 @@
-// MIT-licensed compact fixture from audiojs/decode commit 4e487ace9b8a49988c1d89c6790073cf0a51f869,
-// pinned at SHA-256 8609b9ef168c50948f46ba721dc70e0a075a0f85632c8b19180f137f22543572.
+// 来自 audiojs/decode 提交 4e487ace9b8a49988c1d89c6790073cf0a51f869 的 MIT 许可紧凑 fixture，
+// 固定在 SHA-256 8609b9ef168c50948f46ba721dc70e0a075a0f85632c8b19180f137f22543572。
 const TINY_VORBIS_BASE64 = [
   'T2dnUwACAAAAAAAAAAAY8QDUAAAAAJilW4EBHgF2b3JiaXMAAAAAAkSsAAAAAAAAAAAAAAAAAAC7AU9nZ1MAAAAAAAAAAAAAGPEA',
   '1AEAAABqx87qDjz///////////////+7A3ZvcmJpcwwAAABMYXZmNjIuMy4xMDABAAAAHAAAAGVuY29kZXI9TGF2YzYyLjExLjEw',
@@ -64,8 +64,8 @@ const TINY_VORBIS_BASE64 = [
   'AAAAAAC7XWyGo6PVjs3maDNNi4qIqMEIWNuzelTPTtNTj+p20vXq5X+fiv7q+VI96r/Srk9/pgcmo6c/hVX96PUR',
 ].join('')
 
-// A 100 ms synthetic sine wave encoded as AAC-LC. Its moov box is deliberately
-// after mdat to cover voice-recorder files that have not been fast-started.
+// 一段 100 ms 合成正弦波，编码为 AAC-LC。它的 moov box 被刻意放在
+// mdat 之后，以覆盖尚未 fast-start 的录音机文件。
 const TINY_M4A_BASE64 = [
   'AAAAHGZ0eXBNNEEgAAAAAE00QSBtcDQyaXNvbQAAATNtZGF0ANBgBwEkv8w/N9VZImiSDxf2/lOOn3gf/2Pfn/1Rs70/aQKBh+C/',
   'qkhRiGNxm9WqxQ+xbdy9l2ytu6q+m+hda9ZcR2F8z7F23s3lvZum8i5rqWo+H43j+Npd4vd4vdop6SnpKekp3x/fH+P+X/lPs/rH',
@@ -85,10 +85,9 @@ const TINY_M4A_BASE64 = [
   'MDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDAgMDAwMDAwMDA=',
 ].join('')
 
-// Generated with macOS afconvert from 8192 frames of 16 kHz mono silence,
-// then stripped of its inert free box. The final ALAC packet is a valid
-// remainder packet: stts accounts for 12288 frames while the decoder emits
-// the original 8192 frames.
+// 用 macOS afconvert 从 8192 帧 16 kHz 单声道静音生成，
+// 然后剥离其惰性 free box。最终的 ALAC 包是合法的剩余包：
+// stts 记录 12288 帧，而解码器输出原始的 8192 帧。
 const TINY_ALAC_BASE64 = [
   'AAAAHGZ0eXBNNEEgAAAAAE00QSBtcDQyaXNvbQAAAzBtb292AAAAbG12aGQAAAAA5rSDYea0g2EAAD6AAAAwAAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAA',
   'AAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAABwnRyYWsAAABcdGtoZAAAAAfmtINh5rSDYQAAAAEAAAAA',

@@ -16,7 +16,7 @@ function appendFullOutput(lines: string[], result: ShellExecutionResult): void {
   }
 }
 
-/** One model-facing representation shared by shell, shellOutput, and killShell. */
+/** shell、shellOutput 与 killShell 共享的、面向模型的一种表示。 */
 export function formatShellExecutionResult(result: ShellExecutionResult): string {
   if (result.cleanupResidual && result.running) {
     const lines = [

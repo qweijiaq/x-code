@@ -19,8 +19,7 @@ function summarize(text: string): string {
   return flat.length > 72 ? `${flat.slice(0, 71)}…` : flat
 }
 
-/** Conversation outline: a compact list of each question and answer with a
- *  jump target. Rebuilt only when the transcript entries change. */
+/** 对话大纲：每个问答的紧凑列表，带跳转目标。仅在记录条目变化时重建。 */
 export function OutlinePanel({ entries, onJump }: OutlinePanelProps): JSX.Element {
   const { t } = useTranslation()
   const items = useMemo(() => {

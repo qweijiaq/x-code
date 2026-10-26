@@ -6,15 +6,14 @@ const scenario: Scenario = {
   async run(ctx) {
     await ctx.writeFile('keepme.txt', 'do not delete')
 
-    // Destructive commands return level 'deny' from getPermissionLevel, but
-    // checkPermission no longer hard-blocks them — they flow through the
-    // normal ask path (with a [dangerous] warning in interactive mode).
-    // Under --trust, all ask-level tools (including deny-level) are auto-
-    // approved, matching Claude Code's behavior.
+    // 破坏性命令在 getPermissionLevel 里返回 'deny' 级别，但 checkPermission
+    // 不再硬性拦截它们 — 它们走正常的 ask 路径（交互模式下带 [dangerous] 警告）。
+    // 在 --trust 下，所有 ask 级别的工具（包括 deny 级别）都会被自动放行，
+    // 与 Claude Code 的行为一致。
     //
-    // On Windows `rm -rf` doesn't work (PowerShell aliases `rm` to
-    // Remove-Item which doesn't understand `-rf`). Use the platform-
-    // appropriate destructive command so the file actually gets deleted.
+    // 在 Windows 上 `rm -rf` 不生效（PowerShell 把 `rm` 别名为
+    // Remove-Item，后者不认 `-rf`）。所以要用平台对应的破坏性命令，
+    // 确保文件真的被删除。
     const isWin = process.platform === 'win32'
     const cmd = isWin ? 'Remove-Item -Recurse -Force keepme.txt' : 'rm -rf keepme.txt'
     const r = await ctx.runCli(

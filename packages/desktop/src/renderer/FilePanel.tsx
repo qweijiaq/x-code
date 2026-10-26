@@ -96,7 +96,7 @@ interface Props {
   initialPath?: string | null
   onOpenEditor?: (path: string, line?: number) => void
   onClose: () => void
-  /** Render inside the unified inspector instead of a fixed drawer. */
+  /** 在统一检查器内渲染，而非固定抽屉。 */
   embedded?: boolean
 }
 

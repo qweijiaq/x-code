@@ -1,4 +1,4 @@
-// @x-code-cli/core — webFetch tool (HTTP fetch + HTML→Markdown, with LRU cache + CF fallback)
+// @x-code-cli/core — webFetch 工具（HTTP 抓取 + HTML→Markdown，带 LRU 缓存 + CF 回退）
 import * as cheerio from 'cheerio'
 // @ts-expect-error turndown has no types
 import TurndownService from 'turndown'
@@ -18,14 +18,14 @@ import { VERSION } from '../version.js'
 import { reportProgress } from './progress.js'
 
 const FETCH_TIMEOUT_MS = 15_000
-// Markdown returned to the model. Bumped from 30 KB (which cut docs pages in half)
-// but kept well under the model's context budget: ~100 KB ≈ ~25 K tokens, roughly
-// 12% of a Sonnet 200 K window, so a single fetch can't blow context.
-// This is a per-call cap; the model can always fetch again with a narrower prompt.
+// 返回给模型的 Markdown。从 30 KB（会把文档页拦腰截断）往上调，但仍远低于
+// 模型的上下文预算：约 100 KB ≈ 约 25 K token，大致是 Sonnet 200 K 窗口的
+// 12%，所以单次抓取不可能撑爆上下文。
+// 这是每次调用级别的上限；模型随时可以用更窄的 prompt 再抓一次。
 const MAX_CONTENT_CHARS = 100_000
-// Raw HTML ceiling before turndown. 10 MB is comfortable for any real doc page;
-// enforced both by content-length header AND by streaming body read (see
-// readResponseBody) so chunked responses are also bounded.
+// turndown 之前的原始 HTML 上限。10 MB 对任何真实文档页都绰绰有余；同时由
+// content-length 头和流式 body 读取（见 readResponseBody）双重执行，所以
+// 分块响应也被限制住。
 const MAX_HTTP_BYTES = 10 * 1024 * 1024
 const MAX_URL_LENGTH = 2000
 const CACHE_TTL_MS = 15 * 60 * 1000
@@ -33,17 +33,16 @@ const CACHE_MAX_ENTRIES = 50
 
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
-// Used as Cloudflare fallback: aggressive bot rules often let honest CLI UAs through
-// while blocking browser impersonators that fail TLS-fingerprint checks.
+// 用作 Cloudflare 回退：激进的机器人规则常常放行诚实的 CLI UA，而拦截那些
+// 通不过 TLS 指纹校验的浏览器伪装者。
 const FALLBACK_UA = `x-code-cli/${VERSION} (+https://github.com/qweijiaq/x-code)`
 
 const YEAR = new Date().getFullYear()
 
-// ── SSRF protection ──
-// Reject URLs targeting internal/private networks. Mirrors Claude Code's
-// validateURL: hostname must have ≥2 dot-separated segments (rejects
-// `localhost`, bare hostnames), no embedded credentials, no non-HTTP schemes,
-// and no IPs in private/link-local/loopback ranges.
+// ── SSRF 防护 ──
+// 拒绝指向内部/私有网络的 URL。对应 Claude Code 的 validateURL：hostname
+// 必须至少有 2 个点分隔的段（拒绝 `localhost`、裸主机名），不能内嵌凭据，
+// 不能是非 HTTP 协议，也不能是私有/链路本地/回环范围内的 IP。
 
 const DISALLOWED_ADDRESSES = new BlockList()
 
@@ -97,23 +96,22 @@ function isDisallowedAddress(address: string, family: number): boolean {
 function isPrivateHost(hostname: string): boolean {
   const lower = hostname.toLowerCase()
   if (lower === 'localhost' || lower.endsWith('.local') || lower.endsWith('.internal')) return true
-  // IP-literal in URL — strip surrounding brackets for IPv6
+  // URL 里的 IP 字面量 —— 去掉 IPv6 两侧的方括号
   const bare = lower.startsWith('[') ? lower.slice(1, -1) : lower
   const family = isIP(bare)
   return family !== 0 && isDisallowedAddress(bare, family)
 }
 
-/** @internal Exported for DNS-guard tests. */
+/** @internal 仅为 DNS-guard 测试导出。 */
 export function validateResolvedAddress(
   hostname: string,
   address: string,
   family: number,
   allowHttpsFakeIp = false,
 ): void {
-  // Clash/Mihomo fake-IP mode deliberately maps public hostnames into
-  // 198.18.0.0/15 and routes those sockets through its TUN interface. Permit
-  // that synthetic address only for an HTTPS hostname. IP-literal URLs are
-  // still rejected by validateFetchUrl, and every redirect is revalidated.
+  // Clash/Mihomo 的 fake-IP 模式刻意把公网主机名映射进 198.18.0.0/15，并
+  // 把这些 socket 路由经过其 TUN 接口。只对 HTTPS 主机名放行这种合成地址。
+  // IP 字面量 URL 仍会被 validateFetchUrl 拒绝，且每个重定向都会重新校验。
   if (allowHttpsFakeIp && isIP(hostname) === 0 && isFakeIpAddress(address, family)) return
 
   if (isDisallowedAddress(address, family)) {
@@ -188,7 +186,7 @@ function isFakeIpDnsRejection(error: unknown): boolean {
   return false
 }
 
-/** @internal Exported for testing only. */
+/** @internal 仅为测试导出。 */
 export function validateFetchUrl(url: string): string | null {
   if (url.length > MAX_URL_LENGTH) return `URL exceeds ${MAX_URL_LENGTH} character limit`
   let parsed: URL
@@ -221,7 +219,7 @@ function withTimeout(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, timeout]) : timeout
 }
 
-/** @internal Exported for redirect-validation tests. */
+/** @internal 仅为重定向校验测试导出。 */
 export async function doFetch(
   url: string,
   userAgent: string,
@@ -249,8 +247,8 @@ export async function doFetch(
   }
 }
 
-/** Stream-read response body with a hard byte cap. Prevents OOM on chunked
- *  responses where content-length is absent or lying. */
+/** 以硬字节上限流式读取响应 body。防止 content-length 缺失或撒谎的分块响应
+ *  造成 OOM。 */
 async function readResponseBody(response: Response, maxBytes: number): Promise<string> {
   const reader = response.body?.getReader()
   if (!reader) return response.text()
@@ -310,9 +308,9 @@ export const webFetch = tool({
       reportProgress(toolCallId, `Fetching ${url}`)
       let response = await doFetch(url, BROWSER_UA, abortSignal)
 
-      // Cloudflare bot-challenge fallback: on 403 + cf-mitigated header, retry with
-      // an honest CLI UA. Many CF rules whitelist identified crawlers while blocking
-      // anything that fails the browser TLS fingerprint check.
+      // Cloudflare 机器人挑战回退：在 403 + cf-mitigated 头时，用诚实的 CLI
+      // UA 重试。很多 CF 规则会放行已识别的爬虫，而拦截任何通不过浏览器
+      // TLS 指纹校验的请求。
       if (response.status === 403 && response.headers.get('cf-mitigated') !== null) {
         response = await doFetch(url, FALLBACK_UA, abortSignal)
       }
@@ -321,7 +319,7 @@ export const webFetch = tool({
         return `Error: HTTP ${response.status} ${response.statusText}`
       }
 
-      // Reject upfront when content-length exceeds the cap.
+      // 当 content-length 超过上限时提前拒绝。
       const contentLength = Number(response.headers.get('content-length') ?? '0')
       if (contentLength > MAX_HTTP_BYTES) {
         const mb = Math.round(contentLength / 1024 / 1024)
@@ -329,8 +327,8 @@ export const webFetch = tool({
       }
 
       const contentType = response.headers.get('content-type') ?? ''
-      // Stream-read with hard byte cap — prevents OOM on chunked responses
-      // where content-length is absent or lies.
+      // 以硬字节上限流式读取 —— 防止 content-length 缺失或撒谎的分块响应
+      // 造成 OOM。
       const body = await readResponseBody(response, MAX_HTTP_BYTES)
 
       if (contentType.includes('application/json')) {

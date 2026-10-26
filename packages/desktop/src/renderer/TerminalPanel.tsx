@@ -102,7 +102,7 @@ export function TerminalPanel(): React.JSX.Element {
         }
         const id = (response.result as { id: string }).id
         if (disposed) {
-          // The panel closed before the shell finished starting.
+          // 面板在 shell 启动完成前就已关闭。
           void window.xcode.request({ id: crypto.randomUUID(), method: 'shell:kill', params: { id } })
           return
         }
@@ -131,7 +131,7 @@ export function TerminalPanel(): React.JSX.Element {
     })
     observer.observe(container)
 
-    // The terminal palette follows the app theme without recreating the shell.
+    // 终端调色板跟随应用主题，而无需重建 shell。
     const themeObserver = new MutationObserver(() => {
       term.options.theme = terminalTheme()
     })

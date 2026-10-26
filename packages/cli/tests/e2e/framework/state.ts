@@ -1,4 +1,4 @@
-// Persistent run state (gitignored). Allows `--resume` to skip passed scenarios.
+// 持久化运行状态（已 gitignore）。让 `--resume` 跳过已通过的场景。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import type { RunState, ScenarioResult } from './types.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-// state lives next to scenarios/ — one folder above this file.
+// state 位于 scenarios/ 旁边 — 即本文件上一级目录。
 const STATE_DIR = path.resolve(__dirname, '..', '.state')
 const STATE_FILE = path.join(STATE_DIR, 'last-run.json')
 

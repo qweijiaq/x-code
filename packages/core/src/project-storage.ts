@@ -23,21 +23,21 @@ async function appendXcodeToGitignore(cwd: string): Promise<void> {
     const prefix = content.length > 0 && !content.endsWith('\n') && !content.endsWith('\r') ? newline : ''
     await fs.appendFile(gitignorePath, `${prefix}${GITIGNORE_COMMENT}${newline}${GITIGNORE_ENTRY}${newline}`, 'utf-8')
   } catch {
-    // A missing or unwritable .gitignore is non-fatal; never create one implicitly.
+    // .gitignore 缺失或不可写是非致命的；绝不隐式创建它。
   }
 }
 
-/** Create an existing project-storage path and update .gitignore only when
- * this mkdir operation created the top-level .x-code directory. */
+/** 创建已有的项目存储路径，且仅当这次 mkdir 操作创建了顶层 .x-code 目录时
+ *  才更新 .gitignore。 */
 export async function ensureProjectStorageDir(directory: string): Promise<void> {
   try {
-    // mode 0o700: sessions / memory may contain pasted secrets — owner-only
-    // (ignored on Windows, where mkdir has no permission model).
+    // mode 0o700：会话/记忆可能包含粘贴进来的机密——仅所有者可访问
+    // （在 Windows 上被忽略，因为 mkdir 没有权限模型）。
     const createdDir = await fs.mkdir(directory, { recursive: true, mode: 0o700 })
     if (createdDir !== undefined && path.basename(createdDir) === XCODE_DIR) {
       await appendXcodeToGitignore(path.dirname(createdDir))
     }
   } catch {
-    // Project persistence is best-effort and must never prevent the CLI from running.
+    // 项目持久化是尽力而为的，绝不能阻止 CLI 运行。
   }
 }

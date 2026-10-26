@@ -41,7 +41,7 @@ function regexEscape(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** General agent tools must not bypass the durable memory store's single writer. */
+/** 通用 agent 工具不得绕过持久化记忆存储的单一写入者。 */
 export function isManagedMemoryMutation(
   toolName: string,
   input: Record<string, unknown>,
@@ -63,7 +63,7 @@ export function isManagedMemoryMutation(
   return referencedMarkers.some((marker) => new RegExp(`>{1,2}\\s*["']?${regexEscape(marker)}`).test(normalized))
 }
 
-/** Memory diagnostics may read managed files without surfacing them as chat content. */
+/** 记忆诊断可以读取受管文件，而无需把它们作为聊天内容展示出来。 */
 export function isManagedMemoryAccess(
   toolName: string,
   input: Record<string, unknown>,

@@ -1,33 +1,31 @@
-// @x-code-cli/core — Hook event bus
+// @x-code-cli/core — Hook 事件总线
 //
-// Thin orchestration layer over [[HookRegistry]]. The agent loop,
-// tool-execution, compression, and sub-agent runner call `bus.emit(event)`
-// at ten lifecycle points; the bus filters hooks by matcher (PreToolUse /
-// PostToolUse only), runs them, and returns the aggregated decisions.
+// 位于 [[HookRegistry]] 之上的薄编排层。代理循环、
+// 工具执行、压缩和子代理运行器在十个生命周期节点调用 `bus.emit(event)`；
+// 总线按 matcher 过滤 hook（仅 PreToolUse / PostToolUse），运行它们，
+// 并返回聚合后的决策。
 //
-// Serial vs parallel:
+// 串行 vs 并行：
 //
-//   Decision events (UserPromptSubmit / PreToolUse / PostToolUse) run
-//   serially. A `deny` short-circuits the remaining hooks — the agent
-//   stops at the first stop. Order is registration order, so plugin
-//   authors get deterministic behaviour.
+//   决策事件（UserPromptSubmit / PreToolUse / PostToolUse）串行运行。
+//   一个 `deny` 会让后续 hook 短路 —— 代理在第一个 stop 处停下。
+//   顺序即注册顺序，因此插件作者得到确定性的行为。
 //
-//   Fire-and-forget events (SessionStart / PreCompact / PostCompact /
-//   SubagentStart / SubagentStop / TurnComplete / SessionEnd) run in
-//   parallel — they have no decisions and no ordering concerns.
+//   即发即忘事件（SessionStart / PreCompact / PostCompact /
+//   SubagentStart / SubagentStop / TurnComplete / SessionEnd）并行运行 ——
+//   它们没有决策，也没有顺序问题。
 //
-// The bus catches per-hook errors and degrades to `allow` so one
-// broken hook never blocks the loop. The executor already does the
-// "non-zero exit / timeout → allow" handling — this layer adds the
-// matcher-regex error guard.
+// 总线捕获每个 hook 的错误并降级为 `allow`，这样一个损坏的 hook
+// 绝不会阻塞循环。执行器已经处理了“非零退出 / 超时 → allow” ——
+// 这一层增加的是 matcher 正则的错误防护。
 import { debugLog } from '../utils.js'
 import { type ExecuteHookOptions, executeHook } from './executor.js'
 import { type HookRegistry, emptyHookRegistry } from './registry.js'
 import type { HookDecision, HookEvent, RegisteredHook } from './types.js'
 
 export interface EmitOptions extends ExecuteHookOptions {
-  /** Force parallel execution. Default is serial for decision events
-   *  and parallel for fire-and-forget. Caller almost never overrides. */
+  /** 强制并行执行。默认是决策事件串行、
+   *  即发即忘事件并行。调用方几乎从不覆盖。 */
   parallel?: boolean
 }
 
@@ -39,11 +37,10 @@ export interface ToolHookSnapshot {
 }
 
 export class HookBus {
-  // Mutable so /plugin refresh can swap in a fresh registry without
-  // forcing callers to re-capture the bus reference. New incoming
-  // event emissions then see the new hooks; any in-flight executeHook
-  // calls finish against the old registry (deliberate — finishing the
-  // hook is cheaper than coordinating shutdown).
+  // 可变，以便 /plugin refresh 能换入新的注册表而无需
+  // 强迫调用方重新捕获总线引用。之后新到达的事件发射
+  // 会看到新 hook；任何进行中的 executeHook 调用仍针对旧注册表完成
+  // （这是刻意的 —— 让 hook 跑完比协调关闭更省事）。
   private registryGeneration = 0
 
   constructor(private registry: HookRegistry) {}
@@ -52,8 +49,8 @@ export class HookBus {
     return this.registry.has(event)
   }
 
-  /** Replace the internal registry. Used by /plugin refresh after a
-   *  rescan to pick up newly-installed / removed plugin hooks. */
+  /** 替换内部注册表。由 /plugin refresh 在重新扫描后使用，
+   *  以纳入新安装 / 已移除的插件 hook。 */
   replaceRegistry(registry: HookRegistry): void {
     this.registry = registry
     this.registryGeneration++
@@ -92,10 +89,9 @@ export class HookBus {
     return this.emitHooks(phase === 'pre' ? snapshot.preHooks : snapshot.postHooks, event, opts)
   }
 
-  /** Emit an event. Returns the per-hook decisions in run order — empty
-   *  when no hooks matched. Callers typically only inspect the result
-   *  for the three DecisionEvents; for the others they just await
-   *  completion for side effects. */
+  /** 发射一个事件。按运行顺序返回各 hook 的决策 —— 没有匹配的 hook 时
+   *  为空。调用方通常只对三个 DecisionEvent 检查结果；对其余事件
+   *  仅 await 完成以获取副作用。 */
   async emit(event: HookEvent, opts: EmitOptions = {}): Promise<HookDecision[]> {
     if ('authority' in event && (event.authority?.peerTainted || event.authority?.source === 'peer')) return []
     const hooks = this.registry.get(event.name)
@@ -117,10 +113,9 @@ export class HookBus {
     const parallel = opts.parallel ?? !isDecisionEvent
 
     if (parallel) {
-      // For fire-and-forget events we still await the results so the
-      // caller's await-for-completion semantics work; we just don't
-      // serialise execution. Individual hook failures don't fail the
-      // batch (executor returns `allow` on failure).
+      // 对即发即忘事件我们仍 await 结果，以保证调用方
+      // await 至完成的语义成立；只是不串行执行。
+      // 单个 hook 失败不会让整批失败（执行器失败时返回 `allow`）。
       const settled = await Promise.allSettled(applicable.map((h) => executeHook(h, event, opts)))
       const out: HookDecision[] = []
       for (const r of settled) {
@@ -134,8 +129,8 @@ export class HookBus {
       return out
     }
 
-    // Serial: first `deny` halts the rest. modify decisions stack on
-    // the next hook's input via the caller (we just collect them).
+    // 串行：第一个 `deny` 就停止其余 hook。modify 决策通过调用方
+    // 叠加到下一个 hook 的输入上（我们只负责收集它们）。
     const decisions: HookDecision[] = []
     for (const h of applicable) {
       try {
@@ -152,9 +147,8 @@ export class HookBus {
   }
 }
 
-/** A bus with no registered hooks. The CLI passes this when plugins
- *  are disabled (`--no-plugins`) so the agent loop's emit-sites don't
- *  need null-checks. */
+/** 一个未注册任何 hook 的总线。CLI 在插件被禁用（`--no-plugins`）
+ *  时传入它，这样代理循环的发射点就不需要判空。 */
 export function emptyHookBus(): HookBus {
   return new HookBus(emptyHookRegistry())
 }
@@ -169,26 +163,25 @@ function matchesTool(hook: RegisteredHook, toolName: string): boolean {
   try {
     return new RegExp(hook.entry.matcher).test(toolName)
   } catch (err) {
-    // Bad regex shouldn't silently disable the hook — degrade to
-    // "matches every tool" but log so support can spot the bad pattern.
+    // 错误的正则不应让 hook 静默失效 —— 降级为
+    // “匹配所有工具”，但记录日志以便排查错误模式。
     debugLog('hooks.matcher-invalid', `${hook.pluginId}: ${String(err)}`)
     return true
   }
 }
 
-// ── Decision aggregation helpers used by the agent loop emit-sites ──
+// ── 代理循环发射点使用的决策聚合辅助函数 ──
 
-/** Collapse a list of PreToolUse decisions into a single effective
- *  outcome. Order matters: deny short-circuits earlier in `emit`, so
- *  if we see a `deny` here it's the final word. Modifications stack —
- *  the last `modify` with `args` wins (later plugins refine earlier
- *  plugins). */
+/** 把一组 PreToolUse 决策折叠为单一有效结果。
+ *  顺序重要：deny 在 `emit` 中更早就短路，因此
+ *  这里看到 `deny` 就是最终结论。modify 会叠加 ——
+ *  最后一个带 `args` 的 `modify` 生效（后面的插件细化前面的插件）。 */
 export interface PreToolEffect {
   decision: 'allow' | 'deny'
   reason?: string
-  /** Modified args, or undefined to use the original. */
+  /** 修改后的 args，或 undefined 表示用原始值。 */
   args?: unknown
-  /** Extra context to inject (rare for PreToolUse; supported for symmetry). */
+  /** 要注入的额外上下文（PreToolUse 少见；为对称性而支持）。 */
   context?: string
 }
 
@@ -208,7 +201,7 @@ export function aggregatePreToolUse(decisions: ReadonlyArray<HookDecision>): Pre
 }
 
 export interface PostToolEffect {
-  /** Replacement output, or undefined to keep original. */
+  /** 替换后的输出，或 undefined 表示保留原始值。 */
   output?: string
   context?: string
 }
@@ -230,8 +223,8 @@ export function aggregatePostToolUse(decisions: ReadonlyArray<HookDecision>): Po
 export interface UserPromptEffect {
   decision: 'allow' | 'deny'
   reason?: string
-  /** Concatenated context from every hook, ready to prepend to the user
-   *  message. Empty string when no hook injected anything. */
+  /** 每个 hook 的上下文拼接结果，可直接前置到用户消息。
+   *  没有 hook 注入任何内容时为空字符串。 */
   context: string
 }
 
@@ -239,8 +232,8 @@ export function aggregateUserPromptSubmit(decisions: ReadonlyArray<HookDecision>
   const contexts: string[] = []
   for (const d of decisions) {
     if (d.decision === 'deny') return { decision: 'deny', reason: d.reason, context: '' }
-    // `context` is present on both 'allow' and 'modify' branches; the
-    // narrowing above eliminates 'deny', so this is safe.
+    // `context` 同时出现在 'allow' 和 'modify' 分支上；上面的
+    // 收窄已排除 'deny'，因此这里是安全的。
     if (d.decision === 'allow' && d.context) contexts.push(d.context)
     else if (d.decision === 'modify' && d.context) contexts.push(d.context)
   }

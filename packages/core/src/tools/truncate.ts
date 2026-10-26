@@ -1,44 +1,40 @@
-// @x-code-cli/core — Tool-output truncation
+// @x-code-cli/core — 工具输出截断
 //
-// Dual-budget truncation (lines OR bytes, whichever hits first). The 20/80
-// head/tail split is from gemini-cli; the per-tool direction is from opencode.
-// Shell output wants head-only (the tail repeats the prompt / exit line and
-// the head carries the action), while file reads and grep results prefer
-// head+tail so both the top-of-file context and the last section remain
-// visible.
+// 双预算截断（行数或字节数，哪个先到算哪个）。20/80 的头/尾切分来自
+// gemini-cli；每个工具的方向来自 opencode。shell 输出只想保留头部（尾部
+// 重复 prompt / 退出行，头部才承载动作），而文件读取和 grep 结果更想要
+// 头+尾，这样文件顶部的上下文和最后一段都能看到。
 //
-// Why not a separate char budget? For ASCII, chars == bytes, so a char budget
-// is redundant with the byte budget. For non-ASCII (CJK code/comments), the
-// byte budget is the one that actually matches how providers bill — they
-// count UTF-8 bytes, not UTF-16 code units. Running two size axes (chars +
-// bytes) made the slice logic three-pass and produced no behavioural win.
+// 为什么不单独设一个字符预算？对 ASCII 来说字符 == 字节，字符预算与字节
+// 预算是冗余的。对非 ASCII（CJK 代码/注释），字节预算才是真正匹配各家
+// provider 计费方式的 —— 它们按 UTF-8 字节计，而不是 UTF-16 码元。跑两条
+// 尺寸轴（字符 + 字节）把切片逻辑变成三趟，且没有任何行为上的收益。
 
-/** Default per-result line cap. Above this we keep a head/tail slice. */
+/** 每个结果默认的行数上限。超过它我们保留头/尾切片。 */
 export const MAX_TOOL_RESULT_LINES = 2000
 
-/** Default per-result byte cap (UTF-8). Covers both ASCII single-line
- *  minified dumps and non-ASCII content where a modest char count still adds
- *  up to a lot of wire bytes. */
+/** 每个结果默认的字节上限（UTF-8）。同时覆盖 ASCII 单行压缩倾倒，以及
+ *  那些字符数不多但传输字节仍很可观的非 ASCII 内容。 */
 export const MAX_TOOL_RESULT_BYTES = 50 * 1024
 
-/** Head:tail ratio when slicing. 0.2 keeps the first 20% + last 80%. */
+/** 切片时的头:尾比例。0.2 保留前 20% + 后 80%。 */
 const DEFAULT_HEAD_RATIO = 0.2
 
 export interface TruncateOptions {
-  /** Max lines before truncation kicks in. Default {@link MAX_TOOL_RESULT_LINES}. */
+  /** 截断生效前的最大行数。默认 {@link MAX_TOOL_RESULT_LINES}。 */
   maxLines?: number
-  /** Max bytes (UTF-8). Default {@link MAX_TOOL_RESULT_BYTES}. */
+  /** 最大字节数（UTF-8）。默认 {@link MAX_TOOL_RESULT_BYTES}。 */
   maxBytes?: number
   /**
-   * Where to keep content when truncating:
-   *  - `head-tail` (default): keep head 20% + tail 80%, drop middle.
-   *  - `head`: keep first N bytes only, drop tail. Good for streamed shell
-   *    output where the tail repeats noise (prompt, exit code).
-   *  - `tail`: keep last N bytes only, drop head. Good for logs where the
-   *    interesting part is the most recent.
+   * 截断时保留内容的位置：
+   *  - `head-tail`（默认）：保留头部 20% + 尾部 80%，丢掉中间。
+   *  - `head`：只保留前 N 字节，丢掉尾部。适合流式 shell 输出 —— 尾部
+   *    重复噪音（prompt、退出码）。
+   *  - `tail`：只保留后 N 字节，丢掉头部。适合日志 —— 有意思的部分是
+   *    最近的。
    */
   direction?: 'head-tail' | 'head' | 'tail'
-  /** Head ratio in head-tail mode. Default {@link DEFAULT_HEAD_RATIO}. */
+  /** head-tail 模式下的头部比例。默认 {@link DEFAULT_HEAD_RATIO}。 */
   headRatio?: number
 }
 
@@ -46,14 +42,14 @@ function byteLength(str: string): number {
   return Buffer.byteLength(str, 'utf-8')
 }
 
-/** Byte-aware slice that always cuts on a UTF-8 boundary so we don't produce
- *  a replacement char. Walks back up to 4 bytes to find a clean boundary. */
+/** 字节感知的切片，总是切在 UTF-8 边界上，这样不会产生替换字符。最多回退
+ *  4 字节去找一个干净的边界。 */
 function sliceBytes(buf: Buffer, bytes: number, direction: 'head' | 'tail'): Buffer {
   if (buf.length <= bytes) return buf
   if (direction === 'head') {
     let end = bytes
-    // Back off to the last full codepoint start byte: continuation bytes in
-    // UTF-8 have the high bits `10xxxxxx`; we want to stop before them.
+    // 回退到最后一个完整码元的起始字节：UTF-8 的续字节高位是 `10xxxxxx`；
+    // 我们想在它们之前停下。
     while (end > 0 && (buf[end] & 0xc0) === 0x80) end--
     return buf.subarray(0, end)
   }
@@ -64,8 +60,8 @@ function sliceBytes(buf: Buffer, bytes: number, direction: 'head' | 'tail'): Buf
 
 type SliceResult = {
   sliced: string
-  /** Character index in `sliced` where the head ends and the tail begins
-   *  (head-tail mode only). Used to insert the truncation marker cleanly. */
+  /** `sliced` 中头结束、尾开始的字符索引（仅 head-tail 模式）。用来干净地
+   *  插入截断标记。 */
   headEnd: number | null
 }
 
@@ -118,9 +114,8 @@ function applyByteSlice(
 }
 
 /**
- * Truncate tool output to the line / byte budget. Returns the input unchanged
- * if it fits both. Adds a one-line marker so the model can tell intentional
- * omission from corrupted output.
+ * 按行/字节预算截断工具输出。若两者都放得下则原样返回。加一行标记，让模型
+ * 能区分刻意的省略与损坏的输出。
  */
 export function truncateToolResult(result: string, options: TruncateOptions = {}): string {
   const maxLines = options.maxLines ?? MAX_TOOL_RESULT_LINES
@@ -134,10 +129,9 @@ export function truncateToolResult(result: string, options: TruncateOptions = {}
 
   if (origLines <= maxLines && origBytes <= maxBytes) return result
 
-  // Line slice first: preserves structured chunking for line-oriented output
-  // (grep matches, listDir entries). After the line cut we may still be over
-  // the byte budget — a long single line or CJK-heavy content where the line
-  // count was fine — and the byte slice handles the remainder.
+  // 先做行切片：为面向行的输出（grep 匹配、listDir 条目）保留结构化分块。
+  // 行切之后仍可能超过字节预算 —— 比如单行超长或 CJK 密集的内容，行数其实
+  // 没问题 —— 剩下的交给字节切片处理。
   const lineSlice = applyLineSlice(result, maxLines, direction, headRatio)
   const byteSlice = applyByteSlice(lineSlice.result, maxBytes, direction, headRatio)
 

@@ -1,16 +1,14 @@
-// @x-code-cli/core — The `toolSearch` built-in: deferred-tool discovery
+// @x-code-cli/core — `toolSearch` 内建工具：延迟工具的发现入口
 //
-// A conditionally-registered tool (like task / activateSkill — NOT in the
-// static toolRegistry). buildTools adds it for the top-level agent only, and
-// only when there's a deferred catalog to search. It's always DIRECTLY loaded
-// when present: it's the entry point that loads everything else, so deferring
-// it would trap the model with no way out of the deferred set.
+// 一个条件注册的工具（和 task / activateSkill 一样 —— 不在静态
+// toolRegistry 里）。buildTools 只把它加给顶层 agent，而且只在存在可搜索的
+// 延迟目录时才加。它一旦存在就始终直接加载：它是加载其它一切的入口，若再
+// 延迟它，模型就会被困在延迟集合里出不来。
 //
-// Defined WITHOUT an `execute` so processToolCalls hand-dispatches it via
-// BYPASS_LOOP_GUARD_HANDLERS (the model legitimately searches several times per
-// task; the loop guard would only get in the way). The dispatch + catalog
-// matching live in agent/tool-search/ — this file is just the leaf definition
-// (zero agent-loop deps), keeping the same layering as the other tools/ files.
+// 定义时没有 `execute`，由 processToolCalls 经 BYPASS_LOOP_GUARD_HANDLERS
+// 手动分发（模型每个任务合法地会搜索多次；loop guard 只会碍事）。分发与
+// 目录匹配在 agent/tool-search/ 里实现 —— 本文件只是叶子定义（零 agent-loop
+// 依赖），保持与其它 tools/ 文件相同的分层。
 import { jsonSchema, tool } from 'ai'
 
 export const TOOL_SEARCH_TOOL_NAME = 'toolSearch'
@@ -34,5 +32,5 @@ export const toolSearch = tool({
     required: ['query'],
     additionalProperties: false,
   }),
-  // No execute — hand-dispatched in tool-execution.ts (BYPASS_LOOP_GUARD_HANDLERS).
+  // 无 execute —— 在 tool-execution.ts 里手动分发（BYPASS_LOOP_GUARD_HANDLERS）。
 })

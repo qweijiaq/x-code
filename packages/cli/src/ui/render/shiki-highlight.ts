@@ -1,46 +1,39 @@
-// @x-code-cli/cli — Shiki-backed syntax highlighter (prototype).
+// @x-code-cli/cli — 基于 Shiki 的语法高亮器（原型）。
 //
-// Complements the in-house regex highlighter (syntax-highlight.ts) with a
-// real TextMate grammar engine, modeled on how codex-cli uses syntect:
+// 用真正的 TextMate 语法引擎补充内置正则高亮器（syntax-highlight.ts），
+// 仿照 codex-cli 使用 syntect 的方式：
 //
-//  - Lazy singleton: the engine warms up in the background at startup
-//    (`warmShikiEngine`, fire-and-forget). Until it's ready, every entry
-//    point returns null and callers fall back to the regex highlighter —
-//    the render path stays synchronous and never blocks on engine init.
-//  - Guardrails (same idea as codex's highlight.rs): inputs over
-//    MAX_LINES lines / MAX_BYTES bytes / MAX_LINE_BYTES per line are
-//    rejected, returning null so callers render plain/fallback text.
-//    The render loop draws via a setInterval on the UI thread, so a
-//    pathological multi-thousand-line paste must never be tokenized
-//    synchronously.
-//  - Languages beyond the eager set load on demand: the first render of
-//    an uncommon fence (e.g. `ruby`) kicks off an async load and falls
-//    back for that one render; subsequent renders use shiki.
+//  - 惰性单例：引擎在启动时后台预热（`warmShikiEngine`，即发即忘）。就绪前
+//    每个入口都返回 null，调用方回退到正则高亮器——渲染路径保持同步，
+//    从不在引擎初始化上阻塞。
+//  - 护栏（与 codex 的 highlight.rs 同理）：超过 MAX_LINES 行 / MAX_BYTES
+//    字节 / 每行 MAX_LINE_BYTES 的输入会被拒绝，返回 null 让调用方渲染
+//    纯文本/回退文本。渲染循环在 UI 线程上靠 setInterval 绘制，所以病理性的
+//    数千行粘贴绝不能同步分词。
+//  - 预加载集合之外的语言按需加载：罕见围栏（如 `ruby`）的首次渲染会触发
+//    异步加载并对该次渲染回退；之后的渲染使用 shiki。
 //
-// Engine choice: Oniguruma WASM via `shiki/wasm` (base64-inlined, so no
-// .wasm asset for esbuild to ship). Measured ~30-40x faster than the
-// pure-JS regex engine at our input sizes — the JS engine took ~160ms
-// for a 500-line block, which would visibly freeze the render loop.
+// 引擎选型：通过 `shiki/wasm` 使用 Oniguruma WASM（base64 内联，esbuild
+// 无需再打包 .wasm 资源）。实测在我们这种输入规模下比纯 JS 正则引擎快约
+// 30-40 倍——JS 引擎处理 500 行代码块要约 160ms，会明显卡住渲染循环。
 import { type HighlighterCore, type LanguageInput, createHighlighterCore } from 'shiki/core'
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma'
 
 import { type SyntaxThemeName, highlightLine } from './syntax-highlight.js'
 import { chalk as c } from './tokens.js'
 
-// ─── Guardrails ───
+// ─── 护栏 ───
 
-/** User decision: code blocks longer than this aren't worth reading
- *  (or coloring) — render them plain. */
+/** 用户拍板的决定：比这长的代码块不值得读（或上色）——按纯文本渲染。 */
 const MAX_LINES = 500
 const MAX_BYTES = 256 * 1024
-/** A single minified mega-line is pathological; skip it. */
+/** 单行的压缩巨型行是病态输入；跳过它。 */
 const MAX_LINE_BYTES = 4 * 1024
 
-// ─── Theme mapping ───
+// ─── 主题映射 ───
 
-/** Our 4 syntax palettes → shiki theme names. `ansi` has no shiki
- *  equivalent (terminal 16-color palette), so it maps to null and always
- *  falls back to the in-house highlighter. */
+/** 我们的 4 个语法调色板 → shiki 主题名。`ansi` 没有 shiki 等价物
+ *  （终端 16 色调色板），所以映射到 null 并始终回退到内置高亮器。 */
 const SHIKI_THEMES: Record<Exclude<SyntaxThemeName, 'ansi'>, string> = {
   'one-dark': 'one-dark-pro',
   monokai: 'monokai',
@@ -49,17 +42,16 @@ const SHIKI_THEMES: Record<Exclude<SyntaxThemeName, 'ansi'>, string> = {
 
 let currentShikiTheme: string | null = SHIKI_THEMES['one-dark']
 
-/** Mirror of setSyntaxTheme — called from the same two sites (startup
- *  config apply, `/theme` switch) so the shiki path follows the active
- *  UI theme. */
+/** setSyntaxTheme 的镜像——从同样两个位置调用（启动时应用配置、`/theme`
+ *  切换），让 shiki 路径跟随当前 UI 主题。 */
 export function setShikiTheme(name: SyntaxThemeName): void {
   currentShikiTheme = name === 'ansi' ? null : SHIKI_THEMES[name]
 }
 
-// ─── Language registry ───
+// ─── 语言注册表 ───
 
-/** Languages loaded eagerly at warm-up — the ones that dominate agent
- *  output. Anything else in LANG_LOADERS below loads on first use. */
+/** 预热时急加载的语言——占据 agent 输出主体的那些。下面 LANG_LOADERS 里的
+ *  其余语言在首次使用时加载。 */
 const EAGER_LANGS = ['typescript', 'javascript', 'json', 'bash', 'python', 'markdown', 'yaml'] as const
 
 async function loadShikiLanguage(name: string): Promise<LanguageInput> {
@@ -69,9 +61,8 @@ async function loadShikiLanguage(name: string): Promise<LanguageInput> {
   return languages[name]!
 }
 
-/** fence id / extension → shiki language id + lazy loader. Keys are
- *  lowercase. Fence aliases shiki doesn't know out of the box (or whose
- *  spelling differs, e.g. `shell`) are normalized here. */
+/** 围栏 id / 扩展名 → shiki 语言 id + 惰性加载器。键是小写。shiki 默认不认识
+ *  的围栏别名（或拼写不同的，如 `shell`）在这里做归一化。 */
 const LANG_LOADERS: Record<string, () => Promise<LanguageInput>> = {
   ts: () => loadShikiLanguage('typescript'),
   typescript: () => loadShikiLanguage('typescript'),
@@ -131,17 +122,16 @@ const LANG_LOADERS: Record<string, () => Promise<LanguageInput>> = {
   makefile: () => loadShikiLanguage('makefile'),
 }
 
-// ─── Engine singleton ───
+// ─── 引擎单例 ───
 
 let highlighter: HighlighterCore | null = null
 let warmPromise: Promise<void> | null = null
-/** Language ids (shiki names) known to be loaded. */
+/** 已知已加载的语言 id（shiki 名字）。 */
 const loadedLangs = new Set<string>()
-/** In-flight on-demand loads, keyed by shiki language id. */
+/** 正在进行的按需加载，以 shiki 语言 id 为键。 */
 const pendingLangs = new Map<string, Promise<void>>()
 
-/** Kick off engine initialization in the background. Safe to call more
- *  than once — subsequent calls are no-ops. Never rejects. */
+/** 在后台启动引擎初始化。可安全多次调用——后续调用是空操作。永不 reject。 */
 export function warmShikiEngine(): void {
   if (highlighter || warmPromise) return
   warmPromise = (async () => {
@@ -159,15 +149,14 @@ export function warmShikiEngine(): void {
     for (const id of EAGER_LANGS) loadedLangs.add(shikiLangId(id))
     highlighter = h
   })().catch(() => {
-    // Engine failure (OOM, bad chunk, …) — stay permanently on the
-    // regex fallback rather than crashing the UI.
+    // 引擎失败（OOM、坏块……）——永久停留在正则回退上，而不是让 UI 崩溃。
     warmPromise = null
   })
 }
 
-/** Normalize a fence id / extension to the shiki language id our
- *  loaders register. Must cover every alias in LANG_LOADERS —
- *  `loadedLangs` and `codeToTokens` both key off the normalized id. */
+/** 把围栏 id / 扩展名归一化到我们的加载器注册的 shiki 语言 id。必须覆盖
+ *  LANG_LOADERS 里的每个别名——`loadedLangs` 和 `codeToTokens` 都以归一化
+ *  后的 id 为键。 */
 function shikiLangId(fenceId: string): string {
   switch (fenceId) {
     case 'ts':
@@ -210,8 +199,8 @@ function shikiLangId(fenceId: string): string {
   }
 }
 
-/** If the fence id is one we can load but haven't yet, start loading it
- *  in the background. Returns true when the language is ready NOW. */
+/** 如果围栏 id 是我们可以加载但尚未加载的，就在后台开始加载。语言现在就绪
+ *  时返回 true。 */
 function ensureLang(shikiId: string, fenceId: string): boolean {
   if (loadedLangs.has(shikiId)) return true
   if (!highlighter) return false
@@ -226,7 +215,7 @@ function ensureLang(shikiId: string, fenceId: string): boolean {
         loadedLangs.add(shikiId)
       })
       .catch(() => {
-        // Unloadable grammar — treat as unsupported, stay on fallback.
+        // 无法加载的语法——视为不支持，停留在回退上。
       })
       .finally(() => pendingLangs.delete(shikiId))
     pendingLangs.set(shikiId, pending)
@@ -236,9 +225,8 @@ function ensureLang(shikiId: string, fenceId: string): boolean {
 
 // ─── Token → ANSI ───
 
-// shiki/vscode-textmate FontStyle bit flags — we honor Bold only, and
-// suppress Italic/Underline the same way codex's convert_style does
-// (they read as visual noise in terminal output).
+// shiki/vscode-textmate 的 FontStyle 位标志——我们只保留 Bold，并像 codex
+// 的 convert_style 那样抑制 Italic/Underline（它们在终端输出里是视觉噪音）。
 const FONT_BOLD = 2
 
 interface ShikiToken {
@@ -247,13 +235,12 @@ interface ShikiToken {
   fontStyle?: number
 }
 
-/** Render one line of tokens to ANSI. Two throughput/output-size
- *  optimizations over the naive per-token paint:
- *  1. Tokens whose color equals the theme's default foreground are
- *     emitted bare — TextMate grammars tag every space/identifier with
- *     the fg scope, which would otherwise triple the byte size and
- *     burden the cell differ for zero visual effect.
- *  2. Adjacent tokens sharing color+bold are merged into one SGR run. */
+/** 把一行 token 渲染成 ANSI。相比朴素的逐 token 上色，有两个吞吐/输出体积
+ *  优化：
+ *  1. 颜色等于主题默认前景色的 token 原样输出——TextMate 语法会给每个
+ *     空格/标识符都打上 fg scope，否则字节数会翻三倍，还白白加重单元格
+ *     diff 的负担，视觉上毫无收益。
+ *  2. 颜色和 bold 都相同的相邻 token 合并为一段 SGR 序列。 */
 function paintLine(tokens: ShikiToken[], themeFg: string | null): string {
   let out = ''
   let pending = ''
@@ -281,14 +268,11 @@ function flush(text: string, key: string | null): string {
   return bold ? fn.bold(text) : fn(text)
 }
 
-// ─── Public API ───
+// ─── 公共 API ───
 
-/** Highlight `code` (a whole snippet, any number of lines) with shiki,
- *  returning ANSI-colored text with the same visible content. Returns
- *  null — caller falls back to the regex highlighter or plain text —
- *  when: the engine isn't warmed up yet, the active theme is `ansi`,
- *  the fence language is unknown/not-yet-loaded, or the input exceeds
- *  the guardrails. Never throws. */
+/** 用 shiki 高亮 `code`（整个代码片段，任意行数），返回可见内容相同的 ANSI
+ *  彩色文本。以下情况返回 null——调用方回退到正则高亮器或纯文本——：引擎尚未
+ *  预热、当前主题是 `ansi`、围栏语言未知/尚未加载，或输入超出护栏。永不抛异常。 */
 export function highlightCodeShiki(code: string, fenceLang: string | undefined): string | null {
   if (!highlighter || !currentShikiTheme || !fenceLang) return null
   if (code.length === 0) return code
@@ -309,21 +293,19 @@ export function highlightCodeShiki(code: string, fenceLang: string | undefined):
     const { tokens } = highlighter.codeToTokens(code, { lang: shikiId, theme: currentShikiTheme })
     return (tokens as ShikiToken[][]).map((line) => paintLine(line, themeFg)).join('\n')
   } catch {
-    // Grammar/theme hiccup on this input — fall back, never crash render.
+    // 该输入上的语法/主题小故障——回退，绝不让渲染崩溃。
     return null
   }
 }
 
-/** Highlight a shell command preview (single- or multi-line). Tries the
- *  shiki engine first, falls back to the in-house regex highlighter when
- *  shiki isn't ready or declines the input. All shell-preview call sites
- *  (live tool row, committed scrollback row, permission dialog) must go
- *  through this one helper so their coloring can't drift apart. */
+/** 高亮 shell 命令预览（单行或多行）。先尝试 shiki 引擎，shiki 未就绪或拒绝
+ *  该输入时回退到内置正则高亮器。所有 shell 预览调用点（实时工具行、已提交
+ *  滚动区行、权限对话框）都必须经过这一个辅助函数，避免各自着色漂移。 */
 export function highlightShellCommand(command: string): string {
   return highlightCodeShiki(command, 'shell') ?? highlightLine(command, 'shell')
 }
 
-/** Test hook: true once the engine finished warming up. */
+/** 测试钩子：引擎预热完成后为 true。 */
 export function isShikiReady(): boolean {
   return highlighter !== null
 }

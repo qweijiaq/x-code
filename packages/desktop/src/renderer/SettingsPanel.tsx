@@ -127,7 +127,7 @@ interface SettingsPanelProps {
   onLanguage(language: 'zh' | 'en'): void
   workspace: string
   onOpenDocument(path: string, page?: number): void
-  /** Tab requested from outside (command palette / shortcut). */
+  /** 从外部请求的标签页（命令面板 / 快捷键）。 */
   activeTab?: string
   onTabChange?: (tab: string) => void
   onUsage?: (key: 'skill') => void

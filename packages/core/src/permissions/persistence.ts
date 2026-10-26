@@ -88,8 +88,8 @@ export function readPersistedRules(cwd: string): AllowRule[] {
 }
 
 /**
- * Persist a new rule to `.x-code/local/permissions.json`.
- * Creates the file if it doesn't exist and migrates legacy string rules to v2.
+ * 将新规则持久化到 `.x-code/local/permissions.json`。
+ * 文件不存在时创建，并将旧版字符串规则迁移到 v2。
  */
 export function persistRule(cwd: string, rule: AllowRule): void {
   const filePath = getPermissionsPath(cwd)
@@ -104,9 +104,9 @@ export function persistRule(cwd: string, rule: AllowRule): void {
 }
 
 /**
- * Remove a rule from `.x-code/local/permissions.json`.
- * Returns true when the file changed. Shell rules without `cwd` are
- * normalized to the project directory, matching `persistRule`.
+ * 从 `.x-code/local/permissions.json` 删除一条规则。
+ * 文件发生变化时返回 true。没有 `cwd` 的 shell 规则会归一化为项目目录，
+ * 与 `persistRule` 保持一致。
  */
 export function removePersistedRule(cwd: string, rule: AllowRule): boolean {
   const rules = readPersistedRules(cwd)

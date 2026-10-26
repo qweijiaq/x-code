@@ -1,7 +1,7 @@
-// Project checks: detect and run the workspace's own typecheck/lint/test/build
-// commands (Node) or cargo check/test (Rust). Checks run with CI=1 so watch
-// modes stay one-shot, stop at the first failure by default, and return a
-// bounded tail of the output.
+// 项目检查：检测并运行工作区自身的 typecheck/lint/test/build
+// 命令（Node）或 cargo check/test（Rust）。检查以 CI=1 运行，使 watch
+// 模式保持一次性，默认在首个失败处停止，并返回
+// 有界输出尾部。
 import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -49,7 +49,7 @@ async function detectPackageManager(root: string): Promise<'pnpm' | 'yarn' | 'bu
     if (entries.includes('yarn.lock')) return 'yarn'
     if (entries.includes('bun.lockb')) return 'bun'
   } catch {
-    // Fall through to npm.
+    // 回落到 npm。
   }
   return 'npm'
 }
@@ -63,8 +63,8 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-/** Detect checks in a stable order: typecheck → lint → test → build, then
- *  cargo check → cargo test. */
+/** 按稳定顺序检测检查：typecheck → lint → test → build，然后
+ *  cargo check → cargo test。 */
 export async function detectProjectChecks(rootInput: string): Promise<ProjectCheck[]> {
   const root = path.resolve(rootInput)
   const checks: ProjectCheck[] = []
@@ -151,7 +151,7 @@ async function runOne(root: string, check: ProjectCheck): Promise<CheckResult> {
       },
     )
     child.on('error', () => {
-      // execFile's callback normally handles this; keep a guard for spawn errors.
+      // execFile 的回调通常会处理；保留对 spawn 错误的兜底。
       if (!child.exitCode && !child.killed) {
         resolve({
           ...check,
@@ -167,7 +167,7 @@ async function runOne(root: string, check: ProjectCheck): Promise<CheckResult> {
 
 export interface RunChecksOptions {
   ids?: string[]
-  /** Stop at the first failure and mark the rest skipped (default true). */
+  /** 在首个失败处停止，其余标记为跳过（默认 true）。 */
   stopOnFailure?: boolean
   onStart?: (check: ProjectCheck) => void
 }

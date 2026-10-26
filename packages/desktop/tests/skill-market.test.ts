@@ -13,7 +13,7 @@ import {
   searchSkillMarket,
 } from '../src/runtime/skill-market.js'
 
-// Minimal stored (uncompressed) ZIP writer for extraction tests.
+// 用于解压测试的最小存储（未压缩）ZIP 写入器。
 const crcTable = (() => {
   const table = new Uint32Array(256)
   for (let index = 0; index < 256; index++) {

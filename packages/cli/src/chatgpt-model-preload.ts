@@ -4,7 +4,7 @@ type RefreshModels = typeof refreshOpenAIChatGPTModels
 
 let startupPreloadStarted = false
 
-/** Start the one normal catalog load for an authenticated product launch. */
+/** 为一次已认证的产品启动开始唯一一次正常的目录加载。 */
 export function startChatGPTModelPreload(
   authMode: 'none' | 'api-key' | 'chatgpt',
   clientVersion: string,

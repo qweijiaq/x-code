@@ -52,8 +52,8 @@ function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> 
   })
 }
 
-/** Renderer-side UI smoke. Kept outside App.tsx so the component file stays
- *  focused on interaction code. */
+/** 渲染进程侧的 UI smoke。放在 App.tsx 之外，让组件文件专注
+ *  于交互代码。 */
 export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
   const { setInput, setAttachments, openDocument, closeInspector, activeSessionId } = context
   const reportProgress = (name: string): void => window.xcode.reportUiSmokeProgress(name)
@@ -72,7 +72,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     setInput('')
     setAttachments([])
   } catch {
-    // Smoke isolation is best-effort.
+    // Smoke 隔离是尽力而为。
   }
   const openToolsMenu = async (): Promise<boolean> => {
     document.querySelector<HTMLButtonElement>('[data-testid="tools-menu-toggle"]')?.click()
@@ -96,8 +96,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         () => document.querySelector('[data-testid="onboarding"] .onboarding-provider') !== null,
         2_000,
       )
-      // With no key typed and no stored key, the test button must explain
-      // itself instead of silently ignoring the click.
+      // 既没输入 key 也没有存储的 key 时，测试按钮必须自己说明原因，
+      // 而不是静默忽略这次点击。
       const anyConfigured = document.querySelector('[data-testid="onboarding"] .onboarding-available') !== null
       let testResponded = anyConfigured
       let testDetail = anyConfigured ? 'skipped (provider configured)' : 'no feedback'
@@ -114,8 +114,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
           ? (document.querySelector('[data-testid="onboarding"] .onboarding-test.fail')?.textContent ?? 'error shown')
           : 'no result shown'
       }
-      // Exercise the "save and continue" path with a throwaway key, then
-      // clear it and return to the demo model for the remaining checks.
+      // 用一个一次性 key 走「保存并继续」路径，然后清除它，
+      // 回到演示模型做剩下的检查。
       const keyInput = document.querySelector<HTMLInputElement>('[data-testid="onboarding"] input[type="password"]')
       let keySaveStep = false
       let keySaveDetail = 'password input missing'
@@ -451,9 +451,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail: `turns=${turnToggles.length} tools=${turnToolCount} hidden=${toolsHidden} keeps=${toggleStays} restored=${toolsRestored}`,
     }
 
-    // Build enough history that reactive compaction has something to
-    // summarize, then make the demo model reject the next request with a
-    // context-overflow error. The turn must recover on its own.
+    // 构造足够的历史，让响应式压缩有内容可总结，然后让演示模型
+    // 用上下文溢出错误拒绝下一次请求。该轮必须自行恢复。
     const filler = '上下文填充内容，用于触发自动压缩。'.repeat(4000)
     await window.xcode.request({
       id: crypto.randomUUID(),
@@ -871,8 +870,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail: `before=${visualBefore} toggled=${visualOffValue} restored=${visualRestoreValue}`,
     }
 
-    // The drawer was closed after the tab checks above; reopen it on the
-    // Tools tab to exercise the sandbox row in the DOM.
+    // 上面的标签页检查之后抽屉已关闭；在 Tools 标签页重新打开，
+    // 以在 DOM 中检查沙箱行。
     document.querySelector<HTMLButtonElement>('[data-testid="settings-toggle"]')?.click()
     await waitFor(() => document.querySelector('.settings-drawer') !== null, 3_000)
     Array.from(document.querySelectorAll<HTMLButtonElement>('.settings-tab'))
@@ -897,8 +896,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         }
         return false
       }
-      // The button is disabled while the previous save is in flight; wait
-      // for it to become clickable before toggling again.
+      // 上一次保存进行中时按钮被禁用；等它变得可点击后再切换。
       const toggleSandbox = async (): Promise<void> => {
         for (let attempt = 0; attempt < 40; attempt++) {
           const button = document
@@ -1348,8 +1346,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       (button) => button.textContent?.includes('撤销本轮'),
     )
     undoButton?.click()
-    // Undo restores the turn's changes; pre-existing untracked paths such
-    // as the workspace `.x-code` directory remain by design.
+    // 撤销会恢复该轮次的修改；预先存在的未跟踪路径（如工作区的
+    // `.x-code` 目录）按设计保留。
     const gitUndone = await waitFor(
       () =>
         !Array.from(document.querySelectorAll('[data-testid="git-drawer"] .git-file')).some((button) =>
@@ -1556,8 +1554,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       params: {},
     })
     if (!diagnostics.ok) {
-      // A nested runtime smoke can lose its first process; retry once so
-      // the UI smoke does not fail on that transient.
+      // 嵌套的运行时 smoke 可能丢失第一个进程；重试一次，
+      // 以免 UI smoke 因这种瞬时问题失败。
       await new Promise((resolve) => setTimeout(resolve, 500))
       diagnostics = await window.xcode.request({
         id: crypto.randomUUID(),
@@ -1772,7 +1770,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         : background.error.message,
     }
 
-    // A fresh turn guarantees the active session has a rewind checkpoint.
+    // 一个全新的轮次能保证活动会话有回退检查点。
     await window.xcode.request({
       id: crypto.randomUUID(),
       method: 'agent:submit',
@@ -3073,7 +3071,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
 
   const ok = Object.values(checks).every((check) => check.ok)
   reportProgress('finishing')
-  // `checks` is a Proxy used for progress tracking; structured clone cannot
-  // serialize it, so send a plain snapshot.
+  // `checks` 是用于进度追踪的 Proxy；结构化克隆无法序列化它，
+  // 因此发送一个普通快照。
   window.xcode.reportUiSmoke({ ok, checks: { ...checks } })
 }

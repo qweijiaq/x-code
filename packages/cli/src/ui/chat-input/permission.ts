@@ -1,7 +1,7 @@
-// Permission-dialog cell builders + `formatElapsed`.
+// 权限对话框的单元格构建器 + `formatElapsed`。
 //
-// Lives outside ChatInput.tsx because the permission rendering is a
-// self-contained data → Cell[] mapping that has no React state.
+// 放在 ChatInput.tsx 之外，因为权限渲染是一块自包含的 data → Cell[] 映射，没有任何
+// React 状态。
 import { getPermissionLevel } from '@x-code-cli/core'
 
 import { highlightShellCommand } from '../render/shiki-highlight.js'
@@ -10,9 +10,8 @@ import { type Cell, ansiTextToCells, textToCells } from './cells.js'
 import { S_DIM, S_ERROR_BOLD, S_NONE, S_PRIMARY, S_SUCCESS } from './palette.js'
 import { truncatePathFromStart } from './text-helpers.js'
 
-// Codex-style question titles ("Would you like to run the following
-// command?") — the dialog reads as a request the user answers, not a
-// status line.
+// Codex 风格的问句标题（「Would you like to run the following command?」）——
+// 对话框读起来像用户要回答的请求，而不是一条状态行。
 export function permissionTitle(toolName: string, mcp?: { serverName: string; rawName: string }): string {
   if (mcp) return `Would you like to use MCP tool ${mcp.serverName}/${mcp.rawName}?`
   switch (toolName) {
@@ -29,9 +28,8 @@ export function permissionTitle(toolName: string, mcp?: { serverName: string; ra
   }
 }
 
-// Resolved per call (not a module-level table) because palette styles are
-// `let` bindings re-derived on `/theme` switches — a captured table would
-// freeze the strings from module load.
+// 每次调用都重新解析（而不是模块级表），因为调色板风格是 `let` 绑定，会在
+// `/theme` 切换时重新派生——捕获的表会把模块加载时的字符串冻结下来。
 function permissionLevelStyle(level: string): { label: string; style: string } {
   switch (level) {
     case 'always-allow':
@@ -43,12 +41,9 @@ function permissionLevelStyle(level: string): { label: string; style: string } {
   }
 }
 
-/** One-line `key: value, key: value` summary of an MCP tool's input.
- *  Values are JSON-encoded so strings render with their quotes and
- *  nested objects stay readable; long ones get trimmed before the join
- *  so a single oversized field can't swallow every other key. The outer
- *  truncate-to-terminal-width in `permissionContentCells` then caps the
- *  whole row. */
+/** MCP 工具输入的单行 `key: value, key: value` 摘要。值经 JSON 编码，这样字符串
+ *  会连同引号一起渲染，嵌套对象也保持可读；长值在拼接前先裁剪，以免单个超大字段
+ *  吞掉所有其他键。`permissionContentCells` 里外层「截到终端宽度」随后封顶整行。 */
 function mcpInputPreview(input: Record<string, unknown>): string {
   const keys = Object.keys(input)
   if (keys.length === 0) return '(no args)'
@@ -73,25 +68,19 @@ export function permissionContentCells(
   termWidth: number,
   mcp?: { serverName: string; rawName: string },
 ): Cell[] | null {
-  // Frame geometry assumes exactly ONE row per permission content line.
-  // When a string is longer than termWidth the terminal will auto-wrap it
-  // onto the next physical row, which breaks every downstream absolute
-  // cursor position (the Yes/No rows, the input separator, the prompt
-  // itself) — the dialog appears "half missing" with only the title
-  // visible. Truncate here so the cell matrix and the on-screen rows
-  // stay 1:1. Mirrors the tool-bubble preview truncation in the live
-  // tool-list rendering below.
+  // 帧几何假设每条权限内容行恰好占一行。当字符串长于 termWidth 时，终端会自动把
+  // 它折到下一物理行，这会破坏所有下游的绝对光标位置（Yes/No 行、输入分隔线、提示
+  // 框本身）——对话框显得「缺了一半」，只看得见标题。在这里截断，让单元格矩阵与屏
+  // 幕行保持 1:1。与下方实时工具列表渲染里的工具气泡预览截断一致。
   const truncateToWidth = (text: string, reservedCols: number): string => {
     const maxLen = Math.max(10, termWidth - reservedCols)
     return text.length > maxLen ? text.slice(0, maxLen - 1) + GLYPH_ELLIPSIS : text
   }
   if (mcp) {
-    // One-line `key: value, key: value` preview of the input. MCP tools
-    // can take arbitrary schemas, so we fall back to a generic serialiser
-    // rather than trying to guess "the important field". Empty input
-    // still renders the row (with `(no args)`) so the dialog height
-    // matches shell/edit and the always-allow row sits where the user
-    // expects it.
+    // 输入的单行 `key: value, key: value` 预览。MCP 工具可以有任意 schema，所以我
+    // 们回退到通用序列化器，而不是试图猜「哪个字段重要」。空输入仍渲染该行（带
+    // `(no args)`），这样对话框高度与 shell/edit 一致，always-allow 行也停在用户预
+    // 期的位置。
     const preview = mcpInputPreview(input)
     const cells: Cell[] = []
     cells.push({ char: ' ', style: S_NONE, width: 1 })
@@ -106,13 +95,12 @@ export function permissionContentCells(
     cells.push({ char: ' ', style: S_NONE, width: 1 })
     cells.push({ char: ' ', style: S_NONE, width: 1 })
     const rawCommand = String(input.command ?? '')
-    // Leading 2 spaces + `$ ` + trailing space + `[label]` + 2-col safety
-    // margin. The `$ ` is prepended AFTER truncation, so it must be in the
-    // budget — otherwise a max-length command overflows boxedRow's content
-    // width and truncateCellRow clips the tail of the `[label]` tag.
+    // 前导 2 空格 + `$ ` + 尾随空格 + `[label]` + 2 列安全余量。`$ ` 是在截断之后
+    // 才前置的，所以必须算进预算——否则最大长度的命令会溢出 boxedRow 的内容宽度，
+    // truncateCellRow 会裁掉 `[label]` 标签的尾部。
     const decoration = 2 + 2 + 1 + (info.label.length + 2) + 2 + 2
     const command = truncateToWidth(rawCommand, decoration)
-    // Same codex-style shell highlighting as the live/committed tool rows.
+    // 与实时/已提交工具行相同的 codex 风格 shell 高亮。
     cells.push(...textToCells('$ ', S_PRIMARY))
     cells.push(...ansiTextToCells(highlightShellCommand(command)))
     cells.push({ char: ' ', style: S_NONE, width: 1 })
@@ -139,8 +127,8 @@ export function permissionContentCells(
     return cells
   }
   if (toolName === 'enterPlanMode') {
-    // Plan-mode entry has no per-call input — describe the consequence
-    // so the user knows what Yes/No actually means.
+    // 进入 plan 模式没有每次调用的输入——描述后果，让用户知道 Yes/No 实际意味着
+    // 什么。
     const cells: Cell[] = []
     cells.push({ char: ' ', style: S_NONE, width: 1 })
     cells.push({ char: ' ', style: S_NONE, width: 1 })

@@ -1,21 +1,17 @@
-// @x-code-cli/cli — Render a writeFile / edit diff payload to ANSI text.
+// @x-code-cli/cli — 把 writeFile / edit 的 diff 负载渲染成 ANSI 文本。
 //
-// Output is a multi-line string ready for the scrollback writer. Layout
-// mirrors Claude Code's StructuredDiff: per-line gutter with right-
-// aligned line number + sigil, then syntax-highlighted code. The red/green
-// background is carried to the right edge by a BCE erase (`\x1b[K` inside
-// the bg span) rather than space padding, so scrollback reflow on terminal
-// resize has no printable padding cells to split into phantom rows.
+// 输出是准备好交给滚动区写入器的多行字符串。布局仿照 Claude Code 的
+// StructuredDiff：每行的槽位带右对齐行号 + 记号，然后是语法高亮的代码。红/绿背景
+// 用 BCE 擦除（bg span 内的 `\x1b[K`）而不是空格填充铺到右边缘，这样终端调整大小
+// 时的滚动区重排就没有可打印的填充单元格可拆成幽灵行。
 //
-// Each rendered line is prefixed with RESULT_INDENT so the diff sits
-// directly under the tool-call bullet in scrollback (`   ⎿  Added X
-// lines, removed Y` header, then 6-space-indented diff body).
+// 每行渲染结果都加 RESULT_INDENT 前缀，让 diff 在滚动区里正好坐在工具调用圆点下方
+// （`   ⎿  Added X lines, removed Y` 头，然后是 6 空格缩进的 diff 主体）。
 //
-// Two render paths share the same gutter / column / highlight pipeline:
-//   - update path (`renderHunks`): hunks with green/red bg + sigil
-//   - create path (`renderCreatePreview`): first N lines of new content,
-//     no diff bg (the whole file is "new" — bg coloring every row would
-//     be visual noise), but same syntax highlighting and gutter style.
+// 两条渲染路径共享同样的槽位 / 列 / 高亮管线：
+//   - update 路径（`renderHunks`）：带绿/红背景 + 记号的 hunk
+//   - create 路径（`renderCreatePreview`）：新内容的前 N 行，无 diff 背景（整个文件
+//     都是「新」的——每行都上背景色会是视觉噪音），但同样的语法高亮和槽位风格。
 import { stripTerminalControls } from '@x-code-cli/core'
 import type { EditDiffHunk, EditDiffPayload } from '@x-code-cli/core'
 
@@ -25,14 +21,11 @@ import { sliceByWidth, visualWidth } from './text-width.js'
 import { type ThemeName, getThemeColors } from './theme.js'
 import { chalk as c } from './tokens.js'
 
-/** Apply a theme's diff bg color to text. Three value shapes:
- *   - `'#rrggbb'` — true-color hex, via chalk.bgHex
- *   - `'ansi:default'` — leave bg untouched (terminal default). The
- *     ANSI-only themes use this and rely on a colored DECORATION fg
- *     to mark `-` lines; bg coloring would over-paint the user's
- *     terminal background.
- *   - `'ansi:green'` / `'ansi:red'` — named ANSI bg (currently unused
- *     but kept for completeness). */
+/** 把主题的 diff 背景色应用到文本。三种取值形态：
+ *   - `'#rrggbb'` — 真彩十六进制，经 chalk.bgHex
+ *   - `'ansi:default'` — 背景保持不动（终端默认）。仅 ANSI 的主题用这个，并依赖彩
+ *     色 DECORATION 前景来标记 `-` 行；上背景色会过度覆盖用户的终端背景。
+ *   - `'ansi:green'` / `'ansi:red'` — 命名 ANSI 背景（当前未用，但为完整起见保留）。 */
 function applyBg(text: string, color: string): string {
   if (color === 'ansi:default') return text
   if (color.startsWith('ansi:')) {
@@ -46,10 +39,9 @@ function applyBg(text: string, color: string): string {
   return c.bgHex(color)(text)
 }
 
-/** Apply a theme's gutter (line number + sigil) fg color. Mirrors
- *  applyBg — same value shapes, fg-side. CC paints the gutter in a
- *  saturated decoration color so the line-number column pops off the
- *  near-black bg; without it, "1 +" disappears into the diff bg. */
+/** 应用主题的槽位（行号 + 记号）前景色。与 applyBg 对应——同样的取值形态，前景侧。
+ *  CC 用饱和的装饰色涂槽位，让行号列从近黑背景上跳出来；没有它，「1 +」会消失在
+ *  diff 背景里。 */
 function applyGutterFg(text: string, color: string): string {
   if (color === 'ansi:green') return c.green(text)
   if (color === 'ansi:red') return c.red(text)
@@ -59,19 +51,17 @@ function applyGutterFg(text: string, color: string): string {
   return text
 }
 
-/** Cap an individual diff body's height. Multi-hunk patches with hundreds
- *  of lines aren't useful in scrollback (the user would scroll past most
- *  of it anyway); after the cap we collapse to a `… +N more lines` row.
- *  Matches Claude Code's behavior of clipping long structured diffs. */
+/** 封顶单个 diff 主体的高度。数百行的多 hunk 补丁在滚动区里没用（用户反正会滚过大
+ *  部分）；封顶后我们折叠成 `… +N more lines` 行。与 Claude Code 裁剪长结构化 diff
+ *  的行为一致。 */
 const MAX_DIFF_LINES = 60
 
-/** Cap on the create-mode content preview. Claude Code's
- *  FileWriteToolCreatedMessage uses MAX_LINES_TO_RENDER = 10; we follow
- *  the same number so a freshly-created package.json / config file shows
- *  enough to be useful but doesn't dominate the scrollback. */
+/** create 模式内容预览的封顶。Claude Code 的 FileWriteToolCreatedMessage 用
+ *  MAX_LINES_TO_RENDER = 10；我们沿用同样数字，让新建的 package.json / 配置文件显示
+ *  到足够有用，又不至于霸占滚动区。 */
 const MAX_CREATE_PREVIEW_LINES = 10
 
-/** Format the count summary line ("Added 3 lines, removed 1 line"). */
+/** 格式化计数摘要行（"Added 3 lines, removed 1 line"）。 */
 function formatCounts(p: EditDiffPayload): string {
   if (p.isCreate) {
     const n = p.additions
@@ -89,8 +79,7 @@ function formatCounts(p: EditDiffPayload): string {
   return parts.join(', ')
 }
 
-/** Pick the largest visible line number across all hunks so every gutter
- *  is the same width — keeps the sigil column aligned across hunks. */
+/** 挑出所有 hunk 里最大的可见行号，让每个槽位等宽——保持记号列跨 hunk 对齐。 */
 function maxLineNumber(hunks: EditDiffHunk[]): number {
   let max = 1
   for (const h of hunks) {
@@ -102,11 +91,9 @@ function maxLineNumber(hunks: EditDiffHunk[]): number {
   return max
 }
 
-/** Walk a hunk's `lines` array, assigning each line its file-relative
- *  number. Follows the standard unified-diff convention: `-` rows are
- *  numbered against the OLD file, `+` and context rows against the NEW
- *  file. Each counter advances independently so consecutive remove rows
- *  get distinct old-file numbers. */
+/** 遍历 hunk 的 `lines` 数组，给每行分配它相对文件的行号。遵循标准统一 diff 约定：
+ *  `-` 行按 OLD 文件编号，`+` 行和上下文行按 NEW 文件编号。每个计数器独立推进，这样
+ *  连续的 remove 行得到不同的旧文件行号。 */
 function numberLines(h: EditDiffHunk): { sigil: ' ' | '+' | '-'; code: string; lineNum: number }[] {
   const out: { sigil: ' ' | '+' | '-'; code: string; lineNum: number }[] = []
   let oldN = h.oldStart
@@ -129,16 +116,13 @@ function numberLines(h: EditDiffHunk): { sigil: ' ' | '+' | '-'; code: string; l
   return out
 }
 
-/** Truncate a single code line so the rendered row fits the column. The
- *  width budget is the terminal width minus the indent and the gutter. We
- *  use a UTF ellipsis to mark the cut, matching the tool-input preview.
+/** 截断单行代码，让渲染行放进列内。宽度预算是终端宽度减去缩进和槽位。我们用 UTF
+ *  省略号标记截断处，与工具输入预览一致。
  *
- *  Both the fits-check and the slice operate on VISUAL columns, not JS
- *  string units. CJK / fullwidth chars take 2 cells but `length === 1`,
- *  so a length-based check would let a 50-char Chinese line slip past a
- *  100-cell budget while actually overshooting by 50 cells — the terminal
- *  would then wrap mid-row and produce a spurious blank below every diff
- *  line. */
+ *  适配检查和切片都按视觉列操作，而不是 JS 字符串单位。CJK / 全角字符占 2 个单元
+ *  格但 `length === 1`，所以基于长度的检查会让 50 字符的中文行溜过 100 单元格的预算，
+ *  实际却超了 50 个单元格——终端随后会在行中间折行，并在每条 diff 行下面产生一行多余
+ *  的空白。 */
 function fitCode(code: string, width: number): string {
   if (visualWidth(code) <= width) return code
   if (width < 1) return ''
@@ -146,45 +130,37 @@ function fitCode(code: string, width: number): string {
 }
 
 /**
- * Render the diff body. Returns a string with N lines (no leading or
- * trailing newline). Each line is already indented by RESULT_INDENT.
+ * 渲染 diff 主体。返回有 N 行的字符串（无前导或尾随换行）。每行已经用 RESULT_INDENT
+ * 缩进。
  *
- * `terminalWidth` is the full terminal width — the function reserves
- * RESULT_INDENT.length cells for the indent and computes the gutter +
- * code column from what remains. Falls back to 120 if the terminal width
- * is unknown / nonsensical.
+ * `terminalWidth` 是完整终端宽度——函数为缩进预留 RESULT_INDENT.length 个单元格，并
+ * 从剩余部分计算槽位 + 代码列。终端宽度未知 / 不合理时回退到 120。
  */
 function renderHunks(
   payload: EditDiffPayload,
   terminalWidth: number,
   syntaxTheme?: SyntaxThemeName,
-  /** UI theme to read diff bg colors from. `undefined` → use the
-   *  module-level active theme (real renders). The `/theme` picker
-   *  passes each candidate theme's name when building previews so the
-   *  user sees each theme's actual diff colors side by side. */
+  /** 用来读取 diff 背景色的 UI 主题。`undefined` → 使用模块级活动主题（真实渲染）。
+   *  `/theme` 选择器在构建预览时传入每个候选主题的名字，让用户并排看到每个主题实际
+   *  的 diff 颜色。 */
   uiTheme?: ThemeName,
 ): string[] {
   const themeColors = getThemeColors(uiTheme)
-  // ANSI mode is detected by the `'ansi:default'` bg sentinel — those
-  // themes can't paint hex bg (16-color compat), so they communicate
-  // remove rows via dim styling instead. Mirrors CC color-diff/index.ts:924.
+  // ANSI 模式由 `'ansi:default'` 背景哨兵检测——这些主题不能涂十六进制背景（16 色兼
+  // 容），所以它们改用 dim 风格来表示 remove 行。对应 CC 的 color-diff/index.ts:924。
   const isAnsiMode = themeColors.diffAdded === 'ansi:default'
-  // CC paints unhighlighted text inside diff rows in `Theme.foreground`
-  // (#f8f8f2 dark / #333333 light). Without it our unmatched chars
-  // fall back to terminal default `#cccccc` and read as visibly dimmer
-  // than CC. ANSI themes pass null (honor terminal palette).
+  // CC 用 `Theme.foreground`（暗 #f8f8f2 / 亮 #333333）涂 diff 行里未高亮的文本。没有
+  // 它，我们未匹配的字符会回退到终端默认的 `#cccccc`，读起来比 CC 明显更暗。ANSI 主
+  // 题传 null（尊重终端调色板）。
   const defaultFg = themeColors.defaultFg
   const cols = Math.max(40, terminalWidth)
   const lineNumWidth = Math.max(1, String(maxLineNumber(payload.hunks)).length)
-  // Gutter format: " <num> <sigil> " — 1 leading space + num + 1 space +
-  // sigil + 1 trailing space.
+  // 槽位格式：" <num> <sigil> " — 1 前导空格 + num + 1 空格 + sigil + 1 尾随空格。
   const gutterWidth = lineNumWidth + 4
-  // Reserve 1 trailing cell of safety: if the row's printable width hits
-  // exactly `cols`, the terminal enters delayed-wrap state at the last
-  // column; Windows conhost / Windows Terminal in some configurations
-  // counts that as a wrap and inserts a phantom blank row below every
-  // `-`/`+` line. Keeping the budget at cols-1 keeps the cursor strictly
-  // inside the row.
+  // 预留 1 个尾随安全单元格：如果行的可打印宽度恰好命中 `cols`，终端会在最后一列进
+  // 入延迟折行状态；某些配置下的 Windows conhost / Windows Terminal 会把它算作一次折
+  // 行，并在每条 `-`/`+` 行下面插入一行幽灵空白行。把预算保持在 cols-1，让光标严格停
+  // 在行内。
   const codeWidth = Math.max(1, cols - RESULT_INDENT.length - gutterWidth - 1)
   const lang = detectLanguage(payload.filePath)
 
@@ -194,7 +170,7 @@ function renderHunks(
 
   for (let hi = 0; hi < payload.hunks.length; hi++) {
     if (hi > 0) {
-      // Hunk separator — Claude Code uses a dimmed `...` row.
+      // Hunk 分隔符——Claude Code 用一行调暗的 `...`。
       out.push(`${RESULT_INDENT}${c.gray('...')}`)
     }
     const hunk = payload.hunks[hi]!
@@ -208,60 +184,46 @@ function renderHunks(
 
       const numStr = String(lineNum).padStart(lineNumWidth)
       const fitted = fitCode(code, codeWidth)
-      // The bg band reaches the right edge via `\x1b[K` emitted INSIDE the
-      // bg span: on BCE-capable terminals (xterm.js, WT, conhost) the erase
-      // fills with the row's bg color. We deliberately do NOT pad with
-      // bg-colored spaces — a padded row is printable up to the OLD terminal
-      // width, so when the terminal narrows later its scrollback reflow
-      // splits every padded row into content + a stray bg-colored blank row
-      // (one phantom line per diff line). On a non-BCE terminal the band
-      // simply ends after the code text.
+      // 背景带通过 bg span 内部发出的 `\x1b[K` 到达右边缘：在支持 BCE 的终端
+      // （xterm.js、WT、conhost）上，擦除会填满该行的背景色。我们刻意不用背景色空格
+      // 填充——填充行可打印到旧的终端宽度，所以终端后来变窄时，其滚动区重排会把每条
+      // 填充行拆成内容 + 一行多余的背景色空白行（每条 diff 行一个幽灵行）。在非 BCE
+      // 终端上，背景带就在代码文本后结束。
       const gutter = ` ${numStr} ${sigil} `
-      // Syntax highlighting is applied to CONTEXT rows only. On +/- rows
-      // we render plain text on top of the diff bg — multi-color
-      // highlighting on top of a saturated red/green band fights the bg
-      // visually and reads as noise. Claude Code's fallback diff renders
-      // diff bodies as plain text on bg for the same reason; the bg
-      // alone communicates add/remove and the surrounding context lines
-      // give the eye full-color anchors.
+      // 语法高亮只应用于 CONTEXT 行。在 +/- 行上，我们在 diff 背景之上渲染纯文本——
+      // 饱和红/绿带之上再叠多色高亮在视觉上互相打架，读起来像噪音。Claude Code 的回
+      // 退 diff 也出于同样原因把 diff 主体渲染成背景上的纯文本；背景单独传达增/删，
+      // 周围的上下文行给眼睛提供全色锚点。
       let styled: string
       if (sigil === '+') {
-        // `+` row: bg + decorated gutter + syntax-highlighted code.
-        // CC always highlights `+` lines (they ARE the new code).
-        // We pre-paint the gutter in the theme's add-decoration color
-        // BEFORE wrapping the row in bg, so the colored fg sticks.
-        // defaultFg is threaded through so unmatched chars (`;`, `(`,
-        // `)`, `{`, `}`) and undecorated identifiers (e.g. `log` in
-        // `console.log`) get CC's bright cream/dark-gray instead of
-        // the terminal default white.
+        // `+` 行：背景 + 装饰槽位 + 语法高亮代码。
+        // CC 始终高亮 `+` 行（它们就是新代码）。
+        // 我们在把整行包进背景之前，先用主题的 add 装饰色预涂槽位，让彩色前景站得住。
+        // defaultFg 被贯穿传入，这样未匹配字符（`;`、`(`、`)`、`{`、`}`）和未装饰的
+        // 标识符（例如 `console.log` 里的 `log`）得到 CC 的亮奶油色/暗灰，而不是终端
+        // 默认白。
         const code = highlightLine(fitted, lang, syntaxTheme, defaultFg)
         const coloredGutter = applyGutterFg(gutter, themeColors.diffAddedDecoration)
         styled = applyBg(coloredGutter + code + '\x1b[K', themeColors.diffAdded)
       } else if (sigil === '-') {
-        // `-` row: bg + decorated gutter + PLAIN code (no syntax
-        // highlighting, ever — including in picker previews). CC's
-        // color-diff/index.ts:916-918 always passes the `-` line
-        // through `defaultStyle(theme)` instead of highlightLine, so
-        // the deleted text is white-on-red across both real diffs and
-        // theme previews. Multi-color fg on top of the saturated red
-        // bg also fights itself visually; plain text reads as "this
-        // is going away" more cleanly. We DO apply defaultFg though —
-        // it's how CC's `defaultStyle` makes the deleted text visibly
-        // brighter than terminal default.
+        // `-` 行：背景 + 装饰槽位 + 纯代码（永不做语法高亮——包括在选择器预览里）。
+        // CC 的 color-diff/index.ts:916-918 总是把 `-` 行经过 `defaultStyle(theme)` 而
+        // 不是 highlightLine，所以删除文本在真实 diff 和主题预览里都是白字红底。饱和红
+        // 背景上再叠多色前景同样在视觉上自相打架；纯文本读起来更像「这东西要被删掉」。
+        // 不过我们确实应用 defaultFg——CC 的 `defaultStyle` 正是靠它让删除文本比终端
+        // 默认更亮。
         const plainCode = defaultFg ? applyColor(fitted, defaultFg) : fitted
         const coloredGutter = applyGutterFg(gutter, themeColors.diffRemovedDecoration)
         let row = applyBg(coloredGutter + plainCode + '\x1b[K', themeColors.diffRemoved)
-        // ANSI mode has no bg to mark the remove row, so dim the whole
-        // line instead — matches CC's `dimContent` (color-diff/
-        // index.ts:924). Without this, ANSI-mode `-` rows are visually
-        // indistinguishable from `+` rows.
+        // ANSI 模式没有背景来标记 remove 行，所以改为调暗整行——对应 CC 的
+        // `dimContent`（color-diff/index.ts:924）。没有这个，ANSI 模式下的 `-` 行在视觉
+        // 上与 `+` 行无法区分。
         if (isAnsiMode) row = c.dim(row)
         styled = row
       } else {
-        // Context row: full syntax highlighting, no bg, gutter in
-        // default fg (matches CC's addLineNumber path for marker===' ').
-        // defaultFg here keeps brightness consistent across context and
-        // +/- rows — CC paints all three from the same Theme.foreground.
+        // 上下文行：完整语法高亮、无背景、槽位用默认前景（对应 CC 对 marker===' '
+        // 的 addLineNumber 路径）。这里的 defaultFg 让上下文行与 +/- 行的亮度保持一致
+        // ——CC 三者都从同一个 Theme.foreground 上色。
         const highlighted = highlightLine(fitted, lang, syntaxTheme, defaultFg)
         styled = gutter + highlighted
       }
@@ -277,12 +239,10 @@ function renderHunks(
 }
 
 /**
- * Render the first ~10 lines of newly-created file content as a preview
- * block. Same gutter style + syntax highlight as the update path — what
- * distinguishes create from update visually is the absence of the diff
- * bg: bg-coloring every row green for a brand-new file would be visual
- * noise without communicating any information (there's nothing to
- * compare against). Truncated tail collapses to `… +N lines`.
+ * 把新建文件内容的前约 10 行渲染成预览块。与 update 路径同样的槽位风格 + 语法高亮
+ * ——create 与 update 在视觉上的区别在于没有 diff 背景：给全新文件的每一行都上绿色背
+ * 景会是视觉噪音，却不传达任何信息（没有东西可与之对比）。截断的尾部折叠成
+ * `… +N lines`。
  */
 function renderCreatePreview(
   filePath: string,
@@ -292,8 +252,8 @@ function renderCreatePreview(
 ): string[] {
   const cols = Math.max(40, terminalWidth)
   const allLines = stripTerminalControls(content).split('\n')
-  // Drop a single trailing empty line — most file content ends with `\n`,
-  // splitting yields an empty string we don't want to render.
+  // 丢掉单个尾随空行——多数文件内容以 `\n` 结尾，split 会产生一个我们不想渲染的空
+  // 字符串。
   if (allLines.length > 0 && allLines[allLines.length - 1] === '') allLines.pop()
   if (allLines.length === 0) return []
 
@@ -318,33 +278,25 @@ function renderCreatePreview(
 }
 
 /**
- * Render the full diff block (counts header + hunk body or content
- * preview) as the body of a tool-call result row. The first line is meant
- * to follow the `   ⎿  ` prefix that stdout-writer emits, so we DON'T
- * prepend the prefix here — the caller stitches everything together.
+ * 把完整 diff 块（计数头 + hunk 主体或内容预览）渲染为工具调用结果行的主体。第一行
+ * 应当跟在 stdout-writer 发出的 `   ⎿  ` 前缀之后，所以我们不在这里前置该前缀——由
+ * 调用方拼接一切。
  *
- * Returns:
- *   - line[0]: counts summary (e.g. "Added 3 lines, removed 1 line" /
- *              "Created 20 lines")
- *   - line[1..]: diff hunks (update path) or content preview (create path)
+ * 返回：
+ *   - line[0]：计数摘要（如 "Added 3 lines, removed 1 line" / "Created 20 lines"）
+ *   - line[1..]：diff hunk（update 路径）或内容预览（create 路径）
  *
- * Update payloads with no hunks (timed-out diff) collapse to the header
- * only — there's no patch to render.
+ * 没有 hunk 的 update 负载（diff 超时）折叠成仅头部——没有补丁可渲染。
  */
-/** Render a fixed JS snippet diff under the given UI theme — used by
- *  the `/theme` and first-run pickers to show a live color preview for
- *  the focused option. The hunk is hand-built (4 lines, 1 swap) rather
- *  than going through computeEditDiff so the picker doesn't drag in the
- *  diff library on the cold path.
+/** 在给定 UI 主题下渲染一个固定的 JS 片段 diff——供 `/theme` 和首次运行选择器显示
+ *  聚焦选项的实时颜色预览。hunk 是手工构建的（4 行、1 处交换），而不是走
+ *  computeEditDiff，这样选择器不会在冷路径上拖进 diff 库。
  *
- *  The picker passes the candidate theme's name; we look up the
- *  theme's diff colors AND its associated syntax palette so the
- *  preview shows BOTH parts of the theme (bg + code colors) varying
- *  together — that's the whole point of the picker.
+ *  选择器传入候选主题的名字；我们查主题的 diff 颜色以及它关联的语法调色板，让预览
+ *  同时展示主题的两个部分（背景 + 代码颜色）一起变化——这正是选择器的意义所在。
  *
- *  Drops the leading RESULT_INDENT from each row so the preview sits
- *  flush to the dialog's left margin (it's not nested under a tool
- *  bullet — it's a standalone block). */
+ *  从每行去掉前导 RESULT_INDENT，让预览贴到对话框左边缘（它不是嵌在工具圆点下面——
+ *  它是一个独立块）。 */
 export function buildThemePreview(themeName: ThemeName, terminalWidth: number): string[] {
   const theme = getThemeColors(themeName)
   const payload: EditDiffPayload = {

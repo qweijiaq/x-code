@@ -1,4 +1,4 @@
-// @x-code-cli/core — Tool execution & dispatch
+// @x-code-cli/core — 工具执行与分发
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -63,7 +63,7 @@ import { appendTrackedMessage } from './tracked-messages.js'
 export { isManagedMemoryAccess, isManagedMemoryMutation }
 export { deliverToolImages }
 
-/** Count occurrences of a substring without creating intermediate arrays. */
+/** 统计子串出现次数，不创建中间数组。 */
 function countOccurrences(content: string, search: string): number {
   let count = 0
   let pos = 0
@@ -74,13 +74,11 @@ function countOccurrences(content: string, search: string): number {
   return count
 }
 
-/** Execute a write tool (writeFile / edit).
+/** 执行一个写入工具（writeFile / edit）。
  *
- *  In addition to returning the model-facing result string, fires
- *  `callbacks.onFileEdit` (when defined) with the structured patch so the
- *  UI can render a colored diff under the tool bullet. The diff payload is
- *  a UI-only side channel — it never lands in `state.messages` and the
- *  model only sees the short result string. */
+ *  除了返回面向模型的结果字符串，还会（在已定义时）用结构化补丁触发
+ *  `callbacks.onFileEdit`，让 UI 能在工具条目下方渲染彩色 diff。diff 负载
+ *  是仅 UI 的旁路——它绝不进入 `state.messages`，模型只看到简短的结果字符串。 */
 async function executeWriteTool(
   toolName: string,
   input: Record<string, unknown>,
@@ -94,9 +92,8 @@ async function executeWriteTool(
     const content = input.content as string
     reportProgress(toolCallId, `Writing ${filePath}`)
     await fs.mkdir(path.dirname(filePath), { recursive: true })
-    // Read old content BEFORE writing so we can diff. Treat any read
-    // failure as "file did not exist" — covers the common ENOENT path
-    // plus permission / EISDIR edge cases (we'd error on write anyway).
+    // 在写入之前读取旧内容，以便做 diff。把任何读取失败都视为“文件不存在”——
+    // 覆盖常见的 ENOENT 路径，以及权限 / EISDIR 等边界情况（写入时反正也会报错）。
     let oldContent: string | null = null
     try {
       oldContent = await fs.readFile(filePath, { encoding: 'utf-8', signal })
@@ -122,7 +119,7 @@ async function executeWriteTool(
     const filePath = input.filePath as string
     const edits = input.edits
 
-    // Shared edit tail: persist newContent, then emit the UI diff side channel.
+    // 共享的 edit 收尾：持久化 newContent，然后发出 UI diff 旁路。
     const applyEdit = async (oldContent: string, newContent: string): Promise<void> => {
       if (signal?.aborted) throw signal.reason ?? new Error('Edit interrupted by user')
       await beforeWrite(filePath)
@@ -166,10 +163,9 @@ async function executeWriteTool(
   return toolErrorString('unknown write tool')
 }
 
-/** Push a tool result to state and notify the UI. `images` (base64 + media
- *  type) ride along only for MCP tools that return image content — they become
- *  media parts in the tool_result so a vision model can see them; the UI
- *  callback always gets the text form. */
+/** 把工具结果推入状态并通知 UI。`images`（base64 + 媒体类型）只对返回图片内容的
+ *  MCP 工具携带——它们成为 tool_result 中的 media 片段，让视觉模型能看到；
+ *  UI 回调始终拿到文本形式。 */
 function pushToolResult(
   state: LoopState,
   callbacks: AgentCallbacks,
@@ -181,10 +177,9 @@ function pushToolResult(
   notifyUi = true,
 ): void {
   appendTrackedMessage(state, toolResultMessage(toolCallId, toolName, output, images, isError))
-  // Clear the progress reporter for manually-dispatched tools (shell,
-  // writeFile, edit, askUser). Auto-executed tools go through the SDK
-  // stream's `tool-result` event and are cleared there — this call is
-  // a no-op in that case since the reporter would already be gone.
+  // 为手动分发的工具（shell、writeFile、edit、askUser）清除进度上报器。
+  // 自动执行的工具走 SDK 流的 `tool-result` 事件并在那里清除——那种情况下
+  // 此调用是 no-op，因为上报器已经没了。
   clearProgressReporter(toolCallId)
   if (notifyUi) callbacks.onToolResult(toolCallId, output, isError)
 }
@@ -425,12 +420,10 @@ async function checkCentralAuthority(ctx: HandlerCtx): Promise<boolean> {
   return true
 }
 
-/** Wrap pushToolResult with a PostToolUse hook emission. Only the two
- *  "real" success-result call sites use this — error / interrupt /
- *  permission-denial paths still call pushToolResult directly because
- *  emitting PostToolUse on a synthetic deny would be confusing for hook
- *  authors. Bypass handlers (askUser / task / MCP resources) also push
- *  directly today; lifting them to this helper is a follow-up. */
+/** 用 PostToolUse 钩子发射包装 pushToolResult。只有两个“真正”的成功结果调用点
+ *  使用它——error / 中断 / 权限拒绝路径仍直接调用 pushToolResult，因为在合成的
+ *  deny 上发射 PostToolUse 会让钩子作者感到困惑。旁路处理器（askUser / task /
+ *  MCP 资源）今天也直接推入；把它们提升到这个辅助函数是后续工作。 */
 async function pushSuccessfulToolResult(
   ctx: HandlerCtx,
   output: string,
@@ -638,7 +631,7 @@ async function handleKillShell(ctx: HandlerCtx): Promise<void> {
   await commitShellObservation(ctx, observation)
 }
 
-/** Manual tools that bypass the loop guard and the write/shell execution pipeline. */
+/** 绕过循环护栏以及 write/shell 执行流水线的手动工具。 */
 const BYPASS_LOOP_GUARD_HANDLERS: Record<string, ToolHandler> = {
   ...createBuiltInToolHandlers(pushToolResult),
   todoWrite: ({ input, toolCallId, state, callbacks }) =>
@@ -651,19 +644,16 @@ const BYPASS_LOOP_GUARD_HANDLERS: Record<string, ToolHandler> = {
   killShell: handleKillShell,
 }
 
-/** Run the loop-guard machinery for a non-bypass tool. Returns true if the
- *  tool was blocked (caller should stop dispatching).
+/** 为不绕过护栏的工具运行循环护栏机制。若工具被阻止则返回 true（调用方应停止
+ *  分发）。
  *
- *  Auto-executed tools never reach this path — `processToolCalls` skips
- *  them earlier because their result is already in `state.messages` from
- *  the SDK's `response.messages`, and re-running the loop-guard here would
- *  push the synthesized result on top of that or inject a mid-iteration
- *  user message that breaks the assistant→tool ordering strict providers
- *  require.
+ *  自动执行的工具从不会走到这条路径——`processToolCalls` 会更早地跳过它们，
+ *  因为其结果已经通过 SDK 的 `response.messages` 在 `state.messages` 里了；在这里
+ *  重跑循环护栏会把合成结果叠在其上，或注入一条迭代中途的 user 消息，打破严格
+ *  提供方要求的 assistant→tool 顺序。
  *
- *  `deferred` collects messages that must land AFTER the iteration's tool
- *  results — pushing them mid-loop creates the
- *  `assistant → tool A → user → tool B` pattern that DeepSeek 400s on. */
+ *  `deferred` 收集必须落在本迭代工具结果之后的消息——在循环中途推入它们会造出
+ *  `assistant → tool A → user → tool B` 的模式，DeepSeek 会因此返回 400。 */
 async function applyLoopGuard(ctx: HandlerCtx, deferred: ModelMessage[]): Promise<boolean> {
   const { toolName, input, toolCallId, state, callbacks } = ctx
   const loopCheck = checkForLoop(state, toolName, input, toolCallId)
@@ -675,8 +665,7 @@ async function applyLoopGuard(ctx: HandlerCtx, deferred: ModelMessage[]): Promis
 
   recordToolCall(state, toolName, input, loopCheck.hash)
   const guardMessage = `[loop-guard] ${loopCheck.message}`
-  // Manual tool — short-circuit by synthesising the result. The tool body
-  // never runs; no side effects, no permission prompt.
+  // 手动工具——通过合成结果短路。工具体永不运行；无副作用，无权限提示。
   pushToolResult(state, callbacks, toolCallId, toolName, guardMessage, true)
 
   if (loopCheck.kind === 'hard-block') {
@@ -687,12 +676,11 @@ async function applyLoopGuard(ctx: HandlerCtx, deferred: ModelMessage[]): Promis
       ])
       .catch(() => 'Pause')
     if (answer.toLowerCase().startsWith('pause')) {
-      // Clear the recent-calls window so the guard doesn't immediately
-      // re-trigger on the next turn if the model legitimately retries
-      // once with the same args under the user's guidance.
+      // 清空最近调用窗口，这样如果模型在用户引导下用相同参数合理地再试一次，
+      // 护栏不会在下一轮立即再次触发。
       state.recentToolCalls = []
-      // Defer until after the iteration so the user-role message lands at
-      // the END of this turn's messages, not between tool results.
+      // 推迟到迭代之后，这样这条 user 角色消息落在本轮消息的末尾，而不是在
+      // 工具结果之间。
       deferred.push({
         role: 'user',
         content: '[loop-guard] User paused the loop. Wait for further instructions rather than calling more tools.',
@@ -702,8 +690,8 @@ async function applyLoopGuard(ctx: HandlerCtx, deferred: ModelMessage[]): Promis
   return true
 }
 
-/** One model-visible call backed by a handful of private Playwright calls.
- *  Only the final screenshot and bounded console diagnostics reach context. */
+/** 一个模型可见的调用，背后是若干私有的 Playwright 调用。只有最终截图和
+ *  受限的 console 诊断进入上下文。 */
 async function applyVisualCheckGuard(ctx: HandlerCtx): Promise<boolean> {
   const { toolCallId, toolName, state, callbacks } = ctx
   state.visualCheckCallsSinceMutation++
@@ -732,9 +720,8 @@ async function applyVisualCheckGuard(ctx: HandlerCtx): Promise<boolean> {
   if (answer.toLowerCase().startsWith('continue')) {
     state.visualCheckCallsSinceMutation = 0
   } else {
-    // This is a real control-flow stop, not a model-facing suggestion. The
-    // outer agent loop observes it after all required tool results are paired
-    // and returns to the prompt without spending another model round.
+    // 这是真正的控制流停止，不是面向模型的建议。外层 agent loop 在所有必需
+    // 工具结果配对之后观察到它，并返回提示词，不再消耗另一轮模型。
     ctx.control.stopTurn = true
   }
   return true
@@ -781,8 +768,8 @@ async function handleBrowserVisualCheck(ctx: HandlerCtx): Promise<void> {
   }
 }
 
-/** Permission gate for writeFile/edit/shell. Returns true if execution
- *  should continue, false if it was blocked / denied / aborted. */
+/** writeFile/edit/shell 的权限门。若应继续执行则返回 true，若被阻止 / 拒绝 /
+ *  中止则返回 false。 */
 async function checkWriteOrShellPermission(ctx: HandlerCtx): Promise<boolean> {
   const { toolName, input, toolCallId, state, options, callbacks } = ctx
   if (toolName !== 'writeFile' && toolName !== 'edit' && toolName !== 'shell') return true
@@ -803,8 +790,8 @@ async function checkWriteOrShellPermission(ctx: HandlerCtx): Promise<boolean> {
     return false
   }
 
-  // The dispatcher has already proved this path equals currentPlanPath.
-  // Plan-file edits are part of planning itself and need no second dialog.
+  // 分发器已证明此路径等于 currentPlanPath。计划文件编辑本身就是规划的一部分，
+  // 无需第二次对话框。
   if (state.permissionMode === 'plan' && (toolName === 'writeFile' || toolName === 'edit')) return true
 
   if (toolName === 'shell') {
@@ -854,10 +841,9 @@ async function checkWriteOrShellPermission(ctx: HandlerCtx): Promise<boolean> {
   return true
 }
 
-/** Denial tool-result text. When the user denied via "No, and tell
- *  X-Code what to do instead" their typed feedback rides along so the
- *  model can adjust its next attempt (kimi-cli's reject-with-feedback
- *  semantics) instead of retrying a near-identical call. */
+/** 拒绝时的工具结果文本。当用户通过“否，并告诉 X-Code 该怎么做”拒绝时，他们
+ *  输入的反馈会一并携带，这样模型能调整下一次尝试（kimi-cli 的 reject-with-feedback
+ *  语义），而不是重试一个几乎相同的调用。 */
 function permissionDeniedMessage(feedback?: string): string {
   const trimmed = feedback?.trim()
   return trimmed ? `Permission denied by user. User feedback: ${trimmed}` : 'Permission denied by user.'
@@ -869,10 +855,9 @@ function findDeniedShellKeyword(command: string, restrictions: readonly string[]
   return restrictions.find((keyword) => keyword.trim() && lowerCommand.includes(keyword.toLowerCase())) ?? null
 }
 
-/** Run the underlying side-effecting tool body for writeFile/edit/shell.
- *  Auto-executed tools return early because the AI SDK has already produced
- *  their result. Returns the post-execution { output, isError } pair, or
- *  null when there's nothing to push (auto-executed). */
+/** 运行 writeFile/edit/shell 底层带副作用的工具体。自动执行的工具会提前返回，
+ *  因为 AI SDK 已经产生了其结果。返回执行后的 { output, isError } 对，或当没有
+ *  可推入内容（自动执行）时返回 null。 */
 async function executeWriteOrShell(ctx: HandlerCtx): Promise<{
   output: string
   isError: boolean
@@ -891,9 +876,8 @@ async function executeWriteOrShell(ctx: HandlerCtx): Promise<{
         trackedPath = absPath
       }
       const output = await executeWriteTool(toolName, input, toolCallId, callbacks, options.abortSignal, beforeWrite)
-      // executeWriteTool returns "Error: ..." strings for in-band failures
-      // (missing match, non-unique match) rather than throwing — surface
-      // those as errored results so the scrollback line flips to red.
+      // executeWriteTool 对带内失败（未匹配、匹配不唯一）返回 "Error: ..." 字符串
+      // 而不是抛错——把那些作为错误结果暴露出来，让滚动回显行变红。
       const isError = isToolErrorString(output)
       if (!isError && trackedPath) {
         state.turnFilesModified.add(trackedPath)
@@ -903,9 +887,8 @@ async function executeWriteOrShell(ctx: HandlerCtx): Promise<{
     }
     if (toolName === 'shell') {
       if (!ctx.preparedShell) throw new Error('Shell request was not safely prepared')
-      // Intercept sed -i: simulate the edit in-process so the modified
-      // file enters filesModified and is covered by /rewind checkpoints.
-      // Falls through to real shell execution on parse failure or IO error.
+      // 拦截 sed -i：在进程内模拟这次编辑，使被修改的文件进入 filesModified，
+      // 并被 /rewind checkpoint 覆盖。解析失败或 IO 错误时回退到真正的 shell 执行。
       const command = ctx.preparedShell.command
       const sedInfo = parseSedEditCommand(command)
       if (sedInfo) {
@@ -925,7 +908,7 @@ async function executeWriteOrShell(ctx: HandlerCtx): Promise<{
           }
           return { output: 'Done', isError: false }
         } catch {
-          // File unreadable or unwritable — fall through to real sed
+          // 文件不可读或不可写——回退到真正的 sed
         }
       }
 
@@ -965,12 +948,10 @@ async function executeWriteOrShell(ctx: HandlerCtx): Promise<{
   }
 }
 
-/** Handle a single tool call. Returns when the call has been fully dispatched.
- *  `parentModel` is the LanguageModel instance for the current loop — needed
- *  by the task tool to pass as fallback when the sub-agent doesn't override.
- *  `deferred` is the per-turn deferred-message queue threaded down to
- *  `applyLoopGuard`; messages collected here are flushed after the entire
- *  iteration in `processToolCalls`. */
+/** 处理单个工具调用。当调用被完整分发后返回。`parentModel` 是当前循环的
+ *  LanguageModel 实例——task 工具在子 agent 未覆盖时要用它作为回退传入。
+ *  `deferred` 是传给 `applyLoopGuard` 的每轮延迟消息队列；这里收集的消息会在
+ *  `processToolCalls` 里整个迭代之后被刷写。 */
 async function handleToolCall(
   tc: ToolCall,
   state: LoopState,
@@ -993,12 +974,10 @@ async function handleToolCall(
     control,
   }
 
-  // Anchor relative write targets at projectCwd so the permission check,
-  // the checkpoint snapshot and the actual fs write all operate on the
-  // same file. The tool schema asks for an absolute path but nothing
-  // enforces it — a relative path previously wrote against process.cwd()
-  // while beforeWrite tracked path.resolve(projectCwd, filePath), so
-  // /rewind captured the wrong file whenever the two differed.
+  // 把相对写入目标锚定到 projectCwd，让权限检查、checkpoint 快照与实际的 fs
+  // 写入都作用于同一文件。工具 schema 要求绝对路径，但没有任何东西强制它——
+  // 相对路径以前写的是 process.cwd()，而 beforeWrite 追踪的是
+  // path.resolve(projectCwd, filePath)，所以只要两者不同，/rewind 就捕获错文件。
   if (
     (ctx.toolName === 'writeFile' || ctx.toolName === 'edit') &&
     typeof ctx.input.filePath === 'string' &&
@@ -1010,13 +989,11 @@ async function handleToolCall(
 
   if (!enforcePlanModeBoundary(ctx)) return
 
-  // ── Plugin hook: PreToolUse ──
-  // Fires before bypass-handler routing and before MCP dispatch so the
-  // hook sees EVERY tool the model attempts (including askUser, task,
-  // and MCP tools). A deny becomes a synthetic tool_result the model
-  // sees, keeping state.messages valid. A modify can rewrite the input
-  // record (mutated in-place on ctx.input so downstream handlers and
-  // the loop guard see the post-modification args).
+  // ── 插件钩子：PreToolUse ──
+  // 在旁路处理器路由之前、MCP 分发之前触发，这样钩子能看到模型尝试的每一个工具
+  //（包括 askUser、task 和 MCP 工具）。deny 变成模型可见的合成 tool_result，
+  // 保持 state.messages 有效。modify 可以重写输入记录（在 ctx.input 上就地修改，
+  // 让下游处理器与循环护栏看到修改后的参数）。
   try {
     if (ctx.toolName === 'shell') {
       if (!(await prepareShellRequest(ctx))) return
@@ -1117,14 +1094,13 @@ async function handleToolCall(
       return
     }
 
-    // MCP tools route through their own permission path (per-tool ask +
-    // always-allow file) rather than the writeFile/edit/shell rules. They
-    // still go through the loop-guard so the model can't spin on a
-    // failing MCP call indefinitely.
+    // MCP 工具走它们自己的权限路径（逐工具询问 + always-allow 文件），而不是
+    // writeFile/edit/shell 规则。它们仍要经过循环护栏，让模型不能无限地对一个
+    // 失败的 MCP 调用空转。
     //
-    // Routing is by registry lookup, not name pattern: MCP tool names are
-    // `<server>__<tool>` (no special prefix), so the only authoritative
-    // "is this MCP?" answer is "is it registered with the MCP registry?".
+    // 路由依据注册表查找，而不是名称模式：MCP 工具名是 `<server>__<tool>`
+    //（没有特殊前缀），所以“这是不是 MCP？”的唯一权威答案是“它是否注册在
+    // MCP 注册表里？”。
     if (ctx.options.mcpRegistry?.get(ctx.toolName)) {
       await handleMcpToolCall(ctx, deferred)
       return
@@ -1180,9 +1156,8 @@ function sameResolvedPath(left: string, right: string): boolean {
   return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
 }
 
-/** Defense in depth for stale history, plugin calls, and direct dispatcher use.
- *  Tool visibility is the primary Plan boundary; this check makes it a runtime
- *  invariant even if a hidden call reaches the dispatcher. */
+/** 针对过期历史、插件调用与直接分发器使用的纵深防御。工具可见性是 Plan 的
+ *  主要边界；这一检查让它成为运行时不变式，即使某个隐藏调用到达分发器。 */
 function enforcePlanModeBoundary(ctx: HandlerCtx): boolean {
   if (ctx.state.permissionMode !== 'plan') return true
   if (!PLAN_MODE_EXECUTABLE_TOOLS.has(ctx.toolName)) {
@@ -1221,9 +1196,8 @@ function enforcePlanModeBoundary(ctx: HandlerCtx): boolean {
   return true
 }
 
-/** Dispatch an MCP tool call. Sits parallel to the writeFile/edit/shell
- *  pipeline above — same loop-guard, same abort handling, but using the
- *  per-tool permission store and the MCP registry's callTool. */
+/** 分发一个 MCP 工具调用。与上方的 writeFile/edit/shell 流水线并行——同样的
+ *  循环护栏、同样的中止处理，但使用逐工具权限存储和 MCP 注册表的 callTool。 */
 async function handleMcpToolCall(ctx: HandlerCtx, deferred: ModelMessage[]): Promise<void> {
   const { toolName, input, toolCallId, state, options, callbacks } = ctx
   const registry = options.mcpRegistry
@@ -1247,14 +1221,13 @@ async function handleMcpToolCall(ctx: HandlerCtx, deferred: ModelMessage[]): Pro
     return
   }
 
-  // Loop-guard FIRST: even denied-by-mode calls count as the model
-  // "attempting" something, and we want to catch a loop of denials too.
+  // 循环护栏优先：即使是被模式拒绝的调用，也算模型“尝试”了某事，我们也要
+  // 抓住拒绝的循环。
   if (await applyLoopGuard(ctx, deferred)) return
 
-  // Plan mode: MCP tools are opaque (we don't know if they write or
-  // not), so the only safe stance is "no". The model will see the
-  // denial as a tool result and should call exitPlanMode if it really
-  // needs external tools to proceed.
+  // Plan 模式：MCP 工具是不透明的（我们不知道它们是否会写入），所以唯一安全
+  // 的立场是“否”。模型会把拒绝视为工具结果；如果它确实需要外部工具才能继续，
+  // 应该调用 exitPlanMode。
   if (state.permissionMode === 'plan') {
     pushToolResult(
       state,
@@ -1267,15 +1240,14 @@ async function handleMcpToolCall(ctx: HandlerCtx, deferred: ModelMessage[]): Pro
     return
   }
 
-  // A peer-influenced allow-once decision is the only approval that applies
-  // to this call. Never consult or update the legacy MCP permission store.
+  // 一个受 peer 影响的 allow-once 决定，是唯一适用于此调用的批准。绝不查询
+  // 或更新旧版 MCP 权限存储。
   if (ctx.authorityApprovedOnce && state.executionAuthority.peerTainted) {
     await executeApprovedMcpTool(ctx, entry)
     return
   }
 
-  // Permission gate. trustMode bypasses everything; otherwise consult
-  // the store (session + persisted), and fall back to asking the user.
+  // 权限门。trustMode 绕过一切；否则查询存储（会话 + 持久化），并回退到询问用户。
   let approved = options.trustMode
   if (!approved && permissions) approved = await permissions.isApproved(toolName)
 
@@ -1344,27 +1316,20 @@ async function executeApprovedMcpTool(
   }
 }
 
-/** Collect every toolCallId the AI SDK actually committed to the
- *  assistant message in this turn. The SDK's `result.toolCalls` promise
- *  is independent of `response.messages` — when zod validation rejects
- *  a malformed tool input mid-stream the SDK emits a `tool-error` chunk
- *  and excludes that tool_call from response.messages, but it can still
- *  surface in `toolCalls`. Running such a "ghost" call would have two
- *  bad outcomes:
- *    1. write/edit/shell would fire a real side effect for a call the
- *       model never officially committed to.
- *    2. The pushed tool_result would be an orphan in state.messages
- *       (no preceding assistant tool_call with that id) and the next
- *       API request would 400 with "tool must be a response to a
- *       preceding message with tool_calls".
- *  Returning the set lets `processToolCalls` filter the SDK's list
- *  before any handler runs.
+/** 收集 AI SDK 在本轮真正提交到 assistant 消息里的每个 toolCallId。SDK 的
+ *  `result.toolCalls` promise 独立于 `response.messages`——当 zod 校验在流中途
+ *  拒绝一个格式错误的工具输入时，SDK 会发一个 `tool-error` 块，并把该 tool_call
+ *  从 response.messages 排除，但它仍可能出现在 `toolCalls` 里。运行这样一个
+ *  “幽灵”调用会有两个坏结果：
+ *    1. write/edit/shell 会为模型从未正式提交的调用触发真实的副作用。
+ *    2. 推入的 tool_result 会成为 state.messages 里的孤儿（没有带该 id 的前置
+ *       assistant tool_call），下一次 API 请求会以 "tool must be a response to
+ *       a preceding message with tool_calls" 报 400。
+ *  返回这个集合让 `processToolCalls` 能在任何处理器运行之前过滤 SDK 的列表。
  *
- *  Walks from the END of state.messages backwards, collecting tool-call
- *  ids from EVERY assistant message we encounter until we hit a
- *  non-assistant/tool boundary — covers multi-assistant turn structures
- *  some providers produce while still cutting off at the previous user
- *  message so old turns' ids don't bleed in. */
+ *  从 state.messages 末尾往前遍历，收集遇到的每一条 assistant 消息里的 tool-call
+ *  id，直到碰到非 assistant/tool 的边界——覆盖某些提供方产生的多 assistant 轮次
+ *  结构，同时在前一条 user 消息处切断，让旧轮次的 id 不渗入。 */
 function collectActiveAssistantToolCallIds(state: LoopState): Set<string> {
   const ids = new Set<string>()
   for (let i = state.messages.length - 1; i >= 0; i--) {
@@ -1382,26 +1347,23 @@ function collectActiveAssistantToolCallIds(state: LoopState): Set<string> {
   return ids
 }
 
-/** Collect tool_call_ids that ALREADY have a tool-result message in the
- *  current turn's window of state.messages. Two distinct upstream paths
- *  drop a result here before `processToolCalls` runs:
- *    1. AI SDK auto-executed tools (readFile / glob / grep / listDir /
- *       webFetch / webSearch) — their result is in `response.messages`
- *       and gets pushed by `collectTurnResponse` before we iterate.
- *    2. AI SDK auto-rejection of an unavailable tool — when a sub-agent's
- *       toolFilter excludes a tool the model still emits a tool-call for
- *       (e.g. `general-purpose` agent calling `writeFile`), the SDK
- *       synthesizes an `error-text` tool-result so the assistant message
- *       isn't left with an orphan tool-call.
- *  In both cases re-running the tool here is wrong:
- *    - For (1) the tool already executed; another run would duplicate
- *      side effects (re-fetch a webpage, re-trigger a saveKnowledge).
- *    - For (2) the tool isn't supposed to run at all in this agent's
- *      filter, but `executeWriteTool` dispatches by name and would
- *      happily fire writeFile, creating a real side effect AND pushing
- *      a duplicate tool-result that DeepSeek 400s on next turn.
- *  Same turn-boundary logic as collectActiveAssistantToolCallIds —
- *  walk back from end-of-messages, stop at the first user message. */
+/** 收集当前轮次 state.messages 窗口中已有 tool-result 消息的 tool_call_id。
+ *  有两条不同的上游路径会在 `processToolCalls` 运行之前把结果放到这里：
+ *    1. AI SDK 自动执行的工具（readFile / glob / grep / listDir / webFetch /
+ *       webSearch）——其结果在 `response.messages` 里，在我们迭代之前由
+ *       `collectTurnResponse` 推入。
+ *    2. AI SDK 对不可用工具的自动拒绝——当子 agent 的 toolFilter 排除了某个工具，
+ *       而模型仍为它发出 tool-call（例如 `general-purpose` agent 调用 `writeFile`）
+ *       时，SDK 会合成一个 `error-text` tool-result，让 assistant 消息不会留下
+ *       一个孤儿 tool-call。
+ *  两种情况下在这里重跑工具都是错的：
+ *    - 对 (1)，工具已经执行过了；再跑一次会重复副作用（重新抓取网页、重新触发
+ *      saveKnowledge）。
+ *    - 对 (2)，工具在该 agent 的过滤器中本就不该运行，但 `executeWriteTool`
+ *      按名称分发，会欣然触发 writeFile，既产生真实副作用，又推入一个重复的
+ *      tool-result，DeepSeek 下一轮会因此报 400。
+ *  与 collectActiveAssistantToolCallIds 相同的轮次边界逻辑——从消息末尾往回走，
+ *  在第一条 user 消息处停下。 */
 function collectFulfilledToolCallIds(state: LoopState): Set<string> {
   const ids = new Set<string>()
   for (let i = state.messages.length - 1; i >= 0; i--) {
@@ -1419,31 +1381,24 @@ function collectFulfilledToolCallIds(state: LoopState): Set<string> {
   return ids
 }
 
-/** Group consecutive `task` tool-calls into a single batch so they can be
- *  dispatched in parallel; everything else gets a singleton batch and
- *  dispatches one-at-a-time. Sub-agents launched by the `task` tool are
- *  the only manual tool we hand-execute in `processToolCalls` that's
- *  truly isolated:
- *    - each `runSubAgent` builds a fresh `LoopState` (own messages, own
- *      `recentToolCalls`, own todos, own permission mode)
- *    - `parentState.tokenUsage` is updated by additive accumulation only
- *      after the sub-agent completes, so concurrent updates can't get
- *      torn (single-threaded event loop + plain `+=` writes)
- *    - permission dialogs from concurrent sub-agents queue naturally on
- *      the parent UI's `permissionResolversRef`
- *  Every other manual tool mutates shared state and must stay serial:
- *    - `writeFile` / `edit` mutate the filesystem and `state.filesModified`
- *    - `shell` streams stdout/stderr to the parent UI as it arrives —
- *      interleaved bytes from concurrent shells would scramble the live
- *      indicator
- *    - `askUser` / permission dialogs hold the UI; running two at once
- *      would race the dialog state machine
- *    - `todoWrite` / `enterPlanMode` / `exitPlanMode` mutate `LoopState`
- *      fields that the next turn reads
- *  Auto-executed tools (readFile / glob / grep / listDir / webFetch /
- *  webSearch) don't appear here — by the time `processToolCalls` runs,
- *  the SDK has already executed them and the skip-fulfilled pre-pass
- *  short-circuits them out. */
+/** 把连续的 `task` 工具调用归为一批，使它们能并行分发；其他一切都各自成批、
+ *  逐个分发。由 `task` 工具启动的子 agent，是我们在 `processToolCalls` 中手工
+ *  执行、且真正隔离的唯一手动工具：
+ *    - 每个 `runSubAgent` 构建全新的 `LoopState`（自己的消息、自己的
+ *      `recentToolCalls`、自己的 todos、自己的权限模式）
+ *    - `parentState.tokenUsage` 只在子 agent 完成后通过加法累加更新，因此并发
+ *      更新不会被撕裂（单线程事件循环 + 普通的 `+=` 写）
+ *    - 并发子 agent 的权限对话框自然地排在父 UI 的 `permissionResolversRef` 上
+ *  其他每个手动工具都修改共享状态，必须保持串行：
+ *    - `writeFile` / `edit` 修改文件系统和 `state.filesModified`
+ *    - `shell` 把 stdout/stderr 边到边流式写到父 UI——并发 shell 交错的字节
+ *      会弄乱实时指示器
+ *    - `askUser` / 权限对话框占用 UI；同时跑两个会让对话框状态机竞态
+ *    - `todoWrite` / `enterPlanMode` / `exitPlanMode` 修改下一轮要读取的
+ *      `LoopState` 字段
+ *  自动执行的工具（readFile / glob / grep / listDir / webFetch / webSearch）
+ *  不会出现在这里——到 `processToolCalls` 运行时，SDK 已经执行了它们，跳过
+ *  已满足的预过滤会把它们短路掉。 */
 export function partitionToolCalls(calls: ToolCall[]): ToolCall[][] {
   const batches: ToolCall[][] = []
   let i = 0
@@ -1460,14 +1415,12 @@ export function partitionToolCalls(calls: ToolCall[]): ToolCall[][] {
   return batches
 }
 
-/** Handle all tool calls from a single model turn.
+/** 处理单个模型轮次的所有工具调用。
  *
- *  Consecutive `task` tool-calls dispatch in parallel via Promise.all;
- *  every other tool runs one at a time. See `partitionToolCalls` for the
- *  full rationale on why only sub-agents are safe to fan out.
+ *  连续的 `task` 工具调用通过 Promise.all 并行分发；其他每个工具一次跑一个。
+ *  关于为什么只有子 agent 可以安全地扇出，完整理由见 `partitionToolCalls`。
  *
- *  `parentModel` is threaded through so the task tool can pass it to
- *  `runSubAgent`. */
+ *  `parentModel` 被一路传递，这样 task 工具能把它传给 `runSubAgent`。 */
 export async function processToolCalls(
   toolCalls: ToolCall[],
   state: LoopState,
@@ -1478,27 +1431,22 @@ export async function processToolCalls(
 ): Promise<{ stopTurn: boolean }> {
   const activeIds = collectActiveAssistantToolCallIds(state)
   const fulfilledIds = collectFulfilledToolCallIds(state)
-  // Per-turn queue for messages that must land AFTER every tool-result
-  // we push in this loop. Pushing a `role: 'user'` message between two
-  // tool-results creates the shape that DeepSeek's strict ordering
-  // rejects — we collect them here and flush at the end of the loop.
+  // 每轮队列，用于那些必须落在本循环推入的每个 tool-result 之后的消息。在两条
+  // tool-result 之间推入一条 `role: 'user'` 消息，会造出 DeepSeek 严格顺序拒绝的
+  // 形状——我们在这里收集它们，并在循环末尾刷写。
   const deferred: ModelMessage[] = []
   const control: ToolExecutionControl = { stopTurn: false }
 
-  // Pre-pass: drop ghost calls and account for already-fulfilled calls.
-  // What survives goes into `liveCalls` which is what we actually
-  // dispatch. Doing this BEFORE partitioning keeps the parallel-batch
-  // dispatch simple — every entry in the batch is a real call we need
-  // to run.
+  // 预过滤：丢弃幽灵调用，并统计已满足的调用。存活下来的进入 `liveCalls`，
+  // 那才是我们真正分发的内容。在分区之前做这一步，让并行批次分发保持简单——
+  // 批次里的每个条目都是我们需要运行的真实调用。
   const liveCalls: ToolCall[] = []
   for (const tc of toolCalls) {
-    // Skip ghost calls the SDK rejected mid-stream — see
-    // collectActiveAssistantToolCallIds for the full rationale. Don't
-    // pushToolResult either: the assistant message has no matching
-    // tool_call, so any result we emit would be an orphan that the
-    // sanitizer drops next turn anyway. Belt-and-suspenders: the
-    // sanitizer's reverse-orphan branch would still clean up if this
-    // check ever lets one through.
+    // 跳过 SDK 在流中途拒绝的幽灵调用——完整理由见
+    // collectActiveAssistantToolCallIds。也不要 pushToolResult：assistant 消息
+    // 没有匹配的 tool_call，所以我们发出的任何结果都会成为孤儿，反正 sanitizer
+    // 下一轮也会丢弃。双重保险：即使这个检查放过了某个，sanitizer 的反向孤儿
+    // 分支也仍会清理。
     if (!activeIds.has(tc.toolCallId)) {
       debugLog(
         'tool-exec.skip-ghost',
@@ -1507,11 +1455,9 @@ export async function processToolCalls(
       continue
     }
 
-    // Skip already-fulfilled calls — see collectFulfilledToolCallIds.
-    // Still record the call in the loop-guard window so a runaway
-    // pattern on the same auto-executed tool can be circuit-broken on
-    // a future turn; if the guard fires, defer the user-role nudge
-    // until after iteration.
+    // 跳过已满足的调用——见 collectFulfilledToolCallIds。仍在循环护栏窗口里记录
+    // 这次调用，这样同一自动执行工具上的失控模式能在未来轮次被熔断；如果护栏
+    // 触发，就把 user 角色的提醒推迟到迭代之后。
     if (fulfilledIds.has(tc.toolCallId)) {
       debugLog('tool-exec.skip-fulfilled', `${tc.toolName} ${tc.toolCallId} — tool-result already in state.messages`)
       const loopCheck = checkForLoop(state, tc.toolName, tc.input, tc.toolCallId)
@@ -1525,19 +1471,16 @@ export async function processToolCalls(
     liveCalls.push(tc)
   }
 
-  // Dispatch in batches. A batch of size 1 is functionally identical to
-  // a plain `await handleToolCall(...)` — Promise.all over a single
-  // promise resolves the same way — so the parallel path uniformly
-  // handles both cases.
+  // 按批次分发。大小为 1 的批次在功能上与普通 `await handleToolCall(...)` 相同
+  // ——对单个 promise 做 Promise.all 的解析方式一样——因此并行路径统一处理两种
+  // 情况。
   const batches = partitionToolCalls(liveCalls)
   let dispatched = 0
   for (const batch of batches) {
-    // User pressed Esc / Ctrl+C. A managed shell that reached ready remains
-    // available as a background session; other tools receive the abort. For
-    // every remaining tool_call we still need to push a synthetic
-    // tool_result — orphan tool_calls without a matching result would
-    // make the next API request fail with "tool_use without tool_result"
-    // the moment the user types another prompt.
+    // 用户按了 Esc / Ctrl+C。一个已到达 ready 的受管 shell 仍作为后台会话可用；
+    // 其他工具收到中止。对每个剩余 tool_call，我们仍要推入一个合成 tool_result——
+    // 没有匹配结果的孤儿 tool_call 会在用户再输入一条提示词的瞬间，让下一次
+    // API 请求以 "tool_use without tool_result" 失败。
     if (options.abortSignal?.aborted) {
       for (let j = dispatched; j < liveCalls.length; j++) {
         pushToolResult(
@@ -1557,8 +1500,8 @@ export async function processToolCalls(
     )
     dispatched += batch.length
     if (control.stopTurn) {
-      // Preserve assistant tool_call -> tool_result pairing for strict
-      // providers even when the user pauses before later calls dispatch.
+      // 即使用户在后续调用分发前暂停，也为严格提供方保留 assistant tool_call ->
+      // tool_result 配对。
       for (let j = dispatched; j < liveCalls.length; j++) {
         pushToolResult(
           state,
@@ -1573,10 +1516,9 @@ export async function processToolCalls(
     }
   }
 
-  // Flush deferred messages AFTER all tool_results in this turn — they
-  // sit at the very end of state.messages, where the next runTurn sees
-  // them as the most recent context but they don't break the
-  // assistant→tool ordering the SDK will replay to the provider.
+  // 在本轮所有 tool_result 之后刷写延迟消息——它们位于 state.messages 最末尾，
+  // 下一次 runTurn 会把它们视为最新上下文，但它们不会破坏 SDK 将向提供方重放的
+  // assistant→tool 顺序。
   if (!control.stopTurn && deferred.length > 0) state.messages.push(...deferred)
   return { stopTurn: control.stopTurn }
 }

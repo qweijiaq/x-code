@@ -5,8 +5,8 @@ import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
-// 245 MB installers can take much longer than a fixed 10-minute cap on slow
-// links. Abort only when the stream stops producing data.
+// 245 MB 安装器在慢速链路上可能远超过固定的 10 分钟上限。
+// 只在流停止产出数据时才中止。
 const DOWNLOAD_IDLE_TIMEOUT_MS = 60_000
 const PROGRESS_INTERVAL_MS = 200
 
@@ -31,7 +31,7 @@ export interface UpdateDownloadResult {
   sha256: string
 }
 
-/** Validate the RELEASE.json body used by the update panel and by downloads. */
+/** 校验更新面板和下载使用的 RELEASE.json 体。 */
 export function parseReleaseInfo(data: unknown): ParsedRelease {
   const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : null
   if (!record || typeof record.version !== 'string' || !record.version.trim()) {
@@ -59,7 +59,7 @@ export function parseReleaseInfo(data: unknown): ParsedRelease {
   }
 }
 
-/** Choose the installer for this OS/arch. macOS prefers the dmg over the zip. */
+/** 选择此 OS/arch 的安装器。macOS 优先选择 dmg 而非 zip。 */
 export function pickUpdateArtifact(
   release: ParsedRelease,
   platform: NodeJS.Platform,
@@ -91,17 +91,17 @@ export interface DownloadUpdateOptions {
   platform: NodeJS.Platform
   arch: string
   destDir: string
-  /** Injectable for tests; defaults to the global fetch. */
+  /** 可注入用于测试；默认使用全局 fetch。 */
   fetchImpl?: typeof fetch
   maxBytes?: number
-  /** Exact destination chosen by the user; defaults to destDir/<artifact name>. */
+  /** 用户选择的精确目标；默认 destDir/<artifact name>。 */
   destPath?: string
-  /** User cancellation; aborts the feed request and the stream. */
+  /** 用户取消；中止源请求和流。 */
   signal?: AbortSignal
   onProgress?: (progress: { receivedBytes: number; totalBytes?: number; bytesPerSecond?: number }) => void
 }
 
-/** Download the platform installer into `destDir` and verify its SHA-256. */
+/** 把平台安装器下载到 `destDir` 并校验其 SHA-256。 */
 export async function downloadUpdateArtifact(options: DownloadUpdateOptions): Promise<UpdateDownloadResult> {
   const artifact = pickUpdateArtifact(options.release, options.platform, options.arch)
   if (!artifact) throw new Error('发布信息中没有适用于当前平台的安装包')

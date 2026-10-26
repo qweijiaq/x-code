@@ -71,6 +71,7 @@ async function handleRequest(request: PdfRenderRequest): Promise<PdfRenderRespon
 
 function send(response: PdfRenderResponse): Promise<boolean> {
   if (parentPort) {
+    // 渲染出的图片 buffer 用 transferList 转移所有权（零拷贝）；其余消息按普通结构化克隆发送。
     if (response.ok && response.result.type === 'render') parentPort.postMessage(response, [response.result.data])
     else parentPort.postMessage(response)
     return Promise.resolve(true)

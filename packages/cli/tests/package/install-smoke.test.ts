@@ -38,9 +38,8 @@ function powershellQuote(value: string): string {
 function commandInvocation(executable: string, args: string[]): { executable: string; args: string[] } {
   if (process.platform !== 'win32' || !executable.toLowerCase().endsWith('.cmd')) return { executable, args }
 
-  // Node 22 rejects direct .cmd spawning with EINVAL on Windows. An encoded
-  // PowerShell invocation preserves spaces and Unicode without cmd.exe's
-  // nested quoting ambiguities.
+  // Node 22 在 Windows 上以 EINVAL 拒绝直接生成 .cmd。用编码后的
+  // PowerShell 调用能保留空格和 Unicode，且避免 cmd.exe 嵌套引号的歧义。
   const script = [
     '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
     "$ProgressPreference = 'SilentlyContinue'",

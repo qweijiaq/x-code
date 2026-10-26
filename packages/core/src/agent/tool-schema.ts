@@ -2,8 +2,8 @@ import { zodToJsonSchema } from 'zod-to-json-schema'
 
 import { estimateTextTokenCount } from './context-window.js'
 
-/** Estimate the model-facing wire size of one function tool. Shared by the
- *  direct-tool budget and /usage so policy and observability use one number. */
+/** 估算单个函数工具面向模型的线上体积。由直接工具预算与 /usage 共享，
+ *  使策略与可观测性使用同一个数字。 */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function estimateToolDefinitionTokens(name: string, def: any): number {
   const payload: Record<string, unknown> = { name }
@@ -22,7 +22,7 @@ export function estimateToolDefinitionTokens(name: string, def: any): number {
       try {
         payload.parameters = JSON.stringify(schema)
       } catch {
-        // Unknown circular schema: description + name still provide a lower bound.
+        // 未知的循环 schema：description + name 仍能提供下界。
       }
     }
   }

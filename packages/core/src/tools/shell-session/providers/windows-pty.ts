@@ -60,7 +60,7 @@ function closeServer(server: Server | undefined): void {
   try {
     server.close()
   } catch {
-    // Closing a server whose listen failed is already complete.
+    // 关闭一个 listen 已失败的 server，这件事本身已经完成。
   }
 }
 
@@ -530,8 +530,8 @@ export class WindowsPtySpawnAttempt implements ManagedSpawnAttempt {
     }
     this.dataDisposable?.dispose()
     this.exitDisposable?.dispose()
-    // The Job notification pipe is independent from ConPTY. Let it drain so a
-    // queued ACTIVE_PROCESS_ZERO frame cannot be lost behind terminal onExit.
+    // Job 通知管道独立于 ConPTY。让它排空，这样已排队的 ACTIVE_PROCESS_ZERO
+    // 帧不会丢失在 terminal onExit 之后。
     this.control?.destroy()
     closeServer(this.eventServer)
     closeServer(this.controlServer)

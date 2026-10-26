@@ -84,9 +84,8 @@ async function ensureNodePtyHelperExecutable(): Promise<void> {
   if (process.platform === 'win32') return
   const packageRoot = path.dirname(require.resolve('node-pty/package.json'))
   const helper = path.join(packageRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper')
-  // pnpm's content-addressed copy can lose the executable bit carried by the
-  // node-pty tarball on macOS. The native addon then reports only the opaque
-  // "posix_spawnp failed" at runtime even though installation succeeded.
+  // pnpm 的内容寻址拷贝可能在 macOS 上丢失 node-pty tarball 携带的可执行位。
+  // 之后原生插件运行时只会报一个含糊的 "posix_spawnp failed"，尽管安装其实成功了。
   await fs.chmod(helper, 0o755).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw error
   })
@@ -123,8 +122,8 @@ export async function createTuiHarness(options: {
     rows,
     cwd: options.workspace.cwd,
     env,
-    // The DLL-backed ConPTY path avoids the console-list helper, which cannot
-    // AttachConsole during teardown on headless Windows runners.
+    // 由 DLL 支撑的 ConPTY 路径避开了 console-list 辅助程序，后者在无头
+    // Windows runner 上无法在收尾时 AttachConsole。
     ...(isWindows ? { useConpty: true, useConptyDll: true } : {}),
   })
   let raw = ''
@@ -177,8 +176,8 @@ export async function createTuiHarness(options: {
   const waitForInputReady = async (): Promise<void> => {
     const probe = 'q'
     const deadline = Date.now() + 5000
-    // promptContent() strips the input box's rails/padding so the probe
-    // asserts against the typed text, not the `│ …… │` frame around it.
+    // promptContent() 剥离输入框的边框/填充，让探针针对输入文本断言，
+    // 而不是它周围的 `│ …… │` 边框。
     while (!promptContent(promptLine()).endsWith(` ${probe}`)) {
       if (Date.now() >= deadline) throw new Error('Timed out waiting for interactive stdin listener')
       processUnderTest.write(probe)
@@ -222,7 +221,7 @@ export async function createTuiHarness(options: {
         ? `& ${values.map(powershellQuote).join(' ')}; Write-Output "${EXIT_MARKER}$LASTEXITCODE"\r`
         : `${values.map(posixQuote).join(' ')}; __x_code_status=$?; printf '\\n${EXIT_MARKER}%s\\n' "$__x_code_status"\n`
       processUnderTest.write(command)
-      // A named Windows session secures its runtime and starts the native broker before rendering the header.
+      // 具名的 Windows 会话会先保护其运行时并启动原生 broker，再渲染头部。
       const startupTimeoutMs =
         isWindows && args.some((arg) => arg === '--name' || arg.startsWith('--name=')) ? 20_000 : 10_000
       await waitFor(() => raw.includes('test-model'), 'CLI header', startupTimeoutMs)
@@ -303,7 +302,7 @@ export async function createTuiHarness(options: {
       try {
         processUnderTest.kill()
       } catch {
-        // PTY may already be closed after a failed launch.
+        // 启动失败后 PTY 可能已经关闭。
       }
       if (!processExited) {
         const timeout = setTimeout(resolveProcessExit, 2000)

@@ -1,7 +1,7 @@
 /**
- * Runtime bootstrap: workspace resolution, provider discovery, plugins,
- * registries, and the base AgentOptions shared by every turn. Mirrors the
- * ordering used by the CLI startup, but injects no UI callbacks here.
+ * 运行时引导：工作区解析、provider 发现、插件、
+ * 注册表，以及每轮共享的基础 AgentOptions。与 CLI 启动的
+ * 顺序一致，但这里不注入任何 UI 回调。
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -76,8 +76,8 @@ export interface RuntimeBootstrap {
   mcpExtraServers: Record<string, McpServerConfig>
 }
 
-/** Prefer an explicit workspace, otherwise walk up to the nearest project
- *  marker so a launch from `packages/desktop` still sees the repo root. */
+/** 优先使用显式工作区，否则向上走到最近的项目标记，
+ *  这样从 `packages/desktop` 启动时仍能看到仓库根。 */
 export function resolveWorkspace(): string {
   const explicit = process.env.X_CODE_WORKSPACE?.trim()
   if (explicit) return path.resolve(explicit)
@@ -94,8 +94,8 @@ export function resolveWorkspace(): string {
   return start === path.parse(start).root ? os.homedir() : start
 }
 
-/** Same convention as the CLI: load the nearest `.env` walking up from the
- *  workspace. Existing process env vars keep precedence. */
+/** 与 CLI 相同约定：从工作区向上加载最近的 `.env`。
+ *  已有进程环境变量保持优先。 */
 function loadWorkspaceEnv(workspace: string): void {
   let dir = workspace
   while (true) {
@@ -104,7 +104,7 @@ function loadWorkspaceEnv(workspace: string): void {
       try {
         process.loadEnvFile(envPath)
       } catch {
-        // Ignore malformed .env files.
+        // 忽略格式损坏的 .env 文件。
       }
       return
     }
@@ -156,14 +156,14 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   try {
     process.chdir(workspace)
   } catch {
-    // Keep the launch cwd if the workspace is not accessible.
+    // 工作区不可访问时保持启动时的 cwd。
   }
   loadWorkspaceEnv(workspace)
-  // "Don't ask again" approvals from earlier sessions live in the project.
+  // 更早会话中「不再询问」的批准存在项目里。
   reloadPersistedRules(workspace)
   await applyStoredSecrets()
-  // Pick up tools the user installed after the app was launched. Stored
-  // secrets and .env values win over the shell snapshot.
+  // 拾取应用启动后用户安装的工具。存储的
+  // secret 和 .env 值优先于 shell 快照。
   await refreshShellEnvironment()
   const desktopSettings = loadDesktopSettings()
   applySearchProviderPreference(desktopSettings.searchProvider)
@@ -249,7 +249,7 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   }
 
   const memoryService = new MemoryService({
-    // Resolve against a fresh registry so keys saved after startup work.
+    // 用全新的注册表解析，使启动后保存的 key 生效。
     resolveModel: (id) => withLocalModels(createModelRegistry()).languageModel(id as `${string}:${string}`),
   })
   memoryService.setActiveModelId(modelId)
@@ -262,8 +262,8 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   const agentExtraDirs = integration?.agentsDirs ?? []
   const commandExtraDirs = integration?.commandsDirs ?? []
   const mcpExtraServers = integration?.mcpServers ?? {}
-  // Project hooks execute arbitrary commands; only load them for workspaces
-  // the user explicitly trusted (Settings → Hooks).
+  // 项目 hooks 会执行任意命令；只为用户显式信任的工作区
+  // （设置 → Hooks）加载它们。
   const allowProjectHooks = (desktopSettings.trustedProjectHooks ?? []).includes(path.resolve(workspace))
   const localHooks = loadLocalHookConfigs(workspace, { allowProjectHooks })
   const hookRegistry = new HookRegistry([...(integration?.hookRegistry.list() ?? []), ...localHooks.registered])

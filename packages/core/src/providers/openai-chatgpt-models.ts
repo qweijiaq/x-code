@@ -13,17 +13,16 @@ import type { ProviderModel, ReasoningTierOption } from './catalog.js'
 const CACHE_TTL_MS = 5 * 60 * 1000
 const SHARED_MODEL_REFRESH_TIMEOUT_MS = 8 * 1000
 
-// The ChatGPT models endpoint interprets `client_version` as an official
-// Codex protocol compatibility version, not this product's package version.
-// GPT-5.6 requires at least 0.144.0; sending x-code's independent 0.x version
-// makes the endpoint legitimately return an empty picker catalog.
+// ChatGPT 模型端点把 `client_version` 解释为官方的 Codex 协议兼容版本，
+// 而非本产品的包版本。GPT-5.6 至少要求 0.144.0；发送 x-code 独立的 0.x
+// 版本会让端点合理地返回空的选择器目录。
 const OPENAI_CODEX_COMPATIBILITY_VERSION = '0.144.0'
 
 export interface OpenAIChatGPTRuntimeModel extends ProviderModel {
-  /** Raw `context_window` advertised by the ChatGPT Codex model catalog. */
+  /** ChatGPT Codex 模型目录所声明的原始 `context_window`。 */
   contextWindow?: number
-  /** Provider metadata retained for API/cache compatibility.
-   *  Product headroom is always controlled by COMPRESSION_TRIGGER_RATIO. */
+  /** 为 API/缓存兼容性保留的 provider 元数据。
+   *  产品余量始终由 COMPRESSION_TRIGGER_RATIO 控制。 */
   effectiveContextWindowPercent?: number
   defaultReasoningLevel?: string
   maxOutputTokens?: number
@@ -246,7 +245,7 @@ async function loadCache(accountKey: string): Promise<ModelsCache | undefined> {
       return value as ModelsCache
     }
   } catch {
-    // Missing or malformed cache falls back to the bundled subscription catalog.
+    // 缓存缺失或格式错误时，回退到内置的订阅目录。
   }
   return undefined
 }

@@ -1,4 +1,4 @@
-// Assertion helpers exposed via ctx.expect.
+// 通过 ctx.expect 暴露的断言辅助函数。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 

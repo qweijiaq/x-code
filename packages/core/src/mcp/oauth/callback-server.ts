@@ -1,23 +1,20 @@
-// @x-code-cli/core — Local OAuth callback receiver
+// @x-code-cli/core — 本地 OAuth 回调接收器
 //
-// Spins up an ephemeral HTTP server on 127.0.0.1:<random-port>/callback,
-// waits for the user's authorization-server redirect, returns the
-// captured `code` + `state` (or error). Auto-closes after the first
-// request (or on timeout).
+// 在 127.0.0.1:<随机端口>/callback 上启动一个临时 HTTP 服务器，等待用户的
+// 授权服务器重定向，返回捕获到的 `code` + `state`（或错误）。在首个请求
+// （或超时）后自动关闭。
 //
-// Why ephemeral & random-port:
-//   - A fixed port collides if two CLIs run concurrently.
-//   - Random ports require the OAuth provider to be told the URL after
-//     the listener is up — we expose `start()` returning the actual URL
-//     before resolving any callbacks.
+// 为什么用临时 + 随机端口：
+//   - 两个 CLI 并发运行时会撞固定端口。
+//   - 随机端口要求监听器起来后再告诉 OAuth provider URL——我们暴露的
+//     `start()` 会在解析任何回调之前返回真实 URL。
 //
-// Security:
-//   - Bound to 127.0.0.1 only, never 0.0.0.0 — the listener should not
-//     be reachable from other machines.
-//   - We only accept the first matching request; subsequent hits return
-//     a friendly "auth complete, you can close this window" page.
-//   - We do NOT validate `state` here — that's the SDK's job. We just
-//     forward whatever the auth server sent back.
+// 安全：
+//   - 只绑定 127.0.0.1，绝不 0.0.0.0——监听器不应被其他机器访问。
+//   - 我们只接受第一个匹配的请求；后续命中返回友好的
+//     "auth complete, you can close this window" 页面。
+//   - 这里不校验 `state`——那是 SDK 的职责。我们只转发认证服务器回传的
+//     内容。
 import http from 'node:http'
 import { AddressInfo } from 'node:net'
 
@@ -29,29 +26,28 @@ export interface CallbackResult {
 }
 
 export interface RunningCallbackServer {
-  /** The full redirect URL to advertise to the auth server. */
+  /** 要告知认证服务器的完整重定向 URL。 */
   url: string
-  /** Resolves with the code/state on the first valid callback request,
-   *  or rejects on timeout / OAuth error response. */
+  /** 在首个有效回调请求时以 code/state resolve，
+   *  或在超时 / OAuth 错误响应时 reject。 */
   waitForCallback: () => Promise<CallbackResult>
-  /** Stop accepting new connections and free the port. Idempotent. */
+  /** 停止接受新连接并释放端口。幂等。 */
   close: () => void
 }
 
 export interface StartOptions {
-  /** Max time to wait (ms). Default 5 minutes. */
+  /** 最长等待时间（毫秒）。默认 5 分钟。 */
   timeoutMs?: number
-  /** Path on which the auth server should redirect.
-   *  Default '/callback'. */
+  /** 认证服务器应重定向到的路径。
+   *  默认 '/callback'。 */
   path?: string
 }
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000
 const DEFAULT_PATH = '/callback'
 
-/** Start the listener and return control to the caller so it can hand
- *  the URL to the auth provider. The actual waiting happens via the
- *  returned `waitForCallback()` promise. */
+/** 启动监听器并把控制权返回给调用方，使其能把 URL 交给认证 provider。
+ *  真正的等待通过返回的 `waitForCallback()` promise 进行。 */
 export async function startCallbackServer(options: StartOptions = {}): Promise<RunningCallbackServer> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const expectedPath = options.path ?? DEFAULT_PATH
@@ -69,7 +65,7 @@ export async function startCallbackServer(options: StartOptions = {}): Promise<R
       response.writeHead(400).end('missing URL')
       return
     }
-    // Parse against a dummy base — we only care about pathname + search.
+    // 用一个虚拟 base 解析——我们只关心 pathname + search。
     const u = new URL(req.url, 'http://localhost')
     if (u.pathname !== expectedPath) {
       response.writeHead(404).end('not found')
@@ -111,8 +107,8 @@ export async function startCallbackServer(options: StartOptions = {}): Promise<R
     rejectOnce = null
   })
 
-  // Watch for socket errors so a connection reset doesn't crash the
-  // CLI on Windows where ECONNRESET is more common.
+  // 监听 socket 错误，使连接重置不会在 Windows 上崩溃 CLI
+  // （那里 ECONNRESET 更常见）。
   server.on('error', (err) => {
     debugLog('mcp.callback-server-error', String(err))
     rejectOnce?.(err)
@@ -120,8 +116,8 @@ export async function startCallbackServer(options: StartOptions = {}): Promise<R
     rejectOnce = null
   })
 
-  // Bind to ephemeral port. listen(0, '127.0.0.1') asks the OS for any
-  // free port; the actual one comes out of address().
+  // 绑定到临时端口。listen(0, '127.0.0.1') 让 OS 分配任意空闲端口；
+  // 实际端口从 address() 里取。
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', () => {
@@ -138,7 +134,7 @@ export async function startCallbackServer(options: StartOptions = {}): Promise<R
     resolveOnce = null
     rejectOnce = null
   }, timeoutMs)
-  // Clear the timer on either resolution path.
+  // 任一 resolve 路径都清除定时器。
   void waiter.finally(() => clearTimeout(timeoutHandle))
 
   let closed = false
@@ -147,7 +143,7 @@ export async function startCallbackServer(options: StartOptions = {}): Promise<R
     closed = true
     server.close()
   }
-  // Auto-close once we've handled the (single) callback.
+  // 处理完（单个）回调后自动关闭。
   void waiter.finally(close)
 
   return { url, waitForCallback: () => waiter, close }

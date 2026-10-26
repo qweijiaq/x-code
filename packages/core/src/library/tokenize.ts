@@ -1,8 +1,8 @@
-// @x-code-cli/core — Document library text helpers.
+// @x-code-cli/core — 文档库文本辅助函数。
 //
-// Tokenisation is deliberately simple and dependency-free: latin words plus
-// CJK character bigrams. That is enough for keyword recall on mixed Chinese /
-// English documents without shipping a tokenizer or a dictionary.
+// 分词刻意保持简单且无依赖：拉丁词加上 CJK 字符二元组。
+// 这已足够在中英混合文档上做关键词召回，
+// 无需内置分词器或词典。
 
 export function tokenize(text: string): string[] {
   const lower = text.toLowerCase()
@@ -27,8 +27,8 @@ export interface TextChunk {
 const DEFAULT_CHUNK_CHARS = 800
 const DEFAULT_OVERLAP_CHARS = 120
 
-/** Split text into overlapping chunks, preferring paragraph / line
- *  boundaries so a chunk rarely starts mid-sentence. */
+/** 把文本切分为带重叠的块，优先选择段落 / 行边界，
+ *  这样块很少从句子中间开始。 */
 export function chunkText(text: string, options: { maxChars?: number; overlap?: number } = {}): TextChunk[] {
   const maxChars = options.maxChars ?? DEFAULT_CHUNK_CHARS
   const overlap = Math.min(options.overlap ?? DEFAULT_OVERLAP_CHARS, Math.floor(maxChars / 3))
@@ -54,7 +54,7 @@ export function chunkText(text: string, options: { maxChars?: number; overlap?: 
   return chunks
 }
 
-/** Find a short excerpt around the best-matching query term. */
+/** 在最佳匹配的查询词附近找一段简短摘录。 */
 export function buildSnippet(text: string, terms: string[], maxChars = 180): string {
   const flat = text.replace(/\s+/g, ' ').trim()
   if (flat.length <= maxChars) return flat

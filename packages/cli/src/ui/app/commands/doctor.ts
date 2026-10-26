@@ -1,9 +1,8 @@
-// @x-code-cli/cli — /doctor slash command handler.
+// @x-code-cli/cli — /doctor 斜杠命令处理器。
 //
-// One-shot environment diagnostic: checks API keys, Node version, shell
-// availability, MCP server health, plugin load errors, custom agent parse
-// state, and knowledge file sizes. Modelled after Claude Code's /doctor
-// but scoped to what x-code-cli actually needs.
+// 一次性环境诊断：检查 API 密钥、Node 版本、shell 可用性、MCP 服务器健康、
+// 插件加载错误、自定义代理解析状态，以及知识文件大小。以 Claude Code 的
+// /doctor 为模板，但范围限定在 x-code-cli 实际需要的内容。
 import { getAvailableProviders, getEnvVarName, getOpenAIAuthStatus } from '@x-code-cli/core'
 import type { AgentOptions } from '@x-code-cli/core'
 
@@ -16,7 +15,7 @@ export interface DoctorCommandDeps {
   echoCommand: (text: string) => void
 }
 
-/** All known provider keys — order matches PROVIDER_DETECTION_ORDER. */
+/** 所有已知供应商键——顺序与 PROVIDER_DETECTION_ORDER 一致。 */
 const ALL_PROVIDERS = ['anthropic', 'openai', 'deepseek', 'google', 'alibaba', 'xai', 'zhipu', 'moonshotai'] as const
 
 export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
@@ -26,7 +25,7 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
     echoCommand(text)
     const sections: string[] = []
 
-    // ── Environment ────────────────────────────────────────────────────
+    // ── 环境 ────────────────────────────────────────────────────
     {
       const lines = ['**Environment**', '']
       lines.push(`- Version: ${VERSION}`)
@@ -41,7 +40,7 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       sections.push(lines.join('\n'))
     }
 
-    // ── Providers ──────────────────────────────────────────────────────
+    // ── 供应商 ──────────────────────────────────────────────────────
     {
       const available = new Set(getAvailableProviders())
       const openAIAuth = getOpenAIAuthStatus()
@@ -57,7 +56,7 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
         }
         lines.push(`- ${p}: ${ok ? '✓' : `✗  (set \`${envVar}\`)`}`)
       }
-      // Custom provider
+      // 自定义供应商
       const hasCustom = available.has('custom')
       if (hasCustom) {
         lines.push('- custom: ✓')
@@ -69,7 +68,7 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       sections.push(lines.join('\n'))
     }
 
-    // ── MCP Servers ────────────────────────────────────────────────────
+    // ── MCP 服务器 ────────────────────────────────────────────────────
     {
       const statuses = options.mcpRegistry?.serverStatus() ?? []
       const lines = ['**MCP Servers**', '']
@@ -107,7 +106,7 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       sections.push(lines.join('\n'))
     }
 
-    // ── Plugins ────────────────────────────────────────────────────────
+    // ── 插件 ────────────────────────────────────────────────────────
     {
       const all = options.pluginRegistry?.listAll() ?? []
       const errors = options.pluginRegistry?.loadErrors() ?? []
@@ -126,7 +125,7 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       sections.push(lines.join('\n'))
     }
 
-    // ── Sub-Agents ─────────────────────────────────────────────────────
+    // ── 子代理 ─────────────────────────────────────────────────────
     {
       const agents = options.subAgentRegistry?.list() ?? []
       const lines = ['**Sub-Agents**', '']
@@ -142,7 +141,7 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       sections.push(lines.join('\n'))
     }
 
-    // ── Skills ─────────────────────────────────────────────────────────
+    // ── 技能 ─────────────────────────────────────────────────────────
     {
       const skills = options.skillRegistry?.listAll() ?? []
       const lines = ['**Skills**', '']
@@ -152,7 +151,7 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       sections.push(lines.join('\n'))
     }
 
-    // ── Commands ────────────────────────────────────────────────────────
+    // ── 命令 ────────────────────────────────────────────────────────
     {
       const commands = options.commandRegistry?.list() ?? []
       const lines = ['**Commands**', '']
@@ -167,7 +166,7 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       sections.push(lines.join('\n'))
     }
 
-    // ── Assemble ───────────────────────────────────────────────────────
+    // ── 组装 ───────────────────────────────────────────────────────
     addInfoMessage(sections.join('\n\n'))
   }
 

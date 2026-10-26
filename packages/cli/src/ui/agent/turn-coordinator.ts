@@ -13,8 +13,8 @@ export interface TurnPeerOriginSummary {
   truncated: boolean
 }
 
-/** Structural counterpart of core's execution authority. Keeping this tiny
- * state machine independent of core exports makes it usable during startup. */
+/** core 执行权限的结构化对应物。把这个小型状态机保持独立于 core 导出，让它在
+ *  启动期间也可用。 */
 export interface TurnAuthority {
   source: 'user' | 'peer'
   peerTainted: boolean
@@ -43,7 +43,7 @@ export type TurnCoordinatorListener = (lease: TurnLease | null) => void
 
 export interface TurnCoordinator {
   tryAcquire(owner: TurnOwner, authority: TurnAuthority): TurnLease | null
-  /** Replace the current lease without exposing an observable idle state. */
+  /** 在不暴露可观察空闲状态的情况下替换当前租约。 */
   releaseAndTryAcquire(lease: TurnLease, nextOwner: TurnOwner, nextAuthority: TurnAuthority): TurnLease | null
   isOwned(): boolean
   current(): TurnLease | null
@@ -92,7 +92,7 @@ export function createTurnCoordinator(): TurnCoordinator {
       try {
         listener(lease)
       } catch {
-        // A UI observer must not corrupt ownership or suppress other observers.
+        // 一个 UI 观察者绝不能破坏所有权或压制其他观察者。
       }
     }
   }

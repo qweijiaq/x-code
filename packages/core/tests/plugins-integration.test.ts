@@ -1,4 +1,4 @@
-// Tests for plugin → existing-loader integration
+// 插件 → 既有加载器集成的测试
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -29,7 +29,7 @@ afterEach(() => {
 
 describe('buildPluginIntegration', () => {
   it('lists skill + agent dirs for each enabled plugin (resolved absolute)', async () => {
-    // Build a source plugin tree with skills/ and agents/ dirs
+    // 构造一个带 skills/ 和 agents/ 目录的源插件树
     const src = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-int-plugin-src-'))
     await writeFileAt(
       path.join(src, 'plugin.json'),
@@ -97,7 +97,7 @@ describe('buildPluginIntegration', () => {
       JSON.stringify({
         name: 'badhook',
         version: '1.0.0',
-        // missing command — schema rejects
+        // 缺少 command —— schema 会拒绝
         hooks: { PreToolUse: [{ matcher: 'edit_file' }] },
       }),
     )
@@ -128,8 +128,8 @@ describe('buildPluginIntegration', () => {
   })
 
   it("accepts a flat `.mcp.json` (no `mcpServers` wrapper) — Claude Code's official plugin shape", async () => {
-    // linear@anthropic-marketplace ships .mcp.json as a flat `name → cfg`
-    // map without a `mcpServers` wrapper. We used to silently drop it.
+    // linear@anthropic-marketplace 发布的 .mcp.json 是扁平的 `name → cfg`
+    // 映射，没有 `mcpServers` 包裹层。我们过去会静默丢弃它。
     const src = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-int-plugin-flat-mcp-'))
     await writeFileAt(path.join(src, 'plugin.json'), JSON.stringify({ name: 'linearish', version: '1.0.0' }))
     await writeFileAt(
@@ -147,7 +147,7 @@ describe('buildPluginIntegration', () => {
   })
 
   it('resolves mcpServers name collisions first-wins + records the loser', async () => {
-    // Two plugins both contribute a server named "gh"
+    // 两个插件都贡献了名为 "gh" 的服务器
     const srcA = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-int-plugin-srcA-'))
     await writeFileAt(
       path.join(srcA, 'plugin.json'),
@@ -173,7 +173,7 @@ describe('buildPluginIntegration', () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-int-cwd-'))
     const out = await buildPluginIntegration(await loadAllPlugins({ cwd }))
 
-    // First install wins (installed_plugins.json order)
+    // 先安装者胜出（installed_plugins.json 的顺序）
     expect((out.mcpServers.gh as { command?: string }).command).toBe('first-cmd')
     expect(out.mcpCollisions).toHaveLength(1)
     expect(out.mcpCollisions[0]).toEqual({
@@ -190,7 +190,7 @@ describe('buildPluginIntegration', () => {
       JSON.stringify({
         name: 'badmcp',
         version: '1.0.0',
-        // Has neither command nor url — mcp config schema must reject this entry
+        // 既没有 command 也没有 url —— mcp 配置 schema 必须拒绝此条目
         mcpServers: { broken: { args: ['x'] } },
       }),
     )
@@ -212,7 +212,7 @@ describe('buildPluginIntegration', () => {
 
     expect(out.mcpErrors).toHaveLength(1)
     expect(out.mcpErrors[0]!.pluginId).toBe('badmcp@local')
-    // Good plugin's server still landed
+    // 正常插件的服务器仍然落地
     expect(out.mcpServers.ok).toBeDefined()
   })
 
@@ -225,7 +225,7 @@ describe('buildPluginIntegration', () => {
     await installPlugin({ source: { kind: 'local', path: src }, marketplace: 'local' })
 
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-int-cwd-'))
-    // Disable the plugin via project settings
+    // 通过项目设置禁用该插件
     await writeFileAt(
       path.join(cwd, '.x-code', 'settings.local.json'),
       JSON.stringify({ enabledPlugins: { 'demo@local': false } }),

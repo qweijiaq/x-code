@@ -1,20 +1,20 @@
-// @x-code-cli/core — Local audio transcription via whisper.cpp
+// @x-code-cli/core — 基于 whisper.cpp 的本地音频转录
 //
-// Transcribes local MP3, WAV, FLAC, OGG Vorbis and M4A files using
-// @fugood/whisper.node — a native Node.js binding of whisper.cpp.
-// Returns timestamped text segments; only the text is sent to the LLM, never
-// the raw audio. The whisper model is auto-downloaded from Hugging Face on
-// first use and cached under ~/.x-code/whisper-models/.
+// 使用 @fugood/whisper.node（whisper.cpp 的原生 Node.js 绑定）转录
+// 本地 MP3、WAV、FLAC、OGG Vorbis 和 M4A 文件。
+// 返回带时间戳的文本片段；只有文本会被发送给 LLM，绝不会发送原始音频。
+// whisper 模型在首次使用时自动从 Hugging Face 下载，并缓存到
+// ~/.x-code/whisper-models/ 下。
 //
-// Platform support:
-//   macOS ARM64  — Metal GPU acceleration
-//   macOS x86_64 — CPU only
-//   Windows x64  — Vulkan GPU acceleration (optional)
-//   Linux x64    — CPU (Vulkan/CUDA optional)
+// 平台支持：
+//   macOS ARM64  — Metal GPU 加速
+//   macOS x86_64 — 仅 CPU
+//   Windows x64  — Vulkan GPU 加速（可选）
+//   Linux x64    — CPU（Vulkan/CUDA 可选）
 //
-// When the native binding is unavailable (unsupported OS/arch, broken install),
-// transcribeAudio returns a descriptive error string instead of throwing —
-// callers can surface it to the model and the user.
+// 当原生绑定不可用时（不受支持的 OS/arch、安装损坏），
+// transcribeAudio 会返回描述性错误字符串而不是抛出异常——
+// 调用方可将其直接呈现给模型和用户。
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import fs from 'node:fs/promises'
@@ -38,25 +38,25 @@ import {
   runWhisperTranscription,
 } from './audio-transcribe-runner.js'
 
-// ── Supported audio formats ──────────────────────────────────────────────
+// ── 支持的音频格式 ────────────────────────────────────────────────────────
 export function isAudioFile(filePath: string): boolean {
   return isSupportedAudioPath(filePath)
 }
 
-/** Whisper model variants, ordered small→large.
- *  Default is `tiny` — only ~75 MB to download, fast on CPU, and good
- *  enough for a CLI assistant. Users who need better accuracy for
- *  non-English or complex audio can override via env or option. */
+/** Whisper 模型变体，按小→大排序。
+ *  默认是 `tiny` —— 只需下载约 75 MB，CPU 上速度快，
+ *  对 CLI 助手来说足够好。需要更好准确度（非英语或复杂音频）的
+ *  用户可通过环境变量或选项覆盖。 */
 const DEFAULT_MODEL: WhisperModelName = (process.env.X_CODE_WHISPER_MODEL as WhisperModelName | undefined) ?? 'tiny'
 const HUGGINGFACE_BASE = `https://huggingface.co/ggerganov/whisper.cpp/resolve/${WHISPER_MODEL_REVISION}`
 const DEFAULT_MIRROR_BASE = 'https://hf-mirror.com'
-/** How long to wait for response headers before falling back to the mirror. */
+/** 在回退到镜像之前等待响应头的时长。 */
 const MODEL_HEADER_TIMEOUT_MS = 20_000
 export { MAX_AUDIO_DECODED_PCM_BYTES, MAX_AUDIO_DURATION_SECONDS, MAX_AUDIO_SOURCE_BYTES }
 
-/** Candidate download URLs, in order. Hugging Face is unreachable on some
- *  networks (notably mainland China); hf-mirror serves the same revision.
- *  X_CODE_WHISPER_MODEL_URL overrides the list entirely. */
+/** 候选下载 URL，按顺序排列。Hugging Face 在某些网络下不可达
+ *  （尤其是中国大陆）；hf-mirror 提供相同的 revision。
+ *  X_CODE_WHISPER_MODEL_URL 会整体覆盖该列表。 */
 function whisperModelUrls(filename: string): string[] {
   const custom = process.env.X_CODE_WHISPER_MODEL_URL?.trim()
   if (custom) return [custom]
@@ -75,30 +75,28 @@ function modelPath(model: WhisperModelName): string {
   return path.join(modelsDir(), WHISPER_MODELS[model].filename)
 }
 
-/** Model files shipped inside the desktop app bundle. Read-only; used before
- *  the user cache and any download so first-run voice input works offline. */
+/** 随桌面应用 bundle 一起分发的模型文件。只读；优先于用户缓存和
+ *  任何下载使用，这样首次运行的语音输入也能离线工作。 */
 function bundledModelPath(model: WhisperModelName): string | null {
   const dir = process.env.X_CODE_WHISPER_BUNDLED_DIR?.trim()
   if (!dir) return null
   return path.join(dir, WHISPER_MODELS[model].filename)
 }
 
-// ── Model download ───────────────────────────────────────────────────────
+// ── 模型下载 ─────────────────────────────────────────────────────────────
 
-// Per-chunk stall timeout: if no data arrives for this long we assume
-// the connection is dead.  This is NOT a total download timeout — a
-// slow-but-steady 75 MB download is fine; only a fully stalled network
-// triggers this.
+// 每个 chunk 的停滞超时：若这么久都没有数据到达，我们就认为
+// 连接已死。这不是总下载超时——缓慢但稳定的 75 MB 下载没有问题；
+// 只有完全停滞的网络才会触发它。
 const STALL_TIMEOUT_MS = 30_000
 const MODEL_LOCK_WAIT_MS = 30 * 60_000
 
 interface EnsureModelOptions {
   abortSignal?: AbortSignal
-  /** Called for every notable step (start download, loading model, ready).
-   *  Callers choose how to surface these: tool-progress updates the same
-   *  spinner line in-place (readFile), while file-ingest appends a new
-   *  message per call. To avoid flooding the UI with a new line per 10%,
-   *  intermediate download percentages are only sent to debugLog. */
+  /** 每个值得注意的步骤都会被调用（开始下载、加载模型、就绪）。
+   *  调用方自行选择如何呈现：tool-progress 就地覆盖同一条 spinner 行
+   *  （readFile），而 file-ingest 每次调用追加一条新消息。
+   *  为避免每 10% 就新增一行刷屏，中间的下载百分比只发给 debugLog。 */
   onProgress?: (message: string) => void
 }
 
@@ -174,7 +172,7 @@ async function ensureModel(model: WhisperModelName, options?: EnsureModelOptions
         return localOverride
       }
     } catch {
-      // Fall through to the cache/download path.
+      // 回退到缓存/下载路径。
     }
   }
   const bundled = bundledModelPath(model)
@@ -204,8 +202,8 @@ async function ensureModel(model: WhisperModelName, options?: EnsureModelOptions
     verifiedModels.delete(dest)
     await fs.rm(dest, { force: true })
 
-    // The fixed temporary name is safe while the cross-process lock is held;
-    // removing it also recovers an interrupted download from an earlier run.
+    // 在跨进程锁被持有的情况下，固定临时名是安全的；
+    // 删除它还能回收早前一次运行中被中断的下载。
     const tmpDest = `${dest}.tmp`
     await fs.rm(tmpDest, { recursive: true, force: true })
 
@@ -267,8 +265,8 @@ async function ensureModel(model: WhisperModelName, options?: EnsureModelOptions
         try {
           response = await fetch(url, { signal: headerSignal })
         } finally {
-          // The timer only guards connection/header setup; clearing it keeps a
-          // slow-but-healthy 75 MB body download from being aborted midway.
+          // 该定时器只守护连接/头部建立；清除它能避免
+          // 缓慢但健康的 75 MB body 下载被中途中止。
           clearTimeout(headerTimer)
         }
         if (!response.ok || !response.body) {
@@ -342,23 +340,23 @@ async function ensureModel(model: WhisperModelName, options?: EnsureModelOptions
   }
 }
 
-// ── Transcription result ─────────────────────────────────────────────────
+// ── 转录结果 ─────────────────────────────────────────────────────────────
 
 export interface TranscribeSegment {
-  /** Start time in milliseconds */
+  /** 起始时间（毫秒） */
   t0: number
-  /** End time in milliseconds */
+  /** 结束时间（毫秒） */
   t1: number
-  /** Transcribed text for this segment */
+  /** 该片段的转录文本 */
   text: string
 }
 
 export interface TranscribeAudioResult {
-  /** Full transcription text */
+  /** 完整转录文本 */
   text: string
-  /** Timestamped segments */
+  /** 带时间戳的片段 */
   segments: TranscribeSegment[]
-  /** Detected/specified language */
+  /** 检测到/指定的语言 */
   language?: string
 }
 
@@ -375,7 +373,7 @@ function formatTimestamp(ms: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`
 }
 
-/** Format transcription result as timestamped text suitable for LLM context. */
+/** 把转录结果格式化为适合作为 LLM 上下文的带时间戳文本。 */
 export function formatTranscription(result: TranscribeAudioResult, filePath: string): string {
   const header = `Audio transcription: ${filePath}`
   const langLine = result.language ? `Language: ${result.language}` : ''
@@ -423,9 +421,9 @@ async function stageAudioFile(
   }
 }
 
-// ── Public API ───────────────────────────────────────────────────────────
+// ── 公共 API ─────────────────────────────────────────────────────────────
 
-/** Check whether whisper.node native binding is available on this platform. */
+/** 检查 whisper.node 原生绑定在当前平台是否可用。 */
 export async function isWhisperAvailable(abortSignal?: AbortSignal): Promise<boolean> {
   try {
     await probeWhisperRuntime({ abortSignal })
@@ -438,21 +436,21 @@ export async function isWhisperAvailable(abortSignal?: AbortSignal): Promise<boo
 }
 
 export interface TranscribeOptions {
-  /** Override the default model. Defaults to 'tiny'. */
+  /** 覆盖默认模型。默认是 'tiny'。 */
   model?: WhisperModelName
-  /** Force a specific language (ISO 639-1 code, e.g. 'en', 'zh'). Auto-detect if omitted. */
+  /** 强制指定语言（ISO 639-1 代码，例如 'en'、'zh'）。省略则自动检测。 */
   language?: string
-  /** Abort signal to cancel transcription. */
+  /** 取消转录的中止信号。 */
   abortSignal?: AbortSignal
-  /** Progress callback (0–100). */
+  /** 进度回调（0–100）。 */
   onProgress?: (pct: number) => void
-  /** UI notice callback — displayed to the user for download progress, model loading, etc. */
+  /** UI 通知回调 —— 用于向用户展示下载进度、模型加载等。 */
   onNotice?: (message: string) => void
 }
 
-/** Transcribe a local audio file, returning timestamped text segments.
- *  Never throws — returns descriptive error text on failure so callers
- *  can surface it directly to the model. */
+/** 转录本地音频文件，返回带时间戳的文本片段。
+ *  绝不抛异常——失败时返回描述性错误文本，调用方可
+ *  直接呈现给模型。 */
 export async function transcribeAudio(
   filePath: string,
   options?: TranscribeOptions,
@@ -483,11 +481,10 @@ export async function transcribeAudio(
     const pcmPath = path.join(staged.directory, 'decoded.pcm')
     await prepareWhisperAudio(staged.path, pcmPath, { abortSignal: options?.abortSignal })
 
-    // onNotice fires for every progress tick — fine for tool-progress
-    // (overwrites the same spinner line), but file-ingest appends a new
-    // UI message each time. So use onNotice for key milestones only
-    // when no dedicated progress sink exists; downstream download ticks
-    // always go to onNotice so the readFile spinner stays live.
+    // onNotice 在每次进度 tick 都会触发——对 tool-progress 来说没问题
+    // （覆盖同一条 spinner 行），但 file-ingest 每次都会追加一条新的
+    // UI 消息。所以在没有专用进度接收器时，只用 onNotice 报告关键里程碑；
+    // 下游的下载 tick 始终走 onNotice，好让 readFile 的 spinner 保持活跃。
     const targetModel = await ensureModel(model, {
       abortSignal: options?.abortSignal,
       onProgress: options?.onNotice,

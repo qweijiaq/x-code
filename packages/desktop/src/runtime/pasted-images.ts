@@ -1,7 +1,7 @@
 /**
- * Clipboard images arrive as Blobs without a filesystem path, so the renderer
- * sends them over IPC and the runtime writes a real file under the user data
- * directory. The attachment pipeline then treats it like any dropped file.
+ * 剪贴板图片以 Blob 形式到达，没有文件系统路径，因此渲染进程
+ * 通过 IPC 发送，运行时在用户数据目录下写出真实文件。
+ * 随后附件管线像处理普通拖入文件一样处理它。
  */
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
@@ -24,8 +24,8 @@ export function pastedImagesDir(): string {
   return path.join(userXcodeDir(), 'attachments')
 }
 
-/** Best-effort housekeeping so repeated screenshot pastes cannot grow the
- *  directory without bound. Failures are ignored. */
+/** 尽力做家务清理，避免重复的截图粘贴无限增长目录。
+ *  失败会被忽略。 */
 function prune(dir: string): void {
   try {
     const entries = fs
@@ -47,11 +47,11 @@ function prune(dir: string): void {
       try {
         fs.unlinkSync(entry.filePath)
       } catch {
-        // Already removed.
+        // 已被移除。
       }
     })
   } catch {
-    // The directory may not exist yet.
+    // 目录可能尚不存在。
   }
 }
 

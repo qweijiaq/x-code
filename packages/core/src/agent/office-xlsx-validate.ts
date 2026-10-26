@@ -77,6 +77,7 @@ function parseXmlStreaming(bytes: Uint8Array, handlers: XmlHandlers): string {
   })
   parser.on('closeTag', (name) => handlers.onClose?.(localName(name)))
 
+  // 分块喂给流式解析器；`stream: true` 让解码器不把跨块的多字节 UTF-8 字符截断。
   for (let offset = 0; offset < bytes.length; offset += XML_STREAM_CHUNK_BYTES) {
     parser.write(decoder.decode(bytes.subarray(offset, offset + XML_STREAM_CHUNK_BYTES), { stream: true }))
   }

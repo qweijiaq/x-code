@@ -1,8 +1,8 @@
 import path from 'node:path'
 
-/** Package managers run workspace scripts from the package directory while
- *  preserving the user's invocation directory in INIT_CWD. Restore it before
- *  the CLI loads project-scoped state so dev runs match the installed binary. */
+/** 包管理器从包目录运行 workspace 脚本，同时把用户的调用目录保留在 INIT_CWD
+ *  中。在 CLI 加载项目作用域状态之前把它恢复，这样 dev 运行能与已安装的
+ *  二进制文件行为一致。 */
 export function restoreInvocationCwd(
   initCwd: string | undefined = process.env.INIT_CWD,
   chdir: (directory: string) => void = process.chdir,

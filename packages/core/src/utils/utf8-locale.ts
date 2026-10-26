@@ -1,6 +1,6 @@
-// GUI-launched apps inherit no LANG/LC_CTYPE, so child shells can end up in the
-// C locale and mangle non-ASCII paths and tool output. Normalize only the
-// locale variables to UTF-8; other user environment stays untouched.
+// 由 GUI 启动的应用不会继承 LANG/LC_CTYPE，因此子 shell 可能落入 C locale，
+// 从而弄乱非 ASCII 路径和工具输出。只把 locale 变量归一化为 UTF-8；其他
+// 用户环境变量保持不变。
 const UTF8_LOCALE = 'en_US.UTF-8'
 
 export function isUtf8Locale(value: string | undefined): boolean {

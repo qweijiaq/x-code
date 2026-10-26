@@ -1,8 +1,7 @@
 /**
- * Desktop IPC contract shared by the main process, the preload bridge, the
- * runtime utility process, and the renderer. Keep this file dependency-free
- * (types only) so every process can import it without pulling in Node or DOM
- * globals.
+ * 主进程、preload 桥、运行时 utility 进程与 renderer 共享的
+ * 桌面 IPC 契约。保持本文件无依赖（仅类型），使每个进程都能导入它
+ * 而无需引入 Node 或 DOM 全局。
  */
 
 export interface ShellCreateParams {
@@ -26,14 +25,14 @@ export interface SmokeReport {
   versions: Record<string, string>
 }
 
-// ─── App / models ───────────────────────────────────────────────────────────
+// ─── App / 模型 ───────────────────────────────────────────────────────────
 
 export interface ModelOption {
   id: string
   label: string
   provider: string
   description: string
-  /** Context ceiling for this model (tokens). */
+  /** 此模型的上下文上限（tokens）。 */
   contextWindow?: number
   demo?: boolean
 }
@@ -50,7 +49,7 @@ export interface AppState {
   models: ModelOption[]
   providers: ProviderStatus[]
   activeModelId: string
-  /** Context ceiling for the active model (tokens). */
+  /** 活动模型的上下文上限（tokens）。 */
   contextWindow?: number
   demo: boolean
   thinking: boolean
@@ -94,7 +93,7 @@ export interface UpdateCheckResult {
   latestVersion?: string
   url?: string
   notes?: string
-  /** File name of the installer matching this platform/arch, when listed. */
+  /** 匹配此平台/架构的安装器文件名（当列出时）。 */
   artifact?: string
   error?: string
 }
@@ -214,7 +213,7 @@ export interface CompactResult {
   message: string
 }
 
-// ─── Settings ───────────────────────────────────────────────────────────────
+// ─── 设置 ───────────────────────────────────────────────────────────────
 
 export type ApiKeySource = 'stored' | 'env' | 'none'
 
@@ -226,7 +225,7 @@ export interface ProviderSettingsView {
   source: ApiKeySource
   hint?: string
   baseUrl?: string
-  /** Custom OpenAI-compatible model id (without the `custom:` prefix). */
+  /** 自定义 OpenAI 兼容模型 id（不带 `custom:` 前缀）。 */
   modelId?: string
 }
 
@@ -236,7 +235,7 @@ export interface SkillRuntimeView {
   dir: string
   status: SkillRuntimeStatus
   manifests: string[]
-  /** Dependency folders left inside the skill directory by older installers. */
+  /** 旧安装器留在技能目录内的依赖文件夹。 */
   legacy: boolean
   message?: string
 }
@@ -286,7 +285,7 @@ export interface PluginSettingsView {
   enabled: boolean
   marketplace: string
   userConfig?: UserConfigFieldView[]
-  /** Keys that currently have a saved value. */
+  /** 当前有已保存值的 key。 */
   userConfigSet?: string[]
 }
 
@@ -307,7 +306,7 @@ export interface SearchProviderView {
   configured: boolean
   source: 'stored' | 'env' | 'none'
   hint?: string
-  /** DeepSeek built-in search uses the model provider key. */
+  /** DeepSeek 内置搜索使用模型 provider 的 key。 */
   modelKeyOnly?: boolean
 }
 
@@ -325,9 +324,9 @@ export interface PermissionRuleView {
   tool: string
   pattern: string
   type: PermissionRuleType
-  /** Shell rules are bound to the project they were approved in. */
+  /** shell 规则绑定到它们获批所在的项目。 */
   cwd?: string
-  /** Human-readable form, e.g. `git commit:*`. */
+  /** 人类可读形式，例如 `git commit:*`。 */
   label: string
 }
 
@@ -348,19 +347,19 @@ export interface SettingsSnapshot {
   pluginErrors: string[]
   tools: ToolSettingsView[]
   searchProviders: SearchProviderView[]
-  /** Preferred standalone provider id; empty means automatic order. */
+  /** 首选独立 provider id；空表示自动顺序。 */
   searchProvider: string
   toolProfile: 'full' | 'standard'
   thinking: boolean
   alwaysAllowAll: boolean
   browser: {
-    /** Interactive browser sub-agent (`task` can delegate browser work). */
+    /** 交互式浏览器子代理（`task` 可委托浏览器工作）。 */
     enabled: boolean
-    /** One-shot localhost screenshots after visual changes. */
+    /** 视觉变更后的一次性 localhost 截图。 */
     visualCheck: boolean
   }
-  /** How stored API keys are persisted: OS-encrypted via safeStorage, or
-   *  plaintext with 0600 when encryption is unavailable. */
+  /** 存储的 API key 如何持久化：通过 safeStorage 做 OS 加密，或
+   *  加密不可用时用 0600 明文。 */
   secretStorage: 'encrypted' | 'plain' | 'unknown'
   shellSandbox: { supported: boolean; enabled: boolean; allowNetwork: boolean; extensions: boolean }
   notifications: boolean
@@ -399,9 +398,9 @@ export interface DocumentSheetView {
 export interface DocumentPageView {
   page: number
   dataUrl: string
-  /** Text for this page: extracted text, or persisted OCR when there was none. */
+  /** 此页文本：提取的文本，或当没有时的持久化 OCR。 */
   text: string
-  /** True when `text` came from persisted OCR. */
+  /** 当 `text` 来自持久化 OCR 时为 true。 */
   ocr?: boolean
 }
 
@@ -418,20 +417,20 @@ export interface DocumentView {
   notes: string[]
   metadata: Record<string, string | number>
   pages?: DocumentPageView[]
-  /** Extracted text for every page, independent of which page images are loaded. */
+  /** 每一页的提取文本，与加载了哪些页面图片无关。 */
   pageTexts?: DocumentTextPage[]
   sheets?: DocumentSheetView[]
   dataUrl?: string
-  /** PDF only: total page count and whether more page images can be loaded. */
+  /** 仅 PDF：总页数以及是否还能加载更多页面图片。 */
   totalPages?: number
   hasMore?: boolean
-  /** Pages that currently have persisted OCR text. */
+  /** 当前有持久化 OCR 文本的页面。 */
   ocrPages?: number[]
-  /** True for text-like documents that support edit review. */
+  /** 对支持编辑审核的文本类文档为 true。 */
   editable?: boolean
-  /** Hash of the stored baseline (content when the document was first opened). */
+  /** 存储基线的哈希（文档首次打开时的内容）。 */
   baselineHash?: string
-  /** True when the file on disk differs from the stored baseline. */
+  /** 当磁盘上的文件与存储基线不同时为 true。 */
   changed?: boolean
 }
 
@@ -472,13 +471,13 @@ export interface GitStatusView {
 export interface BranchInfoView {
   name: string
   current: boolean
-  /** Working directory that already has this branch checked out. */
+  /** 已签出此分支的工作目录。 */
   worktreePath?: string
-  /** A linked worktree that can be removed (never the main checkout). */
+  /** 可被删除的关联 worktree（绝不是主检出）。 */
   removable?: boolean
-  /** Remote-tracking branch entry (name includes the remote, e.g. origin/main). */
+  /** 远程跟踪分支条目（名称含远程，例如 origin/main）。 */
   remote?: boolean
-  /** Local branch name a remote entry creates/fast-forwards into. */
+  /** 远程条目创建/快进到的本地分支名。 */
   localName?: string
 }
 
@@ -550,12 +549,12 @@ export interface DocumentDiffHunkView {
   oldLines: number
   newStart: number
   newLines: number
-  /** Unified diff lines, each prefixed with ' ', '+', or '-'. */
+  /** 统一 diff 行，每行以 ' '、'+' 或 '-' 为前缀。 */
   lines: string[]
 }
 
 export interface DocumentDiffView {
-  /** Hash of the file on disk when the diff was computed. */
+  /** 计算 diff 时磁盘上文件的哈希。 */
   hash: string
   baselineHash: string
   hunks: DocumentDiffHunkView[]
@@ -572,7 +571,7 @@ export interface DocumentRecentItem {
 }
 
 export interface WorkspaceFileItem {
-  /** Absolute path, ready to be inserted as an @ reference. */
+  /** 绝对路径，可直接作为 @ 引用插入。 */
   path: string
   relative: string
   isDirectory: boolean
@@ -617,12 +616,12 @@ export interface SkillImportResult {
 export type SkillMarketProvider = 'skillhub' | 'skillsmp'
 
 export interface SkillMarketEntryView {
-  /** Provider-specific install id (`@namespace/slug` or SkillsMP skill id). */
+  /** provider 特定的安装 id（`@namespace/slug` 或 SkillsMP skill id）。 */
   id: string
   provider: SkillMarketProvider
   name: string
   description: string
-  /** Chinese description when the catalog provides one. */
+  /** 目录提供时的中文描述。 */
   descriptionZh?: string
   author?: string
   version?: string
@@ -630,7 +629,7 @@ export interface SkillMarketEntryView {
   downloads?: number
   category?: string
   homepage?: string
-  /** GitHub source used by the SkillsMP installer. */
+  /** SkillsMP 安装器使用的 GitHub source。 */
   sourceUrl?: string
   requiresKey?: boolean
   installed: boolean
@@ -692,13 +691,13 @@ export interface MarketplaceListView {
   errors: string[]
 }
 
-// ─── Sessions ───────────────────────────────────────────────────────────────
+// ─── 会话 ───────────────────────────────────────────────────────────────
 
 export interface SessionListItem {
   filePath: string
   sessionId: string
   name?: string
-  /** AI-generated short title (display fallback between name and firstPrompt). */
+  /** AI 生成的短标题（在 name 和 firstPrompt 之间的显示回退）。 */
   title?: string
   firstPrompt: string
   startedAt: string
@@ -721,9 +720,9 @@ export interface SessionSearchResult {
 export interface SessionAttachmentView {
   name: string
   mime?: string
-  /** Original local path, when the session retained it. */
+  /** 原始本地路径（当会话保留它时）。 */
   path?: string
-  /** Present for raster images small enough to embed in the transcript. */
+  /** 对小到足以嵌入记录的栅格图片存在。 */
   dataUrl?: string
 }
 
@@ -787,7 +786,7 @@ export interface BackgroundShellView {
   omittedBytes: number
 }
 
-// ─── Agent views ────────────────────────────────────────────────────────────
+// ─── Agent 视图 ────────────────────────────────────────────────────────────
 
 export interface UsageView {
   inputTokens: number
@@ -809,7 +808,7 @@ export interface FileEditView {
   removals: number
   isCreate: boolean
   content?: string
-  /** True when the runtime kept a pre/post snapshot for "revert this edit". */
+  /** 当运行时为「撤销此编辑」保留了前后快照时为 true。 */
   revertible?: boolean
   hunks: Array<{
     oldStart: number
@@ -820,7 +819,7 @@ export interface FileEditView {
   }>
 }
 
-// ─── Approvals ──────────────────────────────────────────────────────────────
+// ─── 审批 ──────────────────────────────────────────────────────────────
 
 export type ApprovalKind = 'permission' | 'authority' | 'question' | 'plan'
 
@@ -843,7 +842,7 @@ export interface ApprovalRequestEvent {
   }
 }
 
-// ─── Requests ───────────────────────────────────────────────────────────────
+// ─── 请求 ───────────────────────────────────────────────────────────────
 
 export interface RequestMap {
   'agent:submit': {
@@ -1207,7 +1206,7 @@ export interface RuntimeError {
 
 export type RuntimeResponse = { id: string; ok: true; result: unknown } | { id: string; ok: false; error: RuntimeError }
 
-// ─── Events ─────────────────────────────────────────────────────────────────
+// ─── 事件 ─────────────────────────────────────────────────────────────────
 
 export type RuntimeEvent =
   | { type: 'runtime:ready'; pid: number; versions: Record<string, string> }
@@ -1271,14 +1270,14 @@ export type RuntimeEvent =
   | { type: 'shell:exit'; id: string; exitCode: number; signal?: number }
   | { type: 'smoke:result'; report: SmokeReport }
 
-/** Main -> runtime utility process. */
+/** 主进程 → 运行时 utility 进程。 */
 export type RuntimeInbound =
   | { kind: 'request'; request: RuntimeRequest }
   | { kind: 'main-response'; id: string; ok: true; result: unknown }
   | { kind: 'main-response'; id: string; ok: false; error: string }
   | { kind: 'shutdown' }
 
-/** Runtime -> main calls that only the Electron main process can serve. */
+/** 运行时 → 只有 Electron 主进程能服务的调用。 */
 export type MainRequestMethod =
   | 'app:render-pdf'
   | 'app:notify'
@@ -1287,9 +1286,9 @@ export type MainRequestMethod =
   | 'app:safe-storage-encrypt'
   | 'app:safe-storage-decrypt'
 
-/** Fields are method-specific; only `app:render-pdf` uses html/title, the
- *  safeStorage methods use `data` (plain text or base64 ciphertext), and
- *  `app:notify` uses title/body. */
+/** 字段是方法特定的；只有 `app:render-pdf` 使用 html/title，
+ *  safeStorage 方法使用 `data`（明文或 base64 密文），而
+ *  `app:notify` 使用 title/body。 */
 export type MainRequestParams = {
   html?: string
   title?: string
@@ -1299,14 +1298,14 @@ export type MainRequestParams = {
   sessionId?: string
 }
 
-/** Runtime utility process -> main. */
+/** 运行时 utility 进程 → 主进程。 */
 export type RuntimeOutbound =
   | { kind: 'response'; response: RuntimeResponse }
   | { kind: 'event'; event: RuntimeEvent }
   | { kind: 'ready'; pid: number; versions: Record<string, string> }
   | { kind: 'main-request'; id: string; method: MainRequestMethod; params: MainRequestParams }
 
-// ─── UI smoke ───────────────────────────────────────────────────────────────
+// ─── UI 冒烟 ───────────────────────────────────────────────────────────────
 
 export interface UiSmokeCheck {
   ok: boolean
@@ -1319,19 +1318,19 @@ export interface UiSmokeResult {
   error?: string
 }
 
-/** Preload bridge exposed on `window.xcode`. */
+/** 暴露在 `window.xcode` 上的 preload 桥。 */
 export interface XcodeBridge {
   request(request: RuntimeRequest): Promise<RuntimeResponse>
   onEvent(listener: (event: RuntimeEvent) => void): () => void
-  /** Used only by `--ui-smoke`: report renderer-side results and exit. */
+  /** 仅供 `--ui-smoke` 使用：上报 renderer 侧结果并退出。 */
   reportUiSmoke(result: UiSmokeResult): void
-  /** Keeps the smoke watchdog alive and records the last completed check. */
+  /** 保持冒烟看门狗存活，并记录最后一个完成的检查。 */
   reportUiSmokeProgress(name: string): void
-  /** Copies text through Electron's clipboard (file:// pages have no
-   *  reliable navigator.clipboard permission). */
+  /** 通过 Electron 的剪贴板复制文本（file:// 页面没有
+   *  可靠的 navigator.clipboard 权限）。 */
   copyText(text: string): void
-  /** Resolves a dropped File to its filesystem path (sandboxed renderers
-   *  cannot read `File.path`). Returns '' when unavailable. */
+  /** 把拖放的 File 解析为其文件系统路径（沙箱化的 renderer
+   *  无法读取 `File.path`）。不可用时返回 ''。 */
   pathForFile(file: unknown): string
   platform: string
 }

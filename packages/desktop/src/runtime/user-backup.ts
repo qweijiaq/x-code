@@ -55,9 +55,9 @@ async function copyMissing(source: string, target: string): Promise<boolean> {
   return true
 }
 
-/** Copy user data into a new timestamped folder. The destination parent must
- *  already exist. Only known top-level folders are copied; secrets, plugins,
- *  attachments and logs are deliberately excluded. */
+/** 把用户数据复制到一个新的带时间戳的文件夹。目标父目录必须
+ *  已存在。只复制已知的顶层文件夹；secret、插件、
+ *  附件和日志被刻意排除。 */
 export async function exportUserBackup(
   sourceRoot: string,
   destinationParent: string,
@@ -129,8 +129,8 @@ async function readManifest(backupDir: string): Promise<BackupManifest> {
   return record as unknown as BackupManifest
 }
 
-/** Restore missing entries from a backup. Existing sessions, skills and
- *  commands are never overwritten, so importing into a live home is safe. */
+/** 从备份恢复缺失的条目。已有的会话、技能和命令绝不会被覆盖，
+ *  因此导入到正在使用的 home 是安全的。 */
 export async function importUserBackup(backupDir: string, targetRoot: string): Promise<BackupImportResult> {
   const source = path.resolve(backupDir)
   const manifest = await readManifest(source)

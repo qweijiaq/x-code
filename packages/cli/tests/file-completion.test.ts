@@ -25,7 +25,7 @@ describe('detectAtToken', () => {
   })
 
   it('rejects npm-style version specifier (foo@1.2)', () => {
-    // Cursor at end of "npm install foo@1.2"
+    // 光标位于 "npm install foo@1.2" 末尾
     const t = detectAtToken('npm install foo@1.2', 19)
     expect(t.active).toBe(false)
   })
@@ -41,7 +41,7 @@ describe('detectAtToken', () => {
   })
 
   it('captures query when cursor is mid-token', () => {
-    // "@foo|bar" — cursor at 4, full token "@foobar" runs to 7
+    // "@foo|bar" — 光标在 4，完整 token "@foobar" 延伸到 7
     const t = detectAtToken('@foobar', 4)
     expect(t.active).toBe(true)
     expect(t.atIdx).toBe(0)
@@ -123,8 +123,8 @@ describe('scoreAndRank', () => {
   })
 
   it('breaks score ties alphabetically', () => {
-    // Two entries with identical basename match score on empty query —
-    // both have depth 1, so tie-break should fall to alphabetical order.
+    // 空查询下两条 basename 匹配得分相同 — 两者深度都为 1，
+    // 所以平局应回退到字母序。
     const ranked = scoreAndRank([E('zebra.ts'), E('apple.ts')], '')
     expect(ranked[0]?.relPath).toBe('apple.ts')
     expect(ranked[1]?.relPath).toBe('zebra.ts')

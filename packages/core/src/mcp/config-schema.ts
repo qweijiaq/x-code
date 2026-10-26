@@ -1,21 +1,19 @@
-// @x-code-cli/core — MCP config Zod schema
+// @x-code-cli/core — MCP 配置的 Zod schema
 //
-// Validates the `mcpServers` field of ~/.x-code/config.json (and the
-// project-level .x-code/config.json). One schema covers both stdio and
-// streamable-http servers; the union discriminator is field presence:
-// `command` → stdio, `url` → http. Configs that have neither (or both)
-// are rejected before we try to spawn anything.
+// 校验 ~/.x-code/config.json（以及项目级 .x-code/config.json）里的
+// `mcpServers` 字段。一个 schema 同时覆盖 stdio 与 streamable-http
+// 服务器；联合类型的判别依据是字段是否存在：`command` → stdio，
+// `url` → http。两者都缺（或都有）的配置会在我们尝试 spawn 之前就被拒绝。
 import { z } from 'zod'
 
 import { errorMessage } from '../utils.js'
 import type { McpServerConfig } from './types.js'
 
-/** Single permissive schema covering both transports. Field presence
- *  (`command` vs `url`) is the discriminator, enforced via superRefine
- *  rather than z.union — union's per-variant validation hides our
- *  "exactly one of" rule when neither field is present (Zod just says
- *  "Invalid input" because no variant matched). With one flat schema
- *  + superRefine we get readable error messages for every misshape. */
+/** 一个宽松 schema 覆盖两种 transport。字段是否存在（`command` vs `url`）
+ *  是判别依据，通过 superRefine 而非 z.union 强制——union 的逐变体校验
+ *  会在两个字段都缺失时隐藏我们的"恰好其一"规则（Zod 只会说
+ *  "Invalid input"，因为没有变体匹配）。用扁平 schema + superRefine，
+ *  我们能为每种畸形情况得到可读的错误信息。 */
 const serverSchema = z
   .object({
     type: z.enum(['stdio', 'http']).optional(),
@@ -49,9 +47,8 @@ const serverSchema = z
         message: 'mcpServers entry must set either `command` (stdio) or `url` (http)',
       })
     }
-    // Cross-field validation: HTTP-only fields with stdio config, and
-    // vice versa. Not strictly required (extra fields are ignored at
-    // runtime) but the error message catches typos early.
+    // 跨字段校验：stdio 配置里的 HTTP 专属字段，反之亦然。并非严格要求
+    // （运行时多余的字段会被忽略），但错误信息能尽早发现笔误。
     if (hasCommand && typeof v.headers !== 'undefined') {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: '`headers` is only valid for HTTP servers' })
     }
@@ -72,9 +69,8 @@ export const mcpServersSchema = z
     `at most ${MAX_MCP_SERVERS} MCP servers are allowed`,
   )
 
-/** Validate a single server config; throw with a context-tagged message
- *  if it fails. Server name is included so the error tells the user which
- *  entry in their config.json is broken. */
+/** 校验单个服务器配置；失败时抛出带上下文标记的错误信息。包含服务器名，
+ *  使错误能告诉用户其 config.json 中哪一项是坏的。 */
 export function parseServerConfig(name: string, raw: unknown): McpServerConfig {
   const result = serverSchema.safeParse(raw)
   if (!result.success) {
@@ -84,10 +80,9 @@ export function parseServerConfig(name: string, raw: unknown): McpServerConfig {
   return result.data as McpServerConfig
 }
 
-/** Validate the entire `mcpServers` block. Returns a partial result:
- *  every entry that parsed cleanly is included; broken ones surface in
- *  `errors` so the loader can mark them `failed` without aborting the
- *  whole config. */
+/** 校验整个 `mcpServers` 块。返回部分结果：所有干净解析的条目都包含在内；
+ *  损坏的条目出现在 `errors` 中，使 loader 能把它们标记为 `failed` 而不
+ *  中止整个配置。 */
 export function parseServersBlock(raw: unknown): {
   servers: Record<string, McpServerConfig>
   errors: Array<{ name: string; message: string }>

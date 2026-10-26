@@ -100,9 +100,8 @@ function basename(value: string): string {
   return path.posix.basename(value.replace(/\\/g, '/'))
 }
 
-/** Boundary-aware substring match: ASCII keys must not be flanked by
- *  alphanumeric characters; non-ASCII keys match plainly. `key` must already
- *  be normalized with normalizeMemoryText. */
+/** 边界感知的子串匹配：ASCII 键的两侧不能是字母数字字符；非 ASCII 键直接
+ *  匹配。`key` 必须已用 normalizeMemoryText 归一化。 */
 export function containsExactKey(message: string, key: string): boolean {
   if (/[^\x00-\x7F]/u.test(key)) return message.includes(key)
   let index = message.indexOf(key)

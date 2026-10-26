@@ -20,8 +20,8 @@ export function powerShellWrapper(command: string): string {
 }
 
 export function powerShellCommandLine(executable: string, command: string): string {
-  // Redirected Windows PowerShell serializes errors as CLIXML with
-  // -EncodedCommand. Decoding a fixed quoted wrapper keeps stderr textual.
+  // 被重定向的 Windows PowerShell 用 -EncodedCommand 把错误序列化成 CLIXML。
+  // 解码一个固定的带引号包装能让 stderr 保持纯文本。
   return [executable, '-NoProfile', '-NonInteractive', '-Command', powerShellWrapper(command)]
     .map(quoteWindowsCommandArgument)
     .join(' ')

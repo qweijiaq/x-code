@@ -372,8 +372,8 @@ export function evaluateToolAuthority(input: {
   if (!input.authority.peerTainted && input.authority.source !== 'peer') {
     return { kind: 'allow', basis: 'user-authority' }
   }
-  // A peer message cannot grant authority, but it must not revoke authority
-  // the local user explicitly granted when starting this receiving session.
+  // 对等消息不能授予权限，但也不得撤销本地用户启动此接收会话时
+  // 明确授予的权限。
   if (input.trustMode) return { kind: 'allow', basis: 'user-authority' }
   const classified = classifyToolCall(input)
   const capabilities = classified.capabilities

@@ -1,20 +1,18 @@
-// @x-code-cli/core — Per-session JSONL transcript store.
+// @x-code-cli/core — 按会话的 JSONL 转录存储。
 //
-// One file per session: `.x-code/sessions/<sessionId>.jsonl`.
-// The file is append-only; everything we record about a session — header,
-// each ModelMessage, periodic token-usage snapshots, compaction boundaries,
-// abort markers — lives as one JSON object per line.
+// 每个会话一个文件：`.x-code/sessions/<sessionId>.jsonl`。
+// 文件只追加；我们记录会话的所有内容——文件头、每条 ModelMessage、
+// 周期性的 token 用量快照、压缩边界、中止标记——都以每行一个 JSON 对象的形式存在。
 //
-// Why JSONL and not a single rewritten JSON document:
-//   - Crash-safe. A killed process or full-disk error at most loses the line
-//     currently being written; everything before it is intact.
-//   - Cheap appends. Each turn appends a few hundred bytes; never rewrites.
-//   - Mirrors Claude Code's `~/.claude/<project>/<uuid>.jsonl` exactly,
-//     including the `compact_boundary` semantics (see `loadSession` below).
+// 为什么用 JSONL 而不是重写单个 JSON 文档：
+//   - 崩溃安全。进程被杀死或磁盘写满错误，最多丢失正在写入的那一行；
+//     它之前的所有内容都完好无损。
+//   - 追加成本低。每一轮只追加几百字节；从不重写。
+//   - 与 Claude Code 的 `~/.claude/<project>/<uuid>.jsonl` 完全一致，
+//     包括 `compact_boundary` 语义（见下方 `loadSession`）。
 //
-// This module replaces the old per-session `<id>.usage.json` and
-// `<id>.json` (LLM summary) files — both are now meta entries inside the
-// jsonl. /usage history and /resume both source from the same file.
+// 本模块取代旧的按会话的 `<id>.usage.json` 和 `<id>.json`（LLM 摘要）文件
+// ——两者现在都成了 jsonl 内部的 meta 条目。/usage 历史与 /resume 都从同一个文件读取。
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import fs from 'node:fs/promises'
@@ -62,9 +60,8 @@ function sessionsDir(cwd: string = process.cwd()): string {
   return path.join(cwd, XCODE_DIR, SESSIONS_SUBDIR)
 }
 
-/** Build the on-disk filename for a session. New sessions use only their
- * timestamp-shaped id. Hydrated sessions pin `sessionFilePath` so legacy
- * slug-prefixed files continue appending in place after an upgrade. */
+/** 构造会话在磁盘上的文件名。新会话只使用其时间戳形状的 id。恢复的会话固定
+ *  `sessionFilePath`，这样升级后旧版 slug 前缀文件仍能就地继续追加。 */
 export function getSessionFilePath(
   state: { sessionId: string; sessionFilePath?: string | null },
   cwd: string = process.cwd(),
@@ -72,7 +69,7 @@ export function getSessionFilePath(
   return state.sessionFilePath ?? path.join(sessionsDir(cwd), `${state.sessionId}.jsonl`)
 }
 
-// ── Entry types written to the jsonl ────────────────────────────────────
+// ── 写入 jsonl 的条目类型 ────────────────────────────────────────────────────
 
 interface HeaderEntry {
   t: 'meta'
@@ -81,11 +78,11 @@ interface HeaderEntry {
   gitBranch?: string
   modelId: string
   startedAt: string
-  /** Truncated to ~500 chars — enough for the picker to show a recognisable
-   *  preview without paying to read the whole first user message off disk. */
+  /** 截断到约 500 字符——足够让选择器显示可识别的预览，而无需从磁盘读取整条
+   *  首条用户消息。 */
   firstPrompt: string
   taskSlug: string
-  /** Optional free-form display name, currently only set by `/fork <name>`. */
+  /** 可选的自定义显示名，目前仅由 `/fork <name>` 设置。 */
   name?: string
   sessionId: string
   firstPromptProvenance?: MessageProvenance
@@ -131,12 +128,11 @@ interface UsageEntry {
   t: 'meta'
   kind: 'usage'
   usage: TokenUsage
-  /** Optional for backward compatibility with sessions written before usage
-   *  attribution was introduced. This is a cumulative snapshot. */
+  /** 为了与引入用量归因之前写入的会话向后兼容而可选。这是一个累计快照。 */
   breakdown?: UsageBreakdown
-  /** Present only for main provider requests. */
+  /** 仅主提供方请求才有。 */
   turn?: ProviderTurnUsage
-  /** Cumulative diagnostic snapshot so tail scans do not need every turn. */
+  /** 累计诊断快照，这样尾部扫描无需读取每一轮。 */
   cacheMissSummary?: CacheMissSummary
   modelId: string
   ts: string
@@ -145,11 +141,9 @@ interface UsageEntry {
 interface CompactBoundaryEntry {
   t: 'meta'
   kind: 'compact-boundary'
-  /** Present for deep (LLM-summary) compaction; omitted for light compaction
-   *  (loop-guard pruning). The summary text is ALSO embedded in the next
-   *  msg line that gets re-flushed, so this is informational — used by
-   *  `listSessions` to show "compacted" hints in the picker without
-   *  re-reading the post-boundary messages. */
+  /** 深度（LLM 摘要）压缩时存在；轻度压缩（循环护栏修剪）时省略。摘要文本还会
+   *  嵌入到接下来被重新刷写的 msg 行中，所以这只是信息性的——供 `listSessions`
+   *  在选择器中显示“已压缩”提示，而无需重读边界之后的消息。 */
   summary?: string
   memoryGeneration?: number
   ts: string
@@ -169,9 +163,8 @@ interface ForkEntry {
   ts: string
 }
 
-/** Rewind checkpoint pointer. Surfaced by `loadSession` so /resume picks
- *  up the same /rewind history. The actual file backups live separately
- *  under `.x-code/file-history/<sessionId>/`. */
+/** 回退检查点指针。由 `loadSession` 暴露，这样 /resume 能接续相同的 /rewind 历史。
+ *  实际的文件备份单独存放在 `.x-code/file-history/<sessionId>/` 下。 */
 interface CheckpointJsonlEntry {
   t: 'meta'
   kind: 'checkpoint'
@@ -253,8 +246,8 @@ interface PersistedToolResultPart {
   }
 }
 
-/** Keep the live screenshot in memory for the model's next request, but never
- *  copy its base64 payload into the project's resumable JSONL transcript. */
+/** 把实时截图保留在内存中供模型下一次请求使用，但绝不把它的 base64 负载
+ *  拷贝进项目可恢复的 JSONL 转录里。 */
 function persistenceSafeMessage(message: ModelMessage): ModelMessage {
   if (message.role !== 'tool' || !Array.isArray(message.content)) return message
   let changed = false
@@ -283,18 +276,16 @@ function persistenceSafeMessage(message: ModelMessage): ModelMessage {
   return changed ? ({ ...message, content } as ModelMessage) : message
 }
 
-// ── Append helpers (fire-and-forget; never throw) ───────────────────────
+// ── 追加辅助（发后即忘；绝不抛错）────────────────────────────────────────
 
 async function appendLine(filePath: string, entry: Entry): Promise<void> {
   await appendRawLines(filePath, [JSON.stringify(entry)])
 }
 
-/** Every append and atomic snapshot for one session shares this operation
- * chain. A snapshot rename can therefore never race and discard a usage,
- * checkpoint, goal, or memory append that was already acknowledged. */
+/** 同一会话的每次追加与原子快照共享这条操作链。因此快照重命名绝不会与之竞态，
+ *  并丢弃一个已经确认的 usage、checkpoint、goal 或 memory 追加。 */
 const fileOperations = new Map<string, Promise<void>>()
-/** Files already chmod'd this process — avoids a redundant syscall on every
- *  append. */
+/** 本进程已经 chmod 过的文件——避免每次追加都做一次冗余的系统调用。 */
 const chmodDone = new Set<string>()
 
 function enqueueFileOperation<T>(filePath: string, operation: () => Promise<T>): Promise<T> {
@@ -338,9 +329,8 @@ function appendRawLines(filePath: string, lines: string[]): Promise<boolean> {
   return enqueueFileOperation(filePath, () => appendRawLinesNow(filePath, lines))
 }
 
-/** Try to read the current git branch from `.git/HEAD`. Cheap, fully sync
- *  on the calling promise; absent / detached-HEAD / non-git all map to
- *  undefined silently. */
+/** 尝试从 `.git/HEAD` 读取当前 git 分支。成本低，完全同步于调用方的 promise；
+ *  不存在 / 分离 HEAD / 非 git 仓库都静默映射为 undefined。 */
 async function readGitBranch(cwd: string): Promise<string | undefined> {
   try {
     const head = await readFile(path.join(cwd, '.git', 'HEAD'), 'utf-8')
@@ -470,8 +460,8 @@ async function retainedMetadataLines(
   return lines
 }
 
-/** Write payload to a fresh temp file (0600, fsync'd) so a later rename/link
- *  installs fully-persisted contents. Cleans up the temp file on failure. */
+/** 把负载写入一个全新的临时文件（0600，已 fsync），这样后续的 rename/link
+ *  安装的就是完全持久化的内容。失败时清理临时文件。 */
 async function writeTempSnapshot(tempPath: string, payload: string): Promise<void> {
   let handle: fs.FileHandle | undefined
   try {
@@ -488,9 +478,8 @@ async function writeTempSnapshot(tempPath: string, payload: string): Promise<voi
   }
 }
 
-/** Windows cannot flush directory handles (fsync returns EPERM). The installed
- *  file itself was already flushed; keep the directory durability barrier on
- *  platforms that support it. */
+/** Windows 无法刷写目录句柄（fsync 返回 EPERM）。已安装的文件本身已刷写；
+ *  在支持目录持久化屏障的平台上保留该屏障。 */
 async function syncParentDirectory(filePath: string): Promise<void> {
   if (process.platform === 'win32') return
   const directory = await fs.open(path.dirname(filePath), 'r')
@@ -539,10 +528,8 @@ async function writeSnapshotExclusively(filePath: string, payload: string): Prom
   }
 }
 
-/** Install a brand-new snapshot without ever replacing an existing session.
- * Hard links provide an atomic install after the temp inode is flushed. Some
- * filesystems do not support them, so the fallback claims the destination with
- * `wx` and preserves the same no-overwrite guarantee. */
+/** 安装一个全新的快照，绝不替换已有会话。硬链接在临时 inode 刷写后提供原子安装。
+ *  部分文件系统不支持硬链接，因此回退路径用 `wx` 声明目标并保持同样的不覆盖保证。 */
 async function createWithSnapshot(filePath: string, lines: readonly string[]): Promise<void> {
   await ensureProjectStorageDir(path.dirname(filePath))
   const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`)
@@ -585,10 +572,9 @@ export interface ForkedSession {
   forkedFrom: SessionForkOrigin
 }
 
-/** Detached, point-in-time state used to create a branch while the source
- * session keeps running. Every mutable value is cloned during capture so
- * later tool rounds, compaction, goal updates, and memory recall cannot move
- * the branch boundary. */
+/** 用于在源会话继续运行的同时创建分支的、脱离的、某个时间点的状态。捕获期间
+ *  克隆每个可变值，这样后续的工具轮次、压缩、goal 更新与记忆召回都无法移动
+ *  分支边界。 */
 export interface SessionForkSnapshot {
   sourceSessionId: string
   trackedMessages: TrackedModelMessage[]
@@ -657,19 +643,17 @@ async function commitTranscriptSnapshotNow(
     state.transcriptRequiresSnapshot = false
     state.persistedMessageCount = candidate.length
   } catch (error) {
-    // rename may already have replaced the durable file before a directory
-    // fsync reports failure. The in-memory parent is then no longer safe for
-    // a delta; every snapshot failure forces the next operation to rewrite a
-    // fresh root snapshot from the current tracked transcript.
+    // rename 可能在目录 fsync 报错之前就已经替换了持久文件。此时内存中的父级
+    // 不再适合做 delta；每次快照失败都迫使下一次操作从当前已追踪转录重写一个
+    // 全新的根快照。
     state.transcriptRequiresSnapshot = true
     throw error
   }
 }
 
-/** Commit a complete root snapshot. The live transcript changes only after
- * temp-file fsync, atomic rename, and directory fsync all succeed. State
- * derivation and I/O share the LoopState transcript chain, not just the
- * per-file writer queue. */
+/** 提交一个完整的根快照。只有在临时文件 fsync、原子 rename 与目录 fsync 全部
+ *  成功后，实时转录才会改变。状态推导与 I/O 共享 LoopState 转录链，而不仅是
+ *  每个文件的写队列。 */
 export function commitTranscriptSnapshot(
   state: LoopState,
   candidate?: readonly TrackedModelMessage[],
@@ -713,9 +697,8 @@ async function reserveForkTarget(
   throw new Error('Unable to allocate a unique fork session id')
 }
 
-/** Capture every durable value that belongs to a conversation boundary.
- * This function intentionally performs no I/O and finishes cloning before it
- * returns, so callers can retain the result while the source keeps running. */
+/** 捕获属于某个会话边界的每一个持久值。此函数有意不做任何 I/O，并在返回前
+ *  完成克隆，这样调用方可以在源继续运行的同时保留结果。 */
 export function captureSessionForkSnapshot(
   source: LoopState,
   options: { messageCount?: number } = {},
@@ -756,10 +739,8 @@ export function captureSessionForkSnapshot(
   }
 }
 
-/** Create an independent session from a previously captured point-in-time
- * boundary. Rewind sidecars and cumulative usage deliberately start fresh:
- * they describe branch-local file history and provider work, not model
- * context. */
+/** 从先前捕获的某个时间点边界创建一个独立会话。回退副产物与累计用量刻意从零开始：
+ *  它们描述的是分支本地的文件历史与提供方工作，而不是模型上下文。 */
 export async function forkSession(
   snapshot: SessionForkSnapshot,
   modelId: string,
@@ -776,9 +757,8 @@ export async function forkSession(
   const forkedAt = new Date().toISOString()
   const firstUser = selected.find((entry) => entry.message.role === 'user')
   const firstPrompt = firstUser ? extractText(firstUser.message.content).slice(0, 500) : ''
-  // The header must stay well inside listSessions' 8KB head read together
-  // with the 500-char firstPrompt, or the session silently drops out of the
-  // picker and `--resume <name>`.
+  // 文件头必须连同 500 字符的 firstPrompt 一起，稳稳落在 listSessions 的 8KB 头部读取
+  // 范围内，否则该会话会静默地从选择器和 `--resume <name>` 中消失。
   const name = options.name?.trim().slice(0, 200) || undefined
 
   const goal = snapshot.goal ? structuredClone(snapshot.goal) : null
@@ -889,19 +869,18 @@ async function appendHeaderNow(state: LoopState, modelId: string, firstPrompt: s
     firstPromptProvenance: state.trackedMessages[0]?.provenance,
   })
 
-  // Hydrated sessions pin their exact file path. An existing file is the
-  // original header; a missing one is recreated at that same path.
+  // 恢复的会话固定其确切文件路径。已存在的文件是原始文件头；缺失的会在同一路径重建。
   if (state.sessionFilePath) {
     try {
       await fs.access(state.sessionFilePath)
       return
     } catch {
-      // Fall through and recreate the missing pinned file.
+      // 继续往下走，重建缺失的固定文件。
     }
     try {
       await createWithSnapshot(state.sessionFilePath, [JSON.stringify(makeEntry(state.sessionId))])
-      // The old transcript chain lived in the deleted file. Keeping its epoch
-      // would make the next flush append a delta whose parent no longer exists.
+      // 旧转录链曾存在于已删除的文件里。保留它的 epoch 会让下一次刷写追加一个
+      // 其父级已不存在的 delta。
       state.committedTranscriptEpochId = undefined
       state.persistedMessageCount = 0
       state.transcriptRequiresSnapshot = true
@@ -912,9 +891,8 @@ async function appendHeaderNow(state: LoopState, modelId: string, firstPrompt: s
     }
   }
 
-  // Fresh sessions claim their path exclusively. If another process created
-  // the same millisecond id, move this state to the next timestamp instead of
-  // treating the unrelated file as a resumable session.
+  // 新会话独占其路径。如果另一进程创建了相同的毫秒 id，就把本状态移到下一个
+  // 时间戳，而不是把那个无关文件当成可恢复会话。
   const initialSessionId = state.sessionId
   const now = Date.now()
   const attemptedSessionIds = new Set<string>()
@@ -927,7 +905,7 @@ async function appendHeaderNow(state: LoopState, modelId: string, firstPrompt: s
       await createWithSnapshot(filePath, [JSON.stringify(makeEntry(sessionId))])
       state.sessionId = sessionId
       state.sessionFilePath = filePath
-      // A brand-new file cannot continue an epoch chain from another path.
+      // 一个全新文件无法从另一个路径续接 epoch 链。
       state.committedTranscriptEpochId = undefined
       state.persistedMessageCount = 0
       state.transcriptRequiresSnapshot = true
@@ -940,9 +918,8 @@ async function appendHeaderNow(state: LoopState, modelId: string, firstPrompt: s
   throw new Error('Unable to allocate a unique session id')
 }
 
-/** Write the session header. Idempotent for hydrated and already-started
- * states; fresh sessions claim their path without overwriting another
- * process. The transcript chain also serializes duplicate calls on one state. */
+/** 写入会话文件头。对已恢复与已启动的状态幂等；新会话在不覆盖另一进程的前提下
+ *  独占其路径。转录链还会对同一状态上的重复调用做串行化。 */
 export function appendHeader(
   state: LoopState,
   modelId: string,
@@ -952,17 +929,15 @@ export function appendHeader(
   return enqueueTranscriptOperation(state, () => appendHeaderNow(state, modelId, firstPrompt, cwd))
 }
 
-/** Flush every message in `state.messages` past `state.persistedMessageCount`
- *  to the jsonl file. The diff-based design keeps the writer decoupled from
- *  the many places in the agent loop that mutate state.messages directly
- *  (collectTurnResponse, processToolCalls, length-finish nudge, etc.) — we
- *  catch them all by sweeping at turn boundaries.
+/** 把 `state.messages` 中越过 `state.persistedMessageCount` 的每条消息刷写到
+ *  jsonl 文件。基于差量的设计使写入器与 agent loop 中直接改动 state.messages
+ *  的众多位置（collectTurnResponse、processToolCalls、长度收尾 nudge 等）解耦
+ *  ——我们通过在轮次边界做一次整体扫描把它们全部捕获。
  *
- *  After deep / light compaction the in-memory array shrinks. Callers must
- *  call `markBoundaryAndReflush` (below) instead of this — that path writes
- *  a compact-boundary marker so the loader can correctly truncate-on-load
- *  and then re-appends the trimmed messages so post-boundary jsonl content
- *  matches the new in-memory state. */
+ *  深度 / 轻度压缩之后，内存中的数组会缩小。调用方必须改调用下方的
+ *  `markBoundaryAndReflush`——那条路径会写一个 compact-boundary 标记，使加载器
+ *  能正确地在加载时截断，然后再重新追加被裁掉的消息，让边界之后的 jsonl 内容
+ *  与新内存状态一致。 */
 export function flushPendingMessages(state: LoopState): Promise<void> {
   return enqueueTranscriptOperation(state, async () => {
     if (state.transcriptIntegrity === 'failed') {
@@ -985,9 +960,8 @@ export function flushPendingMessages(state: LoopState): Promise<void> {
     if (pending.length === 0) return
     const epoch = epochLines(pending, 'delta', resultingTranscript, state.committedTranscriptEpochId)
     if (!(await appendRawLines(filePath, epoch.lines))) {
-      // append mode can leave any byte prefix on disk before reporting an I/O
-      // failure. Retrying another delta would chain across that unauthenticated
-      // tail, so the next operation must atomically replace it with a snapshot.
+      // 追加模式在报告 I/O 失败之前，可能在磁盘上留下任意字节前缀。再试一次 delta
+      // 会跨过那段未经验证的尾部串接，因此下一次操作必须用快照原子替换它。
       state.transcriptRequiresSnapshot = true
       throw new Error('Failed to commit transcript delta')
     }
@@ -996,15 +970,13 @@ export function flushPendingMessages(state: LoopState): Promise<void> {
   })
 }
 
-/** Append a usage snapshot for the current turn. Called from the agent loop
- *  after `collectTurnResponse` accepts the provider's `usage` object. The
- *  picker reads only the LAST usage line (tail scan) to display per-session
- *  totals — no need to keep older snapshots around any more efficiently. */
+/** 为当前轮次追加一个用量快照。在 `collectTurnResponse` 接受提供方的 `usage`
+ *  对象后由 agent loop 调用。选择器只读最后一条 usage 行（尾部扫描）来显示
+ *  每个会话的总量——无需更高效地保留旧快照。 */
 export async function appendUsage(state: LoopState, modelId: string, turn?: ProviderTurnUsage): Promise<void> {
   const filePath = getSessionFilePath(state)
-  // Full loads reconstruct individual estimates from persisted turns. Keeping
-  // only cumulative totals here avoids duplicating the entire turn history in
-  // every usage snapshot while preserving cheap tail reads for the picker.
+  // 完整加载会从已持久化的各轮重建单独估算值。这里只保留累计总量，避免在每个
+  // 用量快照里复制整段轮次历史，同时为选择器保留廉价的尾部读取。
   const entry: UsageEntry = {
     t: 'meta',
     kind: 'usage',
@@ -1018,9 +990,8 @@ export async function appendUsage(state: LoopState, modelId: string, turn?: Prov
   await appendLine(filePath, entry)
 }
 
-/** Append a per-step usage snapshot. Called from agentLoop after each
- *  user-submit completes. Accumulates across the session — loadSession
- *  collects every entry to rebuild the full step history on resume. */
+/** 追加一个每步用量快照。每次用户提交完成后由 agentLoop 调用。跨会话累计
+ *  ——loadSession 收集每个条目，以便在恢复时重建完整的步骤历史。 */
 export async function appendStepStats(state: LoopState, step: StepStats): Promise<void> {
   if (!state.sessionId) return
   const filePath = getSessionFilePath(state)
@@ -1033,21 +1004,17 @@ export async function appendStepStats(state: LoopState, step: StepStats): Promis
   await appendLine(filePath, entry)
 }
 
-/** Mark a compaction event and re-flush the (just-shrunk) message array.
- *  After this returns, the jsonl post-last-boundary content equals
- *  `state.messages` exactly — `loadSession` reconstructs the same in-memory
- *  state on resume.
+/** 标记一次压缩事件，并重新刷写（刚刚缩小的）消息数组。此函数返回后，jsonl
+ *  最后一条边界之后的内容与 `state.messages` 完全一致——`loadSession` 在恢复时
+ *  重建相同的内存状态。
  *
- *  Why we re-append instead of relying on the pre-boundary messages: our
- *  `compressMessages` keeps a `recent N` slice verbatim, but those slices
- *  were already persisted before the boundary; the loader's
- *  "everything-after-last-boundary wins" rule would otherwise drop them.
- *  Duplicating ~6 messages on disk is cheap and keeps the load logic
- *  trivial.
+ *  为什么我们重新追加，而不是依赖边界之前的消息：我们的 `compressMessages`
+ *  会逐字保留一个 `recent N` 切片，但这些切片在边界之前就已经持久化了；
+ *  加载器的“最后边界之后的所有内容优先”规则否则会把它们丢弃。在磁盘上复制
+ *  大约 6 条消息成本很低，还能让加载逻辑保持简单。
  *
- *  Light compaction (loop-guard pruning) calls this with `summary=undefined`
- *  — the trimmed messages still need a boundary so the loader doesn't
- *  resurrect the dropped loop-guard pairs. */
+ *  轻度压缩（循环护栏修剪）以 `summary=undefined` 调用本函数——被裁掉的消息仍
+ *  需要一条边界，这样加载器就不会把被丢弃的循环护栏对复活。 */
 export async function markBoundaryAndReflush(
   state: LoopState,
   summary?: string,
@@ -1055,10 +1022,9 @@ export async function markBoundaryAndReflush(
 ): Promise<void> {
   void summary
   await commitTranscriptSnapshot(state, candidate, { dropCheckpoints: true, dropMemoryRecall: true })
-  // Compaction shrinks/rewrites the messages array — every prior
-  // checkpoint's `messageCount` now points past the end. Clear the
-  // in-memory list to mirror the loader's behaviour (which drops
-  // pre-boundary checkpoint lines on resume).
+  // 压缩会缩小/重写消息数组——此前每个 checkpoint 的 `messageCount` 现在都指向
+  // 末尾之后。清空内存列表以对齐加载器的行为（它在恢复时会丢弃边界之前的
+  // checkpoint 行）。
   state.checkpoints = []
   resetMemoryRecallWindow(state)
 }
@@ -1091,12 +1057,10 @@ export async function clearPeerContext(state: LoopState): Promise<number> {
   return removed
 }
 
-/** Append a rewind checkpoint marker. Fire-and-forget, like the other
- *  append helpers. On resume, `loadSession` collects these into
- *  `LoadedSession.checkpoints` so the picker can offer the same rewind
- *  points across CLI restarts. The "everything-after-last-boundary wins"
- *  loader rule naturally drops checkpoints whose `messageCount` was
- *  invalidated by a compaction. */
+/** 追加一个回退检查点标记。与其他追加辅助一样是发后即忘。恢复时 `loadSession`
+ *  把这些收集进 `LoadedSession.checkpoints`，这样选择器可以在 CLI 重启之间提供
+ *  相同的回退点。“最后边界之后的所有内容优先”这一加载器规则会自然地丢弃那些
+ *  `messageCount` 已被压缩作废的 checkpoint。 */
 export async function appendCheckpoint(state: LoopState, entry: CheckpointEntry): Promise<void> {
   if (!state.sessionId) return
   const filePath = getSessionFilePath(state)
@@ -1111,10 +1075,8 @@ export async function appendCheckpoint(state: LoopState, entry: CheckpointEntry)
   await appendLine(filePath, jsonl)
 }
 
-/** Append an `interrupted` marker. Purely informational — the loader
- *  ignores it for state reconstruction; the picker can show "interrupted"
- *  next to sessions that ended mid-turn so users know what they're
- *  resuming into. */
+/** 追加一个 `interrupted` 标记。纯粹是信息性的——加载器在状态重建时忽略它；
+ *  选择器可以在轮次中途结束的会话旁显示“interrupted”，让用户知道恢复的是什么。 */
 export async function appendInterrupted(state: LoopState): Promise<void> {
   if (!state.sessionId) return
   const filePath = getSessionFilePath(state)
@@ -1187,7 +1149,7 @@ export async function appendMemoryRecallDelete(state: LoopState, tombstone: Memo
   await appendLine(getSessionFilePath(state), entry)
 }
 
-// ── Read path: load + list ──────────────────────────────────────────────
+// ── 读取路径：load + list ──────────────────────────────────────────────
 
 export interface LoadedSession {
   sessionId: string
@@ -1203,9 +1165,8 @@ export interface LoadedSession {
   contextSecurity: ContextSecurityState
   committedTranscriptEpochId?: string
   transcriptIntegrity: 'clean' | 'legacy' | 'failed'
-  /** The loaded in-memory transcript differs from the last durable commit or
-   *  discarded an incomplete tail. The first append must atomically replace
-   *  the transcript instead of extending the stale/broken epoch chain. */
+  /** 已加载的内存转录与最后一次持久提交不同，或丢弃了一个不完整的尾部。第一次
+   *   追加必须原子替换转录，而不是在过期/损坏的 epoch 链上续接。 */
   transcriptRequiresSnapshot: boolean
   tokenUsage: TokenUsage
   usageBreakdown?: UsageBreakdown
@@ -1213,17 +1174,16 @@ export interface LoadedSession {
   cacheMissSummary?: CacheMissSummary
   goal: GoalState | null
   goalInputs: GoalInput[]
-  /** Rewind checkpoints surviving the last compact-boundary (if any).
-   *  The backing file manifests live under `.x-code/file-history/<sid>/`. */
+  /** 存活过最后一条 compact-boundary 的回退检查点（如果有）。背后的文件清单
+   *   存放在 `.x-code/file-history/<sid>/` 下。 */
   checkpoints: CheckpointEntry[]
-  /** Per-step token usage snapshots accumulated across the session. */
+  /** 跨会话累计的每步 token 用量快照。 */
   stepStats: StepStats[]
   memoryRecallAttachments: MemoryRecallAttachment[]
   memoryRecallTombstones: MemoryRecallTombstone[]
   memoryGeneration: number
   forkedFrom?: SessionForkOrigin
-  /** Path of the jsonl file so the agent loop can keep appending to the
-   *  same file when the user resumes. */
+  /** jsonl 文件的路径，这样 agent loop 能在用户恢复时继续向同一文件追加。 */
   filePath: string
 }
 
@@ -1236,27 +1196,23 @@ const EMPTY_USAGE: TokenUsage = {
   currentContextTokens: 0,
 }
 
-/** Walk a session jsonl and reconstruct a LoadedSession.
+/** 遍历会话 jsonl 并重建 LoadedSession。
  *
- *  Compact-boundary semantics (matches Claude Code): every time we see a
- *  `compact-boundary` line, the message accumulator is cleared. So the
- *  returned `messages` reflects only what's after the LAST boundary —
- *  which by construction equals the in-memory state at the point of
- *  compaction (see `markBoundaryAndReflush`).
+ *  compact-boundary 语义（与 Claude Code 一致）：每次看到一条 `compact-boundary` 行，
+ *  消息累加器就被清空。因此返回的 `messages` 只反映最后一条边界之后的内容——
+ *  按构造，它等于压缩那一刻的内存状态（见 `markBoundaryAndReflush`）。
  *
- *  Trailing tool_call / tool_result orphans are trimmed (the next API
- *  request would otherwise reject the message array) — see
- *  `sanitizeMessageTail` for the exact rule. */
+ *  尾部的 tool_call / tool_result 孤儿会被裁掉（否则下一次 API 请求会拒绝
+ *  这个消息数组）——精确规则见 `sanitizeMessageTail`。 */
 export interface SalvagedSession {
   filePath: string
   sessionId: string
   messageCount: number
 }
 
-/** Best-effort recovery for a transcript whose integrity chain is broken.
- *  Reads every parseable message, deduplicates by entry id, drops orphan
- *  tool tails, and writes a brand-new clean session. The source file is never
- *  modified. Only call this after an explicit user recovery action. */
+/** 对完整性链已损坏的转录做尽力恢复。读取每条可解析的消息，按 entry id 去重，
+ *  丢弃孤儿工具尾部，并写出一个全新的干净会话。源文件绝不被修改。仅在用户明确
+ *  的恢复操作之后调用。 */
 export async function salvageSession(filePath: string): Promise<SalvagedSession> {
   if (!filePath.endsWith('.jsonl')) throw new Error('Not a session file')
   let raw: string
@@ -1393,8 +1349,8 @@ export async function loadSession(filePath: string): Promise<LoadedSession | nul
         if (entry.turn) providerTurns.push(entry.turn)
       } else if (entry.kind === 'compact-boundary' && !hasEpoch) {
         legacyMessages = []
-        // Checkpoints anchored to pre-compaction message counts are now
-        // meaningless — the array shrank under them. Drop along with msgs.
+        // 锚定在压缩前消息计数上的 checkpoint 现在已无意义——数组在它们之下缩小了。
+        // 随消息一起丢弃。
         checkpoints = []
         memoryRecallAttachments = []
         memoryRecallTombstones = []
@@ -1431,11 +1387,10 @@ export async function loadSession(filePath: string): Promise<LoadedSession | nul
           forkedAt: entry.ts,
         }
       }
-      // 'interrupted' is informational only — doesn't affect state
+      // 'interrupted' 只是信息性的——不影响状态
     } else if (entry.t === 'msg' && !hasEpoch) {
-      // Also protect resumed sessions created by older releases. This does not
-      // rewrite their append-only files, but keeps legacy screenshots out of a
-      // new provider request after resume.
+      // 也保护旧版本创建的恢复会话。这不重写它们只追加的文件，但会在恢复后把
+      // 旧版截图挡在新提供方请求之外。
       legacyMessages.push(persistenceSafeMessage(entry.message))
     }
   }
@@ -1475,10 +1430,9 @@ export async function loadSession(filePath: string): Promise<LoadedSession | nul
         const laterTranscriptLine = parsedLines
           .slice(index + 1)
           .some((later) => later.ok && isTranscriptLine(later.entry))
-        // A malformed row terminates the continuous transcript prefix. A
-        // trailing partial write is recoverable from the last commit, but a
-        // later epoch must never be accepted across the gap: its parentage
-        // and the bytes hidden by the malformed row cannot be authenticated.
+        // 一行格式错误会终止连续的转录前缀。尾部的部分写入可从最后一次提交恢复，
+        // 但绝不能在缺口之上接受更晚的 epoch：它的父级关系以及被错误行掩盖的字节
+        // 无法被认证。
         transcriptPrefixNeedsReplacement = true
         if (laterTranscriptLine) transcriptIntegrity = 'failed'
         break
@@ -1556,9 +1510,8 @@ export async function loadSession(filePath: string): Promise<LoadedSession | nul
   }
 
   const committedDigestBeforeRepair = canonicalTranscriptDigest(trackedMessages)
-  // Repair binary parts that older builds persisted as JSON-serialized
-  // Buffers — without this the resumed transcript fails the SDK's
-  // ModelMessage schema on the very first request.
+  // 修复旧版本以 JSON 序列化 Buffer 形式持久化的二进制片段——不做这一步，恢复的
+  // 转录会在第一次请求时就无法通过 SDK 的 ModelMessage schema。
   normalizeSerializedBinaryParts(trackedMessages.map((entry) => entry.message))
 
   trackedMessages = sanitizeTrackedMessageTail(trackedMessages)
@@ -1614,13 +1567,11 @@ export async function loadSession(filePath: string): Promise<LoadedSession | nul
 
 type ToolCallPart = { type?: string; toolCallId?: string }
 
-/** Restore a binary payload that was persisted as a JSON-serialized Buffer /
- *  Uint8Array back to a base64 string. Older builds put raw Buffer instances
- *  into image/file parts; JSON.stringify turns those into
- *  `{"type":"Buffer","data":[...]}` (Buffer) or `{"0":137,"1":80,...}`
- *  (Uint8Array) — both fail the SDK's ModelMessage schema on resume, killing
- *  every request in the resumed session. Returns undefined when the shape
- *  isn't a recognizable serialized binary. */
+/** 把以 JSON 序列化 Buffer / Uint8Array 形式持久化的二进制负载恢复成 base64 字符串。
+ *  旧版本把原始 Buffer 实例放进 image/file 片段；JSON.stringify 会把它们变成
+ *  `{"type":"Buffer","data":[...]}`（Buffer）或 `{"0":137,"1":80,...}`
+ *  （Uint8Array）——两者都会在恢复时无法通过 SDK 的 ModelMessage schema，
+ *  杀死恢复会话中的每一次请求。当形状不是可识别的序列化二进制时返回 undefined。 */
 function serializedBinaryToBase64(value: unknown): string | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   const obj = value as Record<string, unknown>
@@ -1634,9 +1585,9 @@ function serializedBinaryToBase64(value: unknown): string | undefined {
   return undefined
 }
 
-/** Walk loaded messages in place and repair binary parts corrupted by JSON
- *  serialization (see serializedBinaryToBase64). Covers user/assistant image
- *  and file parts plus tool-result `content` entries. */
+/** 就地遍历已加载的消息，修复被 JSON 序列化破坏的二进制片段（见
+ *  serializedBinaryToBase64）。覆盖 user/assistant 的 image 与 file 片段，
+ *  以及 tool-result 的 `content` 条目。 */
 function normalizeSerializedBinaryParts(messages: ModelMessage[]): void {
   const fixPart = (part: unknown): void => {
     if (!part || typeof part !== 'object') return
@@ -1672,16 +1623,13 @@ function normalizeSerializedBinaryParts(messages: ModelMessage[]): void {
   }
 }
 
-/** Drop trailing assistant tool_calls that have no matching tool_result
- *  later in the array. Providers reject any orphan with "tool_use without
- *  tool_result", so resuming a session that ended mid-tool-execution must
- *  trim back to the last fully-resolved boundary.
+/** 丢弃数组后面没有匹配 tool_result 的尾部 assistant tool_call。提供方会以
+ *  "tool_use without tool_result" 拒绝任何孤儿，因此恢复一个在工具执行中途结束的
+ *  会话时，必须裁回到最后一个完全解析的边界。
  *
- *  Algorithm: collect every toolCallId that has a tool_result somewhere,
- *  then walk back from the end and drop any assistant message whose
- *  tool_call parts include an unresolved id. Stops at the first clean
- *  message (text-only assistant, or assistant whose every tool_call IS
- *  resolved). */
+ *  算法：收集每个在别处有 tool_result 的 toolCallId，然后从末尾往回走，丢弃
+ *  任何其 tool_call 片段包含未解析 id 的 assistant 消息。在第一条干净消息
+ *  （纯文本 assistant，或其每个 tool_call 都已解析的 assistant）处停下。 */
 function sanitizeMessageTail(messages: ModelMessage[]): ModelMessage[] {
   const resolvedIds = new Set<string>()
   for (const msg of messages) {
@@ -1700,12 +1648,12 @@ function sanitizeMessageTail(messages: ModelMessage[]): ModelMessage[] {
       continue
     }
     if (msg.role !== 'assistant') {
-      // Bare 'tool' or 'user' at the tail without an upstream tool_call is
-      // legal — keep walking; the cut is driven only by orphan tool_calls.
+      // 尾部没有上游 tool_call 的裸 'tool' 或 'user' 是合法的——继续往回走；
+      // 裁剪只由孤儿 tool_call 驱动。
       break
     }
     const content = msg.content
-    if (typeof content === 'string') break // text-only assistant — clean tail
+    if (typeof content === 'string') break // 纯文本 assistant——干净的尾部
     if (!Array.isArray(content)) break
     const hasOrphan = (content as ToolCallPart[]).some(
       (p) => p?.type === 'tool-call' && typeof p.toolCallId === 'string' && !resolvedIds.has(p.toolCallId),
@@ -1725,35 +1673,32 @@ export function sanitizeTrackedMessageTail(entries: readonly TrackedModelMessage
   return entries.slice(0, sanitizedMessages.length)
 }
 
-// ── List for picker ─────────────────────────────────────────────────────
+// ── 供选择器列出 ─────────────────────────────────────────────────────
 
 export interface SessionListEntry {
   filePath: string
   sessionId: string
   taskSlug: string
-  /** Free-form display name written by `/fork <name>`; absent elsewhere. */
+  /** 由 `/fork <name>` 写入的自定义显示名；其他地方没有。 */
   name?: string
   firstPrompt: string
-  /** Present when the session was created by `/fork` (parsed from the fork
-   *  meta line, which sits right after the header inside the head read). */
+  /** 当会话由 `/fork` 创建时存在（从紧跟在文件头之后、位于头部读取范围内的
+   *   fork meta 行解析而来）。 */
   forkedFrom?: SessionForkOrigin
   startedAt: string
   modelId: string
-  /** File mtime in epoch milliseconds — sort key for the picker. */
+  /** 文件的 mtime（epoch 毫秒）——选择器的排序键。 */
   mtime: number
   tokenUsage: TokenUsage | null
   usageBreakdown?: UsageBreakdown | null
   cacheMissSummary?: CacheMissSummary | null
 }
 
-/** Enumerate every session jsonl in the current project, newest first.
- *  Reads only the head (~8KB, for the header line) and tail (~4KB, for
- *  the last usage line) of each file — no full-file load — so the picker
- *  is responsive even with hundreds of historical sessions. Files
- *  without a parseable header are dropped silently. */
-/** Rename a session by rewriting its header line. The transcript body is
- *  preserved byte-for-byte; the rewrite goes through the same temp-file +
- *  fsync + rename path as compaction snapshots. */
+/** 按从新到旧枚举当前项目里的每个会话 jsonl。只读每个文件的头部（约 8KB，取文件头行）
+ *  和尾部（约 4KB，取最后一条 usage 行）——不做全文件加载——这样即使有数百个历史会话，
+ *  选择器也能保持响应。没有可解析文件头的文件会被静默丢弃。 */
+/** 通过重写文件头行来重命名会话。转录正文逐字节保留；重写走与压缩快照相同的
+ *  临时文件 + fsync + rename 路径。 */
 export async function renameSession(filePath: string, name: string): Promise<string> {
   if (!filePath.endsWith('.jsonl')) throw new Error('Not a session file')
   const trimmed = name.trim().slice(0, 200)
@@ -1781,7 +1726,7 @@ export async function renameSession(filePath: string, name: string): Promise<str
   return trimmed
 }
 
-/** Delete a session transcript. Callers own the UX confirmation. */
+/** 删除一个会话转录。UX 确认由调用方负责。 */
 export async function deleteSession(filePath: string): Promise<void> {
   if (!filePath.endsWith('.jsonl')) throw new Error('Not a session file')
   await fs.unlink(filePath)
@@ -1816,13 +1761,13 @@ export async function listSessions(cwd: string = process.cwd()): Promise<Session
         if (forkLine) {
           try {
             const fork = JSON.parse(forkLine) as ForkEntry
-            // Guard against substring hits on non-fork content so a malformed
-            // line can't produce a forkedFrom with an undefined sessionId.
+            // 防范在非 fork 内容上的子串命中，这样一行格式错误的内容不会产生
+            // 一个 sessionId 为 undefined 的 forkedFrom。
             if (fork.kind === 'fork' && typeof fork.parentSessionId === 'string') {
               forkedFrom = { sessionId: fork.parentSessionId, messageCount: fork.messageCount, forkedAt: fork.ts }
             }
           } catch {
-            // Malformed fork line — lineage hint is best-effort only.
+            // fork 行格式错误——谱系提示只是尽力而为。
           }
         }
         const tailStart = Math.max(0, stat.size - 4 * 1024)
@@ -1843,7 +1788,7 @@ export async function listSessions(cwd: string = process.cwd()): Promise<Session
               latestModelId = e.modelId || header.modelId
               break
             } catch {
-              // Malformed line — keep scanning earlier lines.
+              // 行格式错误——继续扫描更早的行。
             }
           }
         }
@@ -1871,8 +1816,8 @@ export async function listSessions(cwd: string = process.cwd()): Promise<Session
     .sort((a, b) => b.mtime - a.mtime)
 }
 
-/** Read [offset, offset+length) bytes of a file as utf-8. Used by
- *  `listSessions` to grab head/tail without slurping the full file. */
+/** 以 utf-8 读取文件的 [offset, offset+length) 字节。供 `listSessions` 抓取
+ *  头部/尾部，而无需吞下整个文件。 */
 async function readRange(filePath: string, offset: number, length: number): Promise<string> {
   if (length <= 0) return ''
   const fh = await fs.open(filePath, 'r')
@@ -1885,20 +1830,17 @@ async function readRange(filePath: string, offset: number, length: number): Prom
   }
 }
 
-/** Pick the most recently modified session file in the current project, or
- *  null if none exist. Used by `xc --continue` / `-c` to skip the picker
- *  and resume the latest session unconditionally. */
+/** 选取当前项目里最近修改的会话文件，若不存在则返回 null。供 `xc --continue` / `-c`
+ *  跳过选择器、无条件恢复最新会话使用。 */
 export async function pickLatestSession(cwd: string = process.cwd()): Promise<SessionListEntry | null> {
   const all = await listSessions(cwd)
   return all[0] ?? null
 }
 
-/** Build a LoopState seeded from a previously-saved session. The agent
- *  loop accepts `existingState` and will continue appending to the exact
- *  loaded jsonl path, including legacy slug-prefixed filenames.
- *  `persistedMessageCount` is set to the loaded length
- *  so the very first flush after the next user submit only appends NEW
- *  messages — the loaded tail is already on disk. */
+/** 从先前保存的会话构建一个 LoopState。agent loop 接受 `existingState`，并将继续
+ *  向已加载的确切 jsonl 路径追加，包括旧版 slug 前缀文件名。`persistedMessageCount`
+ *  被设为已加载的长度，这样下一次用户提交后的第一次刷写只会追加新消息——已加载的
+ *  尾部已经在磁盘上了。 */
 export function hydrateLoopState(
   loaded: LoadedSession,
   initialMode: PermissionMode = 'default',
@@ -1927,10 +1869,9 @@ export function hydrateLoopState(
         estimates: scannedCacheMissSummary.estimates,
       }
     : scannedCacheMissSummary
-  // `inputTokens` is cumulative across the session and can be millions on a
-  // resumed conversation. Using it here made the first turn after resume look
-  // like the context was full and triggered compaction at a few percent. The
-  // last request's current context is the right comparison for the threshold.
+  // `inputTokens` 跨会话累计，在一段恢复的对话里可能高达数百万。在这里使用它会让
+  // 恢复后的第一轮看起来像上下文已满，并在百分之几时触发压缩。最后一次请求的当前
+  // 上下文才是与阈值比较的正确对象。
   state.lastInputTokens = loaded.tokenUsage.currentContextTokens || 0
   state.persistedMessageCount = loaded.trackedMessages.length
   state.checkpoints = loaded.checkpoints.slice()

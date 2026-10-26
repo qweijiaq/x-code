@@ -1,16 +1,14 @@
-// @x-code-cli/core — Plugin manifest discovery + zod validation
+// @x-code-cli/core — 插件 manifest 发现 + zod 校验
 //
-// One job: given a plugin root directory on disk, find its manifest
-// (probing the three accepted relative paths in priority order), parse +
-// validate the JSON, and return a `PluginManifest`. The caller resolves
-// contribution paths and figures out scope / enable state.
+// 只做一件事：给定磁盘上的插件根目录，找到它的 manifest（按优先级探测
+// 三个被接受的相对路径），解析并校验 JSON，然后返回一个 `PluginManifest`。
+// 贡献路径的解析与作用域 / 启用状态的判断由调用方负责。
 //
-// Unknown top-level fields in the manifest are silently stripped (zod's
-// default behaviour with `z.object`). This is intentional: it lets newer
-// Claude Code manifests with fields we don't understand (e.g.
-// `output-styles`, `lspServers`) still parse — we just don't act on them.
-// `/plugin doctor` later surfaces them as "loaded but contributing X
-// unsupported fields" so users know they're getting partial behaviour.
+// manifest 中未知的顶层字段会被静默剥除（zod 对 `z.object` 的默认行为）。
+// 这是有意的：让带有我们不懂字段（如 `output-styles`、`lspServers`）的
+// 较新 Claude Code manifest 仍能解析——我们只是不响应这些字段。`/plugin
+// doctor` 随后会把它们呈现为“已加载但贡献了 X 个不支持的字段”，让用户
+// 知道他们得到的是部分行为。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -20,7 +18,7 @@ import { errorMessage, fileExists } from '../utils.js'
 import { GEMINI_MANIFEST_REL, MANIFEST_CANDIDATES, isSafePluginPathComponent } from './paths.js'
 import type { ManifestFormat, PluginManifest } from './types.js'
 
-// ── Zod schemas ─────────────────────────────────────────────────────────
+// ── Zod schema ─────────────────────────────────────────────────────────
 
 const authorSchema = z.union([
   z.string(),
@@ -41,15 +39,13 @@ const userConfigItemSchema = z.object({
   description: z.string().optional(),
 })
 
-/** Some contribution fields accept either a relative path (string) OR an
- *  inline object — Claude Code's `mcpServers` and `hooks` work this way.
- *  We don't validate the inline object's shape here; that's the job of
- *  the mcp / hooks subsystems, which already own their own schemas. */
+/** 有些贡献字段既接受相对路径（string），也接受内联对象——Claude Code 的
+ *  `mcpServers` 和 `hooks` 就是这种。这里不校验内联对象的形状；那是 mcp /
+ *  hooks 子系统的事，它们已有自己的 schema。 */
 const pathOrInline = z.union([z.string().min(1), z.record(z.string(), z.unknown())])
 
-/** Plugin name: lowercase letters, digits, dashes; must start with a
- *  letter or digit. Matches Claude Code / Codex / Gemini and keeps names
- *  safe to use as filesystem path components on Windows. */
+/** 插件名：小写字母、数字、短横线；必须以字母或数字开头。与 Claude Code /
+ *  Codex / Gemini 一致，并保证名字在 Windows 上可用作文件系统路径组件。 */
 const NAME_RE = /^[a-z0-9][a-z0-9-]*$/
 
 const manifestSchema = z.object({
@@ -59,11 +55,10 @@ const manifestSchema = z.object({
     .min(1)
     .regex(NAME_RE, 'name must be lowercase letters, digits, and dashes only (e.g. "linear-issues")')
     .refine(isSafePluginPathComponent, 'name is reserved or unsafe as a cross-platform filesystem component'),
-  // version is optional in real Claude Code plugins (verified against
-  // anthropics/claude-plugins-official — many ship without one,
-  // including major third-party plugins like amplitude). We default
-  // to "0.0.0" so cache paths and the installed_plugins.json record
-  // still have a usable string.
+  // version 在真实 Claude Code 插件里是可选的（已对照
+  // anthropics/claude-plugins-official 验证——许多插件不带该字段，包括
+  // amplitude 这类主流第三方插件）。我们默认填 "0.0.0"，好让缓存路径和
+  // installed_plugins.json 记录仍有一个可用字符串。
   version: z
     .string()
     .min(1)
@@ -86,19 +81,17 @@ const manifestSchema = z.object({
   engines: z.object({ 'x-code': z.string().optional() }).optional(),
 })
 
-// ── Discovery ───────────────────────────────────────────────────────────
+// ── 发现 ───────────────────────────────────────────────────────────
 
 export interface ManifestDiscovery {
-  /** Absolute path to the manifest file. */
+  /** manifest 文件的绝对路径。 */
   manifestPath: string
   format: ManifestFormat
 }
 
-/** Probe a plugin root for a manifest. Returns the highest-priority
- *  match. Returns `{ format: 'gemini', ... }` when ONLY a Gemini manifest
- *  exists — the installer uses this to produce a friendly "we don't
- *  support Gemini extensions" error rather than a confusing
- *  "no manifest found". */
+/** 探测插件根目录的 manifest。返回优先级最高的匹配。当只存在 Gemini
+ *  manifest 时返回 `{ format: 'gemini', ... }`——安装器借此给出友好的
+ *  “我们不支持 Gemini 扩展”错误，而不是令人困惑的“未找到 manifest”。 */
 export async function discoverManifest(rootDir: string): Promise<ManifestDiscovery | null> {
   for (const candidate of MANIFEST_CANDIDATES) {
     const full = path.join(rootDir, candidate.rel)
@@ -113,7 +106,7 @@ export async function discoverManifest(rootDir: string): Promise<ManifestDiscove
   return null
 }
 
-// ── Parsing ─────────────────────────────────────────────────────────────
+// ── 解析 ─────────────────────────────────────────────────────────────
 
 export class ManifestParseError extends Error {
   constructor(
@@ -125,11 +118,10 @@ export class ManifestParseError extends Error {
   }
 }
 
-/** Parse + validate a manifest JSON file. Fills in `schemaVersion: "1"`
- *  when absent (the implicit default — most existing Claude Code plugins
- *  don't set this field). Throws `ManifestParseError` with a path-tagged
- *  message on failure so the loader can collect it as a doctor entry
- *  without aborting the whole boot. */
+/** 解析并校验 manifest JSON 文件。缺省时填 `schemaVersion: "1"`（隐式默认
+ *  值——多数既有 Claude Code 插件都不设此字段）。失败时抛带路径标记消息的
+ *  `ManifestParseError`，让 loader 能把它收集为 doctor 条目而不中止整个
+ *  启动。 */
 export async function parseManifest(manifestPath: string): Promise<PluginManifest> {
   let raw: string
   try {
@@ -156,8 +148,8 @@ export async function parseManifest(manifestPath: string): Promise<PluginManifes
     ...data,
     schemaVersion: data.schemaVersion ?? '1',
     version: data.version ?? '0.0.0',
-    // Normalise the author union — internal callers only deal with the
-    // object form. String authors are turned into `{ name: <string> }`.
+    // 归一化 author 联合类型——内部调用方只处理对象形式。字符串作者会被
+    // 转成 `{ name: <string> }`。
     author: typeof data.author === 'string' ? { name: data.author } : data.author,
   }
 }

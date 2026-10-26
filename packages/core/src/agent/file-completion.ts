@@ -1,25 +1,24 @@
-// @x-code-cli/core — Workspace file index and @-mention ranking
+// @x-code-cli/core — 工作区文件索引与 @-提及排序
 //
-// Shared by the CLI (ChatInput) and the desktop renderer's @ menu. The
-// scanner is bounded and every matching operation is stateless:
+// 由 CLI（ChatInput）和桌面渲染器的 @ 菜单共享。扫描器是有界的，
+// 且每个匹配操作都是无状态的：
 //
-//   1. detectAtToken — is the cursor inside an `@…` token, and where does it span?
-//   2. scoreAndRank — fuzzy-rank entries against the query with basename weighting.
-//   3. applyCompletion — splice the chosen path into the buffer.
-//   4. scanWorkspaceFiles — shallow-first, filtered workspace index.
+//   1. detectAtToken — 光标是否位于某个 `@…` token 内，它跨越到哪里？
+//   2. scoreAndRank — 用基名加权对条目做模糊排序。
+//   3. applyCompletion — 把选中的路径拼接到缓冲区里。
+//   4. scanWorkspaceFiles — 浅层优先、过滤后的工作区索引。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
 export interface AtTrigger {
-  /** True when the cursor sits inside an @-token whose '@' is at line
-   *  start or preceded by whitespace. */
+  /** 当光标位于一个 @-token 内、且其 '@' 在行首或前面是空白时为 true。 */
   active: boolean
-  /** Position of the '@' itself (only meaningful when active). */
+  /** '@' 自身的位置（仅在 active 时有意义）。 */
   atIdx: number
-  /** Path substring between '@' and the cursor, without optional quotes. */
+  /** '@' 与光标之间的路径子串，不含可选的引号。 */
   query: string
-  /** Right boundary of the token (first whitespace at-or-after cursor,
-   *  or text.length). applyCompletion replaces text.slice(atIdx, tokenEnd). */
+  /** token 的右边界（光标处或之后的首个空白，或 text.length）。
+   *  applyCompletion 会替换 text.slice(atIdx, tokenEnd)。 */
   tokenEnd: number
 }
 
@@ -72,7 +71,7 @@ export function detectAtToken(text: string, cursor: number): AtTrigger {
 }
 
 export interface FileEntry {
-  /** POSIX-style path relative to cwd. */
+  /** 相对 cwd 的 POSIX 风格路径。 */
   relPath: string
   isDirectory: boolean
 }
@@ -87,8 +86,8 @@ function isHidden(relPath: string): boolean {
   return basename.startsWith('.')
 }
 
-/** Subsequence match with consecutive-run bonus. Returns -Infinity on miss.
- *  Earlier match positions outrank later ones (capped). */
+/** 带连续段奖励的子序列匹配，未命中时返回 -Infinity。
+ *  更靠前的匹配位置胜过更靠后的（有上限）。 */
 function fuzzyScore(target: string, query: string): number {
   if (query.length === 0) return 0
   const t = target.toLowerCase()
@@ -116,15 +115,14 @@ function fuzzyScore(target: string, query: string): number {
 
 function scoreEntry(entry: FileEntry, query: string): number {
   if (query.length === 0) {
-    // Empty query: shallow paths first; alphabetical tie-break is handled
-    // by the outer sort.
+    // 空查询：浅层路径优先；字母序的并列决胜由外层排序处理。
     const depth = entry.relPath.split('/').length
     return -depth
   }
   const slash = entry.relPath.lastIndexOf('/')
   const basename = slash >= 0 ? entry.relPath.slice(slash + 1) : entry.relPath
-  // Basename match weighted heavily so `chat` ranks ChatInput.tsx above
-  // a deep `src/foo/chatter/util.ts`.
+  // 基名匹配权重大，这样 `chat` 能把 ChatInput.tsx 排在深处
+  // 的 `src/foo/chatter/util.ts` 之前。
   const baseScore = fuzzyScore(basename, query)
   if (baseScore !== -Infinity) return baseScore * 10
   return fuzzyScore(entry.relPath, query)
@@ -146,10 +144,9 @@ export function scoreAndRank(entries: FileEntry[], query: string): ScoredEntry[]
   return out
 }
 
-/** Splice a picked entry into the buffer, replacing the full @-token.
- *  Directories get a trailing '/' so the user can keep typing a child
- *  path; files don't (cursor stops at the path so the user can keep
- *  composing the prompt). */
+/** 把选中的条目拼接到缓冲区，替换整个 @-token。
+ *  目录带上尾部 '/'，让用户可以继续输入子路径；文件不带
+ *  （光标停在路径末尾，方便用户继续组织提示词）。 */
 export function applyCompletion(
   text: string,
   atIdx: number,
@@ -184,25 +181,24 @@ const DEFAULT_MAX_ENTRIES = 5000
 const DEFAULT_MAX_MS = 200
 
 interface SimpleIgnore {
-  /** Bare names that match anywhere in the tree (`node_modules`, `dist`). */
+  /** 在树中任意位置都匹配的裸名称（`node_modules`、`dist`）。 */
   names: Set<string>
-  /** Lower-cased suffixes including the dot (`.log`, `.tsbuildinfo`). */
+  /** 含点的小写后缀（`.log`、`.tsbuildinfo`）。 */
   suffixes: Set<string>
 }
 
 const EMPTY_IGNORE: SimpleIgnore = { names: new Set(), suffixes: new Set() }
 
-/** Parse a .gitignore content string with deliberately reduced semantics:
- *  - skip blank lines, comments (`#`), negations (`!…`)
- *  - `*.ext`               → suffix `.ext`
- *  - `name` / `/name` / `name/`  → bare name (matches at any depth)
- *  - anything containing `/` mid-pattern, `**`, or `?` / `[` is dropped
+/** 用刻意简化的语义解析 .gitignore 内容字符串：
+ *  - 跳过空行、注释（`#`）、否定（`!…`）
+ *  - `*.ext`               → 后缀 `.ext`
+ *  - `name` / `/name` / `name/`  → 裸名称（任意深度都匹配）
+ *  - 任何中间含 `/`、`**`，或 `?` / `[` 的模式都被丢弃
  *
- *  This catches the 90%+ case that hard-blacklist misses (`*.log`,
- *  `coverage`, `.DS_Store`, `*.tsbuildinfo`) without pulling in the
- *  `ignore` package. Repos with intricate ignore rules just won't
- *  benefit fully from gitignore filtering — the hard blacklist still
- *  protects them from the worst offenders. */
+ *  这能覆盖硬黑名单漏掉的 90%+ 情况（`*.log`、`coverage`、
+ *  `.DS_Store`、`*.tsbuildinfo`），又不必引入 `ignore` 包。
+ *  忽略规则复杂的仓库只是无法充分受益于 gitignore 过滤 ——
+ *  硬黑名单仍能挡住最严重的那些。 */
 export function parseSimpleGitignore(content: string): SimpleIgnore {
   const names = new Set<string>()
   const suffixes = new Set<string>()
@@ -235,15 +231,14 @@ export interface ScanOptions {
   signal?: AbortSignal
   maxEntries?: number
   maxMs?: number
-  /** Override gitignore. Test injection point — production path always
-   *  loads `<rootDir>/.gitignore`. */
+  /** 覆盖 gitignore。测试注入点 —— 生产路径总是加载
+   *  `<rootDir>/.gitignore`。 */
   ignore?: SimpleIgnore
 }
 
-/** BFS over rootDir with the three filtering layers. POSIX-style relPaths
- *  even on Windows so they match what the menu displays and what the user
- *  is typing (forward-slash). file-ingest.ts:118 normalizes either flavor
- *  on the backend. */
+/** 带三层过滤对 rootDir 做 BFS。即便在 Windows 上也产出 POSIX 风格的
+ *  relPath，好与菜单显示的和用户正在输入的内容（正斜杠）一致。
+ *  file-ingest.ts:118 会在后端归一化两种风格。 */
 export async function scanWorkspaceFiles(opts: ScanOptions): Promise<FileEntry[]> {
   const { rootDir, signal, maxEntries = DEFAULT_MAX_ENTRIES, maxMs = DEFAULT_MAX_MS } = opts
   const ignore = opts.ignore ?? (await loadIgnore(rootDir))

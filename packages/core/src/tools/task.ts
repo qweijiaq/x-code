@@ -1,20 +1,17 @@
-// @x-code-cli/core — task tool (sub-agent dispatch)
+// @x-code-cli/core — task 工具（子 agent 分发）
 //
-// The tool definition has no `execute` — dispatch is handled manually
-// in tool-execution.ts's handleToolCall, which calls runSubAgent.
-// This is intentional: the task tool needs access to LoopState,
-// AgentOptions, and callbacks that aren't available in the tool's
-// execute context.
+// 工具定义没有 `execute` —— 分发在 tool-execution.ts 的 handleToolCall 里
+// 手动处理，由它调用 runSubAgent。这是刻意的：task 工具需要访问 LoopState、
+// AgentOptions 和回调，而这些在工具的 execute 上下文里都拿不到。
 import { tool } from 'ai'
 
 import { z } from 'zod'
 
 import type { SubAgentRegistry } from '../agent/sub-agents/registry.js'
 
-/** Build the task tool description dynamically from the registry.
- *  Called once per session when constructing the system prompt cache.
- *  The listing of available agents is embedded in the description so
- *  the model knows what subagent_type values are valid. */
+/** 根据注册表动态构建 task 工具描述。
+ *  每次会话构造系统提示词缓存时调用一次。可用 agent 的清单被嵌进描述里，
+ *  这样模型才知道哪些 subagent_type 值合法。 */
 function buildTaskToolDescription(registry: SubAgentRegistry): string {
   const agents = registry.list()
   const agentList = agents.map((a) => `  - ${a.name}: ${a.description}`).join('\n')
@@ -33,8 +30,7 @@ Prompt contract:
 Independent read-only agents may run concurrently in one assistant message. Never run concurrent agents that can write the same files or resources.`
 }
 
-/** Create the task tool definition. Must be called with the registry
- *  so the description includes the available agent list. */
+/** 创建 task 工具定义。必须传入注册表，让描述里包含可用 agent 列表。 */
 export function createTaskTool(registry: SubAgentRegistry) {
   return tool({
     description: buildTaskToolDescription(registry),
@@ -47,6 +43,6 @@ export function createTaskTool(registry: SubAgentRegistry) {
           'The complete task instruction sent to the sub-agent. Be specific — the sub-agent has no prior context.',
         ),
     }),
-    // No execute — handled manually in tool-execution.ts
+    // 无 execute —— 在 tool-execution.ts 里手动处理
   })
 }

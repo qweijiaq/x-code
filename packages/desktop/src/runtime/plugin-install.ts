@@ -28,8 +28,8 @@ function isLocalPath(value: string): boolean {
   )
 }
 
-/** Strip a copy-pasted `xc plugin install …` / `claude plugin install …`
- *  wrapper. No shell is executed; only the target argument is used. */
+/** 剥离复制粘贴的 `xc plugin install …` / `claude plugin install …`
+ *  包装。不执行任何 shell；只使用目标参数。 */
 export function normalizeInstallCommand(command: string): string {
   const match = command.trim().match(/^(?:xc|x-code|claude)\s+plugin\s+install\s+(.+)$/i)
   const raw = (match ? match[1] : command).trim()
@@ -51,8 +51,8 @@ export function coerceUserConfigValue(type: UserConfigItem['type'], value: strin
   return String(value)
 }
 
-/** Merge install-time form values with manifest defaults. Empty sensitive
- *  values mean "keep whatever is already stored / leave unset". */
+/** 把安装时的表单值与 manifest 默认值合并。敏感字段为空值
+ *  表示「保留已存储的值 / 保持未设置」。 */
 export function buildUserConfigValues(fields: UserConfigItem[], provided?: UserConfigValues): PluginUserConfig {
   const merged: PluginUserConfig = {}
   for (const field of fields) {
@@ -123,8 +123,8 @@ async function resolveTarget(target: PluginInstallTarget): Promise<ResolvedTarge
   return resolveSource(normalizeInstallCommand(target.command))
 }
 
-/** Resolve/download a plugin far enough to produce the core consent preview,
- *  then abort before it is moved into the cache. */
+/** 把插件解析/下载到足以生成核心 consent 预览的程度，
+ *  然后在移入缓存前中止。 */
 export async function previewPluginInstall(target: PluginInstallTarget): Promise<ConsentPreview> {
   const resolved = await resolveTarget(target)
   let captured: ConsentPreview | null = null
@@ -152,15 +152,15 @@ export async function installPluginWithConsent(
   const result = await installPlugin({
     ...resolved,
     scope: 'user',
-    // The caller obtained an explicit user confirmation from the preview UI.
+    // 调用方已从预览 UI 获得用户的明确确认。
     consent: () => true,
     userConfigPrompt: userConfigPrompt(userConfig),
   })
   return { pluginId: result.pluginId, version: result.manifest.version }
 }
 
-/** Kept for the skill command path: installs a plugin target/command after
- *  the skill command itself was confirmed. */
+/** 为 skill 命令路径保留：在 skill 命令本身被确认后，
+ *  安装插件目标/命令。 */
 export async function installPluginTarget(
   commandOrTarget: string,
   userConfig?: UserConfigValues,

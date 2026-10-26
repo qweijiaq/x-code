@@ -54,10 +54,9 @@ export function replaceTrackedMessages(
   recalculate(state)
 }
 
-/** Compatibility view for existing provider/message helpers. It stores no
- * message data of its own: every index and length operation projects the
- * tracked transcript. Structural transformations should use tracked entries
- * directly so moves keep entryId/provenance together. */
+/** 供现有 provider/message 辅助函数使用的兼容视图。它自己不存任何消息数据：
+ *  每次下标与长度操作都投影到跟踪转录上。结构性变换应直接使用跟踪条目，
+ *  使搬移能保持 entryId/provenance 在一起。 */
 export function createModelMessageView(state: LoopState): ModelMessage[] {
   const target: ModelMessage[] = []
   const syncTargetLength = (): void => {

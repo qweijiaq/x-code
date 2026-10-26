@@ -1,4 +1,4 @@
-// @x-code-cli/core — AI SDK Provider Registry (multi-model support)
+// @x-code-cli/core — AI SDK provider 注册表（多模型支持）
 import { createAlibaba } from '@ai-sdk/alibaba'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createDeepSeek } from '@ai-sdk/deepseek'
@@ -18,11 +18,11 @@ import { createOpenAIChatGPTFetch } from './openai-chatgpt-fetch.js'
 
 const KIMI_CODING_MODEL_IDS = {
   'kimi-k3': 'k3',
-  // The stable Coding Plan id currently auto-routes to K2.8 Preview.
+  // 稳定的 Coding Plan id 目前自动路由到 K2.8 Preview。
   'kimi-k2.7-code': 'kimi-for-coding',
   'kimi-k2.7-code-highspeed': 'kimi-for-coding-highspeed',
-  // Coding Plan exposes K2.6 by disabling thinking on kimi-for-coding rather
-  // than through a standalone model id.
+  // Coding Plan 通过关闭 kimi-for-coding 的 thinking 来暴露 K2.6，
+  // 而非使用独立的模型 id。
   'kimi-k2.6': 'kimi-for-coding',
 } as const
 
@@ -69,8 +69,8 @@ export function createModelRegistry() {
   if (openAIAuth.context.mode !== 'none') {
     providers.openai = createOpenAI({
       apiKey: openAIAuth.context.mode === 'api-key' ? openAIAuth.context.apiKey : 'x-code-dynamic-openai-auth',
-      // Keep official OpenAI auth isolated from SDK-level OPENAI_BASE_URL.
-      // Third-party gateways are configured explicitly through custom:*.
+      // 将官方 OpenAI 认证与 SDK 级的 OPENAI_BASE_URL 隔离。
+      // 第三方网关通过 custom:* 显式配置。
       baseURL: 'https://api.openai.com/v1',
       fetch: createOpenAIAuthFetch(openAIAuth),
     })
@@ -94,28 +94,25 @@ export function createModelRegistry() {
     })
   }
   if (opts.moonshotai) {
-    // Base URL comes from the /model picker, persisted in config.baseUrls.
-    // No env-var escape hatch — the picker is the single source of truth,
-    // visible to the user and easy to change (just re-run /model).
+    // Base URL 来自 /model 选择器，持久化在 config.baseUrls 中。
+    // 没有环境变量后门——选择器是唯一事实来源，对用户可见且易于修改
+    // （重新运行 /model 即可）。
     const baseURL = config.baseUrls?.moonshotai
 
-    // Coding Plan (kimi.com/code/console) uses api.kimi.com/coding/v1, which is
-    // a plain OpenAI-compatible endpoint. The @ai-sdk/moonshotai provider
-    // injects per-request transforms (e.g. thinking config wrapping) that are
-    // incompatible with the Coding Plan's direct API — keys minted through the
-    // Coding Plan console authenticate only here and 401 against the moonshot.*
-    // endpoints. Route through createOpenAICompatible so the request goes
-    // through unmodified.
+    // Coding Plan（kimi.com/code/console）使用 api.kimi.com/coding/v1，这是一个
+    // 普通的 OpenAI-compatible 端点。@ai-sdk/moonshotai provider 会注入每请求
+    // 转换（如 thinking 配置包装），与 Coding Plan 的直接 API 不兼容——通过
+    // Coding Plan 控制台签发的 key 只能在这里认证，对 moonshot.* 端点会 401。
+    // 改走 createOpenAICompatible，使请求原样透传。
     if (baseURL?.includes('api.kimi.com/coding')) {
       const codingProvider = createOpenAICompatible({
         name: 'moonshotai',
         apiKey: opts.moonshotai,
         baseURL,
         fetch: permanentErrorFetch,
-        // createOpenAICompatible only sends `stream_options.include_usage`
-        // when asked; without it the Coding Plan streams no usage chunk and
-        // the footer context-size readout stays at 0. The @ai-sdk/moonshotai
-        // route below hardcodes this already.
+        // createOpenAICompatible 只有在被要求时才发送 `stream_options.include_usage`；
+        // 没有它，Coding Plan 不会流式返回 usage 块，页脚的上下文大小读数
+        // 会一直是 0。下方 @ai-sdk/moonshotai 路由已经硬编码了这一点。
         includeUsage: true,
         convertUsage: moonshotConvertUsage,
       })
@@ -136,14 +133,14 @@ export function createModelRegistry() {
     }
   }
 
-  // Custom OpenAI compatible provider
+  // 自定义 OpenAI-compatible provider
   if (opts.custom.apiKey && opts.custom.baseURL) {
     providers.custom = createOpenAICompatible({
       name: 'custom',
       apiKey: opts.custom.apiKey,
       baseURL: opts.custom.baseURL,
       fetch: permanentErrorFetch,
-      // Same includeUsage rationale as the Coding Plan route above.
+      // 与上方 Coding Plan 路由相同的 includeUsage 理由。
       includeUsage: true,
     })
   }
@@ -152,12 +149,10 @@ export function createModelRegistry() {
 }
 
 /**
- * Usage converter for the Coding Plan (OpenAI-compatible) route. Mirrors the
- * SDK's default conversion, but additionally reads Moonshot's proprietary
- * TOP-LEVEL `cached_tokens` — the default only looks at OpenAI's
- * `prompt_tokens_details.cached_tokens`, so cache-read tokens would
- * otherwise always report 0 (the usage schema is a looseObject, so the
- * top-level field survives validation and is readable here).
+ * Coding Plan（OpenAI-compatible）路由的 usage 转换器。镜像 SDK 的默认转换，
+ * 但额外读取 Moonshot 专有的顶层 `cached_tokens`——默认只读取 OpenAI 的
+ * `prompt_tokens_details.cached_tokens`，否则缓存读取 token 会始终报告为 0
+ * （usage schema 是 looseObject，因此顶层字段能通过校验并在这里被读取）。
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const moonshotConvertUsage = (usage: any) => {
@@ -189,9 +184,9 @@ const moonshotConvertUsage = (usage: any) => {
 }
 
 /**
- * Side-channel for Zhipu reasoning effort. Zhipu goes through
- * @ai-sdk/openai-compatible which doesn't auto-translate the top-level
- * `reasoning` parameter. We inject `reasoning_effort` via the fetch shim.
+ * Zhipu 推理强度的旁路通道。Zhipu 走 @ai-sdk/openai-compatible，
+ * 它不会自动翻译顶层的 `reasoning` 参数。我们通过 fetch 垫片注入
+ * `reasoning_effort`。
  */
 let _zhipuReasoningEffort: string | undefined
 const ZHIPU_REASONING_HEADER = 'x-x-code-zhipu-reasoning-effort'
@@ -228,9 +223,9 @@ function withInternalReasoningHeader(
   return result
 }
 
-/** Move x-code's per-session affinity hint to the wire location required by
- * xAI's selected transport. The AI SDK does not currently expose the Responses
- * `prompt_cache_key` option, so the normal provider-options path cannot do this. */
+/** 把 x-code 的每会话亲和提示挪到 xAI 所选传输要求的线上位置。
+ *  AI SDK 目前未暴露 Responses 的 `prompt_cache_key` 选项，因此常规的
+ *  provider-options 路径做不到这一点。 */
 const xaiPromptCacheFetch: typeof fetch = async (input, init) => {
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
   const promptCacheKey = headers.get(XAI_PROMPT_CACHE_KEY_HEADER)
@@ -273,9 +268,9 @@ const xaiPromptCacheFetch: typeof fetch = async (input, init) => {
   }
 }
 
-/** Inject `reasoning_effort` into Zhipu requests. Zhipu goes through
- * @ai-sdk/openai-compatible which doesn't auto-translate the SDK's top-level
- * `reasoning` parameter, so the fetch shim adds it to the HTTP body. */
+/** 把 `reasoning_effort` 注入 Zhipu 请求。Zhipu 走 @ai-sdk/openai-compatible，
+ *  它不会自动翻译 SDK 顶层的 `reasoning` 参数，因此由 fetch 垫片把它加进
+ *  HTTP 请求体。 */
 const zhipuReasoningFetch: typeof fetch = async (input, init) => {
   const headers = new Headers(init?.headers)
   const hasRequestEffort = headers.has(ZHIPU_REASONING_HEADER)
@@ -293,7 +288,7 @@ const zhipuReasoningFetch: typeof fetch = async (input, init) => {
         return permanentErrorFetch(input, { ...sanitizedInit, body: JSON.stringify(body) })
       }
     } catch {
-      // pass through
+      // 透传
     }
   }
 
@@ -301,16 +296,15 @@ const zhipuReasoningFetch: typeof fetch = async (input, init) => {
 }
 
 /**
- * Body-keyword → non-retryable status mapping. SDK's `APICallError` marks
- * 408 / 409 / 429 / 5xx as `isRetryable: true`; any 4xx outside that set is
- * non-retryable. Each entry below catches a "this will never succeed by
- * retrying" failure mode that providers nonetheless return with retryable
- * status codes (most commonly Moonshot using 429 for billing). Pick a
- * semantically-honest target status so `classifyApiError` downstream can
- * also use the status alone to emit the right recovery hint.
+ * 响应体关键字 → 不可重试状态码的映射。SDK 的 `APICallError` 会把
+ * 408 / 409 / 429 / 5xx 标记为 `isRetryable: true`；该集合之外的 4xx 都
+ * 视为不可重试。下面每一项都捕获一种“重试永远无法成功”的失败模式，但
+ * provider 却用可重试的状态码返回它（最常见的是 Moonshot 用 429 表示
+ * 计费问题）。选择一个语义诚实的目标状态码，这样下游的 `classifyApiError`
+ * 也能仅凭状态码给出正确的恢复提示。
  *
- * Order matters: first category whose pattern matches wins. Keep billing /
- * context-length above content-policy / auth — they are the most specific.
+ * 顺序很重要：第一个匹配到模式的分组胜出。把计费 / 上下文长度放在
+ * 内容策略 / 认证之前——它们最具体。
  */
 type PermanentErrorMatcher = string | RegExp
 
@@ -320,13 +314,12 @@ const PERMANENT_ERROR_CATEGORIES: ReadonlyArray<{
   patterns: readonly PermanentErrorMatcher[]
 }> = [
   {
-    // 402 Payment Required — account out of funds / quota exhausted.
-    // Real example: Moonshot returns HTTP 429 with body
+    // 402 Payment Required — 账户余额不足 / 配额耗尽。
+    // 真实案例：Moonshot 返回 HTTP 429，响应体为
     // `{"error":{"message":"... is suspended due to insufficient balance,
-    //   please recharge ...","type":"exceeded_current_quota_error"}}`.
-    // DeepSeek returns "Insufficient Balance" with HTTP 400 (already
-    // non-retryable; rewriting to 402 only normalizes the status so the
-    // classifier emits the same friendly hint).
+    //   please recharge ...","type":"exceeded_current_quota_error"}}`。
+    // DeepSeek 返回 "Insufficient Balance" 并带 HTTP 400（本身已不可重试；
+    // 改写成 402 只是归一化状态码，让分类器给出同样的友好提示）。
     status: 402,
     statusText: 'Payment Required',
     patterns: [
@@ -341,9 +334,8 @@ const PERMANENT_ERROR_CATEGORIES: ReadonlyArray<{
     ],
   },
   {
-    // 413 Payload Too Large — prompt exceeded the model's context window.
-    // Same prompt will keep overflowing — only /compact or /clear or a
-    // model swap fixes it.
+    // 413 Payload Too Large — prompt 超出模型的上下文窗口。
+    // 同一个 prompt 会一直溢出——只有 /compact、/clear 或更换模型才能解决。
     status: 413,
     statusText: 'Payload Too Large',
     patterns: [
@@ -356,9 +348,8 @@ const PERMANENT_ERROR_CATEGORIES: ReadonlyArray<{
     ],
   },
   {
-    // 422 Unprocessable Entity — provider's safety filter blocked the
-    // request or response. Retrying the same content reproduces the same
-    // block; the user has to rephrase or switch models.
+    // 422 Unprocessable Entity — provider 的安全过滤器拦截了请求或响应。
+    // 重试同样的内容会再次触发同样的拦截；用户必须改写或更换模型。
     status: 422,
     statusText: 'Unprocessable Entity',
     patterns: [
@@ -373,9 +364,8 @@ const PERMANENT_ERROR_CATEGORIES: ReadonlyArray<{
     ],
   },
   {
-    // 401 Unauthorized — auth-related failures that occasionally leak
-    // through a 5xx or 429 due to upstream proxy / gateway misconfig.
-    // Retrying with the same (bad) key fails identically.
+    // 401 Unauthorized — 因上游代理 / 网关配置错误而偶尔以 5xx 或 429
+    // 泄漏出来的认证相关失败。用同一把（坏掉的）key 重试会得到同样的失败。
     status: 401,
     statusText: 'Unauthorized',
     patterns: [
@@ -388,11 +378,10 @@ const PERMANENT_ERROR_CATEGORIES: ReadonlyArray<{
     ],
   },
   {
-    // 404 Not Found — model id is wrong, deprecated, or not enabled for
-    // this account. Some providers return 5xx instead of 404 when the
-    // model alias is unrecognized; this normalizes it. The regex catches
-    // OpenAI's "The model `gpt-x` does not exist or you do not have
-    // access..." where the model name sits between the two tokens.
+    // 404 Not Found — 模型 id 错误、已弃用或未对该账户启用。有些 provider
+    // 在无法识别模型别名时返回 5xx 而非 404；这里把它归一化。正则捕获
+    // OpenAI 的 "The model `gpt-x` does not exist or you do not have
+    // access..."，其中模型名位于两个 token 之间。
     status: 404,
     statusText: 'Not Found',
     patterns: ['model_not_found', 'model not found', 'unknown model', /\bmodel\b[^]*?\bdoes not exist\b/],
@@ -400,23 +389,19 @@ const PERMANENT_ERROR_CATEGORIES: ReadonlyArray<{
 ] as const
 
 /**
- * Intercept upstream error responses (4xx / 5xx) that describe a permanent
- * failure but use a retryable HTTP status, and rewrite their status to a
- * non-retryable code BEFORE the AI SDK parses them. SDK's `APICallError`
- * constructor computes `isRetryable` from the status — anything outside
- * {408, 409, 429, 5xx} comes out false — so the SDK's
- * `_retryWithExponentialBackoff` bails on the first attempt instead of
- * burning ~30s and a `RetryError` wrapper on a problem retries cannot fix.
+ * 拦截描述永久性失败却使用可重试 HTTP 状态码的上游错误响应（4xx / 5xx），
+ * 在 AI SDK 解析它们之前把状态码改写成不可重试的。SDK 的 `APICallError`
+ * 构造函数根据状态码计算 `isRetryable`——{408, 409, 429, 5xx} 之外都算
+ * false——于是 SDK 的 `_retryWithExponentialBackoff` 在第一次尝试就放弃，
+ * 而不是在一个重试无法解决的问题上白白消耗约 30 秒并套上一层 `RetryError`。
  *
- * Body-detection only — error responses without a matching keyword pass
- * through unchanged, so real rate limits / network blips / 5xx hiccups
- * still benefit from SDK's normal retry. Successful responses (`< 400`)
- * are never read so SSE streams are untouched.
+ * 只做响应体检测——没有匹配关键字的错误响应原样透传，所以真实的限流 /
+ * 网络抖动 / 5xx 打嗝仍能受益于 SDK 的正常重试。成功响应（`< 400`）从不
+ * 被读取，因此 SSE 流不受影响。
  */
 const permanentErrorFetch: typeof fetch = async (input, init) => {
   const response = await fetch(input, init)
-  // Streaming/successful responses are off-limits: reading their body would
-  // consume the SSE stream the SDK is about to parse.
+  // 流式 / 成功响应是禁区：读取它们的响应体会消耗掉 SDK 即将解析的 SSE 流。
   if (response.status < 400) return response
 
   const text = await response
@@ -429,11 +414,10 @@ const permanentErrorFetch: typeof fetch = async (input, init) => {
   for (const category of PERMANENT_ERROR_CATEGORIES) {
     const hit = category.patterns.some((p) => (typeof p === 'string' ? lower.includes(p) : p.test(lower)))
     if (!hit) continue
-    // No-op when the provider already used the right status code.
+    // provider 已经用了正确的状态码时，无需改写。
     if (response.status === category.status) return response
-    // Preserve the body verbatim — the SDK's error parser still extracts
-    // the provider's message field from it, which classifyApiError then
-    // sees and routes to the right friendly hint.
+    // 响应体原样保留——SDK 的错误解析器仍会从中提取 provider 的 message
+    // 字段，classifyApiError 随后读到它并路由到正确的友好提示。
     return new Response(text, {
       status: category.status,
       statusText: category.statusText,

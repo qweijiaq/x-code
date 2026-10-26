@@ -93,11 +93,9 @@ const components: Components = {
   },
 }
 
-/** Markdown rendering for assistant output. Code blocks get a language label
- *  and a copy button; links open in the system browser instead of navigating
- *  the sandboxed window. While text is still streaming we skip syntax
- *  highlighting: re-highlighting every partial code block makes the transcript
- *  reflow and jitter, and the final render highlights it once. */
+/** 渲染助手输出的 Markdown。代码块会加上语言标签和复制按钮；链接在系统
+ *  浏览器中打开，而不是在沙箱窗口内导航。文本仍在流式输出时跳过语法高亮：
+ *  对每个不完整的代码块重复高亮会让记录重排并抖动，最终渲染时再高亮一次。 */
 export const MarkdownView = memo(function MarkdownView({
   text,
   streaming = false,

@@ -1,10 +1,9 @@
-// Git panel + per-turn checkpoints.
+// Git 面板 + 每轮检查点。
 //
-// A checkpoint is taken before each agent turn: `git stash create` captures the
-// tracked working-tree/index state without touching anything, and the untracked
-// file list is recorded. Undo restores tracked files (and the index) to that
-// snapshot and deletes only untracked files created by the turn — HEAD and the
-// user's pre-existing modifications are never rolled back.
+// 每次 agent 轮次前创建一个检查点：`git stash create` 捕获已跟踪的
+// 工作树/索引状态而不触碰任何东西，未跟踪文件列表也被记录。
+// 撤销会把已跟踪文件（和索引）恢复到该快照，并只删除本轮创建的
+// 未跟踪文件——HEAD 和用户预先存在的修改绝不会被回滚。
 import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -19,7 +18,7 @@ const DIFF_MAX_BYTES = 300 * 1024
 const GIT_ENV = {
   ...process.env,
   GIT_TERMINAL_PROMPT: '0',
-  // Checkpoints and test commits must work without the user's global identity.
+  // 检查点和测试提交必须能在没有用户全局身份的情况下工作。
   GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? 'X-Code',
   GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? 'x-code@localhost',
   GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? 'X-Code',
@@ -53,7 +52,7 @@ export async function gitRepoRoot(cwd: string): Promise<string | null> {
 
 export interface GitFileChange {
   path: string
-  /** Two-character porcelain status, e.g. "M ", " M", "??". */
+  /** 两字符 porcelain 状态，例如 "M "、" M"、"??"。 */
   status: string
   staged: boolean
   unstaged: boolean
@@ -87,7 +86,7 @@ function parsePorcelain(stdout: string): GitFileChange[] {
       unstaged: status[1] !== ' ' && status[1] !== '?',
       untracked: status === '??',
     })
-    // Rename/copy entries carry the original path as the next NUL field.
+    // 重命名/复制条目把原始路径作为下一个 NUL 字段。
     if (status[0] === 'R' || status[0] === 'C') index++
   }
   return files
@@ -163,7 +162,7 @@ export async function undoCheckpoint(checkpoint: GitCheckpoint): Promise<{
     restored = 1
   }
 
-  // Delete untracked files that appeared during the turn only.
+  // 只删除本轮期间出现的未跟踪文件。
   let deleted = 0
   const current = await untrackedFiles(root)
   for (const relative of current) {
@@ -173,7 +172,7 @@ export async function undoCheckpoint(checkpoint: GitCheckpoint): Promise<{
       await fs.rm(target, { recursive: true, force: true })
       deleted++
     } catch {
-      // Leave files we cannot remove and report the count that worked.
+      // 留下无法删除的文件，并上报成功删除的数量。
     }
   }
 
@@ -201,7 +200,7 @@ export async function gitStatus(
   let ahead = 0
   let behind = 0
   let body = statusResult.stdout
-  // The --branch header arrives as the first NUL-terminated field.
+  // --branch 头作为第一个 NUL 结尾字段到达。
   const headerMatch = /^## ([^\0]+)\0/.exec(body)
   if (headerMatch) {
     const header = headerMatch[1]!
@@ -268,7 +267,7 @@ async function isDirectory(target: string): Promise<boolean> {
   }
 }
 
-/** Resolve symlinks so /var/... and /private/var/... compare equal on macOS. */
+/** 解析符号链接，使 macOS 上 /var/... 和 /private/var/... 比较相等。 */
 async function canonicalPath(target: string): Promise<string> {
   try {
     return await fs.realpath(target)
@@ -286,8 +285,8 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
-/** Git < 2.17 does not report `locked` in `worktree list --porcelain`; the
- *  administrative directory carries a `locked` file instead. */
+/** Git < 2.17 不会在 `worktree list --porcelain` 中上报 `locked`；
+ *  管理目录改用一个 `locked` 文件表示。 */
 async function worktreeLocked(target: string): Promise<boolean> {
   const result = await git(target, ['rev-parse', '--git-dir'])
   if (result.code !== 0) return false
@@ -295,8 +294,8 @@ async function worktreeLocked(target: string): Promise<boolean> {
   return pathExists(path.join(adminDir, 'locked'))
 }
 
-/** Local branches plus the worktree (if any) that has each one checked out.
- *  Used by the "open branch in a window" picker. */
+/** 本地分支加上签出每个分支的 worktree（如果有）。用于
+ *  「在窗口中打开分支」选择器。 */
 export async function gitBranches(cwd: string): Promise<BranchListView> {
   const root = await gitRepoRoot(cwd)
   if (!root) return { isRepo: false, branches: [] }
@@ -372,9 +371,9 @@ function assertBranchName(branch: string): void {
   if (!branch || branch.startsWith('-') || /\s/.test(branch)) throw new Error('分支名无效')
 }
 
-/** Return the worktree for `branch`, creating a sibling directory when the
- *  branch is not checked out anywhere yet. A remoteRef creates a local
- *  tracking branch when one does not exist. */
+/** 返回 `branch` 的 worktree，当该分支尚未在任何地方签出时
+ *  创建一个同级目录。remoteRef 会在本地跟踪分支不存在时
+ *  创建一个。 */
 export async function openBranchWorktree(cwd: string, branch: string, remoteRef?: string): Promise<WorktreeOpenResult> {
   const root = await gitRepoRoot(cwd)
   if (!root) throw new Error('当前工作区不是 Git 仓库')
@@ -395,8 +394,8 @@ export async function openBranchWorktree(cwd: string, branch: string, remoteRef?
     throw new Error(`分支不存在：${target}`)
   }
 
-  // A manually deleted worktree directory leaves a stale record and would make
-  // `git worktree add` fail with "already checked out".
+  // 手动删除的 worktree 目录会留下陈旧记录，并会让
+  // `git worktree add` 以「already checked out」失败。
   await git(root, ['worktree', 'prune'])
   const worktrees = await listWorktrees(root)
   const existing = worktrees.find((entry) => entry.branch === target)
@@ -415,8 +414,8 @@ export async function openBranchWorktree(cwd: string, branch: string, remoteRef?
   return { branch: target, workspacePath, created: true }
 }
 
-/** Create a new local branch from `from` (default HEAD), checked out in a new
- *  sibling worktree. */
+/** 从 `from`（默认 HEAD）创建新的本地分支，并在新的
+ *  同级 worktree 中签出。 */
 export async function createBranchWorktree(
   cwd: string,
   branch: string,
@@ -451,8 +450,8 @@ export async function createBranchWorktree(
   return { branch: target, workspacePath, created: true }
 }
 
-/** Remove a linked worktree. The main checkout and the workspace this runtime
- *  is currently using are never allowed. Dirty worktrees need `force`. */
+/** 删除一个关联 worktree。主检出和此运行时当前使用的
+ *  工作区绝不允许。脏 worktree 需要 `force`。 */
 export async function removeBranchWorktree(
   cwd: string,
   targetPath: string,
@@ -489,9 +488,9 @@ export async function removeBranchWorktree(
   const args = force ? ['worktree', 'remove', '--force', target] : ['worktree', 'remove', target]
   const result = await git(root, args)
   if (result.code !== 0) {
-    // `git worktree remove` arrived in Git 2.17; older installations only
-    // offer add/list/lock/prune/unlock. Removing the directory and pruning the
-    // administrative record is the equivalent operation there.
+    // `git worktree remove` 在 Git 2.17 才出现；更旧的安装只提供
+    // add/list/lock/prune/unlock。在那里，删除目录并清理
+    // 管理记录是等效操作。
     const unsupported = result.code === 129 || /usage: git worktree|unknown subcommand/i.test(result.stderr)
     if (!unsupported) throw new Error(result.stderr.trim() || '移除 worktree 失败')
     try {
@@ -512,7 +511,7 @@ export async function removeBranchWorktree(
   return { path: target, removed: true, forced: force }
 }
 
-/** Drop records for worktree directories that no longer exist. */
+/** 删除那些目录已不存在的 worktree 记录。 */
 export async function pruneWorktrees(cwd: string): Promise<void> {
   const root = await gitRepoRoot(cwd)
   if (!root) throw new Error('当前工作区不是 Git 仓库')

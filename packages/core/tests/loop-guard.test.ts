@@ -1,4 +1,4 @@
-// Tests for agent/loop-guard.ts
+// 测试 agent/loop-guard.ts
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -78,11 +78,11 @@ describe('checkForLoop', () => {
     for (let i = 0; i < SOFT_LOOP_THRESHOLD - 1; i++) {
       recordToolCall(state, 'shell', { command: 'ls' })
     }
-    // A different-input call in between should NOT contribute to the loop
-    // count for the new identical call
+    // 中间一次不同输入的调用不应计入
+    // 新相同调用的循环计数
     recordToolCall(state, 'shell', { command: 'pwd' })
     const result = checkForLoop(state, 'shell', { command: 'pwd' }, 'tc-new')
-    // Only 1 prior 'pwd' call → ok
+    // 之前只有 1 次 'pwd' 调用 → ok
     expect(result.kind).toBe('ok')
   })
 
@@ -91,7 +91,7 @@ describe('checkForLoop', () => {
     for (let i = 0; i < SOFT_LOOP_THRESHOLD - 1; i++) {
       recordToolCall(state, 'shell', { command: 'ls' })
     }
-    // A different-tool call should not trigger the guard
+    // 不同工具的调用不应触发护栏
     const result = checkForLoop(state, 'grep', { pattern: 'foo' }, 'tc-new')
     expect(result.kind).toBe('ok')
   })

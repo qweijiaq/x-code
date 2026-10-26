@@ -1,6 +1,5 @@
-// Tests for hooks subsystem: variables, config-schema, registry, bus,
-// executor (via a real node subprocess to exercise the stdin/stdout
-// protocol portably).
+// hooks 子系统的测试：变量、配置模式、注册表、总线、
+// 执行器（通过真实的 node 子进程来可移植地演练 stdin/stdout 协议）。
 import { describe, expect, it } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -14,7 +13,7 @@ import { HookRegistry, buildHookRegistry } from '../src/hooks/registry.js'
 import type { HookEvent, RegisteredHook } from '../src/hooks/types.js'
 import { buildVariableContext, expandVariables } from '../src/hooks/variables.js'
 
-// ── variables ───────────────────────────────────────────────────────────
+// ── 变量 ───────────────────────────────────────────────────────────
 
 describe('expandVariables', () => {
   const ctx = buildVariableContext({ pluginDir: '/abs/plugin', cwd: '/abs/cwd' })
@@ -51,7 +50,7 @@ describe('expandVariables', () => {
         pluginId: 'demo@local',
       })
       const expanded = expandVariables('write ${pluginDataDir}/state.json', c)
-      // The expanded path must live under our temp plugins root.
+      // 展开后的路径必须位于我们的临时插件根目录下。
       expect(expanded.startsWith('write ')).toBe(true)
       const dataPath = expanded.slice('write '.length).replace(/\/state\.json$/, '')
       const stat = await fs.stat(dataPath)
@@ -69,7 +68,7 @@ describe('expandVariables', () => {
   })
 })
 
-// ── config-schema ──────────────────────────────────────────────────────
+// ── 配置模式 ──────────────────────────────────────────────────────
 
 describe('parseHookConfig', () => {
   it('strips unknown event names (forward compat)', () => {
@@ -123,7 +122,7 @@ describe('parseHookConfig', () => {
   })
 })
 
-// ── registry ───────────────────────────────────────────────────────────
+// ── 注册表 ───────────────────────────────────────────────────────────
 
 describe('buildHookRegistry', () => {
   it('groups hooks by event in registration order', () => {
@@ -137,14 +136,14 @@ describe('buildHookRegistry', () => {
   })
 })
 
-// ── aggregators ────────────────────────────────────────────────────────
+// ── 聚合器 ────────────────────────────────────────────────────────
 
 describe('aggregate helpers', () => {
   it('aggregatePreToolUse stops at first deny', () => {
     const eff = aggregatePreToolUse([
       { decision: 'allow' },
       { decision: 'deny', reason: 'no' },
-      { decision: 'modify', args: { x: 1 } }, // ignored — comes after deny
+      { decision: 'modify', args: { x: 1 } }, // 被忽略 —— 在 deny 之后
     ])
     expect(eff.decision).toBe('deny')
     expect(eff.reason).toBe('no')
@@ -186,7 +185,7 @@ describe('aggregate helpers', () => {
   })
 })
 
-// ── bus matcher ────────────────────────────────────────────────────────
+// ── 总线匹配器 ────────────────────────────────────────────────────────
 
 describe('HookBus matcher behaviour', () => {
   function makeHook(matcher: string | undefined, command = 'node -e "process.exit(0)"'): RegisteredHook {
@@ -199,13 +198,12 @@ describe('HookBus matcher behaviour', () => {
   }
 
   it('filters by matcher regex (PreToolUse only)', async () => {
-    // We exercise the matcher filter at the bus level — to avoid spawning
-    // shell processes, use commands that exit 0 immediately so any matched
-    // hook runs successfully.
+    // 我们在总线层面演练 matcher 过滤 —— 为避免启动 shell 进程，
+    // 使用立即以 0 退出的命令，这样任何匹配到的 hook 都能成功运行。
     const reg = new HookRegistry([makeHook('write_file', 'node -e "process.exit(0)"')])
     const bus = new HookBus(reg)
 
-    // No match: empty decisions array (no hook ran).
+    // 不匹配：空的 decisions 数组（没有 hook 运行）。
     const noMatch = await bus.emit({
       name: 'PreToolUse',
       session: { cwd: process.cwd(), modelId: 'm' },
@@ -213,7 +211,7 @@ describe('HookBus matcher behaviour', () => {
     })
     expect(noMatch).toEqual([])
 
-    // Match: one hook ran (we got one decision back).
+    // 匹配：一个 hook 运行（我们拿回一个 decision）。
     const match = await bus.emit({
       name: 'PreToolUse',
       session: { cwd: process.cwd(), modelId: 'm' },
@@ -314,7 +312,7 @@ describe('HookBus matcher behaviour', () => {
   })
 })
 
-// ── executor (real subprocess) ─────────────────────────────────────────
+// ── 执行器（真实子进程）─────────────────────────────────────────
 
 describe('executeHook (real subprocess)', () => {
   async function writeHookScript(contents: string): Promise<string> {
@@ -378,8 +376,8 @@ describe('executeHook (real subprocess)', () => {
   }, 15_000)
 
   it('picks the platform-specific command over the base when current OS matches', async () => {
-    // Each candidate emits a unique reason so we can tell which one ran.
-    // Whichever process.platform we're on, the matching override wins.
+    // 每个候选都输出唯一的 reason，以便判断哪个被运行了。
+    // 无论当前 process.platform 是什么，匹配的覆盖项都会胜出。
     const base = await writeHookScript('console.log(JSON.stringify({decision:"deny",reason:"BASE"}))')
     const win = await writeHookScript('console.log(JSON.stringify({decision:"deny",reason:"WIN"}))')
     const mac = await writeHookScript('console.log(JSON.stringify({decision:"deny",reason:"MAC"}))')
@@ -411,7 +409,7 @@ describe('executeHook (real subprocess)', () => {
 
   it('falls back to base command when current OS has no override', async () => {
     const base = await writeHookScript('console.log(JSON.stringify({decision:"deny",reason:"BASE-WINS"}))')
-    // Set overrides only for OSes that we're NOT on.
+    // 只为我们当前不在的操作系统设置覆盖项。
     const other = await writeHookScript('console.log(JSON.stringify({decision:"deny",reason:"OTHER"}))')
     const hook: RegisteredHook = {
       pluginId: 'demo@local',

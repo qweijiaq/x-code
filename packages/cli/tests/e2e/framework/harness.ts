@@ -1,9 +1,9 @@
-// Harness: spawn `xc -p` in print mode and parse the resulting session jsonl.
+// Harness：以 print 模式启动 `xc -p`，并解析生成的会话 jsonl。
 //
-// Why parse jsonl rather than stdout: stdout in print mode is just the model's
-// final assistant text (no structured tool-call markers). Sessions jsonl has
-// every assistant tool-call + tool-result event in a parse-friendly format
-// that's stable across UI changes. See packages/core/src/agent/session-store.ts.
+// 为什么解析 jsonl 而非 stdout：print 模式的 stdout 只是模型的最终
+// assistant 文本（没有结构化的 tool-call 标记）。会话 jsonl 以易于解析的
+// 格式包含每一次 assistant tool-call + tool-result 事件，且在 UI 变化时保持
+// 稳定。参见 packages/core/src/agent/session-store.ts。
 import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -25,13 +25,11 @@ export async function runCliInDir(
   const args = ['-p', prompt, ...(options?.args ?? [])]
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    // `pnpm test:e2e` sets INIT_CWD to the repository root. The CLI restores
-    // that value on startup, so forwarding it unchanged silently moves every
-    // scenario out of its isolated cwd and writes sessions/artifacts into the
-    // real repository. Keep package-manager cwd restoration scoped to the
-    // scenario directory instead.
+    // `pnpm test:e2e` 会把 INIT_CWD 设为仓库根。CLI 启动时会还原该值，
+    // 原样透传会悄悄把每个场景移出隔离的 cwd，把会话/产物写进真实仓库。
+    // 所以要把包管理器的 cwd 还原限定在场景目录内。
     INIT_CWD: cwd,
-    X_CODE_HOME: path.join(cwd, '.x-code-home'), // isolate user-scope ~/.x-code per scenario
+    X_CODE_HOME: path.join(cwd, '.x-code-home'), // 每个场景隔离 user 级 ~/.x-code
     X_CODE_MODEL: cfg.modelId,
     NODE_ENV: 'test',
     NO_COLOR: '1',
@@ -72,18 +70,18 @@ export async function runCliInDir(
     stderr += `\n[harness] timeout after ${timeoutMs}ms — killed`
   }
 
-  // Keep a short stability guard for providers that finish their final stream
-  // callbacks immediately before print mode performs its awaited session save.
+  // 为那些在 print 模式执行 await 的会话保存之前就完成最终流回调的
+  // 提供方保留一个短暂的稳定性守护。
   await waitForJsonlStable(path.join(cwd, '.x-code', 'sessions'))
 
-  // Locate the freshest session jsonl in cwd/.x-code/sessions/
+  // 在 cwd/.x-code/sessions/ 中定位最新的会话 jsonl
   const sessionJsonlPath = await pickLatestSessionJsonl(path.join(cwd, '.x-code', 'sessions'))
   const parsed: ParsedSession = sessionJsonlPath
     ? await parseSessionJsonl(sessionJsonlPath)
     : { assistantText: '', toolCalls: [] }
 
   return {
-    assistantText: parsed.assistantText || stdout, // fallback: stdout already is the assistant text in print mode
+    assistantText: parsed.assistantText || stdout, // 回退：print 模式下 stdout 本身就是 assistant 文本
     toolCalls: parsed.toolCalls,
     stdout,
     stderr,
@@ -108,11 +106,11 @@ async function waitForJsonlStable(dir: string, maxWaitMs = 2000, pollMs = 100): 
         size += s.size
       }
     } catch {
-      // dir doesn't exist yet — keep polling
+      // 目录尚不存在 — 继续轮询
     }
     if (size > 0 && size === lastSize) {
       stableTicks++
-      if (stableTicks >= 2) return // 2 consecutive equal sizes ≈ ~200ms idle
+      if (stableTicks >= 2) return // 连续两次大小相等 ≈ 约 200ms 空闲
     } else {
       stableTicks = 0
       lastSize = size
@@ -182,7 +180,7 @@ async function parseSessionJsonl(filePath: string): Promise<ParsedSession> {
     if (!message) continue
 
     if (message.role === 'assistant') {
-      // content can be a string or an array of parts
+      // content 可以是字符串或 parts 数组
       if (typeof message.content === 'string') {
         assistantPieces.push(message.content)
       } else if (Array.isArray(message.content)) {
@@ -210,7 +208,7 @@ async function parseSessionJsonl(filePath: string): Promise<ParsedSession> {
     }
   }
 
-  // Merge results into the matching tool calls.
+  // 把结果合并进匹配的工具调用。
   for (const tc of toolCalls) {
     const r = resultByCallId.get(tc.toolCallId)
     if (r) {
@@ -228,7 +226,7 @@ async function parseSessionJsonl(filePath: string): Promise<ParsedSession> {
 
 function extractToolResultText(output: Record<string, unknown> | undefined): string {
   if (!output) return ''
-  // AI SDK v6 tool-result output shape: { type: 'content', value: [{ type: 'text', text }, ...] }
+  // AI SDK v6 的 tool-result 输出形状：{ type: 'content', value: [{ type: 'text', text }, ...] }
   if (output.type === 'content' && Array.isArray(output.value)) {
     const pieces: string[] = []
     for (const part of output.value as Record<string, unknown>[]) {
@@ -236,9 +234,9 @@ function extractToolResultText(output: Record<string, unknown> | undefined): str
     }
     return pieces.join('')
   }
-  // Some tools push { type: 'text', value: '...' } directly.
+  // 有些工具直接输出 { type: 'text', value: '...' }。
   if (output.type === 'text' && typeof output.value === 'string') return output.value
-  // Fallback: stringify whole object — at least gives the test something to match.
+  // 回退：序列化整个对象 — 至少给测试留点可匹配的内容。
   try {
     return JSON.stringify(output)
   } catch {

@@ -1,13 +1,11 @@
-// @x-code-cli/core — webSearch tool (multi-provider).
+// @x-code-cli/core — webSearch 工具（多 provider）。
 //
-// Provider order: explicit X_CODE_WEB_SEARCH_PROVIDER override, then the
-// first keyed provider in SEARCH_PROVIDERS order, then — only when the
-// active model runs on the dedicated `deepseek` provider — DeepSeek's
-// built-in server-side web search. Routing a DeepSeek model through an
-// OpenAI-compatible custom endpoint does NOT trigger the fallback (the
-// provider id differs). There is no runtime failover between providers:
-// a configured provider that errors reports the error rather than
-// silently billing another key.
+// Provider 顺序：显式的 X_CODE_WEB_SEARCH_PROVIDER 覆盖，然后是
+// SEARCH_PROVIDERS 顺序里第一个已配置密钥的 provider，再然后 —— 仅当当前
+// 模型跑在专门的 `deepseek` provider 上时 —— DeepSeek 内建的服务端网页搜索。
+// 把 DeepSeek 模型经 OpenAI 兼容的自定义端点路由*不会*触发这个回退（provider
+// id 不同）。provider 之间没有运行时故障转移：一个配置好的 provider 出错时
+// 会报告错误，而不是悄悄去扣另一个 key。
 import { tool } from 'ai'
 
 import { z } from 'zod'
@@ -18,8 +16,8 @@ import { getShellProvider } from './shell-provider.js'
 
 const YEAR = new Date().getFullYear()
 const SEARCH_TIMEOUT_MS = 15_000
-// DeepSeek search is a full model turn server-side, not a plain lookup, so
-// it needs a much wider budget than the REST search APIs.
+// DeepSeek 搜索是服务端的一次完整模型轮次，不是普通查询，所以它需要比
+// REST 搜索 API 宽得多的预算。
 const DEEPSEEK_TIMEOUT_MS = 60_000
 
 interface SearchResult {
@@ -46,8 +44,8 @@ function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortS
   return signal ? AbortSignal.any([signal, timeout]) : timeout
 }
 
-// HTTP error bodies carry the actionable message ("model not found",
-// "invalid api key"); statusText alone makes provider failures undebuggable.
+// HTTP 错误正文携带可行动的提示（"model not found"、"invalid api key"）；
+// 只有 statusText 会让 provider 故障无法排查。
 async function httpError(label: string, res: Response): Promise<Error> {
   const body = await res.text().catch(() => '')
   const detail = body.replace(/\s+/g, ' ').trim().slice(0, 200)
@@ -55,9 +53,9 @@ async function httpError(label: string, res: Response): Promise<Error> {
 }
 
 async function searchWithTavily(query: string, maxResults: number, signal?: AbortSignal): Promise<ProviderResponse> {
-  // Use Tavily's small REST surface directly. The SDK pulls axios plus the
-  // full js-tiktoken tables into the CLI bundle even though basic search
-  // needs neither; direct fetch also lets Esc cancel the request immediately.
+  // 直接使用 Tavily 的小型 REST 接口。SDK 会把 axios 加完整的 js-tiktoken 表
+  // 拉进 CLI 包里，尽管基础搜索两者都不需要；直接 fetch 还能让 Esc 立即
+  // 取消请求。
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
     headers: {
@@ -138,8 +136,8 @@ async function searchWithPerplexity(
   _maxResults: number,
   signal?: AbortSignal,
 ): Promise<ProviderResponse> {
-  // Sonar is a chat-completions endpoint that grounds the answer itself:
-  // it returns prose plus structured sources instead of raw hits.
+  // Sonar 是一个 chat-completions 端点，会自己把答案落地：它返回散文加
+  // 结构化来源，而不是原始命中。
   const res = await fetch('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
     headers: {
@@ -148,7 +146,7 @@ async function searchWithPerplexity(
       Accept: 'application/json',
     },
     body: JSON.stringify({
-      // Override if Perplexity retires the id or a cheaper search model appears.
+      // 若 Perplexity 弃用该 id 或出现更便宜的搜索模型，可覆盖。
       model: process.env.PERPLEXITY_SEARCH_MODEL || 'sonar',
       max_tokens: 1024,
       messages: [{ role: 'user', content: query }],
@@ -170,7 +168,7 @@ async function searchWithPerplexity(
     ? data.search_results
         .filter((r) => !!r.url)
         .map((r) => ({ title: r.title ?? r.url!, url: r.url!, content: r.snippet ?? '' }))
-    : // Older responses carry only a URL list, without titles or snippets.
+    : // 较旧的响应只带 URL 列表，没有标题或摘要。
       (data.citations ?? []).map((url) => ({ title: url, url, content: '' }))
   return { answer, results }
 }
@@ -200,10 +198,9 @@ async function searchWithFirecrawl(query: string, maxResults: number, signal?: A
   }
 }
 
-// DeepSeek has no standalone search API. Web search is a server-side tool
-// on its Anthropic-compatible Messages endpoint: the request declares
-// web_search_20250305 and the response carries web_search_tool_result
-// blocks. Each search costs a full (cheap) model turn.
+// DeepSeek 没有独立的搜索 API。网页搜索是它兼容 Anthropic 的 Messages 端点
+// 上的一个服务端工具：请求声明 web_search_20250305，响应携带
+// web_search_tool_result 块。每次搜索花费一次完整的（便宜的）模型轮次。
 interface AnthropicContentBlock {
   type: string
   text?: string
@@ -218,15 +215,15 @@ interface AnthropicMessagesResponse {
 
 async function searchWithDeepseek(query: string, maxResults: number, signal?: AbortSignal): Promise<ProviderResponse> {
   const apiKey = process.env.DEEPSEEK_API_KEY!
-  // Accept the documented base (https://api.deepseek.com/anthropic) with or
-  // without the /v1 segment, then append the remaining path ourselves.
+  // 接受带或不带 /v1 段的文档化 base（https://api.deepseek.com/anthropic），
+  // 然后自己拼接剩余路径。
   const rawBase = (process.env.DEEPSEEK_SEARCH_BASE_URL || 'https://api.deepseek.com/anthropic').replace(/\/+$/, '')
   const messagesURL = rawBase.endsWith('/v1') ? `${rawBase}/messages` : `${rawBase}/v1/messages`
   const res = await fetch(messagesURL, {
     method: 'POST',
     headers: {
-      // Official DeepSeek expects x-api-key; Anthropic-compatible proxies
-      // expect Authorization. Send both so either route works.
+      // 官方 DeepSeek 期望 x-api-key；兼容 Anthropic 的代理期望
+      // Authorization。两个都发，好让任意一条路由都能工作。
       'x-api-key': apiKey,
       Authorization: `Bearer ${apiKey}`,
       'anthropic-version': '2023-06-01',
@@ -234,13 +231,13 @@ async function searchWithDeepseek(query: string, maxResults: number, signal?: Ab
       Accept: 'application/json',
     },
     body: JSON.stringify({
-      // A full (cheap) model turn powers each search; override if DeepSeek
-      // retires the id or a cheaper search-capable model appears.
+      // 每次搜索由一次完整的（便宜的）模型轮次驱动；若 DeepSeek 弃用该 id
+      // 或出现更便宜的可搜索模型，可覆盖。
       model: process.env.DEEPSEEK_SEARCH_MODEL || 'deepseek-flash',
       max_tokens: 4096,
       messages: [{ role: 'user', content: [{ type: 'text', text: `Perform a web search for the query: ${query}` }] }],
-      // Each use is billed server-side, so don't grant more searches than the
-      // caller asked results for; cap at 5 so maxResults=20 stays cheap.
+      // 每次使用都在服务端计费，所以别授予比调用方请求结果数更多的搜索；
+      // 上限 5，这样 maxResults=20 也保持便宜。
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: Math.min(maxResults, 5) }],
     }),
     signal: withTimeout(signal, DEEPSEEK_TIMEOUT_MS),
@@ -253,13 +250,11 @@ async function searchWithDeepseek(query: string, maxResults: number, signal?: Ab
   const data = (await res.json()) as AnthropicMessagesResponse
   const blocks = data.content ?? []
 
-  // Snippets are not part of the result items; on Anthropic they arrive as
-  // citations on separate text blocks. DeepSeek's compatibility table marks
-  // text-block citations as Ignored, so against the official endpoint this
-  // stitching never fires and contents stay empty — it exists for
-  // Anthropic-compatible proxies (DEEPSEEK_SEARCH_BASE_URL) that do emit
-  // them. First citation per URL wins. The text blocks themselves are the
-  // model's grounded summary and are surfaced as `answer`.
+  // 摘要不属于结果项；在 Anthropic 上它们作为单独文本块上的引文到达。
+  // DeepSeek 的兼容性表把文本块引文标为 Ignored，所以针对官方端点这段拼接
+  // 永远不会触发、contents 保持为空 —— 它是为确实会发出这些引文的
+  // Anthropic 兼容代理（DEEPSEEK_SEARCH_BASE_URL）而存在的。每个 URL 以
+  // 第一条引文为准。文本块本身是模型的落地摘要，作为 `answer` 呈现。
   const snippets = new Map<string, string>()
   const texts: string[] = []
   for (const block of blocks) {
@@ -282,11 +277,11 @@ async function searchWithDeepseek(query: string, maxResults: number, signal?: Ab
     }
   }
 
-  // Strict mode: never scrape URLs out of model prose. If the server ran no
-  // search, say so instead of returning a confident-looking empty list.
+  // 严格模式：绝不从模型散文里抠 URL。如果服务端没有跑搜索，就如实说明，
+  // 而不是返回一个看起来很自信的空列表。
   if (results.length === 0) {
-    // A max_tokens cut before the first search block is a budget problem,
-    // not a search refusal — name it so the user doesn't debug the wrong thing.
+    // 在第一个搜索块之前就被 max_tokens 截断，是预算问题而不是搜索被拒绝
+    // —— 把这一点点明，让用户别排查错方向。
     if (data.stop_reason === 'max_tokens') {
       throw new Error(
         'DeepSeek hit the max_tokens limit before returning any search result ' +
@@ -306,9 +301,8 @@ const deepseekProvider: WebSearchProvider = {
   search: searchWithDeepseek,
 }
 
-// Priority order for automatic selection. DeepSeek is deliberately NOT in
-// this list: it bills a model turn per search, so it only kicks in as the
-// fallback for DeepSeek-model users or via explicit override.
+// 自动选择的优先级顺序。DeepSeek 刻意不在这张列表里：它每次搜索计费一次
+// 模型轮次，所以只作为 DeepSeek 模型用户的回退、或经显式覆盖才启用。
 const SEARCH_PROVIDERS: WebSearchProvider[] = [
   {
     id: 'tavily',
@@ -349,14 +343,13 @@ const SEARCH_PROVIDERS: WebSearchProvider[] = [
 
 const ALL_PROVIDERS: WebSearchProvider[] = [...SEARCH_PROVIDERS, deepseekProvider]
 
-/** Public metadata for settings UIs; no search functions or secrets. */
+/** 供设置 UI 使用的公开元数据；不含搜索函数或密钥。 */
 export interface WebSearchProviderInfo {
   id: string
   label: string
   envKey: string
   signup: string
-  /** Uses the active model's key (DeepSeek built-in search) rather than a
-   *  separately stored search key. */
+  /** 使用当前模型的密钥（DeepSeek 内建搜索），而不是单独存储的搜索密钥。 */
   modelKeyOnly?: boolean
 }
 
@@ -368,9 +361,9 @@ export const WEB_SEARCH_PROVIDERS: WebSearchProviderInfo[] = ALL_PROVIDERS.map((
   ...(provider.id === 'deepseek' ? { modelKeyOnly: true } : {}),
 }))
 
-/** Side-channel: provider name of the active model (modelId split on ':').
- *  Set by the agent loop each turn, mirroring setZhipuReasoningEffort, so
- *  the statically-registered tool can tell whether the user runs DeepSeek. */
+/** 旁路通道：当前模型的 provider 名（modelId 按 ':' 切分）。每轮由 agent loop
+ *  设置，与 setZhipuReasoningEffort 类似，让这个静态注册的工具能判断用户
+ *  是否跑在 DeepSeek 上。 */
 let currentModelProvider: string | undefined
 
 export function setWebSearchModelProvider(provider: string | undefined): void {
@@ -404,9 +397,8 @@ function pickProvider(modelProvider: string | undefined): PickResult {
   return { none: true }
 }
 
-/** Which provider a webSearch call would use right now, for startup hints.
- *  Pass the resolved model's provider explicitly; falls back to the
- *  loop-injected side-channel. */
+/** 此刻一次 webSearch 调用会用哪个 provider，用于启动提示。显式传入已解析
+ *  模型的 provider；否则回退到 loop 注入的旁路通道。 */
 export function resolveWebSearchProvider(modelProvider?: string): { id: string; label: string } | null {
   const picked = pickProvider(modelProvider ?? currentModelProvider)
   return 'provider' in picked ? { id: picked.provider.id, label: picked.provider.label } : null
@@ -420,10 +412,9 @@ export interface WebSearchTestResult {
   message: string
 }
 
-/** Live probe used by settings UIs. `key` is a not-yet-saved draft: it is
- *  placed in the environment only for the duration of the request so the
- *  provider functions can stay unchanged. DeepSeek is rejected — its search
- *  is a billable model turn, not a key check. */
+/** 设置 UI 使用的在线探测。`key` 是尚未保存的草稿：只在请求期间放进环境里，
+ *  好让 provider 函数保持不变。DeepSeek 会被拒绝 —— 它的搜索是一次计费的
+ *  模型轮次，不是密钥检查。 */
 export async function testWebSearchProvider(
   providerId: string,
   key?: string,
@@ -539,9 +530,9 @@ export const webSearch = tool({
     query: z.string().describe('The search query'),
     maxResults: z.number().int().min(1).max(20).optional().describe('Max results (default: 5, max: 20)'),
   }),
-  // Per-request model provider, supplied via streamText toolsContext. This
-  // channel is race-safe for concurrent sub-agent loops; the module-level
-  // setWebSearchModelProvider value is only a fallback.
+  // 每请求的模型 provider，经 streamText toolsContext 提供。这条通道对并发
+  // 的子 agent loop 是竞态安全的；模块级 setWebSearchModelProvider 的值只是
+  // 回退。
   contextSchema: z.object({ modelProvider: z.string().optional() }),
   execute: async ({ query, maxResults }, { toolCallId, abortSignal, context }) => {
     const n = maxResults ?? 5
@@ -554,8 +545,8 @@ export const webSearch = tool({
     reportProgress(toolCallId, `Searching (${provider.label}): ${query}`)
     try {
       const response = await provider.search(query, n, abortSignal)
-      // Uniform cap: some providers (Perplexity) can't limit result counts
-      // server-side, so enforce the seam-level bound here.
+      // 统一上限：有些 provider（Perplexity）无法在服务端限制结果数，所以
+      // 在这里执行接缝级的边界。
       return formatResults({ ...response, results: response.results.slice(0, n) })
     } catch (err) {
       return formatToolError(`searching (${provider.label})`, err)

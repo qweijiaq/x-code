@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * Ensure the multilingual Whisper "tiny" model is available for bundling.
+ * 确保多语言 Whisper "tiny" 模型可用于打包。
  *
- * Order:
- *   1. an already-valid build/whisper/ggml-tiny.bin
- *   2. the local user cache (~/.x-code/whisper-models)
- *   3. download from huggingface.co, then hf-mirror.com
+ * 顺序：
+ *   1. 已有效的 build/whisper/ggml-tiny.bin
+ *   2. 本地用户缓存（~/.x-code/whisper-models）
+ *   3. 从 huggingface.co 下载，其次 hf-mirror.com
  *
- * Set X_CODE_SKIP_BUNDLED_WHISPER=1 to skip (installer then downloads on
- * first voice use, as before).
+ * 设置 X_CODE_SKIP_BUNDLED_WHISPER=1 可跳过（安装器随后会在首次语音使用时下载，
+ * 与之前一致）。
  */
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'

@@ -1,8 +1,8 @@
-// Renderer i18n: i18next with Chinese source strings as keys.
+// Renderer i18n：i18next 以中文字符串作为 key。
 //
-// The app's UI text was written in Chinese first; using those strings as keys
-// keeps the wrap sites readable and means a missing English entry falls back
-// to the original text instead of a raw key.
+// 应用的 UI 文本先以中文书写；把这些字符串当作 key
+// 使包装处保持可读，并且缺失的英文条目会回退到
+// 原始文本，而不是裸 key。
 import i18n from 'i18next'
 
 import { initReactI18next } from 'react-i18next'
@@ -1147,7 +1147,7 @@ i18n.on('languageChanged', (language) => {
   try {
     localStorage.setItem('xcode.language', language === 'en' ? 'en' : 'zh')
   } catch {
-    // localStorage can be unavailable; the switch still applies for the session.
+    // localStorage 可能不可用；本次会话仍然应用该切换。
   }
   document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN'
 })

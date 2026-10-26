@@ -1,8 +1,7 @@
-// Tests for the file-based slash command subsystem (loader / registry /
-// body expansion). The real regression risk is `$ARGUMENTS` and
-// `${CLAUDE_PLUGIN_ROOT}` substitution and frontmatter parsing of the
-// `allowed-tools:` form Claude Code uses (long, comma-separated, often
-// folded across lines).
+// 基于文件的 slash 命令子系统（loader / registry / body 展开）的测试。
+// 真正的回归风险是 `$ARGUMENTS` 和 `${CLAUDE_PLUGIN_ROOT}` 的替换，
+// 以及 Claude Code 使用的 `allowed-tools:` 形式的 frontmatter 解析
+//（很长、逗号分隔、经常跨行折叠）。
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -16,9 +15,9 @@ async function writeCommand(dir: string, name: string, frontmatter: string, body
   await fs.writeFile(path.join(dir, `${name}.md`), `---\n${frontmatter}\n---\n${body}`, 'utf-8')
 }
 
-/** loadPluginCommands now also scans `${X_CODE_HOME}/commands` and
- *  `<cwd>/.x-code/commands` — isolate every test under fresh empty dirs so
- *  the developer's real `~/.x-code/commands/` doesn't leak into assertions. */
+/** loadPluginCommands 现在还会扫描 `${X_CODE_HOME}/commands` 和
+ *  `<cwd>/.x-code/commands` —— 把每个测试都隔离到全新的空目录下，
+ *  以免开发者的真实 `~/.x-code/commands/` 泄漏进断言。 */
 let prevHome: string | undefined
 let prevCwd: string
 let isolatedHome: string
@@ -60,12 +59,10 @@ describe('loadPluginCommands', () => {
   })
 
   it('handles real Claude Code multi-line allowed-tools frontmatter without crashing', async () => {
-    // This is the actual form from anthropics/claude-code's
-    // code-review plugin — `allowed-tools` is comma-separated, often
-    // long enough to wrap visually. Our minimal YAML parser folds
-    // indented continuation lines; the value we read for
-    // `allowed-tools` is currently ignored (no enforcement), but the
-    // parse must not reject the whole file.
+    // 这是 anthropics/claude-code 的 code-review 插件的真实形式 ——
+    // `allowed-tools` 是逗号分隔的，通常长到会视觉换行。我们的最小 YAML 解析器
+    // 会折叠缩进的续行；我们读取到的 `allowed-tools` 值目前被忽略（不做强制），
+    // 但解析绝不能拒绝整个文件。
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-cmds-allowed-'))
     await writeCommand(
       dir,
@@ -122,8 +119,7 @@ describe('loadPluginCommands', () => {
   })
 
   it('precedence: project overrides plugin overrides user on name conflict', async () => {
-    // All three sources define `dup` — registry's last-write-wins should
-    // surface the project version.
+    // 三个来源都定义了 `dup` —— registry 的 last-write-wins 应显现项目版本。
     await writeCommand(path.join(isolatedHome, 'commands'), 'dup', 'description: user', 'user-body')
     const pluginDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-cmds-plugin-'))
     await writeCommand(pluginDir, 'dup', 'description: plugin', 'plugin-body')
@@ -182,8 +178,7 @@ describe('expandCommandBody', () => {
     process.env.XC_PLUGINS_DIR = tmpHome
     try {
       const out = expandCommandBody(cmd('cat ${CLAUDE_PLUGIN_DATA}/notes.md'), '')
-      // The body still names the plugin, so the substitution yields a path
-      // under our temp plugins root.
+      // body 仍然命名了插件，所以替换会产生一个位于我们临时插件根目录下的路径。
       expect(out.startsWith('cat ')).toBe(true)
       const dataPath = out.slice('cat '.length).replace(/\/notes\.md$/, '')
       const stat = await fs.stat(dataPath)
@@ -196,7 +191,7 @@ describe('expandCommandBody', () => {
   })
 
   it('${CLAUDE_PLUGIN_DATA} stays empty when body has no plugin context to resolve', () => {
-    // Synthesize a command def with no pluginId — should NOT mkdir or substitute.
+    // 合成一个没有 pluginId 的命令定义 —— 不应 mkdir 也不应替换。
     const c: import('../src/commands/types.js').CommandDefinition = {
       name: 't',
       body: 'echo ${CLAUDE_PLUGIN_DATA}/foo',

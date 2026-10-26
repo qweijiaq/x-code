@@ -1,5 +1,5 @@
-// @x-code-cli/core — Cross-process file lock backed by an OS advisory lock.
-// Shared by the memory extractor/writer and managed browser profile lease.
+// @x-code-cli/core — 基于操作系统咨询锁的跨进程文件锁。
+// 供内存提取器/写入器和托管浏览器配置租约共用。
 import { flock } from 'fs-ext-extra-prebuilt'
 
 import fs from 'node:fs/promises'
@@ -10,12 +10,12 @@ export interface FileLockLease {
 }
 
 export interface AcquireFileLockOptions {
-  /** Only used to migrate unreadable/remote owner files from older releases. */
+  /** 仅用于迁移旧版本遗留的、无法读取或远程所有者的文件。 */
   staleMs?: number
-  /** How long to retry while a live owner holds the lock. 0 = single attempt. */
+  /** 在活跃所有者持有锁期间重试多久。0 = 仅尝试一次。 */
   waitMs?: number
   retryMs?: number
-  /** When given, a wait timeout throws this message instead of returning null. */
+  /** 提供后，等待超时会抛出此消息而不是返回 null。 */
   timeoutError?: string
   signal?: AbortSignal
 }
@@ -117,9 +117,9 @@ export async function acquireFileLock(
     const { handle, created } = opened
     try {
       await flockAsync(handle.fd, 'exnb')
-      // Releases before the advisory-lock protocol used owner JSON plus path
-      // deletion. Respect a live legacy holder during rolling upgrades; dead
-      // metadata is replaced once, after which kernel ownership is definitive.
+      // 早于咨询锁协议的版本使用所有者 JSON 加路径删除。滚动升级期间尊重
+      // 仍存活的旧持有者；已死的元数据只会被替换一次，之后内核所有权即为
+      // 最终依据。
       if (!created && (await legacyOwnerIsLive(handle, staleMs))) {
         await flockAsync(handle.fd, 'un').catch(() => {})
         await handle.close().catch(() => {})

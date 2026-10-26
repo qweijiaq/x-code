@@ -1,9 +1,7 @@
-// Reducer for atomic text + cursor updates in ChatInput.
+// ChatInput 里文本 + 光标原子更新的 reducer。
 //
-// All mutations to the input buffer go through `useReducer(inputReducer)`
-// so a single keypress that both edits text AND moves the cursor commits
-// as one state transition (no intermediate frame where the cursor is in
-// the wrong place).
+// 输入缓冲的所有变更都经过 `useReducer(inputReducer)`，这样同时编辑文本又移动光标
+// 的单次按键会作为一次状态转换提交（不会出现光标位置错误的中间帧）。
 
 export interface InputState {
   text: string

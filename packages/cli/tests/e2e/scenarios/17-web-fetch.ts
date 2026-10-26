@@ -6,17 +6,17 @@ const PAGE_PHRASE =
 const scenario: Scenario = {
   id: '17-web-fetch',
   name: 'webFetch 工具：抓一个稳定 URL 并解出页面内容',
-  // No API key needed for webFetch, but it does need outbound HTTPS.
-  // example.com is HTTPS-served, has been online since 1992, and ships
-  // a tiny "Example Domain" page that any HTML→markdown extractor handles.
+  // webFetch 不需要 API key，但需要出站 HTTPS。
+  // example.com 走 HTTPS，自 1992 年起一直在线，且提供
+  // 一个极小的 "Example Domain" 页面，任何 HTML→markdown 提取器都能处理。
   async run(ctx) {
     const prompt =
       'Use the webFetch tool to fetch https://example.com/ and then summarize the page content ' +
       'in one short sentence. Include in your summary at least one specific phrase you saw on the page.'
     let r = await ctx.runCli(prompt, { args: ['--max-turns', '4'] })
 
-    // External HTTPS can fail transiently even when webFetch is healthy. Retry only
-    // transport-level failures once; persistent failures still reach the assertions.
+    // 即使 webFetch 本身正常，外部 HTTPS 也可能暂时失败。只对传输层
+    // 失败重试一次；持续性失败仍会进入断言。
     const transientFailure = r.toolCalls.some(
       (tc) =>
         tc.toolName === 'webFetch' &&

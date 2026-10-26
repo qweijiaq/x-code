@@ -84,8 +84,8 @@ export function cloneUsageBreakdown(breakdown: UsageBreakdown): UsageBreakdown {
   }
 }
 
-/** Normalize both AI SDK usage and compatible-provider object token shapes.
- *  Reported flags are captured before missing cache values become zero. */
+/** 归一化 AI SDK 用量与兼容提供方对象两种 token 形态。
+ *  在缺失的缓存值变成零之前先捕获 reported 标志。 */
 export function normalizeLanguageModelUsage(usage: LanguageModelUsage | Record<string, unknown>): UsageDelta {
   const raw = usage as unknown as Record<string, unknown>
   const inputObject =
@@ -138,8 +138,8 @@ export function accumulateUsage(
   addDelta(modelBucket, attribution.usage)
 }
 
-/** Fold a completed child's totals into the root exactly once. The root source
- *  becomes sub-agent, while the child's actual model buckets are preserved. */
+/** 把已完成的子任务总量恰好一次地并入根。根来源变为 sub-agent，
+ *  同时保留子任务实际的模型桶。 */
 export function accumulateChildUsage(parent: LoopState, child: LoopState, fallbackModelId: string): void {
   const modelEntries = Object.entries(child.usageBreakdown.byModel)
   const combined = emptyUsageDelta()

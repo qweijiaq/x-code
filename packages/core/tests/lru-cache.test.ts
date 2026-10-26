@@ -43,9 +43,9 @@ describe('LruCache', () => {
     cache.set('a', 1)
     cache.set('b', 2)
     cache.set('c', 3)
-    // Access 'a' — it becomes most-recently-used
+    // 访问 'a' —— 它变成最近使用
     cache.get('a')
-    // Insert 'd' — 'b' is now the oldest and should be evicted
+    // 插入 'd' —— 'b' 现在是最旧的，应被淘汰
     cache.set('d', 4)
     expect(cache.get('b')).toBeNull()
     expect(cache.get('a')).toBe(1)

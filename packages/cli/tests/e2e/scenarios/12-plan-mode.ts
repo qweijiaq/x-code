@@ -13,11 +13,10 @@ const scenario: Scenario = {
     )
     ctx.expect.exitCode(r, 0)
 
-    // Plan mode CAN call writeFile/edit — but ONLY on the plan-storage
-    // file under `.x-code/plans/`. enterPlanMode's tool result explicitly
-    // tells the model to use writeFile on the plan file to build the plan
-    // (see plan-tools.ts:131). The invariant we care about is: no write
-    // tool touches anything outside `.x-code/plans/`.
+    // 计划模式可以调用 writeFile/edit — 但只能作用于 `.x-code/plans/`
+    // 下的计划存储文件。enterPlanMode 的工具结果明确告诉模型对计划
+    // 文件使用 writeFile 来构建计划（见 plan-tools.ts:131）。我们关心的
+    // 不变量是：任何写工具都不碰 `.x-code/plans/` 之外的东西。
     const isPlanFile = (p: unknown): boolean => typeof p === 'string' && /[\\/]\.x-code[\\/]plans[\\/]/.test(p)
     for (const tc of r.toolCalls) {
       if (tc.toolName !== 'writeFile' && tc.toolName !== 'edit') continue
@@ -28,7 +27,7 @@ const scenario: Scenario = {
       )
     }
 
-    // src/main.ts must not have been touched at all
+    // src/main.ts 必须完全未被改动
     await ctx.expect.fileContent('src/main.ts', /greet/)
     const content = await ctx.readFile('src/main.ts')
     ctx.expect.truthy(!content.includes('bye'), 'src/main.ts should NOT have been modified in plan mode')

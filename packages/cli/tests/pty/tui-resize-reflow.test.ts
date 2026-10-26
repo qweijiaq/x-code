@@ -17,8 +17,8 @@ function occurrences(haystack: string, needle: string): number {
 }
 
 function expectSingleUntornFrame(screen: string[], context: string): void {
-  // The live frame is the only UI element with box-drawing borders; any
-  // second ╭/╰/╯ occurrence is a reflowed remnant of an earlier frame.
+  // 实时帧是唯一带制表符边框的 UI 元素；任何第二次出现的 ╭/╰/╯
+  // 都是先前帧回流后的残留。
   expect(screen.join('\n')).not.toContain('�')
   const topRow = screen.findIndex((row) => row.includes('╭'))
   expect(topRow, `input box top border present (${context})`).toBeGreaterThan(-1)
@@ -100,10 +100,9 @@ describe('floating frame reflow remnants', () => {
       async ({ harness }) => {
         await submitInput(harness, '查一下天津的')
         await harness.waitForText('Working')
-        // Land after the 200ms spinner tick but before its 160ms deferred
-        // flush. Before the regression fix the resize erase joined that
-        // cancellable path, so settle() returned while xterm still showed
-        // the old wide frame reflowed across multiple rows.
+        // 落在 200ms 的 spinner tick 之后、其 160ms 延迟 flush 之前。
+        // 在回归修复前，resize 擦除加入了那条可取消路径，导致 settle()
+        // 返回时 xterm 仍显示旧宽帧跨多行回流后的样子。
         await new Promise((resolve) => setTimeout(resolve, 210))
         harness.resize(64, 36)
         await harness.settle()
@@ -120,8 +119,7 @@ describe('floating frame reflow remnants', () => {
       async ({ harness }) => {
         await submitInput(harness, '查一下天津的')
         await harness.waitForText('LINE-A')
-        // Establish the width-reflow cleanup zone, then let later stream
-        // commits occupy rows below it before changing only the height.
+        // 先建立宽度回流清理区，让后续流式提交占据其下方行，再只改高度。
         harness.resize(64, 24)
         await harness.waitForText('LINE-F')
         await harness.waitForScreen((screen) => screen.includes('custom:test-model'), 'prompt after stream')

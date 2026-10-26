@@ -1,9 +1,9 @@
-/** Detect absolute paths in a prompt that point outside the active workspace.
+/** 检测提示词中指向当前工作区之外的绝对路径。
  *
- *  The agent can read files and run shell commands outside the workspace when
- *  the sandbox allows it, which makes "forgot to switch projects" easy to miss.
- *  This is intentionally conservative: only user-home, removable-volume and
- *  Windows-drive paths are considered, and URLs / system paths are ignored.
+ *  当沙箱允许时，agent 可以读取工作区外的文件并运行 shell 命令，
+ *  这很容易让人漏掉「忘记切换项目」的情况。
+ *  这里刻意保守：只考虑用户主目录、可移动卷和 Windows 盘符路径，
+ *  忽略 URL 和系统路径。
  */
 const PATH_PATTERNS = [
   /(?:^|[\s"'`(])(~\/[^\s"'`()\[\]{}<>，。；：！？、]+)/g,

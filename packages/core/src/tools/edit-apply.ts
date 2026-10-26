@@ -59,7 +59,7 @@ function parseBatch(value: unknown): EditReplacement[] {
   return edits
 }
 
-/** Normalize after PreToolUse and before the loop guard / permission prompt. */
+/** 在 PreToolUse 之后、loop guard / 权限提示之前做规范化。 */
 export function normalizeEditInput(input: Record<string, unknown>): NormalizedEditInput {
   const filePath = input.filePath
   if (typeof filePath !== 'string' || !filePath) throw new Error('filePath must be a non-empty string.')

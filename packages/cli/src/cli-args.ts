@@ -1,10 +1,8 @@
-// @x-code-cli/cli — yargs argument definitions for the `xc` CLI.
+// @x-code-cli/cli — `xc` CLI 的 yargs 参数定义。
 //
-// Kept separate from the entrypoint so a long option list (8-10 flags + 2
-// version/help aliases) doesn't crowd the startup orchestration in
-// index.ts. The shape of `Argv` is whatever yargs infers from the option
-// chain below — kept implicit on purpose so adding / renaming a flag in
-// one place updates the consumer's type automatically.
+// 与入口点分开，以便一长串选项（8-10 个标志 + 2 个别名 version/help）不会
+// 挤占 index.ts 中的启动编排。`Argv` 的形状就是 yargs 从下面的选项链推断
+// 出来的——刻意保持隐式，这样在一处添加 / 重命名标志会自动更新使用方的类型。
 import yargs from 'yargs'
 import { hideBin } from 'yargs/helpers'
 
@@ -37,46 +35,42 @@ export async function parseCliArgs(args: string[] = hideBin(process.argv)) {
     })
     .option('max-turns', {
       type: 'number',
-      // No default — interactive mode runs without a cap (the user presses
-      // Esc to stop). Pass a value to enforce a cap; mainly useful with
-      // `--print` where there's no human in the loop.
+      // 无默认值——交互模式下运行时不设上限（用户按 Esc 停止）。
+      // 传入值以强制上限；主要与 `--print` 配合使用，因为那没有人参与循环。
       describe: 'Cap on agent loop iterations per submission (default: unlimited)',
     })
     .option('plan', {
       type: 'boolean',
       default: false,
-      // No short alias — `-p` is already `--print`. Plan mode constrains the
-      // model to read-only exploration + a plan file until the user approves.
+      // 无短别名——`-p` 已被 `--print` 占用。计划模式将模型限制为只读探索
+      // + 计划文件，直到用户批准。
       describe: 'Start the session in plan mode (read-only exploration; user must approve before code edits)',
     })
     .option('plugins', {
       type: 'boolean',
       default: true,
-      // Declared as positive `--plugins` (default on) so yargs auto-derives
-      // the `--no-plugins` negation. The flag is an escape hatch for
-      // diagnosing whether a misbehaving plugin (broken skill, runaway
-      // hook, etc.) is the cause of a problem — `--no-plugins` skips
-      // loadAllPlugins entirely so only built-in contributions are active.
+      // 声明为正向 `--plugins`（默认开启），这样 yargs 会自动推导出
+      // `--no-plugins` 取反形式。该标志是一个逃生舱，用于诊断行为异常的插件
+      // （损坏的 skill、失控的 hook 等）是否是问题根源——`--no-plugins`
+      // 会完全跳过 loadAllPlugins，只保留内置贡献生效。
       describe: 'Enable plugin discovery (default true). `--no-plugins` to disable for one session.',
     })
     .option('hooks', {
       type: 'boolean',
       default: true,
-      // Same `--no-hooks` negation pattern as `--plugins`. Plugins still
-      // load (skills / agents / mcp contributions still register), only
-      // the hook subsystem is skipped — wires `emptyHookBus()` instead
-      // of the integration-built one. Use when a slow / runaway hook
-      // is suspected, without losing the rest of a plugin's content.
+      // 与 `--plugins` 相同的 `--no-hooks` 取反模式。插件仍会加载
+      // （skill / agent / mcp 贡献仍会注册），只是跳过 hook 子系统——
+      // 改用 emptyHookBus() 而非集成构建的那个。当怀疑某个 hook 缓慢 /
+      // 失控时使用，同时不会丢失插件的其余内容。
       describe: 'Enable plugin hooks (default true). `--no-hooks` to skip hook execution for one session.',
     })
     .option('plugin-debug', {
       type: 'boolean',
       default: false,
-      // Targeted debug output for plugin / hook / marketplace activity.
-      // Mirrors the matching debugLog() lines to stderr in addition to the
-      // log file, so you can see them live without tailing ~/.x-code/logs/.
-      // Equivalent to setting `XC_PLUGIN_DEBUG=1`. Doesn't change behaviour
-      // — only changes where the breadcrumbs go.
+      // 针对插件 / hook / marketplace 活动的定向调试输出。将匹配的
+      // debugLog() 行在写入日志文件的同时镜像到 stderr，这样无需 tail
+      // ~/.x-code/logs/ 就能实时看到。等价于设置 `XC_PLUGIN_DEBUG=1`。
+      // 不改变行为——只改变面包屑的去向。
       describe: 'Mirror plugin / hook / marketplace debug breadcrumbs to stderr (also XC_PLUGIN_DEBUG=1).',
     })
     .option('continue', {
@@ -88,12 +82,10 @@ export async function parseCliArgs(args: string[] = hideBin(process.argv)) {
     .option('resume', {
       alias: 'r',
       type: 'string',
-      // Optional value: `xc --resume` (no value) opens the picker; `xc
-      // --resume <id-or-slug>` jumps directly to the session whose
-      // filename matches. Yargs treats this as a string-typed flag, so
-      // `argv.resume === undefined` means "flag not given", `''` means
-      // "given without a value", and any other string is the user's
-      // lookup key.
+      // 可选值：`xc --resume`（无值）打开选择器；`xc --resume <id-or-slug>`
+      // 直接跳转到文件名匹配的会话。Yargs 将其视为字符串类型标志，因此
+      // `argv.resume === undefined` 表示“未给出该标志”，`''` 表示
+      // “给出了但无值”，其他任何字符串都是用户的查找键。
       describe: 'Resume a session: `--resume` opens the picker; `--resume <id>` jumps directly',
     })
     .version(VERSION)

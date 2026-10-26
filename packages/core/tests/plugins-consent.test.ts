@@ -1,4 +1,4 @@
-// Tests for the install-time consent preview and the default-marketplace seed.
+// 安装时同意预览与默认 marketplace 种子的测试。
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -61,8 +61,8 @@ describe('buildConsentPreview', () => {
   })
 
   it('surfaces auto-discovered root .mcp.json (flat shape) via rootProbe', async () => {
-    // Reproduce the linear@anthropic-marketplace layout: manifest with
-    // only metadata + a flat .mcp.json at root (no `mcpServers` wrapper).
+    // 复现 linear@anthropic-marketplace 的布局：manifest 仅含元数据，
+    // 根目录下是扁平的 .mcp.json（没有 `mcpServers` 包裹层）。
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-consent-probe-flat-'))
     await fs.writeFile(
       path.join(root, '.mcp.json'),
@@ -164,7 +164,7 @@ describe('installPlugin + consent', () => {
       }),
     ).rejects.toThrow(/consent/)
 
-    // installed_plugins.json should NOT have an entry
+    // installed_plugins.json 不应存在条目
     const { listInstalledPlugins } = await import('../src/plugins/installer.js')
     expect(await listInstalledPlugins()).toEqual([])
   })
@@ -203,11 +203,10 @@ describe('ensureDefaultMarketplaces', () => {
 
     await ensureDefaultMarketplaces()
 
-    // ensureDefaultMarketplaces re-adds when the entry is absent, so this
-    // re-run WILL re-subscribe. That's intentional: "missing" looks the
-    // same as "first run" to keep the seed simple. Verify the current
-    // behaviour so future-us doesn't regress it accidentally without
-    // a conscious choice.
+    // 条目缺失时 ensureDefaultMarketplaces 会重新添加，所以这次
+    // 重新运行确实会重新订阅。这是有意的："缺失"和"首次运行"
+    // 看起来一样，以保持种子逻辑简单。锁定当前行为，防止未来
+    // 在无意识的情况下意外回归。
     const km = await readKnownMarketplaces()
     expect(km.marketplaces).toHaveLength(1)
   })

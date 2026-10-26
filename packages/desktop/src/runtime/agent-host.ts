@@ -252,8 +252,7 @@ const FILE_TREE_SKIP = new Set([
 const MAX_EDITOR_READ_BYTES = 1_000_000
 const MAX_EDITOR_WRITE_BYTES = 2_000_000
 
-/** Chinese labels for the built-in tool surface. The model-facing tool names
- *  and English descriptions stay untouched. */
+/** 内置工具界面的中文标签。面向模型的工具名称和英文描述保持不变。 */
 const TOOL_META: Record<string, { label: string; description: string }> = {
   readFile: { label: '读取文件', description: '读取本地文件的完整内容' },
   readDocument: {
@@ -320,9 +319,8 @@ function formatTokens(count: number): string {
   return String(count)
 }
 
-/** Resolve the deepest existing ancestor through symlinks, then append the
- *  missing suffix. Mirrors core's permission-path helper without exporting
- *  another public API. */
+/** 通过符号链接解析到最深的现有祖先目录，再追加缺失的后缀。
+ *  复刻 core 的权限路径辅助函数，但不导出另一个公共 API。 */
 async function directoryStats(dir: string): Promise<{ bytes: number; files: number }> {
   let bytes = 0
   let files = 0
@@ -344,7 +342,7 @@ async function directoryStats(dir: string): Promise<{ bytes: number; files: numb
           bytes += stat.size
           files += 1
         } catch {
-          // Vanished during the scan.
+          // 扫描过程中已消失。
         }
       }
     }
@@ -403,8 +401,8 @@ const SKILL_SIGNATURE_SKIP = new Set([
   'target',
 ])
 
-/** Cheap change detector for external skill installs. Walks only skill
- *  directories (bounded depth) and hashes path+mtime+size of SKILL.md. */
+/** 外部技能安装的轻量变更检测器。只遍历技能目录
+ *  （有界深度），并对 SKILL.md 的 path+mtime+size 做哈希。 */
 async function collectSkillSignatures(dir: string, depth: number, out: string[]): Promise<void> {
   if (depth > 4) return
   let entries: import('node:fs').Dirent[]
@@ -423,7 +421,7 @@ async function collectSkillSignatures(dir: string, depth: number, out: string[])
         const stat = await fs.promises.stat(full)
         out.push(`${full}:${stat.mtimeMs}:${stat.size}`)
       } catch {
-        // Vanished while walking.
+        // 遍历过程中已消失。
       }
     }
   }
@@ -444,7 +442,7 @@ export class AgentHost {
   private autoAllowedTools = new Set<string>()
   private alwaysAllowAll = false
   private workspaceOverride: string | undefined
-  /** This runtime was started for a specific window workspace (e.g. a worktree). */
+  /** 此运行时是为某个窗口工作区（例如 worktree）启动的。 */
   private fixedWorkspace = false
   private reloadingSettings: Promise<void> | null = null
   private fileIndex: { workspace: string; entries: FileEntry[]; at: number } | null = null
@@ -484,8 +482,8 @@ export class AgentHost {
     }
     this.bootstrap = await bootstrapRuntime(this.workspaceOverride)
     this.taskMode = isTaskMode(savedSettings.taskMode) ? savedSettings.taskMode : DEFAULT_TASK_MODE
-    // A window explicitly opened on a worktree must not become the workspace
-    // used by the next fresh launch, even if the user switches projects in it.
+    // 显式在 worktree 上打开的窗口绝不能成为下一次全新启动
+    // 使用的工作区，即使用户在其中切换项目也不行。
     this.fixedWorkspace = Boolean(pinnedWorkspace)
     this.rememberWorkspace(this.bootstrap.workspace, !this.fixedWorkspace)
     this.model = this.bootstrap.model
@@ -574,10 +572,10 @@ export class AgentHost {
     return moveTempFilesIntoWorkspace(paths, this.requireBootstrap().workspace)
   }
 
-  /** Backs the renderer's `@` menu. The scan is cached briefly per workspace:
-   *  a query changes on every keystroke but the index does not. Queries are
-   *  ranked against workspace-relative paths, so an absolute path fragment
-   *  (what the menu itself inserts) is normalized first. */
+  /** 支撑 renderer 的 `@` 菜单。扫描按工作区短暂缓存：
+   *  每次击键都会改变查询，但索引不变。查询按
+   *  工作区相对路径排名，因此绝对路径片段
+   *  （菜单自身插入的内容）会先被规范化。 */
   async listWorkspaceFiles(
     query: string,
     limit = 20,
@@ -602,8 +600,8 @@ export class AgentHost {
       }))
   }
 
-  /** Cheap workspace shape used by the empty-state starter actions. Only the
-   *  top level is inspected; no recursive scan. */
+  /** 空状态启动动作使用的轻量工作区形状。只检查
+   *  顶层，不做递归扫描。 */
   async workspaceInsights(): Promise<WorkspaceInsightsView> {
     const workspace = this.requireBootstrap().workspace
     const names = await fs.promises.readdir(workspace).catch(() => [] as string[])
@@ -685,7 +683,7 @@ export class AgentHost {
         this.applyModel(loaded.view.modelId, false)
         modelChanged = true
       } catch {
-        // Keep the current model when the saved one is no longer available.
+        // 当保存的模型不再可用时，保留当前模型。
       }
     }
 
@@ -696,9 +694,8 @@ export class AgentHost {
     return loaded.view
   }
 
-  /** Recover parseable messages from a damaged transcript into a new session.
-   *  The source file is left untouched; this is only invoked from the explicit
-   *  recovery dialog. */
+  /** 从损坏的会话记录中恢复可解析的消息到新会话。
+   *  源文件保持不变；只从显式的恢复对话框调用。 */
   async salvageSession(
     filePath: string,
   ): Promise<{ sessionId: string; filePath: string; messageCount: number; view: LoadedSessionView }> {
@@ -712,7 +709,7 @@ export class AgentHost {
         this.applyModel(loaded.view.modelId, false)
         modelChanged = true
       } catch {
-        // Keep the current model when the saved one is no longer available.
+        // 当保存的模型不再可用时，保留当前模型。
       }
     }
     this.cancelAllApprovals()
@@ -737,9 +734,9 @@ export class AgentHost {
     return { sessionId: this.loopState.sessionId }
   }
 
-  /** Subscribe to background shell lifecycle so the renderer's task panel can
-   *  refresh and long-running commands can raise a system notification even
-   *  when the turn that started them has already ended. */
+  /** 订阅后台 shell 生命周期，以便 renderer 的任务面板能够
+   *  刷新，长时运行的命令即使在其启动轮次已结束后，
+   *  也能发出系统通知。 */
   private watchShellSessions(state: LoopState): void {
     this.shellUnsubscribe?.()
     this.shellUnsubscribe = state.shellSessions.subscribe((event) => {
@@ -832,8 +829,8 @@ export class AgentHost {
     }
   }
 
-  /** Branch the current conversation into a new session file and make it the
-   *  active one. The source session is left untouched on disk. */
+  /** 把当前对话分支到新的会话文件并使其成为
+   *  活动会话。源会话在磁盘上保持不变。 */
   async forkCurrentSession(name?: string): Promise<{ sessionId: string; filePath: string; view: LoadedSessionView }> {
     if (this.activeTurn) throw new Error('turn-busy')
     const state = this.loopState
@@ -860,8 +857,8 @@ export class AgentHost {
 
   backgroundSessions(): BackgroundShellView[] {
     const sessions = this.loopState?.shellSessions.list() ?? []
-    // Shell session timestamps use Date.now(); performance.now() would produce
-    // a negative elapsed time and clamp to 00:00 in the panel.
+    // shell 会话时间戳使用 Date.now()；performance.now() 会产生
+    // 负的经过时间，并在面板中被钳制为 00:00。
     const now = Date.now()
     return sessions.map((session) => ({
       shellId: session.shellId,
@@ -970,9 +967,9 @@ export class AgentHost {
     return { ok: true }
   }
 
-  /** Revert one edit/write tool call using the snapshots captured before and
-   *  after it ran. Refuses when the file has changed since (the user or a
-   *  later tool touched it), so a stale revert can never clobber newer work. */
+  /** 使用前后快照撤销一次 edit/write 工具调用。
+   *  当文件此后已变化（用户或后续工具碰过）时拒绝，
+   *  因此过期的撤销绝不会覆盖更新的工作。 */
   async revertEdit(toolCallId: string): Promise<{ ok: boolean; filePath: string; message: string }> {
     if (this.activeTurn) throw new Error('turn-busy')
     const entry = this.editHistory.get(toolCallId)
@@ -1262,7 +1259,7 @@ export class AgentHost {
       try {
         this.applyModel(next.modelId, false)
       } catch {
-        // Keep the current model when a saved local model disappeared.
+        // 当保存的本地模型消失时，保留当前模型。
       }
     } else if (update.modelId === null) {
       const baseModel = this.requireBootstrap().modelId
@@ -1270,7 +1267,7 @@ export class AgentHost {
         try {
           this.applyModel(baseModel, false)
         } catch {
-          // Ignore.
+          // 忽略。
         }
       }
     }
@@ -1331,7 +1328,7 @@ export class AgentHost {
           deletedFiles += 1
           freedBytes += stat.size
         } catch {
-          // Skip files that vanished or cannot be removed.
+          // 跳过已消失或无法删除的文件。
         }
       }
     }
@@ -1359,7 +1356,7 @@ export class AgentHost {
           deletedFiles += 1
           freedBytes += stat.size
         } catch {
-          // Skip.
+          // 跳过。
         }
       }
     }
@@ -1391,7 +1388,7 @@ export class AgentHost {
     return { deletedFiles, freedBytes, usage: await this.storageUsage() }
   }
 
-  /** Apply per-workspace overrides after init or a workspace switch. */
+  /** 在初始化或工作区切换后应用每个工作区的覆盖。 */
   private applyProjectOverrides(): void {
     const overrides = this.projectOverrides()
     if (overrides.taskMode && isTaskMode(overrides.taskMode)) this.taskMode = overrides.taskMode
@@ -1399,7 +1396,7 @@ export class AgentHost {
       try {
         this.applyModel(overrides.modelId, false)
       } catch {
-        // Fall back to the default model.
+        // 回退到默认模型。
       }
     }
   }
@@ -1433,7 +1430,7 @@ export class AgentHost {
         fixPrompt: failuresForAgent(results),
       })
     } catch {
-      // Auto checks are advisory; never surface a failure here as a turn error.
+      // 自动检查是建议性的；此处绝不把失败当作轮次错误上报。
     } finally {
       this.autoChecksRunning = false
     }
@@ -1470,7 +1467,7 @@ export class AgentHost {
     return this.getState()
   }
 
-  /** Re-probe Ollama / LM Studio and refresh the model list in place. */
+  /** 重新探测 Ollama / LM Studio 并就地刷新模型列表。 */
   async discoverLocal(): Promise<AppState> {
     if (this.activeTurn) throw new Error('turn-busy')
     const local = await discoverLocalModels()
@@ -1519,8 +1516,8 @@ export class AgentHost {
 
   async submit(prompt: string, attachments: string[] = []): Promise<TurnResult> {
     if (this.activeTurn) throw new Error('turn-busy')
-    // Cached for 30s: makes tools installed in another terminal visible on the
-    // next turn without the per-turn cost of a login shell spawn.
+    // 缓存 30 秒：使其他终端安装的工具在下一轮可见，
+    // 且无需每轮都付出登录 shell 启动的成本。
     await refreshShellEnvironment()
     const bootstrap = this.requireBootstrap()
     const existing = this.loopState
@@ -1582,7 +1579,7 @@ export class AgentHost {
         try {
           await saveSession(this.loopState, model)
         } catch {
-          // A failed session flush must not hide the completed turn.
+          // 会话落盘失败绝不能掩盖已完成的轮次。
         }
         this.emitSessionSaved(this.loopState)
         if (reason === 'completed') void this.generateSessionTitle(this.loopState)
@@ -1607,10 +1604,10 @@ export class AgentHost {
     return { text: turn.text, reason, sessionId: state.sessionId, modelId: this.modelId }
   }
 
-  /** Attachments are resolved against the workspace and appended to the
-   *  prompt as `@path` references, which core's file-ingest turns into image,
-   *  document, or text parts. Without attachments this stays the string fast
-   *  path so provider caching is unchanged. */
+  /** 附件相对于工作区解析，并以 `@path` 引用的形式追加到
+   *  提示中，core 的文件摄取会将其转为图片、
+   *  文档或文本部件。没有附件时保持字符串快路径，
+   *  因此 provider 缓存不变。 */
   private async prepareUserContent(
     prompt: string,
     attachments: string[],
@@ -1804,7 +1801,7 @@ export class AgentHost {
         .slice(0, 30)
       if (topics.length > 0) lines.push('', '主题：', ...topics.map((topic) => `- ${topic}`))
     } catch {
-      // No topics directory.
+      // 没有 topics 目录。
     }
     return { text: lines.join('\n') }
   }
@@ -2030,9 +2027,9 @@ export class AgentHost {
     return path.resolve(this.requireBootstrap().workspace)
   }
 
-  /** Resolve through symlinks for the deepest existing ancestor, then check
-   *  the physical path stays inside the workspace. Prevents `../` and
-   *  symlink escapes for both reads and writes. */
+  /** 对最深的现有祖先做符号链接解析，然后检查
+   *  物理路径仍位于工作区内。防止读取和写入时的
+   *  `../` 与符号链接逃逸。 */
   private workspacePhysicalPath(input: string): string {
     const root = this.workspaceRoot()
     const physicalRoot = realpathAllowMissing(root)
@@ -2080,7 +2077,7 @@ export class AgentHost {
           ...(type === 'file' ? { size: entryStat.size } : {}),
         })
       } catch {
-        // Broken symlink or vanished entry.
+        // 损坏的符号链接或已消失的条目。
       }
     }
     entries.sort((left, right) => {
@@ -2176,8 +2173,8 @@ export class AgentHost {
     return { text: lines.join('\n') }
   }
 
-  /** Export a redacted JSON snapshot for support. Provider keys, MCP env and
-   *  headers, and command strings are deliberately excluded. */
+  /** 导出脱敏的 JSON 快照用于支持。provider key、MCP 环境变量和
+   *  请求头，以及命令字符串被有意排除。 */
   async exportDiagnostics(): Promise<DiagnosticsExportResult> {
     const bootstrap = this.requireBootstrap()
     const workspace = this.workspaceRoot()
@@ -2571,15 +2568,15 @@ export class AgentHost {
     return this.settingsResult()
   }
 
-  /** Re-scan skill directories without restarting. Used by the Settings button
-   *  and by the background poller when an external installer adds a SKILL.md. */
+  /** 无需重启即可重新扫描技能目录。用于设置按钮
+   *  和后台轮询器（当外部安装器添加 SKILL.md 时）。 */
   async reloadSkills(): Promise<SettingsActionResult> {
     await this.reloadSkillsNow()
     await this.emitSettings()
     return this.settingsResult()
   }
 
-  /** Install a skill's declared dependencies into its isolated runtime dir. */
+  /** 把技能声明的依赖安装到其隔离的运行时目录中。 */
   async installSkillRuntime(name: string): Promise<SettingsActionResult> {
     this.assertIdle()
     const registry = this.requireBootstrap().skillRegistry
@@ -2604,7 +2601,7 @@ export class AgentHost {
     return this.settingsResult()
   }
 
-  /** Remove legacy dependency folders created inside the skill directory. */
+  /** 删除在技能目录内创建的旧依赖文件夹。 */
   async clearLegacySkillRuntime(name: string): Promise<SettingsActionResult> {
     this.assertIdle()
     const registry = this.requireBootstrap().skillRegistry
@@ -2619,8 +2616,8 @@ export class AgentHost {
     return this.settingsResult()
   }
 
-  /** Re-read the login shell environment, then rebuild plugins/MCP/skills so
-   *  newly exported variables and installed CLIs take effect immediately. */
+  /** 重新读取登录 shell 环境，然后重建插件/MCP/技能，
+   *  使新导出的变量和新安装的 CLI 立即生效。 */
   async refreshEnvironment(): Promise<EnvironmentRefreshResult> {
     this.assertIdle()
     const environment = await refreshShellEnvironment({ force: true })
@@ -2982,7 +2979,7 @@ export class AgentHost {
     for (const field of plugin.manifest.userConfig ?? []) {
       if (!Object.hasOwn(values, field.key)) continue
       const raw = values[field.key]!
-      // An empty sensitive field means "keep the stored value unchanged".
+      // 空的敏感字段表示「保持已存储的值不变」。
       if (field.sensitive === true && raw === '') continue
       next[field.key] = coerceUserConfigValue(field.type, raw)
     }
@@ -3091,8 +3088,8 @@ export class AgentHost {
 
   async reloadAll(): Promise<SettingsActionResult> {
     if (this.activeTurn) {
-      // A turn owns the current tool surface; apply the persisted preferences
-      // that can change safely, then let the renderer refresh its settings UI.
+      // 轮次拥有当前工具界面；应用可安全变更的持久化偏好，
+      // 然后让 renderer 刷新其设置 UI。
       const desktopSettings = loadDesktopSettings()
       this.disabledTools = new Set(desktopSettings.disabledTools ?? [])
       this.autoAllowedTools = new Set(desktopSettings.autoAllowedTools ?? [])
@@ -3102,13 +3099,13 @@ export class AgentHost {
       this.applyToolFilter()
       this.send({ type: 'app:state', state: this.getState() })
     } else {
-      // Several windows can announce changes at once; serialize the reload so
-      // two bootstrap passes never replace MCP/memory state concurrently.
+      // 多个窗口可能同时宣告变更；串行化重载，使两个
+      // bootstrap 过程绝不会并发替换 MCP/内存状态。
       while (this.reloadingSettings) {
         try {
           await this.reloadingSettings
         } catch {
-          // The previous reload failed; this one still gets its turn.
+          // 上一次重载失败；这一次仍轮到它。
         }
       }
       const reload = this.reloadExtensions(this.modelId)
@@ -3186,7 +3183,7 @@ export class AgentHost {
     try {
       this.send({ type: 'settings:changed', settings: await this.getSettings() })
     } catch {
-      // Best-effort; the next explicit request retries.
+      // 尽力而为；下一次显式请求会重试。
     }
   }
 
@@ -3204,9 +3201,8 @@ export class AgentHost {
     this.loopState.deferredCatalog = undefined
   }
 
-  /** An empty deny list must stay `undefined`: any toolFilter disables the
-   *  root deferred-tool surface, so only install one when tools are actually
-   *  disabled. */
+  /** 空的拒绝列表必须保持 `undefined`：任何 toolFilter 都会禁用
+   *  根 deferred-tool 界面，因此只在确实禁用工具时才安装它。 */
   private applyToolFilter(): void {
     this.requireBootstrap().baseOptions.toolFilter =
       this.disabledTools.size > 0 ? { deny: [...this.disabledTools] } : undefined
@@ -3233,7 +3229,7 @@ export class AgentHost {
     try {
       await saveSession(this.loopState, model)
     } catch {
-      // Best-effort flush on quit.
+      // 退出时尽力落盘。
     }
   }
 
@@ -3442,8 +3438,8 @@ export class AgentHost {
     })
   }
 
-  /** One small model call per new session. Runs after the turn so it never
-   *  delays the answer; failures simply leave the first-prompt fallback. */
+  /** 每个新会话一次小型模型调用。在轮次之后运行，因此绝不会
+   *  延迟回答；失败则保留首条提示的回退方案。 */
   private async generateSessionTitle(state: LoopState): Promise<void> {
     if (this.demo) return
     const model = this.model
@@ -3474,7 +3470,7 @@ export class AgentHost {
       })
       this.send({ type: 'session:title', sessionId: state.sessionId, title })
     } catch {
-      // Title generation is best effort.
+      // 标题生成是尽力而为。
     } finally {
       this.titleGenerating.delete(state.sessionId)
     }

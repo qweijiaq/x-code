@@ -1,16 +1,14 @@
-// @x-code-cli/core — MCP project-level trust gate
+// @x-code-cli/core — MCP 项目级信任门
 //
-// A `.x-code/config.json` checked into a git repo can declare MCP servers
-// with arbitrary `command` strings — i.e. cloning a hostile repo and
-// launching the CLI would silently spawn whatever that command says.
-// Before honouring any project-level mcpServers block, we therefore
-// require an explicit consent step keyed to the absolute project path.
+// 提交进 git 仓库的 `.x-code/config.json` 可以声明带任意 `command` 字符串的
+// MCP 服务器——即克隆一个恶意仓库并启动 CLI，会悄悄 spawn 那个命令要做的
+// 任何事。因此，在尊重任何项目级 mcpServers 块之前，我们要求一个以绝对项目
+// 路径为键的显式同意步骤。
 //
-// Persistence file: ~/.x-code/trusted-projects.json (mode 0600).
-// Format: { trusted: [{ path: <absolute>, trustedAt: <ISO> }, ...] }
+// 持久化文件：~/.x-code/trusted-projects.json（mode 0600）。
+// 格式：{ trusted: [{ path: <absolute>, trustedAt: <ISO> }, ...] }
 //
-// User config (~/.x-code/config.json) is NOT subject to this gate —
-// the user wrote it themselves; trust is implicit.
+// 用户配置（~/.x-code/config.json）不受此门约束——用户自己写的；信任是隐式的。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -29,9 +27,9 @@ interface TrustedStore {
   trusted: TrustedEntry[]
 }
 
-/** Normalise a path for stable comparison across platforms.
- *  Absolute + resolved + lowercased on Windows (case-insensitive FS),
- *  preserved case on macOS/Linux. */
+/** 规范化路径以便跨平台稳定比较。
+ *  绝对 + resolved + 在 Windows 上小写（大小写不敏感 FS），
+ *  macOS/Linux 上保留大小写。 */
 function normalize(p: string): string {
   const resolved = path.resolve(p)
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved
@@ -45,16 +43,15 @@ async function readStore(): Promise<TrustedStore> {
       return parsed as TrustedStore
     }
   } catch {
-    // missing file or malformed — start fresh
+    // 文件缺失或格式错误——从干净状态开始
   }
   return { trusted: [] }
 }
 
 async function writeStore(store: TrustedStore): Promise<void> {
   await fs.mkdir(userXcodeDir(), { recursive: true })
-  // Atomic write: tmp + rename. Avoids a half-written file if the process
-  // is killed mid-write (the trust file is small but the principle holds —
-  // we never want a corrupted JSON to lock the user out of MCP).
+  // 原子写入：tmp + rename。避免进程在写入中途被杀时留下半个文件
+  // （信任文件很小，但原则成立——我们绝不想损坏的 JSON 把用户锁在 MCP 之外）。
   const tmp = trustedFile() + '.tmp'
   await fs.writeFile(tmp, JSON.stringify(store, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 })
   await fs.rename(tmp, trustedFile())
@@ -76,17 +73,16 @@ export async function trustProject(projectPath: string): Promise<void> {
 
 export type TrustChoice = 'trust' | 'skip' | 'exit'
 
-/** Ask the user whether to trust the project's MCP config.
+/** 询问用户是否信任项目的 MCP 配置。
  *
- *  Caller passes a generic askUser callback (the same one the agent loop
- *  uses for askUser tool calls) so trust prompts render in the same dialog
- *  style as the rest of the UI. We show the actual command strings so the
- *  user can audit what would run.
+ *  调用方传入一个通用 askUser 回调（与 agent loop 用于 askUser 工具调用的
+ *  那个相同），使信任提示以与 UI 其余部分相同的对话框风格渲染。我们展示
+ *  实际的命令字符串，使用户能审计将要运行什么。
  *
- *  Returns:
- *    'trust' — user accepted; caller should persist via trustProject(...)
- *    'skip'  — load only user-level mcpServers
- *    'exit'  — caller should terminate the CLI */
+ *  返回：
+ *    'trust' — 用户接受；调用方应通过 trustProject(...) 持久化
+ *    'skip'  — 只加载用户级 mcpServers
+ *    'exit'  — 调用方应终止 CLI */
 export async function promptForTrust(
   _projectPath: string,
   serverSummaries: Array<{ name: string; preview: string }>,
@@ -110,10 +106,9 @@ export async function promptForTrust(
   return 'skip'
 }
 
-/** Build the one-line preview shown for each server in the trust dialog.
- *  Stdio servers expose their full command + args; HTTP servers show the
- *  URL. We intentionally don't truncate — the user needs to see the whole
- *  thing to make an informed call. */
+/** 构建信任对话框中每个服务器展示的单行预览。Stdio 服务器暴露其完整
+ *  command + args；HTTP 服务器展示 URL。我们刻意不截断——用户需要看到
+ *  全貌才能做出知情的决定。 */
 export function buildServerPreview(config: { command?: string; args?: string[]; url?: string }): string {
   if (config.url) return config.url
   if (config.command) {

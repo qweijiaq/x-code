@@ -1,4 +1,4 @@
-// Tests for plugin manifest discovery + parsing
+// 插件 manifest 发现与解析的测试
 import { describe, expect, it } from 'vitest'
 
 import fs from 'node:fs/promises'
@@ -27,7 +27,7 @@ describe('discoverManifest', () => {
   it('finds .x-code-plugin/plugin.json (native, highest priority)', async () => {
     const root = await makeTempPluginDir()
     const expected = await writeManifest(root, '.x-code-plugin/plugin.json', { name: 'foo', version: '1.0.0' })
-    // Also write a competing claude manifest — native must still win.
+    // 再写入一个竞争的 claude manifest —— 原生格式必须仍然优先。
     await writeManifest(root, '.claude-plugin/plugin.json', { name: 'foo', version: '1.0.0' })
 
     const result = await discoverManifest(root)
@@ -95,7 +95,7 @@ describe('parseManifest', () => {
     const file = await writeManifest(root, 'plugin.json', {
       name: 'foo',
       version: '1.0.0',
-      // Claude Code-only fields we don't implement — must not reject.
+      // 我们未实现的 Claude Code 专有字段 —— 不能因此拒绝。
       'output-styles': './styles',
       lspServers: { foo: { command: 'lsp' } },
       unknownFutureField: 42,
@@ -103,7 +103,7 @@ describe('parseManifest', () => {
 
     const manifest = await parseManifest(file)
     expect(manifest.name).toBe('foo')
-    // Unknown fields are dropped.
+    // 未知字段被丢弃。
     expect(manifest).not.toHaveProperty('output-styles')
     expect(manifest).not.toHaveProperty('lspServers')
   })

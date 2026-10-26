@@ -1,22 +1,19 @@
-// @x-code-cli/core — Truncate tool-result parts inside ModelMessage arrays
+// @x-code-cli/core — 截断 ModelMessage 数组内的工具结果片段
 //
-// AI SDK auto-executed tools (readFile / grep / glob / listDir / webFetch /
-// webSearch) return their results inside `response.messages` as tool-result
-// parts. The manual tool path in `tool-execution.ts` runs every output
-// through `truncateToolResult`, but auto-executed results bypass that path
-// and land in `state.messages` at full size. This module walks the messages
-// produced by a completed stream and applies the same per-tool truncation
-// policy in-place before they persist into the conversation state.
+// AI SDK 自动执行的工具（readFile / grep / glob / listDir / webFetch /
+// webSearch）在 `response.messages` 中以 tool-result 片段返回其结果。手动工具
+// 路径（`tool-execution.ts`）会让每个输出经过 `truncateToolResult`，但自动执行的
+// 结果绕过该路径，以完整大小落入 `state.messages`。本模块遍历一条已完成流产生的
+// 消息，在它们持久化进会话状态之前就地应用相同的逐工具截断策略。
 //
-// Policy is per-tool:
-//   - shell / edit / writeFile: manual path already truncated
-//   - readFile: head-tail (preserve file start + file end)
-//   - grep / glob / listDir: head-only (lexical order is meaningful; the tail
-//     carries no additional signal once the head is representative)
-//   - webFetch: head-tail (pages often have navigation cruft at top + bottom,
-//     but the meaningful content is usually the middle. head-tail still beats
-//     head-only because it preserves the final anchors)
-//   - default: head-tail
+// 策略按工具区分：
+//   - shell / edit / writeFile：手动路径已经截断
+//   - readFile：头尾截断（保留文件开头 + 文件结尾）
+//   - grep / glob / listDir：仅头部（字典序有意义；一旦头部具有代表性，尾部不再
+//     携带额外信号）
+//   - webFetch：头尾截断（页面顶部和底部常有导航冗余，而有意义的内容通常在中部。
+//     头尾仍优于仅头部，因为它保留了末尾的锚点）
+//   - default：头尾截断
 import type { ModelMessage } from 'ai'
 
 import { truncateToolResult } from '../tools/truncate.js'
@@ -39,9 +36,8 @@ function policyFor(toolName: string | undefined): TruncateOptions {
   return PER_TOOL_POLICY[toolName] ?? { direction: 'head-tail' }
 }
 
-/** Narrow typing — AI SDK tool-result parts look roughly like this on the
- *  wire. We only mutate the subset we know about and leave anything else
- *  alone. */
+/** 收窄类型——AI SDK 的 tool-result 片段在线上大致长这样。我们只修改已知的子集，
+ *  其余一概不动。 */
 type ToolResultLike = {
   type: 'tool-result'
   toolName?: string
@@ -52,48 +48,38 @@ type ToolResultLike = {
 }
 
 /**
- * Walk `messages` and reconcile tool_call ↔ tool_result pairing in BOTH
- * directions. Providers strictly require:
- *   - every assistant tool_call to have a paired tool_result
- *   - every tool_result to be preceded by an assistant tool_call with
- *     the matching toolCallId
- * Either kind of orphan will poison the next API request with a
- * "tool must be a response to a preceding message with tool_calls"
- * (or the converse) error.
+ * 遍历 `messages`，双向调和 tool_call ↔ tool_result 配对。提供方严格要求：
+ *   - 每条 assistant tool_call 都要有一条配对的 tool_result
+ *   - 每条 tool_result 前面都要有一条 toolCallId 匹配的 assistant tool_call
+ * 任何一种孤儿都会以 "tool must be a response to a preceding message with
+ * tool_calls"（或相反的）错误毒化下一次 API 请求。
  *
- * How the orphans arise:
- *   - Forward (tool_call without result): models occasionally emit
- *     malformed tool input (e.g. todoWrite with required fields
- *     missing). The SDK validates, fails, emits a tool-error event,
- *     and in some cases doesn't push a paired tool-result into
- *     response.messages. We synthesise an error result.
- *   - Reverse (tool_result without preceding tool_call): when the SDK
- *     emits `tool-error` mid-stream because the model's tool input
- *     failed validation, the SDK may exclude the tool_call from
- *     response.messages — but our `processToolCalls` still drains the
- *     `result.toolCalls` promise and runs the tool, pushing a
- *     tool_result into state.messages. We drop that orphan.
+ * 孤儿是怎么产生的：
+ *   - 正向（有 tool_call 无结果）：模型偶尔会发出格式错误的工具输入（例如
+ *     todoWrite 缺少必需字段）。SDK 校验、失败、发出 tool-error 事件，某些情况下
+ *     不会往 response.messages 推入配对的 tool-result。我们合成一条错误结果。
+ *   - 反向（有 tool_result 无前置 tool_call）：当 SDK 因模型工具输入校验失败而在
+ *     流中途发出 `tool-error` 时，SDK 可能把该 tool_call 从 response.messages
+ *     排除——但我们的 `processToolCalls` 仍会耗尽 `result.toolCalls` promise 并
+ *     运行工具，往 state.messages 推入一条 tool_result。我们丢弃那条孤儿。
  *
- * Mutates `messages` in place. Idempotent (running twice is a no-op).
+ * 就地修改 `messages`。幂等（运行两次是 no-op）。
  */
 export function repairOrphanToolCalls(messages: ModelMessage[]): void {
-  // ── Pre-pass: fix interleaved user messages ──
-  // A user message wedged between an assistant's tool_calls and the
-  // corresponding tool_results causes AI_MissingToolResultsError (the
-  // SDK validates strict assistant→tool ordering). This happens when
-  // abort() pushed a notice into state.messages while processToolCalls
-  // was still appending results. Move such user messages AFTER the
-  // tool results block to restore valid ordering.
+  // ── 预过滤：修复被夹在中间的用户消息 ──
+  // 一条夹在 assistant 的 tool_calls 与对应 tool_results 之间的用户消息，会导致
+  // AI_MissingToolResultsError（SDK 校验严格的 assistant→tool 顺序）。当 abort()
+  // 在 processToolCalls 仍在追加结果时把一条提示推进 state.messages，就会出现
+  // 这种情况。把这类用户消息移到工具结果块之后，恢复合法顺序。
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]
     if (!msg || msg.role !== 'assistant' || !Array.isArray(msg.content)) continue
     const hasToolCall = (msg.content as Array<{ type?: string }>).some((p) => p?.type === 'tool-call')
     if (!hasToolCall) continue
-    // Scan forward: expect tool messages, but tolerate interleaved user
-    // messages (the abort-race artifact). Collect the range of tool + user
-    // messages that belong to this assistant's tool-call batch.
+    // 向前扫描：预期是 tool 消息，但容忍夹在中间的用户消息（abort 竞态的产物）。
+    // 收集属于这条 assistant 的 tool-call 批次的 tool + user 消息范围。
     let j = i + 1
-    const displaced: number[] = [] // indices of user messages to relocate
+    const displaced: number[] = [] // 需要搬迁的用户消息索引
     while (j < messages.length) {
       const r = messages[j]?.role
       if (r === 'tool') {
@@ -105,25 +91,24 @@ export function repairOrphanToolCalls(messages: ModelMessage[]): void {
         j++
         continue
       }
-      break // next assistant or unknown role — stop scanning
+      break // 下一条是 assistant 或未知角色——停止扫描
     }
     if (displaced.length === 0) continue
-    // Relocate: splice displaced user messages out and re-insert them
-    // just after the tool results block (index `j` after removal shifts).
+    // 搬迁：把被挤出去的用户消息 splice 出来，再在工具结果块之后重新插入
+    //（移除之后，索引 `j` 发生了偏移）。
     const extracted = displaced.map((idx) => messages[idx]!)
-    // Remove in reverse order so earlier indices stay valid.
+    // 按逆序移除，这样靠前的索引始终有效。
     for (let k = displaced.length - 1; k >= 0; k--) {
       messages.splice(displaced[k]!, 1)
     }
-    // Insert after the last tool message (which shifted left by the
-    // number of removals that preceded it).
+    // 在最后一条 tool 消息之后插入（它因为前面的移除而左移了相应数量）。
     const insertAt = j - displaced.length
     messages.splice(insertAt, 0, ...extracted)
-    // Advance outer loop past the repaired block.
+    // 让外层循环越过已修复的块。
     i = insertAt + extracted.length - 1
   }
 
-  // Collect every tool_call_id that appears in an assistant message.
+  // 收集出现在 assistant 消息里的每个 tool_call_id。
   const expected = new Set<string>()
   const toolNameById = new Map<string, string>()
   for (const msg of messages) {
@@ -137,10 +122,9 @@ export function repairOrphanToolCalls(messages: ModelMessage[]): void {
     }
   }
 
-  // Drop tool-result parts whose toolCallId never appeared in an
-  // assistant tool_call (reverse-orphan). When all parts of a tool
-  // message are orphans, drop the whole message; when only some are,
-  // filter the parts in place.
+  // 丢弃 toolCallId 从未出现在 assistant tool_call 里的 tool-result 片段
+  //（反向孤儿）。当某条 tool 消息的所有片段都是孤儿时，丢弃整条消息；只有部分
+  // 是孤儿时，就地在片段上过滤。
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
     if (!msg || msg.role !== 'tool') continue
@@ -152,16 +136,13 @@ export function repairOrphanToolCalls(messages: ModelMessage[]): void {
       return expected.has(part.toolCallId)
     })
     if (kept.length === 0) {
-      // Splicing the whole tool message can leave assistant→assistant
-      // adjacent (the common shape is assistant tool_calls → tool
-      // results → assistant continuation). Anthropic strictly requires
-      // user/assistant alternation, and although the @ai-sdk/anthropic
-      // converter currently merges consecutive same-role messages for
-      // us, we don't want the sanitizer's correctness to depend on
-      // downstream SDK behavior. When both neighbors are assistant,
-      // replace with a user-text placeholder instead so the boundary
-      // stays. Otherwise (one or both neighbors are user/tool/absent),
-      // dropping is safe.
+      // 把整条 tool 消息 splice 掉，可能留下 assistant→assistant 相邻
+      //（常见形状是 assistant tool_calls → tool results → assistant 续写）。
+      // Anthropic 严格要求 user/assistant 交替，虽然 @ai-sdk/anthropic 转换器
+      // 目前会为我们合并连续的同角色消息，但我们不想让 sanitizer 的正确性依赖
+      // 下游 SDK 的行为。当两侧邻居都是 assistant 时，改用一条 user 文本占位符
+      // 替换，让边界得以保留。否则（一侧或两侧邻居是 user/tool/不存在），直接
+      // 丢弃是安全的。
       const prev = messages[i - 1]
       const next = messages[i + 1]
       if (prev?.role === 'assistant' && next?.role === 'assistant') {
@@ -178,15 +159,13 @@ export function repairOrphanToolCalls(messages: ModelMessage[]): void {
         messages.splice(i, 1)
       }
     } else if (kept.length !== parts.length) {
-      // AI SDK's narrow union typings forbid the partial part shape we
-      // operate on at the type level — we already narrowed at runtime
-      // above, so a structural cast is safe here.
+      // AI SDK 的窄并集类型在类型层面禁止我们操作的部分片段形状——我们在上方
+      // 已做运行时收窄，所以这里做结构化断言是安全的。
       ;(msg as { content: unknown }).content = kept
     }
   }
 
-  // Collect every tool_call_id that's already covered by a tool-result
-  // (after the reverse-orphan pass above).
+  // 收集每个已被 tool-result 覆盖的 tool_call_id（在上方的反向孤儿过滤之后）。
   const fulfilled = new Set<string>()
   for (const msg of messages) {
     if (msg.role !== 'tool') continue
@@ -198,15 +177,12 @@ export function repairOrphanToolCalls(messages: ModelMessage[]): void {
     }
   }
 
-  // Append synthetic results for forward-orphans, preserving overall
-  // ordering (forward-orphans always go at the end — they never had a
-  // real result, so their position is purely a placeholder for the
-  // next API request). Collect all orphan parts into ONE tool message
-  // rather than pushing one per id: the AI SDK's Anthropic converter
-  // happens to merge consecutive same-role messages today, but the
-  // Google converter does not, and OpenAI-compat splits per tool_call_id
-  // anyway — emitting a single tool ModelMessage is wire-equivalent for
-  // the splitters and strictly safer for the non-merging providers.
+  // 为正向孤儿追加合成结果，保持整体顺序（正向孤儿总是放在末尾——它们从未有过
+  // 真实结果，所以其位置纯粹是给下一次 API 请求的占位）。把所有孤儿片段收集进
+  // 一条 tool 消息，而不是每个 id 推一条：AI SDK 的 Anthropic 转换器今天恰好会
+  // 合并连续的同角色消息，但 Google 转换器不会，而 OpenAI 兼容层本来就按
+  // tool_call_id 拆分——发单条 tool ModelMessage 对拆分方是线上等价的，对不合并
+  // 的提供方则严格更安全。
   const orphanParts: Array<{
     type: 'tool-result'
     toolCallId: string
@@ -228,10 +204,9 @@ export function repairOrphanToolCalls(messages: ModelMessage[]): void {
     })
   }
   if (orphanParts.length > 0) {
-    // Defense in depth: if some other code path already left a trailing
-    // tool message (e.g. processToolCalls pushed real results that we
-    // didn't touch above), merge orphan parts into it rather than
-    // emitting a second adjacent tool ModelMessage.
+    // 纵深防御：如果其他代码路径已经留下一条拖尾的 tool 消息（例如
+    // processToolCalls 推入了我们在上方没有触碰的真实结果），把孤儿片段并入它，
+    // 而不是再发一条相邻的 tool ModelMessage。
     const tail = messages[messages.length - 1]
     if (tail && tail.role === 'tool' && Array.isArray(tail.content)) {
       ;(tail.content as unknown[]).push(...(orphanParts as unknown[]))
@@ -244,9 +219,8 @@ export function repairOrphanToolCalls(messages: ModelMessage[]): void {
   }
 }
 
-/** Provenance-preserving orphan repair. Structural moves and removals operate
- * on whole tracked entries; rewritten content keeps the original entryId and
- * provenance, and synthetic results inherit the matching assistant calls. */
+/** 保留来源（provenance）的孤儿修复。结构性移动与移除作用于整条带追踪的条目；
+ *  被重写的内容保留原始 entryId 与来源，合成结果继承匹配的 assistant 调用。 */
 export function repairOrphanTrackedToolCalls(entries: TrackedModelMessage[]): boolean {
   let changed = false
   for (let i = 0; i < entries.length; i++) {
@@ -374,9 +348,8 @@ export function repairOrphanTrackedToolCalls(entries: TrackedModelMessage[]): bo
 }
 
 /**
- * Walk `messages` in place and truncate any oversized tool-result parts. Only
- * mutates the `output.value` field; the rest of the message structure is
- * preserved exactly as the provider returned it.
+ * 就地遍历 `messages` 并截断任何过大的 tool-result 片段。只修改 `output.value`
+ * 字段；消息结构的其余部分严格保持提供方返回的原样。
  */
 export function truncateToolResultsInMessages(messages: ModelMessage[]): void {
   for (const msg of messages) {
@@ -388,7 +361,7 @@ export function truncateToolResultsInMessages(messages: ModelMessage[]): void {
       const output = part.output
       if (!output) continue
 
-      // Text output: `{ type: 'text', value: string }`
+      // 文本输出：`{ type: 'text', value: string }`
       if (output.type === 'text' && typeof output.value === 'string') {
         const truncated = truncateToolResult(output.value, policyFor(part.toolName))
         if (truncated.length !== output.value.length) {
@@ -397,9 +370,9 @@ export function truncateToolResultsInMessages(messages: ModelMessage[]): void {
         continue
       }
 
-      // Content output: `{ type: 'content', value: Array<{ type: string, text?: string, ... }> }`
-      // Only the text entries are mutable — image-data / file-data / file-url
-      // are binary payloads that the provider-compat layer handles elsewhere.
+      // 内容输出：`{ type: 'content', value: Array<{ type: string, text?: string, ... }> }`
+      // 只有 text 条目可修改——image-data / file-data / file-url 是二进制负载，
+      // 由 provider-compat 层在别处处理。
       if (output.type === 'content' && Array.isArray(output.value)) {
         const entries = output.value as Array<{ type?: string; text?: string }>
         for (const entry of entries) {

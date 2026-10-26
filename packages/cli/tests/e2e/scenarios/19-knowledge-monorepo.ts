@@ -9,9 +9,9 @@ const scenario: Scenario = {
   id: '19-knowledge-monorepo',
   name: 'AGENTS.md monorepo 链：root + leaf 都注入 system prompt',
   async run(ctx) {
-    // A `.git` at the root scopes the AGENTS.md walker — without it, the
-    // walker keeps climbing past tmpDir and may pick up unrelated CLAUDE.md
-    // / AGENTS.md files on the developer's machine, making the test flaky.
+    // 根目录的 `.git` 用来限定 AGENTS.md 向上查找的范围 — 没有它，
+    // 查找会越过 tmpDir 继续向上，可能捡到开发者机器上无关的 CLAUDE.md
+    // / AGENTS.md 文件，导致测试不稳定。
     await ctx.mkdir('.git')
     await ctx.writeFile('.git/HEAD', 'ref: refs/heads/main\n')
 

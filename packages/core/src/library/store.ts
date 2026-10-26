@@ -1,11 +1,11 @@
-// @x-code-cli/core — Document library storage.
+// @x-code-cli/core — 文档库存储。
 //
-// Layout under <user dir>/library:
-//   index.json   metadata + chunk text (bounded by the character budget)
-//   vectors.f32  raw little-endian float32 vectors, `dimensions` per chunk
+// <用户目录>/library 下的布局：
+//   index.json   元数据 + 块文本（受字符预算约束）
+//   vectors.f32  原始小端 float32 向量，每块 `dimensions` 个
 //
-// Both files are replaced atomically. The vector file is written first and the
-// index second, so a reader never sees an index that points past the vectors.
+// 两个文件都原子替换。先写向量文件、再写索引，
+// 这样读取者永远不会看到指向向量之外位置的索引。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 

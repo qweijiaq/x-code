@@ -1,7 +1,7 @@
-// @x-code-cli/cli — React hook wrapper around core's workspace file scanner.
+// @x-code-cli/cli — 核心工作区文件扫描器的 React hook 封装。
 //
-// The pure scanner/ranker lives in `@x-code-cli/core` so the desktop renderer
-// can share it; only the lifecycle hook is terminal-specific.
+// 纯扫描/排序逻辑放在 `@x-code-cli/core` 里，桌面渲染器也能复用；
+// 只有生命周期 hook 是终端特有的。
 import { useEffect, useState } from 'react'
 
 import { scanWorkspaceFiles } from '@x-code-cli/core'
@@ -21,9 +21,9 @@ export interface UseFileCompletionResult {
   loading: boolean
 }
 
-/** React hook: scan once on mount, expose entries + loading flag. cwd is
- *  read from `process.cwd()` at scan time and never re-checked — shell
- *  tools that internally chdir don't affect the menu. */
+/** React hook：挂载时扫描一次，暴露 entries 和 loading 标志。cwd 在扫描时
+ *  从 `process.cwd()` 读取且不再重新检查——内部会 chdir 的 shell 工具
+ *  不会影响菜单。 */
 export function useFileCompletion(): UseFileCompletionResult {
   const [entries, setEntries] = useState<readonly FileEntry[]>([])
   const [loading, setLoading] = useState(true)

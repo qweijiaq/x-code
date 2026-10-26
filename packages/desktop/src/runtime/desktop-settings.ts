@@ -133,7 +133,7 @@ export function loadDesktopSettings(): DesktopSettingsFile {
       }
     }
   } catch {
-    // Missing or malformed file.
+    // 文件缺失或格式损坏。
   }
   return { disabledTools: [], autoAllowedTools: [], alwaysAllowAll: false, recentProjects: [] }
 }
@@ -150,9 +150,9 @@ export function saveDesktopSettings(update: DesktopSettingsFile): void {
 let searchProviderOriginal: string | undefined
 let searchProviderCaptured = false
 
-/** Point core's webSearch override at the user's preferred provider. An empty
- *  preference restores whatever the shell/.env supplied, so CLI-style env
- *  overrides keep working. */
+/** 把核心的 webSearch 覆盖指向用户偏好的 provider。空偏好
+ *  恢复 shell/.env 提供的值，因此 CLI 风格的 env
+ *  覆盖继续有效。 */
 export function applySearchProviderPreference(provider: string | undefined): void {
   if (!searchProviderCaptured) {
     searchProviderOriginal = process.env.X_CODE_WEB_SEARCH_PROVIDER

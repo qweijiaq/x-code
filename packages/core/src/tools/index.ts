@@ -1,9 +1,8 @@
-// @x-code-cli/core — Tool registry (unified export)
+// @x-code-cli/core — 工具注册表（统一导出）
 //
-// Memory writes are never exposed as a tool. A durable post-turn worker
-// extracts operations after the root loop finishes. The root-only
-// memorySearch tool is created dynamically in loop.ts because it needs the
-// current MemoryService and LoopState; sub-agents never receive it.
+// 记忆写入从不作为工具暴露。一个持久的轮次后 worker 会在根 loop 结束后
+// 抽取操作。仅根拥有的 memorySearch 工具在 loop.ts 里动态创建，因为它需要
+// 当前的 MemoryService 和 LoopState；子 agent 永远不会拿到它。
 import { askUser } from './ask-user.js'
 import { killShell, shellOutput } from './background-shell.js'
 import { batchRename } from './batch-rename.js'

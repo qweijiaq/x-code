@@ -24,8 +24,8 @@ describe('tokenize', () => {
   })
 
   it('preserves backslash-non-special as a literal pair (Windows paths)', () => {
-    // Regression: a previous POSIX-style "backslash escapes any char" rule
-    // ate path separators on Windows. `D:\res\x-code-cli\tmp` MUST survive.
+    // 回归修复：早期 POSIX 风格的「反斜杠转义任意字符」规则会在 Windows 上
+    // 吞掉路径分隔符。`D:\res\x-code-cli\tmp` 必须保留。
     expect(tokenize('D:\\res\\x-code-cli\\tmp')).toEqual({
       ok: true,
       tokens: ['D:\\res\\x-code-cli\\tmp'],
@@ -112,9 +112,9 @@ describe('parseAdd — stdio', () => {
   })
 
   it('rejects invalid name (single bad token)', () => {
-    // `server!` — single token containing punctuation that fails NAME_RE.
-    // Multi-word "my server" would tokenise into separate args and "my"
-    // alone is a valid name, so we use a single-token failure case here.
+    // `server!` —— 单个包含标点符号的令牌，无法通过 NAME_RE。
+    // 多词的 "my server" 会被切分成独立的 args，而 "my" 单独是合法名称，
+    // 因此这里使用单令牌失败用例。
     const r = parseAdd('server! npx pkg')
     expect(r.ok).toBe(false)
   })
@@ -125,8 +125,8 @@ describe('parseAdd — stdio', () => {
   })
 
   it('preserves Windows-style backslash paths in args', () => {
-    // Regression for the bug where `D:\res\x-code-cli\tmp` got mangled
-    // into `D:resx-code-clitmp` because the tokenizer ate the backslashes.
+    // 回归修复：曾经有个 bug 会把 `D:\res\x-code-cli\tmp` 破坏成
+    // `D:resx-code-clitmp`，因为 tokenizer 吞掉了反斜杠。
     const r = parseAdd('fs npx -y @modelcontextprotocol/server-filesystem D:\\res\\x-code-cli\\tmp')
     expect(r.ok).toBe(true)
     if (r.ok) {

@@ -59,10 +59,9 @@ export function transformOpenAIChatGPTRequestBody(raw: string): { body: string; 
   }
 
   delete body.max_output_tokens
-  // The Platform Responses endpoint supports GPT-5.6 explicit cache options,
-  // but the ChatGPT subscription backend currently rejects both fields with
-  // HTTP 400. Keep prompt_cache_key (which the backend accepts) and strip only
-  // the unsupported controls at this transport boundary.
+  // Platform Responses 端点支持 GPT-5.6 的显式缓存选项，但 ChatGPT 订阅后端
+  // 目前会以 HTTP 400 拒绝这两个字段。保留 prompt_cache_key（后端接受它），
+  // 只在这个传输边界剥离不支持的控件。
   delete body.prompt_cache_options
   body.store = false
 
@@ -261,7 +260,7 @@ async function prepareSseResponse(
         try {
           reader.releaseLock()
         } catch {
-          // A timed peek can still have a read settling; cancellation releases it asynchronously.
+          // 定时的窥探读取可能仍在等待结算；取消操作会异步释放它。
         }
       })
     if (earlyUnauthorized) void consumerResponse.body?.cancel().catch(() => undefined)
@@ -312,7 +311,7 @@ async function prepareSseResponse(
     try {
       reader.releaseLock()
     } catch {
-      // The stream owns lock release while a failed read settles.
+      // 失败的读取结算期间，锁的释放归流所有。
     }
     void consumerResponse.body?.cancel().catch(() => undefined)
     throw err

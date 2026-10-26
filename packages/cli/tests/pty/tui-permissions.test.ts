@@ -125,12 +125,12 @@ describe('TUI permissions', () => {
       await harness.waitForText('Would you like to run the following command?')
       expect(harness.text()).toContain('No, and tell X-Code what to do instead')
 
-      // 'f' opens the inline feedback editor on the last option row.
+      // 'f' 在最后一个选项行打开内联反馈编辑器。
       harness.write('f')
       await harness.waitForText('Type your feedback, then press Enter to submit')
       harness.write('use a different directory')
-      // Wait for the typed text to paint so the Enter handler reads the
-      // updated buffer (the whole string lands as one setState).
+      // 等待输入文本绘制完成，让 Enter 处理器读到更新后的缓冲区
+      //（整串文本作为一次 setState 落地）。
       await harness.waitForText('No: use a different directory')
       harness.key('enter')
       await harness.waitForText('feedback-denied')

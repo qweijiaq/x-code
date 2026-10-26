@@ -1,18 +1,14 @@
-// @x-code-cli/core — MCP tool permission gate
+// @x-code-cli/core — MCP 工具权限门
 //
-// Sits parallel to packages/core/src/permissions/index.ts (which gates
-// built-in writeFile / edit / shell). MCP tools live in their own pool
-// because:
-//   - their names are runtime-discovered, can't be enumerated in a
-//     static rules table;
-//   - the user's "this MCP tool is fine, don't ask again" decision is
-//     persisted per-tool to ~/.x-code/mcp-permissions.json, separate
-//     from any per-shell-prefix allow rules.
+// 与 packages/core/src/permissions/index.ts（它门禁内置的
+// writeFile / edit / shell）平行存在。MCP 工具住在自己的池子里，因为：
+//   - 它们的名字是运行时发现的，无法在静态规则表里枚举；
+//   - 用户"这个 MCP 工具没问题，别再问了"的决定按工具持久化到
+//     ~/.x-code/mcp-permissions.json，独立于任何按 shell 前缀的 allow 规则。
 //
-// Default policy: every MCP tool starts at "ask" and stays there until
-// the user picks "always allow". No name-based heuristics — MCP tools
-// are too varied for `list_/read_/search_` style classification to be
-// safe (some "list_*" tools mutate, some "create_*" tools are no-ops).
+// 默认策略：每个 MCP 工具都从 "ask" 起步，直到用户选 "always allow"。
+// 不做基于名字的启发式——MCP 工具太杂，`list_/read_/search_` 风格的分类
+// 不安全（有些 "list_*" 工具会变更，有些 "create_*" 工具是空操作）。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -27,49 +23,44 @@ interface StoreShape {
   alwaysAllow: string[]
 }
 
-/** In-memory mirror of the persisted file + a session-scoped set for
- *  "this session only" allows. The persisted set is loaded lazily on
- *  first check; the session set is cleared on construction and never
- *  written to disk. */
+/** 持久化文件的内存镜像 + 一个会话级的 "仅本次会话" 允许集合。持久化
+ *  集合在首次检查时惰性加载；会话集合在构造时清空，且绝不写盘。 */
 export class McpPermissionStore {
   private persisted: Set<string> | null = null
   private session = new Set<string>()
 
-  /** Pre-load the persisted file. Optional — checks lazy-load anyway. */
+  /** 预加载持久化文件。可选——检查反正会惰性加载。 */
   async preload(): Promise<void> {
     await this.ensurePersistedLoaded()
   }
 
-  /** Returns true iff the user has already approved this tool (either
-   *  by "always allow" persisted, or by "this session" in-memory). */
+  /** 当且仅当用户已批准该工具时返回 true（要么是持久化的 "always allow"，
+   *  要么是内存中的 "this session"）。 */
   async isApproved(callableName: string): Promise<boolean> {
     if (this.session.has(callableName)) return true
     await this.ensurePersistedLoaded()
     return this.persisted!.has(callableName)
   }
 
-  /** Mark this tool approved for the rest of the session only.
-   *  Not persisted. */
+  /** 把该工具标记为仅本次会话其余时间批准。不持久化。 */
   approveForSession(callableName: string): void {
     this.session.add(callableName)
   }
 
-  /** Mark this tool approved permanently — writes to disk. Failure to
-   *  write is logged but never thrown; the worst case is the user has
-   *  to click "always allow" again next session. */
+  /** 把该工具标记为永久批准——写盘。写盘失败会被记录但绝不抛出；
+   *  最坏情况是用户下次会话要再点一次 "always allow"。 */
   async approvePermanently(callableName: string): Promise<void> {
     await this.ensurePersistedLoaded()
     if (this.persisted!.has(callableName)) return
     this.persisted!.add(callableName)
-    // Also reflect in the session set so the very next call doesn't
-    // race the disk write.
+    // 同时反映到会话集合，使紧接着的下一次调用不会与写盘竞争。
     this.session.add(callableName)
     try {
       await this.writePersisted()
     } catch (err) {
       debugLog('mcp.perm-write-failed', String(err))
-      // Best-effort: do NOT remove from in-memory set on failure —
-      // the user explicitly said yes, honour that for the session.
+      // 尽力而为：失败时不要把项从内存集合里移除——
+      // 用户明确说了是，就在本会话内兑现。
     }
   }
 
@@ -83,10 +74,9 @@ export class McpPermissionStore {
     await fs.mkdir(userXcodeDir(), { recursive: true })
     const tmp = permissionsFile() + '.tmp'
     const payload: StoreShape = { alwaysAllow: [...this.persisted].sort() }
-    // 0600 — readable only by the user. Same posture as mcp-auth.json
-    // (and same caveat: Windows ignores the mode bits but file is in
-    // ~/.x-code so practical leakage is limited to other apps running
-    // as the same user).
+    // 0600——仅用户可读。与 mcp-auth.json 姿态一致
+    // （同样的注意事项：Windows 忽略 mode 位，但文件在 ~/.x-code 下，
+    // 所以实际泄露面限于以同一用户运行的其他应用）。
     await fs.writeFile(tmp, JSON.stringify(payload, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 })
     await fs.rename(tmp, permissionsFile())
   }
@@ -100,15 +90,14 @@ async function readPersisted(): Promise<Set<string>> {
       return new Set(parsed.alwaysAllow.filter((s): s is string => typeof s === 'string'))
     }
   } catch {
-    // missing / malformed — start with empty allow list, degrade to all-ask
+    // 缺失 / 格式错误——从空 allow 列表开始，退化为全部 ask
   }
   return new Set<string>()
 }
 
-/** Pull "yes" / "always" / "no" out of the existing askPermission
- *  callback. The callback's contract returns one of those three strings
- *  (or a denial carrying user feedback); we map them to a structured
- *  choice for our own callers. */
+/** 从现有 askPermission 回调里抽出 "yes" / "always" / "no"。该回调的
+ *  契约返回这三者之一（或一个携带用户反馈的拒绝）；我们把它们映射为
+ *  自己调用方的结构化选择。 */
 export type McpPermissionDecision = 'allow-once' | 'allow-always' | 'deny'
 
 export function classifyDecision(raw: PermissionDecision): McpPermissionDecision {

@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 /**
- * Verify a packaged desktop release before it is published.
+ * 在发布之前校验打包好的桌面发布版。
  *
- * Checks RELEASE.json/SHA256SUMS, the latest-mac.yml feed, dmg/zip integrity,
- * code signing and notarization, then launches the packaged app in headless
- * smoke mode. Signing checks are reported as NOT EXECUTED for an intentionally
- * unsigned build unless --require-signed is passed.
+ * 检查 RELEASE.json/SHA256SUMS、latest-mac.yml feed、dmg/zip 完整性、
+ * 代码签名和公证，然后在无头 smoke 模式下启动打包应用。对于有意不签名的
+ * 构建，签名检查会报告为 NOT EXECUTED，除非传入 --require-signed。
  *
- * Usage:
+ * 用法：
  *   node scripts/verify-desktop-release.mjs [--allow-dirty] [--require-signed]
  *                                          [--skip-smoke] [--ui] [--e2e]
  */
@@ -69,7 +68,7 @@ function run(command, commandArgs, options = {}) {
   })
 }
 
-/** Some tools (codesign) print their useful output to stderr on success. */
+/** 有些工具（如 codesign）成功时会把有用输出打印到 stderr。 */
 function runCombined(command, commandArgs, timeout) {
   const result = spawnSync(command, commandArgs, {
     cwd: root,
@@ -88,8 +87,8 @@ function lastLines(error, count = 8) {
   return text.split('\n').slice(-count).join(' | ')
 }
 
-/** Electron smoke can lose its first launch to transient window/PTY setup;
- *  retry once with the captured output so a release gate is deterministic. */
+/** Electron smoke 的首次启动可能因临时的窗口/PTY 初始化而失败；
+ *  用捕获到的输出重试一次，让发布门禁保持确定性。 */
 function runAppSmoke(binary, smokeArgs, timeout, env) {
   let firstError = null
   for (let attempt = 1; attempt <= 2; attempt++) {

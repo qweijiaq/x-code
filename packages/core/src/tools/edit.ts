@@ -1,4 +1,4 @@
-// @x-code-cli/core — edit tool (precise string replacement, no execute — needs permission check)
+// @x-code-cli/core — edit 工具（精确字符串替换，无 execute —— 需要权限检查）
 import { tool } from 'ai'
 
 import { z } from 'zod'
@@ -23,5 +23,5 @@ export const edit = tool({
     newString: z.string().optional().describe('Legacy replacement text'),
     replaceAll: z.boolean().optional().describe('Replace all occurrences (default: false)'),
   }),
-  // No execute — handled manually in agent loop for permission check
+  // 无 execute —— 由 agent loop 手动处理以便做权限检查
 })

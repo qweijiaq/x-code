@@ -1,4 +1,4 @@
-// @x-code-cli/core — Permission system (3-level model)
+// @x-code-cli/core — 权限系统（三级模型）
 import { realpathSync } from 'node:fs'
 import path from 'node:path'
 
@@ -10,21 +10,20 @@ import { addSessionAllowRule, buildAllowRule, sessionRulesMatch } from './sessio
 type PermissionInput = Record<string, unknown>
 
 /**
- * Cache of resolved shell permission levels keyed by the exact command string.
- * Destructiveness / read-only patterns are static for the process lifetime,
- * so a plain Map is safe — no TTL needed. An upper bound guards against a
- * long-running agent accumulating unique commands without limit.
+ * 以完整命令字符串为键的 shell 权限级别缓存。
+ * 破坏性 / 只读模式的判定在进程生命周期内保持不变，因此普通 Map 即可，
+ * 无需 TTL。上限用于防止长时间运行的 agent 无限制累积唯一命令。
  */
 const SHELL_PERMISSION_CACHE_MAX = 256
 const shellPermissionCache = new Map<string, PermissionLevel>()
 
 function evaluateShellPermission(command: string): PermissionLevel {
   const subCommands = splitShellCommands(command)
-  // Any sub-command destructive → deny the whole command
+  // 任一子命令具有破坏性 → 拒绝整条命令
   if (subCommands.some(isDestructive)) return 'deny'
-  // All sub-commands read-only → auto-allow
+  // 所有子命令均为只读 → 自动允许
   if (subCommands.every(isReadOnly)) return 'always-allow'
-  // Otherwise → ask
+  // 否则 → 询问
   return 'ask'
 }
 
@@ -32,8 +31,7 @@ function resolveShellPermission(input: PermissionInput): PermissionLevel {
   const cmd = (input.command as string) ?? ''
   const cached = shellPermissionCache.get(cmd)
   if (cached) {
-    // Refresh recency: a hit moves the entry to the end so the oldest-
-    // inserted eviction below is a real LRU, not FIFO.
+    // 刷新使用时间：命中时把条目移到末尾，使下方的“淘汰最旧”成为真正的 LRU 而非 FIFO。
     shellPermissionCache.delete(cmd)
     shellPermissionCache.set(cmd, cached)
     return cached
@@ -42,7 +40,7 @@ function resolveShellPermission(input: PermissionInput): PermissionLevel {
   const level = evaluateShellPermission(cmd)
 
   if (shellPermissionCache.size >= SHELL_PERMISSION_CACHE_MAX) {
-    // Evict the oldest entry (Map preserves insertion order).
+    // 淘汰最旧条目（Map 保持插入顺序）。
     const oldest = shellPermissionCache.keys().next().value
     if (oldest !== undefined) shellPermissionCache.delete(oldest)
   }
@@ -50,7 +48,7 @@ function resolveShellPermission(input: PermissionInput): PermissionLevel {
   return level
 }
 
-/** Permission rules for each tool */
+/** 各工具的权限规则 */
 const rules: Record<string, (input: PermissionInput) => PermissionLevel> = {
   readFile: () => 'always-allow',
   readDocument: () => 'always-allow',
@@ -72,16 +70,16 @@ const rules: Record<string, (input: PermissionInput) => PermissionLevel> = {
   shell: resolveShellPermission,
 }
 
-/** Get permission level for a tool call */
+/** 获取某次工具调用的权限级别 */
 export function getPermissionLevel(toolName: string, input: PermissionInput): PermissionLevel {
   const rule = rules[toolName]
-  if (!rule) return 'ask' // Unknown tool defaults to ask
+  if (!rule) return 'ask' // 未知工具默认询问
   return rule(input)
 }
 
-// ── Path safety for write tools ──
-// Sensitive dotfile / config paths that should never be auto-approved even
-// when acceptEdits is active. Matches Claude Code's isDangerousFilePathToAutoEdit.
+// ── 写工具的路径安全 ──
+// 即使启用了 acceptEdits 也不应自动批准的敏感 dotfile / 配置路径。
+// 对齐 Claude Code 的 isDangerousFilePathToAutoEdit。
 const SENSITIVE_PATH_PATTERNS = [
   /[\\/]\.bashrc$/i,
   /[\\/]\.bash_profile$/i,
@@ -96,9 +94,8 @@ const SENSITIVE_PATH_PATTERNS = [
   /[\\/]\.idea[\\/]/i,
 ]
 
-/** Resolve the deepest existing ancestor through symlinks, then append any
- * nonexistent suffix. This keeps permission checks aligned with the path the
- * filesystem will actually mutate. */
+/** 通过符号链接解析出最深层的已存在祖先目录，再拼接上不存在的后缀。
+ * 这样权限检查就与文件系统实际将要修改的路径保持一致。 */
 export function resolvePhysicalPath(filePath: string, baseDir: string = process.cwd()): string {
   let candidate = path.resolve(baseDir, filePath)
   const suffix: string[] = []
@@ -114,9 +111,8 @@ export function resolvePhysicalPath(filePath: string, baseDir: string = process.
   }
 }
 
-/** True when `filePath` physically resolves inside `projectDir` (or equals
- * it). Case folding is Windows-only; Linux and case-sensitive macOS volumes
- * must not conflate distinct paths. */
+/** 当 `filePath` 经物理解析后位于 `projectDir` 内（或与之相等）时返回 true。
+ * 大小写折叠仅在 Windows 上生效；Linux 和区分大小写的 macOS 卷不得把不同路径混为一谈。 */
 export function isPathWithinProject(filePath: string, projectDir: string): boolean {
   const dir = resolvePhysicalPath(projectDir)
   const file = resolvePhysicalPath(filePath, projectDir)
@@ -128,32 +124,27 @@ function isSensitivePath(filePath: string): boolean {
   return SENSITIVE_PATH_PATTERNS.some((re) => re.test(filePath))
 }
 
-/** Check permission with trust mode + permission-mode support.
+/** 检查权限，支持信任模式与权限模式。
  *
- *  `permissionMode` semantics:
- *    - 'default': behave exactly as before — `ask`-level tools prompt.
- *    - 'acceptEdits': auto-allow `writeFile` and `edit` **only if the
- *      target path is inside the project directory** and not a sensitive
- *      dotfile. Paths outside cwd or targeting .bashrc/.git/etc. fall
- *      back to `ask` so the user must explicitly consent. Shell still
- *      goes through normal classification so destructive commands stay
- *      gated, and `deny`-level results still deny.
- *    - 'plan': the agent dispatcher exposes a read/plan-only allowlist and
- *      rejects writes outside currentPlanPath before this function runs.
+ *  `permissionMode` 语义：
+ *    - 'default'：行为与之前完全一致——`ask` 级别的工具会弹出询问。
+ *    - 'acceptEdits'：仅当目标路径位于项目目录内且不是敏感 dotfile 时，
+ *      自动允许 `writeFile` 与 `edit`。位于 cwd 之外或指向 .bashrc/.git 等
+ *      的路径回退到 `ask`，要求用户明确同意。shell 仍走正常分类流程，
+ *      破坏性命令依旧受限，`deny` 级别的结果也依旧拒绝。
+ *    - 'plan'：agent 调度器暴露只读/计划白名单，并在进入本函数之前
+ *      拒绝写入 currentPlanPath 之外的路径。
  *
- *  Trust mode is the global override and beats everything except an
- *  explicit `deny`. */
+ *  信任模式是全局覆盖，除显式 `deny` 外优先于一切。 */
 export interface PermissionGateResult {
   approved: boolean
-  /** Free-text explanation the user typed when denying via the
-   *  "No, and tell X-Code what to do instead" option; undefined for a
-   *  plain No. Callers append it to the denial tool result. */
+  /** 用户通过“No，并告诉 X-Code 该怎么做”选项拒绝时输入的自由文本说明；
+   *  普通 No 时为 undefined。调用方会把它附到拒绝的工具结果上。 */
   feedback?: string
 }
 
-/** Detailed variant of checkPermission that also returns the user's
- *  denial feedback. The boolean wrapper below stays for callers that
- *  only care about allow/deny (goal verifier, existing tests). */
+/** checkPermission 的详细版本，还会返回用户的拒绝反馈。
+ * 下方布尔包装保留给只关心允许/拒绝的调用方（目标校验器、既有测试）。 */
 export async function checkPermissionDetailed(
   toolCall: { toolCallId: string; toolName: string; input: PermissionInput },
   trustMode: boolean,
@@ -180,7 +171,7 @@ export async function checkPermissionDetailed(
     ) {
       return { approved: true }
     }
-    // Path outside project or targeting sensitive file — fall through to ask
+    // 路径在项目之外或指向敏感文件——落入询问分支
   }
   if (sessionRulesMatch(toolCall.toolName, toolCall.input, executionCwd)) return { approved: true }
 
@@ -189,10 +180,9 @@ export async function checkPermissionDetailed(
   if (decision === 'always') {
     const result = buildAllowRule(toolCall.toolName, toolCall.input, executionCwd)
     if (result) {
-      // buildAllowRule may return >1 rule for compound shells like
-      // `git commit && git push` — the user-visible label
-      // ("git commit:*, git push:*") shows both, and we save both
-      // here so the next compound invocation auto-approves.
+      // 对于 `git commit && git push` 这类复合 shell，buildAllowRule 可能返回
+      // 多条规则——用户可见的标签（"git commit:*, git push:*"）会同时展示两者，
+      // 这里也一并保存，使下一次复合调用能够自动批准。
       for (const rule of result.rules) {
         addSessionAllowRule(rule)
         if (result.persist && projectCwd) persistRule(projectCwd, rule)

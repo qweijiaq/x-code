@@ -1,14 +1,13 @@
-// Skill settings — disabledSkills list per scope.
+// Skill settings — 各作用域的 disabledSkills 列表。
 //
-// User scope:     ~/.x-code/settings.json
-// Project scope:  <repo-root>/.x-code/settings.local.json (gitignored)
+// 用户域：     ~/.x-code/settings.json
+// 项目域：  <repo-root>/.x-code/settings.local.json（gitignored）
 //
-// Both files share the shape `{ disabledSkills?: string[] }`. A skill is
-// effectively disabled when its name appears in EITHER scope's list — we
-// take the union, not an override. To re-enable from a user-scope disable
-// while keeping it disabled elsewhere, remove the name from the user-scope
-// list. The settings files are session-immutable: SkillRegistry filters
-// on this list at startup, so toggle/remove takes effect on next launch.
+// 两个文件共享 `{ disabledSkills?: string[] }` 结构。当技能名出现在任一作用域
+// 的列表中时即视为禁用——我们取并集，而非覆盖。要在别处保持禁用的同时从
+// 用户域禁用中重新启用，就把该名称从用户域列表中移除。设置文件在会话内
+// 不可变：SkillRegistry 在启动时按此列表过滤，因此 toggle/remove 在下次
+// 启动时生效。
 import path from 'node:path'
 
 import { mutateSettingsFile, readSettingsFile } from '../settings-io.js'
@@ -45,10 +44,9 @@ export async function loadDisabledSkillsSet(): Promise<Set<string>> {
   return merged
 }
 
-/** Toggle a skill's disabled state in the given scope. `disable=true` adds
- *  the name; `disable=false` removes it. Returns the action that actually
- *  happened so the caller can render an accurate message
- *  ("already disabled" vs "disabled"). */
+/** 在给定作用域切换技能的禁用状态。`disable=true` 添加名称；`disable=false`
+ *  移除它。返回实际发生的动作，让调用方能渲染准确的消息（"already disabled"
+ *  与 "disabled"）。 */
 export async function setSkillDisabled(
   name: string,
   scope: SkillSettingsScope,

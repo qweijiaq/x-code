@@ -7,7 +7,7 @@ import { runSubAgent } from './sub-agents/runner.js'
 import type { PushToolResult, ToolHandler, ToolHandlerContext } from './tool-handler-context.js'
 import { runToolSearch } from './tool-search/resolve.js'
 
-/** Build the self-contained handlers that bypass the standard write/shell pipeline. */
+/** 构建绕过标准写入/shell 管线的自包含处理器。 */
 export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Record<string, ToolHandler> {
   const handleAskUser = async (context: ToolHandlerContext): Promise<void> => {
     const { input, toolCallId, toolName, state, callbacks } = context

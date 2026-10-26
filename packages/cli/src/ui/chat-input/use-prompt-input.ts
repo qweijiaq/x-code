@@ -1,32 +1,25 @@
-// @x-code-cli/cli — Custom stdin input hook with bracketed-paste support
-// and a time-window fallback for terminals that don't enable it.
+// @x-code-cli/cli — 自定义 stdin 输入 hook，带括号粘贴支持，并为不启用它的终端提供
+// 时间窗回退。
 //
-// Two layered paste-detection strategies:
+// 两层粘贴检测策略：
 //
-//   1. **Bracketed paste mode** (primary, fast path)
-//      We send `\x1b[?2004h` on mount. Terminals that support it wrap every
-//      paste in `\x1b[200~ … \x1b[201~`. The state machine below detects
-//      these markers and emits the payload as a single `onPaste` call
-//      regardless of how Node chunks the stdin bytes.
+//   1. **括号粘贴模式**（主路径、快路径）
+//      挂载时我们发 `\x1b[?2004h`。支持它的终端会把每次粘贴都包在
+//      `\x1b[200~ … \x1b[201~` 里。下面的状态机检测这些标记，并把负载作为单次
+//      `onPaste` 调用发出，无论 Node 如何切分 stdin 字节。
 //
-//   2. **Debounce fallback** (for Windows Terminal / PowerShell / tmux /
-//      ConEmu / VS Code integrated terminal — any environment where
-//      bracketed paste is NOT honored)
-//      When no paste markers are seen, paste-suspect chunks (>=
-//      PASTE_SIZE_THRESHOLD chars, containing a newline, or arriving
-//      while a burst is in progress) accumulate in a buffer whose
-//      PASTE_DEBOUNCE_MS timer resets on every event, so one paste
-//      flushes as a single atomic chunk once the stream pauses. Single
-//      keystrokes bypass the buffer and dispatch immediately — human
-//      typing never pays the debounce cost. This is the same approach
-//      Claude Code takes in its `usePasteHandler` hook.
+//   2. **防抖回退**（针对 Windows Terminal / PowerShell / tmux / ConEmu /
+//      VS Code 集成终端——任何不遵守括号粘贴的环境）
+//      看不到粘贴标记时，粘贴嫌疑分块（>= PASTE_SIZE_THRESHOLD 字符、包含换行、
+//      或在爆发进行中到达）会累积进一个缓冲，其 PASTE_DEBOUNCE_MS 定时器在每次
+//      事件时重置，于是流一旦停顿，一次粘贴就作为单个原子分块 flush。单个按键绕
+//      过缓冲并立即分发——人工打字永不承担防抖成本。这与 Claude Code 在其
+//      `usePasteHandler` hook 里采用的方法相同。
 //
-// Special keys (arrows, escape, Ctrl+C, …) always force-flush any
-// pending text before they dispatch, so the pasted content is committed
-// BEFORE the key that acts on it. Enter / tab arriving mid-burst are
-// absorbed into the buffer instead (backspace trims it) — on
-// non-bracketed Windows terminals a bare '\r' is just the paste's next
-// line break, and treating it as Return would submit half the paste.
+// 特殊键（方向键、Esc、Ctrl+C、…）在分发前总会强制 flush 任何待处理文本，这样粘贴
+// 的内容会在作用于它的按键之前被提交。爆发中途到达的 Enter / tab 改为被吸收进缓冲
+// （backspace 修剪它）——在不支持括号粘贴的 Windows 终端上，裸 `\r` 只是粘贴的下一个
+// 换行，把它当作 Return 会提交半段粘贴。
 import { StringDecoder } from 'node:string_decoder'
 
 import { useEffect, useRef } from 'react'
@@ -39,23 +32,17 @@ const ENABLE_BRACKETED_PASTE = '\x1b[?2004h'
 const DISABLE_BRACKETED_PASTE = '\x1b[?2004l'
 const INCOMPLETE_SEQUENCE_TIMEOUT_MS = 20
 
-// Time window for batching rapid stdin bursts. Human typing never
-// enters this buffer (single-keystroke chunks dispatch immediately),
-// so a generous window costs nothing; pasted text simply appears up to
-// 100 ms later. The window must be wide because Windows terminals
-// without bracketed paste trickle one paste as many small stdin events,
-// and a busy event loop (render + cell-diff after each dispatch) can
-// push inter-chunk gaps well past 30 ms — a narrower window flushed
-// mid-paste and split one paste into scrambled fragments.
+// 批量处理快速 stdin 爆发的时间窗。人工打字永不进入这个缓冲（单键分块立即分发），
+// 所以宽松的窗口零成本；粘贴文本最多晚 100 ms 出现。窗口必须宽，因为不支持括号粘贴
+// 的 Windows 终端会把一次粘贴滴成许多小 stdin 事件，而繁忙的事件循环（每次分发后的
+// render + cell-diff）可能把分块间隔推到 30 ms 以上——更窄的窗口会在粘贴中途 flush，
+// 把一次粘贴拆成乱序碎片。
 const PASTE_DEBOUNCE_MS = 100
 
-// Any stdin chunk >= this size (or containing a newline) is suspected
-// to be a paste and goes through the debounce buffer so consecutive
-// fragments merge into a single onPaste event. Chunks below this size
-// are treated as normal typing and dispatched IMMEDIATELY — this
-// matches Claude Code's PASTE_THRESHOLD (800) approach. Holding down
-// a key produces single-char stdin events; with the old low threshold
-// (8) every keystroke went through the debounce and felt laggy.
+// 任何 >= 此大小（或含换行）的 stdin 分块都被怀疑是粘贴，走防抖缓冲，让连续碎片
+// 合并成单次 onPaste 事件。低于此大小的分块按正常打字处理并立即分发——这与 Claude
+// Code 的 PASTE_THRESHOLD (800) 做法一致。按住一个键会产生单字符 stdin 事件；用旧的
+// 低阈值 (8) 时，每次按键都走防抖，感觉卡顿。
 const PASTE_SIZE_THRESHOLD = 32
 
 type PromptKey =
@@ -76,45 +63,42 @@ type PromptKey =
   | 'pagedown'
 
 export interface PromptInputHandlers {
-  /** Normal typed text (may be multi-char if the terminal batched a burst). */
+  /** 普通输入文本（如果终端批量了一次爆发，可能是多字符）。 */
   onText: (text: string) => void
-  /** Atomic paste — always the full contents of one paste event. */
+  /** 原子粘贴——总是一次粘贴事件的完整内容。 */
   onPaste: (content: string) => void
-  /** Special keys. */
+  /** 特殊键。 */
   onKey: (key: PromptKey) => void
-  /** Called on Ctrl+C — should trigger clean Ink unmount via useApp().exit(). */
+  /** Ctrl+C 时调用——应通过 useApp().exit() 触发干净的 Ink 卸载。 */
   onInterrupt: () => void
-  /** Turn the listener on/off without unmounting the component. */
+  /** 开关监听器，而无需卸载组件。 */
   enabled: boolean
 }
 
 export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }: PromptInputHandlers): void {
   const { stdin, setRawMode, internal_eventEmitter } = useStdin()
 
-  // Stash handlers in a ref so the effect doesn't re-subscribe on every
-  // render — each render produces a fresh callback closure, but we want a
-  // stable subscription that always calls through to the latest handlers.
+  // 把处理器藏进 ref，这样 effect 不会在每次渲染时重新订阅——每次渲染都产生一个新
+  // 的回调闭包，但我们要一个稳定订阅，始终调用到最新的处理器。
   //
-  // The assignment has to happen inside a useEffect (not during render)
-  // because assigning to ref.current during render is flagged by React's
-  // concurrent-mode rules — it could cause Strict Mode double-invocation
-  // to see mismatched state. An effect with no dep array runs after every
-  // commit, which is exactly the "latest value" semantics we want.
+  // 赋值必须发生在 useEffect 里（而不是渲染期间），因为在渲染期间给 ref.current 赋
+  // 值会被 React 的并发模式规则标记——它可能让 Strict Mode 的双重调用看到不匹配的
+  // 状态。一个没有依赖数组的 effect 在每次 commit 后运行，正是我们想要的「最新值」
+  // 语义。
   const handlersRef = useRef({ onText, onPaste, onKey, onInterrupt })
   useEffect(() => {
     handlersRef.current = { onText, onPaste, onKey, onInterrupt }
   })
 
-  // Debounce buffer + timer for the fallback path.
+  // 回退路径的防抖缓冲 + 定时器。
   const pendingTextRef = useRef<string>('')
   const pendingTimerRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Ctrl+C must work even when the input is disabled (e.g. during loading).
-  // We always listen on stdin for \x03 and route it to onInterrupt.
-  // When enabled=false, all other input is ignored.
+  // 即使输入被禁用（例如加载中），Ctrl+C 也必须生效。我们始终在 stdin 上监听
+  // \x03，并把它路由到 onInterrupt。当 enabled=false 时，其他所有输入都被忽略。
   useEffect(() => {
     if (!enabled) {
-      // Minimal listener: only Ctrl+C, ignore everything else.
+      // 最小监听器：只处理 Ctrl+C，忽略其他一切。
       setRawMode(true)
       const handleCtrlC = (data: Buffer | string): void => {
         const chunk = typeof data === 'string' ? data : data.toString('utf8')
@@ -137,16 +121,13 @@ export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }:
     let sequenceTimer: ReturnType<typeof setTimeout> | null = null
     let pasteTimer: ReturnType<typeof setTimeout> | null = null
 
-    // ── Flush the debounce buffer ──
+    // ── Flush 防抖缓冲 ──
     //
-    // Emits one onPaste (or onText for tiny chunks) with all the text that
-    // accumulated during the last burst. We normalize line endings to `\n`
-    // here because Windows terminals tend to send `\r` or `\r\n` for
-    // pasted newlines; downstream code and the terminal's line-rendering
-    // both want `\n`. A bare `\r` in a terminal print means "carriage
-    // return" and overwrites previous characters, which was producing
-    // the "optimizations Claude Managed Agents is currently in beta"
-    // splicing pattern in echoed pastes.
+    // 发出一次 onPaste（微小分块则 onText），携带上一次爆发期间累积的所有文本。我们
+    // 在这里把行尾归一化为 `\n`，因为 Windows 终端倾向把粘贴的换行发成 `\r` 或
+    // `\r\n`；下游代码和终端的行渲染都想要 `\n`。终端打印里的裸 `\r` 表示「回车」并
+    // 会覆盖之前的字符，这曾产生回显粘贴里的
+    // "optimizations Claude Managed Agents is currently in beta" 拼接模式。
     const flushPending = (): void => {
       if (pendingTimerRef.current) {
         clearTimeout(pendingTimerRef.current)
@@ -165,48 +146,38 @@ export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }:
       }
     }
 
-    // Debounce from the most recent event: every queued chunk resets the
-    // timer, and the buffer flushes once the stream pauses. There is
-    // intentionally NO max-batch cap here — only paste-suspect chunks
-    // (>= PASTE_SIZE_THRESHOLD chars, containing a newline, or arriving
-    // mid-burst) enter this buffer; held-key repeat produces single-char
-    // events that bypass it (see processNormalInput). A hard cap was
-    // force-flushing mid-paste on Windows, where ConPTY delivers a
-    // multi-KB paste as many stdin events spanning >50 ms, splitting one
-    // paste into scrambled fragments.
+    // 从最近一次事件开始防抖：每个排队的分块都重置定时器，流一停顿缓冲就 flush。这
+    // 里刻意没有最大批量上限——只有粘贴嫌疑分块（>= PASTE_SIZE_THRESHOLD 字符、含换
+    // 行、或爆发中途到达）进入这个缓冲；按键重复产生绕过它的单字符事件（见
+    // processNormalInput）。硬上限曾在 Windows 上于粘贴中途强制 flush——ConPTY 把数
+    // KB 的粘贴作为跨越 >50 ms 的许多 stdin 事件投递，把一次粘贴拆成乱序碎片。
     const armFlushTimer = (): void => {
       if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current)
       pendingTimerRef.current = setTimeout(flushPending, PASTE_DEBOUNCE_MS)
     }
 
-    // Queue text into the debounce buffer and (re)start the flush timer.
+    // 把文本排进防抖缓冲，并（重新）启动 flush 定时器。
     const queueText = (data: string): void => {
       pendingTextRef.current += data
       armFlushTimer()
     }
 
-    // Dispatch a special key. Always force-flushes pending text first so
-    // that, e.g., Enter commits the previously-buffered input BEFORE acting
-    // on the key.
+    // 分发一个特殊键。总是先强制 flush 待处理文本，这样比如 Enter 会在作用于按键之
+    // 前提交之前缓冲的输入。
     const dispatchKey = (key: PromptKey): void => {
       flushPending()
       handlersRef.current.onKey(key)
     }
 
-    // Parse a chunk of non-paste input. Returns immediately for recognized
-    // special keys; otherwise buffers as text.
+    // 解析一段非粘贴输入。识别出的特殊键立即返回；否则作为文本缓冲。
     const processNormalInput = (data: string): void => {
       if (data.length === 0) return
 
-      // Once paste-suspect text sits in the debounce buffer, a paste
-      // burst is in progress: everything that follows until the stream
-      // pauses belongs to the same burst. Windows terminals without
-      // bracketed paste (ConPTY) trickle one paste as many small stdin
-      // events — short trailing lines, bare '\r' bytes, tab characters —
-      // that individually fall below PASTE_SIZE_THRESHOLD. Letting them
-      // take the immediate paths below force-flushed the buffer
-      // mid-paste, splitting one paste into scrambled fragments (a bare
-      // '\r' would even submit early via dispatchKey('return')).
+      // 一旦防抖缓冲里有了粘贴嫌疑文本，粘贴爆发就在进行中：流停顿之前到达的一切都
+      // 属于同一次爆发。不支持括号粘贴的 Windows 终端（ConPTY）把一次粘贴滴成许多小
+      // stdin 事件——短的尾行、裸 `\r` 字节、制表符——它们各自都低于
+      // PASTE_SIZE_THRESHOLD。让它们走下面的即时路径会在粘贴中途强制 flush 缓冲，把
+      // 一次粘贴拆成乱序碎片（裸 `\r` 甚至可能通过 dispatchKey('return') 提前提交）。
       const burstInProgress = pendingTextRef.current.length > 0
 
       if (data === '\r' || data === '\n') {
@@ -214,16 +185,13 @@ export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }:
         return dispatchKey('return')
       }
       if (data === '\x7f' || data === '\b') {
-        // If the debounce buffer has pending text, absorb the backspace by
-        // trimming the buffer instead of flushing + dispatching.
+        // 如果防抖缓冲有待处理文本，就修剪缓冲来吸收退格，而不是 flush + 分发。
         if (pendingTextRef.current.length > 0) {
           pendingTextRef.current = pendingTextRef.current.slice(0, -1)
           return
         }
-        // Dispatch immediately so holding backspace feels responsive
-        // (previously queueBackspace sat in the debounce buffer and
-        // the timer kept resetting on every repeat event, freezing
-        // the delete visually until the key was released).
+        // 立即分发，让按住退格感觉跟手（之前 queueBackspace 坐在防抖缓冲里，定时器
+        // 在每个重复事件上都重置，视觉上把删除冻结到松键为止）。
         dispatchKey('backspace')
         return
       }
@@ -232,42 +200,37 @@ export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }:
         return dispatchKey('tab')
       }
 
-      // Shell-native input clearing shortcuts. Ctrl+U is the familiar
-      // zsh/readline binding on macOS and Linux; PowerShell's default
-      // Windows edit mode uses Ctrl+Home. Treat both as one atomic clear
-      // so multiline drafts and compact paste references are removed too.
+      // Shell 原生的清空输入快捷键。Ctrl+U 是 macOS 和 Linux 上熟悉的 zsh/readline
+      // 绑定；PowerShell 默认的 Windows 编辑模式用 Ctrl+Home。把两者都当作一次原子清
+      // 空，这样多行草稿和紧凑的粘贴引用也一并移除。
       if (data === '\x15') return dispatchKey('clear')
       if (data === '\x1b[1;5H' || data === '\x1b[1;5~') return dispatchKey('clear')
 
-      // Alt/Option+Enter → insert a literal newline. Most terminals that
-      // distinguish Alt-modified keys send the prefix-ESC form: `\x1b\r`
-      // (Alt+Enter on Windows Terminal / Linux xterm / iTerm2 with
-      // "Esc+" Option mapping) or `\x1b\n` on a few. The CSI forms below
-      // come from modifyOtherKeys / kitty keyboard protocol — not
-      // enabled by default anywhere we target, but if a power user has
-      // turned them on we honor them too.
+      // Alt/Option+Enter → 插入字面换行。多数区分 Alt 修饰键的终端发送前缀 ESC 形式：
+      // `\x1b\r`（Windows Terminal / Linux xterm / 带 "Esc+" Option 映射的 iTerm2 上
+      // 的 Alt+Enter），少数发 `\x1b\n`。下面的 CSI 形式来自 modifyOtherKeys / kitty
+      // 键盘协议——在我们目标的所有环境中默认都不启用，但如果有高级用户打开了它们，
+      // 我们也予以支持。
       //   xterm modifyOtherKeys: ESC [27;3;13~ (Alt+Enter), ESC [27;5;13~ (Ctrl+Enter)
       //   kitty CSI-u:           ESC [13;3u   (Alt+Enter), ESC [13;5u   (Ctrl+Enter)
-      // Plain Ctrl+Enter is indistinguishable from Enter on stock
-      // terminals; the kitty/modifyOtherKeys CSI forms are the only way
-      // it can reach us, so they're treated identically to Alt+Enter.
+      // 裸 Ctrl+Enter 在标准终端上与 Enter 无法区分；kitty/modifyOtherKeys 的 CSI 形式
+      // 是它能到达我们的唯一途径，所以它们被当作与 Alt+Enter 完全相同。
       if (data === '\x1b\r' || data === '\x1b\n') return dispatchKey('newline')
       if (data === '\x1b[27;3;13~' || data === '\x1b[27;5;13~') return dispatchKey('newline')
       if (data === '\x1b[13;3u' || data === '\x1b[13;5u') return dispatchKey('newline')
 
       if (data === '\x1b' || data === '\x1b\x1b') return dispatchKey('escape')
 
-      // Ctrl+C — flush and call the interrupt handler (which triggers Ink's
-      // clean unmount via useApp().exit()). We do NOT send SIGINT because on
-      // Windows, signal-exit re-raises it after running callbacks, causing
-      // the process to exit with code 1 before our gracefulShutdown runs.
+      // Ctrl+C——flush 并调用中断处理器（它通过 useApp().exit() 触发 Ink 的干净卸载）。
+      // 我们不发送 SIGINT，因为在 Windows 上，signal-exit 会在运行回调后重新抛出它，
+      // 导致进程在 gracefulShutdown 运行前就以代码 1 退出。
       if (data === '\x03') {
         flushPending()
         handlersRef.current.onInterrupt()
         return
       }
 
-      // ANSI arrow keys and navigation (exact matches)
+      // ANSI 方向键和导航（精确匹配）
       if (data === '\x1b[A') return dispatchKey('up')
       if (data === '\x1b[B') return dispatchKey('down')
       if (data === '\x1b[C') return dispatchKey('right')
@@ -277,26 +240,19 @@ export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }:
       if (data === '\x1b[3~') return dispatchKey('delete')
       if (data === '\x1b[5~') return dispatchKey('pageup')
       if (data === '\x1b[6~') return dispatchKey('pagedown')
-      // (Mode-cycle key bindings — Shift+Tab `\x1b[Z` and the Alt+M
-      // `\x1b m` Windows fallback — were removed; mode switching is
-      // driven exclusively by slash commands now. See ChatInput hint
-      // text and the /plan handler in App.tsx.)
+      // （模式循环键绑定——Shift+Tab `\x1b[Z` 和 Alt+M `\x1b m` 的 Windows 回退——已
+      // 移除；模式切换现在完全由斜杠命令驱动。见 ChatInput 提示文本和 App.tsx 里的
+      // /plan 处理器。）
 
-      // Unknown escape sequences — drop so they don't show up as literal
-      // "\x1b[…" text in the input.
+      // 未知转义序列——丢弃，避免它们以字面 "\x1b[…" 文本出现在输入里。
       if (data.startsWith('\x1b')) return
 
-      // Printable text. Two paths:
-      //  - Paste-suspect chunks (large, multi-line, or arriving while a
-      //    burst is in progress) go through the debounce buffer so a
-      //    paste split across several stdin events merges into one
-      //    onPaste call.
-      //  - Small single-keystroke chunks with no burst in progress
-      //    dispatch IMMEDIATELY. Holding down a key fires stdin events
-      //    at ~30 Hz and debouncing each one made the input feel
-      //    frozen / stutter. Claude Code does the same (their
-      //    usePasteHandler bypasses the paste buffer for
-      //    input.length < PASTE_THRESHOLD).
+      // 可打印文本。两条路径：
+      //  - 粘贴嫌疑分块（大、多行、或爆发进行中到达）走防抖缓冲，让跨多个 stdin 事件
+      //    的粘贴合并成一次 onPaste 调用。
+      //  - 无爆发进行中的小单键分块立即分发。按住一个键会以约 30 Hz 触发 stdin 事件，
+      //    对每个都防抖会让输入感觉冻结 / 卡顿。Claude Code 也这么做（他们的
+      //    usePasteHandler 对 input.length < PASTE_THRESHOLD 绕过粘贴缓冲）。
       if (burstInProgress || data.length >= PASTE_SIZE_THRESHOLD || data.includes('\n')) {
         queueText(data)
       } else {
@@ -344,14 +300,14 @@ export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }:
       }
     }
 
-    // Node chunks are arbitrary byte groups, not key events. Decode them
-    // incrementally so combined keys and split CSI/paste markers both work.
+    // Node 分块是任意字节组，不是按键事件。增量解码它们，让组合键和被拆开的
+    // CSI/粘贴标记都能工作。
     const handleData = (data: Buffer | string): void => {
       const chunk = typeof data === 'string' ? data : utf8Decoder.write(data)
       if (!chunk) return
 
-      // Unmarked paste fallback: an interior newline is likely clipboard
-      // content. A trailing Return is excluded so `abc\r` types then submits.
+      // 无标记粘贴回退：内部换行很可能是剪贴板内容。排除尾随 Return，这样 `abc\r`
+      // 会打字然后提交。
       if (
         !inputDecoder.inPaste() &&
         !chunk.includes('\x1b') &&
@@ -366,9 +322,8 @@ export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }:
       armDecoderTimers()
     }
 
-    // Ink owns stdin's `readable` listener and drains the stream itself.
-    // Listening for `data` in parallel races that drain and can lose input;
-    // its input emitter is the single post-read delivery path used by useInput.
+    // Ink 拥有 stdin 的 `readable` 监听器，并自己排空流。并行监听 `data` 会与那次排
+    // 空竞争并可能丢失输入；它的 input 发射器是 useInput 使用的唯一读后投递路径。
     internal_eventEmitter.on('input', handleData)
     return () => {
       flushPending()

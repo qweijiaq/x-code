@@ -2,12 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import { submitInput, typeInput, withTui } from './test-context.js'
 
-// Regression: the TUI hides the hardware cursor app-wide, but macOS
-// terminals still render the IME composition preview (marked text) AT the
-// hardware cursor position. Every flush must therefore end by parking the
-// cursor on the visible caret cell — otherwise the diff loop leaves it
-// mid-Working-row (spinner tick) or one cell past the input box's right
-// rail (keystroke), and pinyin previews paint there.
+// 回归修复：TUI 全局隐藏硬件光标，但 macOS 终端仍会在硬件光标位置渲染
+// IME 组词预览（标记文本）。因此每次 flush 结束时都必须把光标停放在可见
+// 插入符格上 — 否则 diff 循环会让它停在 Working 行中间（spinner tick）
+// 或输入框右轨外一格（按键），拼音预览就会画在那里。
 
 function lastCursorPosition(raw: string): { row: number; col: number } {
   const matches = [...raw.matchAll(/\x1b\[(\d+);(\d+)H/g)]
@@ -23,14 +21,14 @@ describe('IME cursor park', () => {
       await harness.settle()
 
       const { row, col } = lastCursorPosition(harness.raw())
-      // Caret visual column: 1-based col 5 is the first text cell
-      // (│ space › space), then a(1) b(1) 中(2) 文(2) → caret at col 11.
+      // 插入符视觉列：1 基的 col 5 是第一个文本格
+      //（│ 空格 › 空格），随后 a(1) b(1) 中(2) 文(2) → 插入符在 col 11。
       expect(col).toBe(11)
 
-      // The parked row must be the screen row that contains the typed text.
+      // 停放的行必须是包含所输入文本的屏幕行。
       const inputRowIdx = harness.screen().findIndex((line) => line.includes('ab中文'))
       expect(inputRowIdx).toBeGreaterThanOrEqual(0)
-      expect(row).toBe(inputRowIdx + 1) // screen[] is 0-based, CSI is 1-based
+      expect(row).toBe(inputRowIdx + 1) // screen[] 是 0 基，CSI 是 1 基
     })
   })
 
@@ -43,14 +41,14 @@ describe('IME cursor park', () => {
         await submitInput(harness, 'go')
         await harness.waitForText('Working')
         await typeInput(harness, 'xy')
-        // Let spinner ticks + streaming commits land AFTER our last
-        // keystroke — the final flush is then a spinner/commit flush, the
-        // case that used to leave the cursor mid-Working-row.
+        // 让 spinner tick + 流式提交落在我们最后一次按键之后 —
+        // 最终 flush 就是 spinner/commit flush，正是过去把光标留在 Working
+        // 行中间的那个场景。
         await harness.settle()
         await harness.settle()
 
         const { row, col } = lastCursorPosition(harness.raw())
-        // Caret after "xy": first text cell is col 5, +2 chars → col 7.
+        // "xy" 之后的插入符：第一个文本格是 col 5，+2 字符 → col 7。
         expect(col).toBe(7)
         const inputRowIdx = harness.screen().findIndex((line) => line.includes('xy'))
         expect(inputRowIdx).toBeGreaterThanOrEqual(0)

@@ -1,12 +1,11 @@
-// @x-code-cli/core — sed -i command parser & in-process substitution
+// @x-code-cli/core — sed -i 命令解析器 & 进程内替换
 //
-// Intercepts simple `sed -i 's/pattern/replacement/flags' file` commands so
-// the file-history checkpoint system can track the modification (the normal
-// shell path doesn't call fileHistoryTrackEdit / add to filesModified).
+// 拦截简单的 `sed -i 's/pattern/replacement/flags' file` 命令，好让文件历史
+// 检查点系统能追踪这次修改（正常的 shell 路径不会调用
+// fileHistoryTrackEdit / 添加到 filesModified）。
 //
-// Only handles single-file, single-expression substitutions. Complex
-// pipelines, multi-file globs, and non-substitution sed programs (d, y, a,
-// etc.) fall through to real shell execution.
+// 只处理单文件、单表达式的替换。复杂管道、多文件 glob，以及非替换类的
+// sed 程序（d、y、a 等）都落到真实 shell 执行。
 import { randomBytes } from 'node:crypto'
 
 export type SedEditInfo = {
@@ -17,13 +16,13 @@ export type SedEditInfo = {
   extendedRegex: boolean
 }
 
-// ── Shell tokenizer (simplified) ────────────────────────────────────────
+// ── Shell 分词器（简化版）──────────────────────────────────────────
 
-/** Split a shell command string into tokens, respecting single and double
- *  quotes. Returns null if the command contains operators that make it
- *  unsafe to simulate (pipes, redirects, &&, ||, ;, backticks, $()). */
+/** 把 shell 命令字符串切成分词，尊重单引号和双引号。如果命令包含让它
+ *  不安全去模拟的操作符（管道、重定向、&&、||、;、反引号、$()），返回
+ *  null。 */
 function tokenize(input: string): string[] | null {
-  // Reject commands with shell operators — too complex to simulate safely
+  // 拒绝带 shell 操作符的命令 —— 太复杂，无法安全模拟
   if (/[|><;`]|&&|\|\||\$\(/.test(stripQuoted(input))) return null
 
   const tokens: string[] = []
@@ -35,7 +34,7 @@ function tokenize(input: string): string[] | null {
 
     if (ch === "'") {
       const end = input.indexOf("'", i + 1)
-      if (end === -1) return null // unclosed quote
+      if (end === -1) return null // 引号未闭合
       current += input.slice(i + 1, end)
       i = end + 1
       continue
@@ -72,8 +71,8 @@ function tokenize(input: string): string[] | null {
   return tokens
 }
 
-/** Strip single- and double-quoted substrings so operator detection doesn't
- *  trigger on characters inside quotes (e.g. `sed 's/a|b/c/'`). */
+/** 剥掉单引号与双引号包起来的子串，让操作符检测不会被引号内的字符触发
+ *  （例如 `sed 's/a|b/c/'`）。 */
 function stripQuoted(s: string): string {
   return s.replace(/'[^']*'/g, '').replace(/"[^"]*"/g, '')
 }
@@ -89,7 +88,7 @@ function findClosingDoubleQuote(s: string, start: number): number {
   return -1
 }
 
-// ── BRE → ERE conversion placeholders ──────────────────────────────────
+// ── BRE → ERE 转换占位符 ────────────────────────────────────────────
 
 const PH_BACKSLASH = '\x00BS\x00'
 const PH_PLUS = '\x00PL\x00'
@@ -98,10 +97,10 @@ const PH_PIPE = '\x00PI\x00'
 const PH_LPAREN = '\x00LP\x00'
 const PH_RPAREN = '\x00RP\x00'
 
-// ── Public API ─────────────────────────────────────────────────────────
+// ── 公共 API ──────────────────────────────────────────────────────────
 
-/** Parse a shell command string. Returns info for simple `sed -i` in-place
- *  substitutions, or null for anything we can't safely simulate. */
+/** 解析 shell 命令字符串。对简单的 `sed -i` 就地替换返回信息，对任何我们
+ *  无法安全模拟的内容返回 null。 */
 export function parseSedEditCommand(command: string): SedEditInfo | null {
   const trimmed = command.trim()
   if (!/^\s*sed\s+/.test(trimmed)) return null
@@ -118,21 +117,21 @@ export function parseSedEditCommand(command: string): SedEditInfo | null {
   while (i < tokens.length) {
     const arg = tokens[i]!
 
-    // -i / --in-place (with optional inline or separate suffix)
+    // -i / --in-place（可带内联或分离的后缀）
     if (arg === '-i' || arg === '--in-place') {
       hasInPlace = true
       i++
-      // macOS: -i '' (empty backup suffix as separate arg)
+      // macOS：-i ''（空备份后缀作为单独参数）
       if (i < tokens.length) {
         const next = tokens[i]
         if (typeof next === 'string' && !next.startsWith('-') && (next === '' || next.startsWith('.'))) {
-          i++ // consume backup suffix
+          i++ // 消费备份后缀
         }
       }
       continue
     }
     if (arg.startsWith('-i')) {
-      hasInPlace = true // -i.bak etc.
+      hasInPlace = true // -i.bak 等
       i++
       continue
     }
@@ -144,7 +143,7 @@ export function parseSedEditCommand(command: string): SedEditInfo | null {
       continue
     }
 
-    // -e / --expression (only one allowed)
+    // -e / --expression（只允许一个）
     if (arg === '-e' || arg === '--expression') {
       if (expression !== null) return null
       if (i + 1 >= tokens.length) return null
@@ -159,23 +158,23 @@ export function parseSedEditCommand(command: string): SedEditInfo | null {
       continue
     }
 
-    // Unknown flags → bail
+    // 未知标志 → 放弃
     if (arg.startsWith('-')) return null
 
-    // Positional arguments: expression first, then file path
+    // 位置参数：先是表达式，再是文件路径
     if (expression === null) {
       expression = arg
     } else if (filePath === null) {
       filePath = arg
     } else {
-      return null // multiple files
+      return null // 多个文件
     }
     i++
   }
 
   if (!hasInPlace || !expression || !filePath) return null
 
-  // Parse s/pattern/replacement/flags
+  // 解析 s/pattern/replacement/flags
   if (!expression.startsWith('s/')) return null
   const rest = expression.slice(2)
 
@@ -200,7 +199,7 @@ export function parseSedEditCommand(command: string): SedEditInfo | null {
     if (ch === '/') {
       if (state === 'pattern') state = 'replacement'
       else if (state === 'replacement') state = 'flags'
-      else return null // extra delimiter
+      else return null // 多余的分隔符
       j++
       continue
     }
@@ -218,7 +217,7 @@ export function parseSedEditCommand(command: string): SedEditInfo | null {
   return { filePath, pattern, replacement, flags, extendedRegex }
 }
 
-/** Apply a sed s/…/…/flags substitution to content in-process. */
+/** 在进程内对内容应用 sed s/…/…/flags 替换。 */
 export function applySedSubstitution(content: string, info: SedEditInfo): string {
   let regexFlags = ''
   if (info.flags.includes('g')) regexFlags += 'g'

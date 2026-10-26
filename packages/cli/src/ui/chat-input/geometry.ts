@@ -13,7 +13,7 @@ export function computePostContentScrollRows(
   return Math.max(0, effectiveContentEnd - frameTop + 1)
 }
 
-/** Soft-wrap each raw line at `vpWidth` columns into visual lines. */
+/** 按 `vpWidth` 列把每条原始行软折成视觉行。 */
 export function buildVisualLines(rawLines: string[], vpWidth: number): VisualLine[] {
   const visualLines: VisualLine[] = []
   for (let r = 0; r < rawLines.length; r++) {
@@ -33,7 +33,7 @@ export function buildVisualLines(rawLines: string[], vpWidth: number): VisualLin
   return visualLines
 }
 
-/** Map a raw cursor offset to (visualLine, col-within-visual-line). */
+/** 把原始光标偏移映射到 (视觉行, 视觉行内的列)。 */
 export function locateVisualCursor(
   visualLines: VisualLine[],
   rawLines: string[],
@@ -65,7 +65,7 @@ export function locateVisualCursor(
   return { line: 0, col: 0 }
 }
 
-/** Move the cursor by visual lines while preserving the display column. */
+/** 按视觉行移动光标，同时保持显示列不变。 */
 export function moveCursorVisual(text: string, cursor: number, delta: number, vpWidth: number): number | null {
   const rawLines = text.length === 0 ? [''] : text.split('\n')
   const visualLines = buildVisualLines(rawLines, vpWidth)

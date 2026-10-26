@@ -207,7 +207,7 @@ describe('webSearch', () => {
     const body = JSON.parse(init!.body as string)
     expect(body.model).toBe('deepseek-flash')
     expect(body.tools).toEqual([{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }])
-    // Deduped by URL, snippet stitched from the text-block citation.
+    // 按 URL 去重，snippet 从文本块引用拼接而来。
     expect(result).toContain('cited snippet')
     expect(result.match(/https:\/\/example\.com\/d/g)).toHaveLength(1)
   })

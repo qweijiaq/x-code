@@ -4,6 +4,8 @@ import type { OfficeXlsxWorkerInput, OfficeXlsxWorkerOutput } from './office-xls
 
 const OFFICE_XLSX_WORKER_TIMEOUT_MS = 30_000
 
+// 源码在 dev 下从 src 运行、worker 却编译进 dist；chunks/ 是打包器产物的中间态，
+// 三种路径都指向编译后的 worker 文件。
 function officeXlsxWorkerUrl(): URL {
   const current = new URL(import.meta.url)
   if (current.pathname.endsWith('/src/agent/office-xlsx.ts')) {

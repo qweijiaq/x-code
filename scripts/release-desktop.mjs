@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 /**
- * Local desktop release: build, package (dmg + zip), then write
- * SHA256SUMS and RELEASE.json next to the artifacts.
+ * 本地桌面发布：构建、打包（dmg + zip），然后在产物旁写入
+ * SHA256SUMS 和 RELEASE.json。
  *
- * Signing/notarization happen automatically when the standard electron-builder
- * environment variables are present:
- *   CSC_LINK / CSC_NAME, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
- * Without them the build is intentionally unsigned and not notarized.
+ * 当标准 electron-builder 环境变量存在时，会自动进行签名/公证：
+ *   CSC_LINK / CSC_NAME、APPLE_ID、APPLE_APP_SPECIFIC_PASSWORD、APPLE_TEAM_ID
+ * 没有这些变量时，构建会有意地不签名、不公证。
  *
- * Usage: node scripts/release-desktop.mjs [--arch arm64|x64] [--skip-build]
+ * 用法：node scripts/release-desktop.mjs [--arch arm64|x64] [--skip-build]
  */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -51,8 +50,8 @@ if (!skipBuild) {
   run('pnpm', ['--filter', '@x-code-cli/desktop', 'build'])
 }
 
-// Bundle the multilingual Whisper model so first-run voice input works offline.
-// X_CODE_SKIP_BUNDLED_WHISPER=1 opts out (smaller installer, download on use).
+// 打包多语言 Whisper 模型，让首次运行的语音输入可离线工作。
+// X_CODE_SKIP_BUNDLED_WHISPER=1 可退出打包（安装包更小，使用时再下载）。
 run('node', ['scripts/fetch-whisper-model.mjs'])
 
 const builderArgs = [
@@ -97,8 +96,8 @@ const artifacts = files.map((file) => {
   }
 })
 
-// electron-builder only writes latest-mac.yml when publishing; generate the
-// same feed shape itself so manual and automatic update checks can use it.
+// electron-builder 仅在发布时才写 latest-mac.yml；这里自行生成相同格式的
+// feed，让手动和自动更新检查都能使用它。
 const zipArtifact = artifacts.find((entry) => entry.file.endsWith('.zip') && !entry.file.endsWith('.blockmap'))
 if (!zipArtifact) {
   console.error('No zip artifact found; latest-mac.yml cannot be generated.')
@@ -133,7 +132,7 @@ let commit = ''
 try {
   commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf-8' }).trim()
 } catch {
-  // Not a git checkout.
+  // 不是 Git 检出目录。
 }
 
 const releaseInfo = {

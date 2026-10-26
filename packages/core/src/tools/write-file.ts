@@ -1,4 +1,4 @@
-// @x-code-cli/core — writeFile tool (no execute — needs permission check in agent loop)
+// @x-code-cli/core — writeFile 工具（无 execute —— 权限检查在 agent loop 中处理）
 import { tool } from 'ai'
 
 import { z } from 'zod'
@@ -10,5 +10,5 @@ export const writeFile = tool({
     filePath: z.string().describe('Absolute path to the file'),
     content: z.string().describe('The full content to write'),
   }),
-  // No execute — handled manually in agent loop for permission check
+  // 无 execute —— 由 agent loop 手动处理以便做权限检查
 })

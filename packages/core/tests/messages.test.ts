@@ -1,4 +1,4 @@
-// Tests for agent/messages.ts helpers
+// agent/messages.ts 辅助函数的测试
 import { describe, expect, it } from 'vitest'
 
 import {

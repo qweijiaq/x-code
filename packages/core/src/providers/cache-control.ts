@@ -1,105 +1,95 @@
-// @x-code-cli/core — Per-provider prompt caching
+// @x-code-cli/core — 各 provider 的提示词缓存
 //
-// Prompt caching is the single biggest lever on per-session cost. All current
-// providers offer it, but the activation protocol differs:
+// 提示词缓存是降低单会话成本的最大杠杆。当前所有 provider 都支持它，
+// 但激活协议各不相同：
 //
-//   Anthropic   — set `cacheControl: { type: 'ephemeral' }` on the SYSTEM
-//                 message, the LAST tool definition (caching the whole
-//                 tools schema in one breakpoint), and the LAST two
-//                 non-system messages — four breakpoints total, exactly
-//                 the API's limit. The content at each breakpoint is
-//                 cached server-side with a 5-minute TTL; subsequent
-//                 requests that share the exact prefix hit the cache and
-//                 only pay for the uncached tail. Tools schema is the
-//                 highest-leverage slot — it's the same bytes on every
-//                 turn and runs into the thousands of tokens once the
-//                 full tool set is registered.
+//   Anthropic   — 在 SYSTEM 消息、最后一个工具定义（用一个断点缓存整个
+//                 tools schema）、以及最后两条非 system 消息上设置
+//                 `cacheControl: { type: 'ephemeral' }` —— 共四个断点，
+//                 正好是 API 的上限。每个断点处的内容在服务端缓存，TTL 为
+//                 5 分钟；后续共享完全相同前缀的请求命中缓存，只支付未缓存
+//                 尾部的费用。tools schema 是收益最高的槽位——每轮都是
+//                 相同的字节，注册完整工具集后可达数千 token。
 //
-//   OpenAI      — automatic prefix caching, with `promptCacheKey` routing
-//                 identical stable prefixes to the same cache shard. Platform
-//                 API-key requests on GPT-5.6+ additionally get a 30-minute
-//                 implicit cache and an explicit breakpoint after the byte-
-//                 stable system prompt. ChatGPT subscription requests retain
-//                 the private transport's accepted key-only shape. `store:
-//                 false` independently disables response storage.
+//   OpenAI      — 自动前缀缓存，用 `promptCacheKey` 把相同的稳定前缀路由到
+//                 同一缓存分片。GPT-5.6+ 的 Platform API-key 请求还额外获得
+//                 30 分钟隐式缓存，以及在字节稳定 system prompt 之后的一个
+//                 显式断点。ChatGPT 订阅请求保留其私有传输所接受的仅 key
+//                 形态。`store: false` 独立地禁用响应存储。
 //
-//   Moonshot    — automatic prefix caching + `prompt_cache_key: sessionId`
-//                 for session affinity (requests of one session hit the same
-//                 server-side cache shard), plus the byte-stable prefix below.
+//   Moonshot    — 自动前缀缓存 + `prompt_cache_key: sessionId` 用于会话
+//                 亲和（同一会话的请求命中相同的服务端缓存分片），外加下方
+//                 的字节稳定前缀。
 //
-//   xAI         — automatic prefix caching. The default AI SDK model uses the
-//                 Responses API, which requires `prompt_cache_key` in the body.
-//                 The SDK does not expose that option, so an internal header
-//                 carries the sessionId to the registry fetch adapter. The
-//                 adapter consumes it before sending the request.
+//   xAI         — 自动前缀缓存。默认的 AI SDK 模型使用 Responses API，
+//                 它要求请求体中有 `prompt_cache_key`。SDK 未暴露该选项，
+//                 因此用一个内部 header 把 sessionId 传给 registry 的 fetch
+//                 适配器，由适配器在发送请求前消费它。
 //
-//   Alibaba     — supports both implicit and explicit caching. Explicit
-//                 `cache_control` markers are valid on message content, not
-//                 tool definitions. We tag the system prompt and last two
-//                 messages; the stable tools schema still participates in
-//                 the cached prefix before those message breakpoints.
+//   Alibaba     — 同时支持隐式与显式缓存。显式 `cache_control` 标记在消息
+//                 内容上有效，而非工具定义上。我们标记 system prompt 和最后
+//                 两条消息；稳定的 tools schema 仍会参与这些消息断点之前的
+//                 缓存前缀。
 //
-//   OpenAI-     — the DeepSeek / Zhipu / custom providers all offer automatic
-//   compatible    prefix caching with NO explicit flags required. The only
-//                 prerequisite is a byte-stable prefix across turns.
+//   OpenAI-     — DeepSeek / Zhipu / custom 这些 provider 都提供自动前缀
+//   compatible    缓存，无需任何显式标志。唯一前提是跨轮次字节稳定的前缀。
 //
-//   Google      — Gemini uses implicit caching; no per-request flags we can
-//                 usefully set from the SDK. Left as a no-op.
+//   Google      — Gemini 使用隐式缓存；没有能从 SDK 有意义设置的逐请求
+//                 标志。保持为无操作。
 import { createHash } from 'node:crypto'
 
 import type { ModelMessage, SystemModelMessage } from 'ai'
 
 import { providerOf } from './capabilities.js'
 
-/** Max messages we attach an Anthropic cache breakpoint to. Anthropic allows
- *  up to 4 `cache_control` blocks per request; we spend one on the system
- *  prompt and one on the last tool definition, leaving two for the message
- *  tail. Two is the sweet spot from opencode's testing — a third message
- *  breakpoint costs a cache-write against a region (the just-before-last
- *  message) that's about to be evicted anyway. */
+/** 附加 Anthropic 缓存断点的最大消息数。Anthropic 允许每个请求最多 4 个
+ *  `cache_control` 块；我们在 system prompt 上用掉一个、在最后一个工具定义
+ *  上用掉一个，剩下两个留给消息尾部。二是 opencode 测试出的最佳点——
+ *  第三个消息断点会针对一个即将被淘汰的区域（倒数第二条消息）付出一次
+ *  缓存写入代价。 */
 const MESSAGE_CACHE_BREAKPOINTS = 2
 
 export const XAI_PROMPT_CACHE_KEY_HEADER = 'x-x-code-prompt-cache-key'
 export const OPENAI_SESSION_ID_HEADER = 'x-x-code-openai-session-id'
 
 export interface CacheControlArgs {
-  /** Instructions (system prompt) string. May be wrapped into a system-role
-   *  message if the provider needs cache_control attached to it. */
+  /** 指令（system prompt）字符串。若 provider 需要在其上附加 cache_control，
+   *  可能被包装成 system 角色消息。 */
   instructions: string
-  /** Conversation messages to send. */
+  /** 要发送的会话消息。 */
   messages: ModelMessage[]
-  /** Tool registry passed to streamText. For Anthropic we tag the last entry
-   *  with cache_control so the whole tools schema enters the cache prefix.
-   *  buildTools() returns the same Record reference for the session, so key
-   *  order — and therefore the cached prefix — is byte-stable across turns. */
+  /** 传给 streamText 的工具注册表。对于 Anthropic，我们给最后一个条目打上
+   *  cache_control，使整个 tools schema 进入缓存前缀。buildTools() 在整个
+   *  会话返回同一个 Record 引用，因此键序——以及由此产生的缓存前缀——
+   *  跨轮次字节稳定。 */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools?: Record<string, any>
-  /** provider:model id used to select the caching strategy. */
+  /** 用于选择缓存策略的 provider:model id。 */
   modelId: string
-  /** Stable per-session identifier. OpenAI's ChatGPT transport receives this
-   *  separately from the cross-session prompt-cache routing key. */
+  /** 稳定的每会话标识符。OpenAI 的 ChatGPT 传输会单独收到它，与跨会话的
+   *  提示词缓存路由 key 区分开。 */
   sessionId: string
-  /** ChatGPT subscription uses a private Responses transport that accepts the
-   *  stable key but not Platform-only explicit cache controls. */
+  /** ChatGPT 订阅使用私有 Responses 传输，它接受稳定 key 但不接受
+   *  Platform 专属的显式缓存控制。 */
   openAIAuthMode?: 'chatgpt' | 'api-key' | 'none'
 }
 
 export interface CacheControlResult {
-  /** Instructions may be a tagged system message when a provider needs a
-   *  cache breakpoint on the stable system prompt. */
+  /** 当 provider 需要在稳定 system prompt 上打缓存断点时，指令可能是
+   *  打上标记的 system 消息。 */
   instructions?: string | SystemModelMessage
   messages: ModelMessage[]
-  /** Anthropic receives a shallow-cloned tools record with cache_control on
-   *  the last entry. Other providers get the input record as-is. */
+  /** Anthropic 收到浅克隆的 tools 记录，且最后一个条目带 cache_control。
+   *  其他 provider 原样收到输入记录。 */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools?: Record<string, any>
-  /** Top-level providerOptions to pass through to streamText. */
+  /** 透传给 streamText 的顶层 providerOptions。 */
   providerOptions?: Record<string, unknown>
-  /** HTTP headers to pass through to streamText, including internal fetch-adapter hints. */
+  /** 透传给 streamText 的 HTTP headers，包括内部 fetch 适配器提示。 */
   headers?: Record<string, string>
 }
 
-/** Attach the given providerOptions entry to a message non-destructively. */
+/** 以非破坏性方式把给定的 providerOptions 条目附加到消息上。 */
 function tagMessage(msg: ModelMessage, provider: string, entry: Record<string, unknown>): ModelMessage {
   const existing = (msg as { providerOptions?: Record<string, Record<string, unknown>> }).providerOptions ?? {}
   return {
@@ -111,7 +101,7 @@ function tagMessage(msg: ModelMessage, provider: string, entry: Record<string, u
   } as ModelMessage
 }
 
-/** Build a system-role instruction with Anthropic cache_control attached. */
+/** 构建附带 Anthropic cache_control 的 system 角色指令。 */
 function anthropicSystemMessage(system: string): SystemModelMessage {
   return {
     role: 'system',
@@ -122,7 +112,7 @@ function anthropicSystemMessage(system: string): SystemModelMessage {
   }
 }
 
-/** Build a system-role instruction with Alibaba cache_control attached. */
+/** 构建附带 Alibaba cache_control 的 system 角色指令。 */
 function alibabaSystemMessage(system: string): SystemModelMessage {
   return {
     role: 'system',
@@ -133,7 +123,7 @@ function alibabaSystemMessage(system: string): SystemModelMessage {
   }
 }
 
-/** GPT-5.6 model variants share the new prompt_cache_options contract. */
+/** GPT-5.6 型号变体共享新的 prompt_cache_options 契约。 */
 function supportsOpenAIExplicitPromptCaching(modelId: string): boolean {
   return /^openai:gpt-5\.6(?:$|-)/.test(modelId)
 }
@@ -141,10 +131,9 @@ function supportsOpenAIExplicitPromptCaching(modelId: string): boolean {
 const CHATGPT_CACHE_COMPARISON_TTL_MS = 5 * 60 * 1000
 const OPENAI_EXPLICIT_CACHE_TTL_MS = 30 * 60 * 1000
 
-/** Diagnostic comparison window for adjacent OpenAI turns. Platform GPT-5.6
- *  receives an explicit 30-minute TTL. ChatGPT's private transport exposes no
- *  TTL control, so use a conservative five-minute window and avoid labeling
- *  older provider-default evictions as byte-instability regressions. */
+/** 相邻 OpenAI 轮次的诊断比较窗口。Platform GPT-5.6 获得显式 30 分钟 TTL。
+ *  ChatGPT 的私有传输不暴露 TTL 控制，因此采用保守的五分钟窗口，避免把
+ *  较旧的 provider 默认淘汰误判为字节不稳定的回退。 */
 export function openAICacheComparisonTtlMs(
   modelId: string,
   authMode: CacheControlArgs['openAIAuthMode'],
@@ -153,9 +142,8 @@ export function openAICacheComparisonTtlMs(
   return authMode === 'chatgpt' ? CHATGPT_CACHE_COMPARISON_TTL_MS : OPENAI_EXPLICIT_CACHE_TTL_MS
 }
 
-/** Keep cache routing stable across sessions without exposing prompt text or
- *  local paths in the provider-visible key. Model and prompt changes naturally
- *  produce a different cache group. */
+/** 让缓存路由跨会话保持稳定，同时不在 provider 可见的 key 中暴露提示词文本
+ *  或本地路径。模型或提示词变化自然会生成不同的缓存组。 */
 export function openAIStablePromptCacheKey(modelId: string, instructions: string): string {
   const digest = createHash('sha256').update(modelId).update('\0').update(instructions).digest('hex').slice(0, 32)
   return `xc-agent-v1:${digest}`
@@ -172,16 +160,16 @@ function openAISystemMessage(system: string): SystemModelMessage {
 }
 
 /**
- * Return the request shape enriched with provider-specific caching hints.
- * The input `messages` array is not mutated — new message objects are
- * returned for any message that needs extra providerOptions.
+ * 返回携带各 provider 缓存提示的请求形态。
+ * 输入的 `messages` 数组不会被修改——任何需要额外 providerOptions 的消息
+ * 都会返回新的消息对象。
  */
 export function applyCacheControl(args: CacheControlArgs): CacheControlResult {
   const provider = providerOf(args.modelId)
 
   if (provider === 'anthropic') {
-    // AI SDK v7 rejects system-role entries in `messages`; keep the tagged
-    // system prompt in `instructions` and mark the message tail separately.
+    // AI SDK v7 拒绝 `messages` 中的 system 角色条目；把带标记的 system
+    // prompt 放在 `instructions` 里，并单独标记消息尾部。
     const nonSystemTail = args.messages.slice(-MESSAGE_CACHE_BREAKPOINTS)
     const tailSet = new Set(nonSystemTail)
     const tagged = args.messages.map((m) =>
@@ -197,9 +185,8 @@ export function applyCacheControl(args: CacheControlArgs): CacheControlResult {
   if (provider === 'openai') {
     const promptCacheKey = openAIStablePromptCacheKey(args.modelId, args.instructions)
     const explicitCaching = supportsOpenAIExplicitPromptCaching(args.modelId) && args.openAIAuthMode !== 'chatgpt'
-    // Platform GPT-5.6 implicit mode keeps the automatic latest-message
-    // breakpoint alongside our explicit stable-system breakpoint. ChatGPT
-    // subscription stays on the accepted automatic key-only shape.
+    // Platform GPT-5.6 的隐式模式保留自动的最新消息断点，与我们的显式稳定
+    // system 断点并存。ChatGPT 订阅则维持已接受的自动仅 key 形态。
     return {
       instructions: explicitCaching ? openAISystemMessage(args.instructions) : args.instructions,
       messages: args.messages,
@@ -216,12 +203,11 @@ export function applyCacheControl(args: CacheControlArgs): CacheControlResult {
   }
 
   if (provider === 'moonshotai') {
-    // Moonshot's server-side prefix caching is automatic, but requests land
-    // on a per-key cache shard: pinning `prompt_cache_key` to the sessionId
-    // keeps every turn of a conversation on the same shard (same mechanism
-    // Kimi CLI uses). Both Moonshot routes forward it: the openai-compatible
-    // SDK spreads non-standard providerOptions keys into the request body
-    // verbatim, and @ai-sdk/moonshotai inherits that behavior.
+    // Moonshot 的服务端前缀缓存是自动的，但请求会落到每个 key 的缓存分片上：
+    // 把 `prompt_cache_key` 固定为 sessionId 可使对话的每一轮都落在同一分片
+    // （Kimi CLI 用的也是这一机制）。两条 Moonshot 路由都会转发它：
+    // openai-compatible SDK 会把非标准 providerOptions 键原样展开进请求体，
+    // @ai-sdk/moonshotai 继承了该行为。
     return {
       instructions: args.instructions,
       messages: args.messages,
@@ -233,8 +219,8 @@ export function applyCacheControl(args: CacheControlArgs): CacheControlResult {
   }
 
   if (provider === 'xai') {
-    // The provider registry consumes this internal header and moves the key to
-    // the transport-specific location without leaking the header upstream.
+    // provider registry 会消费这个内部 header，把 key 挪到传输特定的位置，
+    // 而不会把 header 泄露到上游。
     return {
       instructions: args.instructions,
       messages: args.messages,
@@ -244,9 +230,8 @@ export function applyCacheControl(args: CacheControlArgs): CacheControlResult {
   }
 
   if (provider === 'alibaba') {
-    // Alibaba's explicit markers belong on message content. Tool definitions
-    // still form part of the stable prefix, but markers attached to tools are
-    // ignored by both the API contract and the current provider adapter.
+    // Alibaba 的显式标记应放在消息内容上。工具定义仍构成稳定前缀的一部分，
+    // 但附加在工具上的标记会被 API 契约和当前 provider 适配器同时忽略。
     const nonSystemTail = args.messages.slice(-MESSAGE_CACHE_BREAKPOINTS)
     const tailSet = new Set(nonSystemTail)
     const tagged = args.messages.map((m) =>
@@ -259,15 +244,14 @@ export function applyCacheControl(args: CacheControlArgs): CacheControlResult {
     }
   }
 
-  // OpenAI-compatible & Gemini: no explicit flags, just rely on stable prefix.
-  // Callers must ensure buildSystemPrompt is cached in LoopState so the same
-  // instructions string is re-sent every turn.
+  // OpenAI-compatible 与 Gemini：无显式标志，仅依赖稳定前缀。
+  // 调用方必须确保 buildSystemPrompt 在 LoopState 中被缓存，使每一轮都
+  // 重新发送相同的 instructions 字符串。
   return { instructions: args.instructions, messages: args.messages, tools: args.tools }
 }
 
-/** Shallow-clone `tools` and attach a cache_control breakpoint to the last
- *  entry for the given provider, so the entire tools schema enters one cached
- *  prefix slot. Returns the input unchanged when there are no tools. */
+/** 浅克隆 `tools`，并为给定 provider 给最后一个条目附加 cache_control 断点，
+ *  使整个 tools schema 进入同一个缓存前缀槽位。没有工具时原样返回输入。 */
 function tagLastToolForProvider(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools: Record<string, any> | undefined,
@@ -290,7 +274,7 @@ function tagLastToolForProvider(
   return { ...tools, [lastName]: tagged }
 }
 
-/** Anthropic cache_control on last tool. */
+/** 在最后一个工具上附加 Anthropic 的 cache_control。 */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function tagLastTool(tools: Record<string, any> | undefined): Record<string, any> | undefined {
   return tagLastToolForProvider(tools, 'anthropic')

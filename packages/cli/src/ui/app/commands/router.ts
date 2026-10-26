@@ -52,7 +52,7 @@ interface SlashCommandRouterOptions {
   exit: () => void
 }
 
-/** Route one slash command. Busy-state admission remains owned by App. */
+/** 路由一条斜杠命令。忙碌状态的准入仍归 App 管。 */
 export async function routeSlashCommand(text: string, router: SlashCommandRouterOptions): Promise<void> {
   const parts = text.slice(1).trim().split(/\s+/)
   const command = parts[0]?.toLowerCase() ?? ''

@@ -15,9 +15,9 @@ const scenario: Scenario = {
     )
     ctx.expect.exitCode(r, 0)
     const searchCall = ctx.expect.toolCalled(r, 'webSearch', { query: /(prompt[- ]?engin|wikipedia)/i })
-    // Wikipedia article URLs are stable — no vendor domain churn like docs sites
-    // (e.g. Anthropic moved docs.anthropic.com → platform.claude.com), so the
-    // assertion can pin the exact URL in both the search result and final answer.
+    // 维基百科文章 URL 稳定 — 不像文档站点那样频繁换域名
+    //（例如 Anthropic 把 docs.anthropic.com 迁到 platform.claude.com），
+    // 所以断言能在搜索结果和最终答案中都精确锁定该 URL。
     ctx.expect.truthy(
       WIKIPEDIA_URL.test(searchCall.resultText ?? ''),
       `webSearch result did not contain the expected Wikipedia URL; got: ${(searchCall.resultText ?? '').slice(0, 400)}`,

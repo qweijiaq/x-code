@@ -1,5 +1,5 @@
-// Tests for deliverToolImages — how an MCP tool's returned image reaches the
-// model without ever degrading base64 bytes into ordinary prompt text.
+// deliverToolImages 的测试 —— MCP 工具返回的图像如何到达模型，
+// 而不会把 base64 字节降级成普通提示文本。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createLoopState } from '../src/agent/loop-state.js'

@@ -1,4 +1,4 @@
-// @x-code-cli/core — Provider-specific compatibility shims
+// @x-code-cli/core — 针对特定提供方的兼容性补丁
 import type { ModelMessage } from 'ai'
 
 import {
@@ -22,22 +22,18 @@ import { ocrImage } from './image-ocr.js'
 import { toolMediaUserMessage } from './messages.js'
 import type { ToolImage } from './messages.js'
 
-// ── Image/PDF downgrade for text-only providers ───────────────────────────
+// ── 面向纯文本模型的图片/PDF 降级 ───────────────────────────────────────
 //
-// If the active model can't receive image/file parts (for example DeepSeek V4
-// Pro, plus `custom` unless the user opts in), walk every message that would be
-// sent on the next turn and replace each binary part with something the
-// provider CAN accept.
+// 如果当前模型无法接收图片/文件片段（例如 DeepSeek V4 Pro，以及未显式开启的 `custom`），
+// 就遍历下一轮要发送的每条消息，把每个二进制片段替换成该提供方能够接受的内容。
 //
-// Two flavors:
-//   - User messages: ImagePart / FilePart → TextPart with OCR'd text.
-//   - Tool result messages: `content` value array with tagged image `file`
-//     entries (plus legacy `image-data`) → same content array but with image entries replaced by
-//     `text` entries (OCR'd).
+// 两种情况：
+//   - 用户消息：ImagePart / FilePart → 带 OCR 文本的 TextPart。
+//   - 工具结果消息：带标签图片 `file` 条目（以及旧式 `image-data`）的 `content` 值数组
+//     → 同一个 content 数组，但图片条目被替换为 `text` 条目（经 OCR）。
 //
-// OCR runs locally via tesseract.js. Results are memoized by a content
-// hash so repeatedly sending the same image across turns doesn't re-run
-// OCR on every turn.
+// OCR 通过 tesseract.js 在本地运行。结果按内容哈希做记忆化，
+// 这样跨轮次重复发送同一张图片时，不必每轮都重跑 OCR。
 
 type MaybeOutput = { type?: string; value?: unknown; filename?: string }
 
@@ -78,15 +74,13 @@ function withToolImageData(
 }
 
 /**
- * Move image parts out of tool results for multimodal Chat Completions
- * providers. Their `tool` role accepts only text, while the following `user`
- * role accepts typed image content. This also catches AI-SDK auto-executed
- * tools such as readFile, which bypass deliverToolImages.
+ * 针对多模态 Chat Completions 提供方，把图片片段从工具结果中挪出来。
+ * 它们的 `tool` 角色只接受文本，而紧随其后的 `user` 角色接受带类型的图片内容。
+ * 这也能覆盖 AI SDK 自动执行的工具（如 readFile，它们绕过了 deliverToolImages）。
  *
- * Images from one contiguous tool-result group become one user message after
- * the whole group, preserving strict assistant -> all tool results ordering.
- * Returns a request-only projection without mutating canonical history, so
- * stale screenshot pruning can still remove old binary payloads.
+ * 来自一个连续工具结果组的图片，会在整组之后变成一条用户消息，
+ * 从而保持严格的 assistant → 所有工具结果的顺序。
+ * 只返回请求用的投影，不修改规范历史，这样过期截图裁剪仍能移除旧的二进制负载。
  */
 export function reattachToolResultImagesForProvider(messages: ModelMessage[], modelId: string): ModelMessage[] {
   const caps = capabilitiesOf(modelId)
@@ -187,9 +181,8 @@ async function normalizeCompatImage(
     }
   }
 
-  // Compatibility validation runs on every request projection. A full digest
-  // lets repeated session images reuse the decoded result without allowing
-  // same-size, same-header payloads to share a security decision.
+  // 兼容性校验在每次请求投影时都会运行。使用完整摘要可以让重复的会话图片复用
+  // 已解码结果，同时又不会让“同尺寸、同头部”的负载共享同一个安全判定。
   const key = `${modelId}:${bufferFingerprint(buffer)}`
   const cached = compatImageCache.get(key)
   if (cached) return cached
@@ -300,7 +293,7 @@ function imagePartToBuffer(part: { image: unknown; mediaType?: string }): Buffer
   if (Buffer.isBuffer(img)) return img
   if (img instanceof Uint8Array) return Buffer.from(img)
   if (typeof img === 'string') {
-    // Could be base64 or a data URL. Strip the `data:...;base64,` prefix if present.
+    // 可能是 base64，也可能是 data URL。若存在 `data:...;base64,` 前缀则先剥离。
     const commaIdx = img.indexOf(',')
     const data = img.startsWith('data:') && commaIdx > 0 ? img.slice(commaIdx + 1) : img
     try {
@@ -312,14 +305,11 @@ function imagePartToBuffer(part: { image: unknown; mediaType?: string }): Buffer
   return null
 }
 
-/** Replace EVERY binary part in the conversation with a text notice, in
- *  place. This is the 400-recovery path in the agent loop: when a provider
- *  rejects an image (corrupt bytes, size limit, a format that slipped past
- *  the ingestion gate), the offending part stays in history and would fail
- *  EVERY later request — session poisoning. Strip all binary parts once and
- *  retry the turn. Returns true only when something actually changed, so the
- *  caller can tell "retry is worthwhile" from "the bad part isn't in a shape
- *  we recognize — report the error instead of looping". */
+/** 就地替换对话中每一个二进制片段为文本提示。这是 agent loop 中的 400 恢复路径：
+ *  当提供方拒绝一张图片（字节损坏、超出大小限制、格式漏过了摄入门禁）时，出问题的
+ *  片段会留在历史里，之后每一次请求都会失败——即会话中毒。一次性剥离所有二进制片段
+ *  并重试本轮。仅当确有改动时才返回 true，这样调用方就能区分“值得重试”和
+ *  “这个坏片段不是我们能识别的形态——上报错误而非陷入循环”。 */
 export function stripBinaryPartsFromMessages(
   messages: ModelMessage[],
   deliveredFileCache?: { clear(): void },
@@ -365,9 +355,8 @@ export function stripBinaryPartsFromMessages(
   return changed
 }
 
-/** Build a request-only projection that removes legacy non-image files and
- * OCRs images for text-only models. Canonical session messages are never
- * mutated by this compatibility pass. */
+/** 构建一个仅用于请求的投影：移除旧式非图片文件，并为纯文本模型对图片做 OCR。
+ *  规范会话消息绝不会被这个兼容性步骤修改。 */
 export async function downgradeBinaryPartsForProvider(
   messages: ModelMessage[],
   modelId: string,
@@ -378,7 +367,7 @@ export async function downgradeBinaryPartsForProvider(
   const projected = cloneRequestValue(messages)
 
   for (const msg of projected) {
-    // User messages — content may be an array of TextPart | ImagePart | FilePart.
+    // 用户消息——content 可能是 TextPart | ImagePart | FilePart 数组。
     if ((msg.role === 'user' || msg.role === 'assistant') && Array.isArray(msg.content)) {
       const rewritten: unknown[] = []
       for (const part of msg.content) {
@@ -462,7 +451,7 @@ export async function downgradeBinaryPartsForProvider(
       continue
     }
 
-    // Tool result messages — content is always an array of tool-result parts.
+    // 工具结果消息——content 始终是 tool-result 片段数组。
     if (msg.role === 'tool' && Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (part.type !== 'tool-result') continue
@@ -471,9 +460,8 @@ export async function downgradeBinaryPartsForProvider(
 
         const rewritten: unknown[] = []
         for (const entry of output.value as ToolContentEntry[]) {
-          // New sessions use tagged image FileParts; legacy sessions may still
-          // contain image-data/media. OCR for text-only providers so they do
-          // not reject the binary tool output.
+          // 新会话使用带标签的图片 FileParts；旧会话可能仍包含 image-data/media。
+          // 为纯文本提供方做 OCR，以免它们拒绝二进制工具输出。
           const isImageEntry = isToolImageEntry(entry)
           const imageData = toolImageBase64(entry)
           if (isImageEntry && (entry.mediaType?.startsWith('image/') ?? true) && acceptsImages) {
@@ -503,7 +491,7 @@ export async function downgradeBinaryPartsForProvider(
               const buffer = Buffer.from(data, 'base64')
               text = await ocrBuffer(buffer, abortSignal)
             } catch {
-              // fall through with placeholder
+              // 落入占位符分支
             }
             rewritten.push({
               type: 'text',

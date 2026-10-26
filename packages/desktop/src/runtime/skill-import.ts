@@ -30,9 +30,9 @@ function uniqueDir(root: string, base: string): string {
 }
 
 /**
- * Copy a SKILL.md file or a skill directory into the user skill directory
- * (`~/.x-code/skills/<name>`). The caller reloads the skill registry and
- * verifies the new entry; a bad import is removed by the caller.
+ * 把 SKILL.md 文件或技能目录复制到用户技能目录
+ * （`~/.x-code/skills/<name>`）。调用方负责重新加载技能注册表并
+ * 验证新条目；导入失败的条目由调用方移除。
  */
 export async function importSkillIntoUserDir(sourcePath: string): Promise<{ dir: string; sourceName: string }> {
   const source = path.resolve(sourcePath)

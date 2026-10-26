@@ -1,15 +1,15 @@
 #!/usr/bin/env tsx
-// e2e runner. Entry point invoked via `pnpm test:e2e`.
+// e2e 运行器。通过 `pnpm test:e2e` 调用的入口。
 //
-// Modes (mutually exclusive; if none provided, runs interactive flow):
-//   --resume         Re-run scenarios that failed (or never ran) in last-run.json
-//   --all            Re-run every scenario, fresh
-//   --filter <glob>  Substring match against scenario id (e.g. --filter shell)
-//   --list           Just list scenarios + skip status, exit
-//   --model <id>     Skip interactive model selection, use this model id (or alias)
-//   --keep-tmp       Don't delete tmp dirs even on pass (debugging only)
-//   --max-turns N    Pass through to CLI
-//   --print-jsonl    Print each scenario's jsonl path after running
+// 模式（互斥；未提供任何模式时走交互流程）：
+//   --resume         重跑 last-run.json 中失败（或从未运行）的场景
+//   --all            全新重跑每个场景
+//   --filter <glob>  对场景 id 做子串匹配（例如 --filter shell）
+//   --list           仅列出场景 + 跳过状态后退出
+//   --model <id>     跳过交互式模型选择，直接用该模型 id（或别名）
+//   --keep-tmp       通过后也不删除临时目录（仅调试用）
+//   --max-turns N    透传给 CLI
+//   --print-jsonl    运行后打印每个场景的 jsonl 路径
 import * as p from '@clack/prompts'
 
 import { existsSync } from 'node:fs'
@@ -119,7 +119,7 @@ async function cleanupTmpDir(dir: string): Promise<void> {
   try {
     await fs.rm(dir, { recursive: true, force: true })
   } catch {
-    // best-effort
+    // 尽力而为
   }
 }
 
@@ -166,8 +166,8 @@ async function runOne(
     },
     runCli: (prompt, options?: RunCliOptions) =>
       runCliInDir(
-        // Most scenarios run from tmpDir, but a few need a nested cwd to
-        // exercise the AGENTS.md monorepo-chain walker.
+        // 大多数场景从 tmpDir 运行，但少数需要嵌套 cwd 来
+        // 触发 AGENTS.md 的 monorepo 链式向上查找。
         options?.cwd ?? tmpDir,
         prompt,
         {
@@ -216,7 +216,7 @@ async function runOne(
       tmpDir,
     }
     if (lastJsonl) {
-      // Copy the failing jsonl out so it survives the tmpdir nuke if the user retries.
+      // 把失败的 jsonl 拷贝出来，用户重试时它能挺过临时目录清理。
       try {
         const stash = path.join(__dirname, '.state', `failed-${scenario.id}.jsonl`)
         await fs.mkdir(path.dirname(stash), { recursive: true })
@@ -230,7 +230,7 @@ async function runOne(
     await cleanupTmpDir(tmpDir)
   }
   if (result.status === 'failed') {
-    // Surface tmpDir on failure so user can inspect.
+    // 失败时暴露 tmpDir，便于用户检查。
     result.tmpDir = tmpDir
   }
   return result
@@ -246,7 +246,7 @@ function pickScenarios(
   if (filter) chosen = chosen.filter((s) => s.id.includes(filter) || s.name.includes(filter))
   if (resume && state) {
     const failed = new Set(failedIds(state))
-    // Resume = scenarios that failed OR were never run before.
+    // Resume = 失败过的或从未运行过的场景。
     chosen = chosen.filter((s) => failed.has(s.id) || !state.results[s.id])
   }
   return chosen
@@ -265,7 +265,7 @@ async function interactiveSelectModel(env: Record<string, string>, defaultModel:
     console.log()
   }
 
-  // Build options list with default first.
+  // 构建选项列表，默认项在最前。
   const seen = new Set<string>()
   const items: { value: string; label: string; hint?: string }[] = []
   if (opts.some((o) => o.modelId === defaultModel)) {
@@ -346,11 +346,11 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // Load env (.env + process.env)
+  // 加载环境变量（.env + process.env）
   const env = await loadDotenv()
   const scenarios = await loadScenarios()
 
-  // --list mode: just print and exit.
+  // --list 模式：仅打印并退出。
   if (args.list) {
     const state = await loadState()
     console.log(`Found ${scenarios.length} scenarios:`)
@@ -363,7 +363,7 @@ async function main(): Promise<void> {
     return
   }
 
-  // Resolve model
+  // 解析模型
   let modelId: string
   if (args.model) {
     modelId = resolveModelArg(args.model)
@@ -373,13 +373,13 @@ async function main(): Promise<void> {
     modelId = await interactiveSelectModel(env, defaultModel)
   }
 
-  // Resolve scope (resume vs all vs filter)
+  // 解析范围（resume / all / filter）
   const prevState = await loadState()
   let scope: 'all' | 'resume' | 'cancel'
   if (args.all) scope = 'all'
   else if (args.resume) scope = 'resume'
   else if (args.filter)
-    scope = 'all' // filter alone implies "all matching"
+    scope = 'all' // 仅有 filter 意味着“匹配到的全部”
   else scope = await interactiveSelectMode(prevState)
   if (scope === 'cancel') {
     console.log('Cancelled.')
@@ -399,7 +399,7 @@ async function main(): Promise<void> {
   if (args.filter) console.log(`▶ Filter: ${args.filter}`)
   console.log()
 
-  // Prepare run state. Start fresh for scope='all', or merge resume results.
+  // 准备运行状态。scope='all' 时全新开始，否则合并 resume 结果。
   const state: RunState =
     scope === 'all' || !prevState
       ? { model: modelId, startedAt: new Date().toISOString(), results: {} }

@@ -1,9 +1,9 @@
-// Reverse request channel: runtime (utilityProcess) → Electron main.
+// 反向请求通道：运行时（utilityProcess）→ Electron 主进程。
 //
-// Some work only the main process can do: printing a PDF (BrowserWindow) and
-// safeStorage encryption (OS keychain). The runtime posts a `main-request` and
-// awaits the matching `main-response`; both sides are typed in
-// shared/protocol.ts.
+// 有些工作只有主进程能做：打印 PDF（BrowserWindow）和
+// safeStorage 加密（OS 钥匙串）。运行时发出 `main-request` 并
+// 等待匹配的 `main-response`；两侧的类型都定义在
+// shared/protocol.ts。
 import type { MainRequestMethod, MainRequestParams, RuntimeInbound, RuntimeOutbound } from '../shared/protocol.js'
 
 interface BridgePort {
@@ -37,7 +37,7 @@ export function requestMain<T>(method: MainRequestMethod, params: MainRequestPar
   })
 }
 
-/** Resolve a pending request. Returns true when the message was a response. */
+/** 解决一个待处理请求。当消息是响应时返回 true。 */
 export function handleMainResponse(message: RuntimeInbound): boolean {
   if (message.kind !== 'main-response') return false
   const entry = pending.get(message.id)

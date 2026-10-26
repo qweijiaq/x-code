@@ -1,10 +1,9 @@
-// Document edit review: baselines, line diffs, and hunk-level apply.
+// 文档编辑审核：基线、行 diff，以及 hunk 级别的应用。
 //
-// A baseline is captured the first time a text document is opened. When the
-// agent (or another program) edits the file, `document:diff` shows the change
-// against that baseline; applying selected hunks rebuilds the file from the
-// baseline plus the kept changes. The current file hash is verified first, so
-// an edit made while the user is reviewing never gets silently overwritten.
+// 文本文档首次打开时捕获基线。当 agent（或其他程序）编辑该文件时，
+// `document:diff` 对照该基线展示变更；应用选中的 hunk 会从
+// 基线加上保留的变更重建文件。当前文件哈希会先校验，
+// 因此用户在审核期间所做的编辑绝不会被静默覆盖。
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -51,8 +50,8 @@ export interface BaselineState {
   changed: boolean
 }
 
-/** Capture a baseline on first open; report whether the file has changed
- *  since the stored baseline afterwards. */
+/** 首次打开时捕获基线；随后报告文件自存储基线以来
+ *  是否已变化。 */
 export async function ensureBaseline(filePath: string): Promise<BaselineState> {
   if (!isReviewable(filePath)) return { editable: false, hash: '', changed: false }
   const current = await readReviewable(filePath)
@@ -82,9 +81,9 @@ export async function documentDiff(filePath: string): Promise<DocumentDiffView |
   }
 }
 
-/** Rebuild the new content keeping only the accepted hunks (rejected hunks
- *  revert to their baseline lines). Hunks are applied back-to-front so
- *  earlier line numbers stay valid while later ones are replaced. */
+/** 重建新内容，只保留接受的 hunk（拒绝的 hunk
+ *  回退到基线行）。hunk 从后往前应用，这样
+ *  靠前的行号保持有效，同时替换后面的。 */
 export function applySelectedHunks(currentText: string, hunks: EditDiffHunk[], accepted: Set<number>): string {
   const lines = currentText.split('\n')
   for (let index = hunks.length - 1; index >= 0; index--) {
@@ -106,8 +105,8 @@ async function writeAtomically(filePath: string, text: string): Promise<void> {
     await fs.rename(temp, filePath)
   } catch (error) {
     await fs.unlink(temp).catch(() => {})
-    // Windows can refuse rename over an existing file; the content is already
-    // fully validated by this point, so fall back to an in-place write.
+    // Windows 可能拒绝覆盖已有文件的 rename；此时内容已
+    // 完全校验，因此回退到就地写入。
     await fs.writeFile(filePath, text, { mode: stats.mode })
     if (!(error instanceof Error)) throw error
   }
@@ -144,7 +143,7 @@ export async function applyDocumentHunks(
   return { hash, applied: acceptedSet.size }
 }
 
-/** Keep the current content as the new baseline (dismiss the review). */
+/** 把当前内容作为新基线（放弃审核）。 */
 export async function saveCurrentBaseline(filePath: string): Promise<{ hash: string }> {
   const current = await readReviewable(filePath)
   if (!current) throw new Error('File is too large for edit review')

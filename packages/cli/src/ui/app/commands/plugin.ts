@@ -1,15 +1,13 @@
-// @x-code-cli/cli — /plugin slash command handler family.
+// @x-code-cli/cli — /plugin 斜杠命令处理器族。
 //
-// Extracted from App.tsx as a single factory that closes over the deps the
-// plugin subcommands need: the four sub-registries (plugin / skill / sub-
-// agent / command), the MCP registry (for restart-in-same-pass refresh),
-// the hook bus, the prompt-cache invalidator, and the skill-registry
-// version bumper (so /help and tab completion recompute).
+// 从 App.tsx 抽出来的单一工厂，闭包捕获插件子命令需要的依赖：四个子注册表
+// （plugin / skill / sub-agent / command）、MCP 注册表（供同趟重启刷新用）、
+// hook 总线、提示缓存失效器，以及技能注册表版本递增器（让 /help 和 tab 补全
+// 重新计算）。
 //
-// Subcommands: list / info / install / uninstall / enable / disable /
-// search / update / refresh / doctor / marketplace (with its own
-// add / remove / list / refresh / info sub-tree). Unknown sub prints
-// the usage hint.
+// 子命令：list / info / install / uninstall / enable / disable / search /
+// update / refresh / doctor / marketplace（自带 add / remove / list /
+// refresh / info 子树）。未知子命令打印用法提示。
 import {
   addKnownMarketplace,
   clearPluginEntry,
@@ -43,10 +41,9 @@ export interface PluginCommandDeps {
   bumpSkillRegistryVersion: () => void
 }
 
-/** Parse a `/plugin enable|disable` argument string, recognizing the
- *  shared `--scope=user|project` / `-s=user|project` flag (same parser
- *  shape as parseSkillScopeFlag). Default scope = 'user' so terse
- *  invocations stay terse. */
+/** 解析 `/plugin enable|disable` 参数字符串，识别共享的
+ *  `--scope=user|project` / `-s=user|project` 标志（与 parseSkillScopeFlag
+ *  解析器同形）。默认 scope = 'user'，让简短调用保持简短。 */
 function parsePluginScopeFlag(arg: string): { id: string; scope: PluginScope } {
   const { value, scope } = parseScopeFlag(arg, 'user')
   return { id: value, scope }
@@ -61,11 +58,11 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
       addCommandMessage(text, 'Plugin system is disabled for this session (`--no-plugins`).')
       return
     }
-    // Optional filters: --enabled (only on), --disabled (only off), no flag = all.
+    // 可选过滤：--enabled（只显示开启）、--disabled（只显示关闭）、无标志 = 全部。
     const tokens = raw.trim().split(/\s+/).filter(Boolean)
     let filter: 'all' | 'enabled' | 'disabled' = 'all'
     for (const t of tokens) {
-      // Skip the subcommand word itself ('list') if present
+      // 如果存在，跳过子命令词本身（'list'）
       if (t === 'list') continue
       if (t === '--enabled') filter = 'enabled'
       else if (t === '--disabled') filter = 'disabled'

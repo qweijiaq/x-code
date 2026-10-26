@@ -1,27 +1,26 @@
-// @x-code-cli/core — Sub-agent type definitions
+// @x-code-cli/core — 子代理类型定义
 import type { TokenUsage } from '../../types/index.js'
 
 export interface SubAgentDefinition {
   name: string
   description: string
-  /** Markdown body = system prompt for the sub-agent */
+  /** Markdown 正文 = 子代理的系统提示词 */
   prompt: string
-  /** Allowed tools. Omit or `['*']` = every available tool except `task`. */
+  /** 允许的工具。省略或 `['*']` = 除 `task` 外的所有可用工具。 */
   tools?: string[]
-  /** Tools to explicitly deny (applied after `tools`) */
+  /** 显式拒绝的工具（在 `tools` 之后应用） */
   disallowedTools?: string[]
-  /** Model override (e.g. "anthropic:claude-sonnet-5"). Omit = inherit parent */
+  /** 模型覆盖（如 "anthropic:claude-sonnet-5"）。省略 = 继承父级 */
   model?: string
-  /** Max agentic turns before forced stop */
+  /** 强制停止前的最大代理轮数 */
   maxTurns: number
-  /** Shell commands to deny (keyword matching). Only relevant when shell is in tools */
+  /** 要拒绝的 shell 命令（关键词匹配）。仅当 tools 里含 shell 时才有意义 */
   shellRestrictions?: string[]
-  /** Deny every shell command that is not classified read-only. */
+  /** 拒绝所有未被归类为只读的 shell 命令。 */
   shellReadOnlyOnly?: boolean
-  /** Where this definition came from */
+  /** 该定义来自哪里 */
   source: 'built-in' | 'user' | 'project'
-  /** When this sub-agent comes from a plugin contribution, the owning
-   *  plugin's id (`name@marketplace`). */
+  /** 当该子代理来自插件贡献时，所属插件的 id（`name@marketplace`）。 */
   pluginId?: string
 }
 

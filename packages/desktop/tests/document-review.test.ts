@@ -68,7 +68,7 @@ describe('document review', () => {
     expect(content).toContain('omega')
     expect(content).not.toContain('OMEGA')
 
-    // Baseline now matches the applied content, so the review is clean.
+    // 基线此时已匹配应用后的内容，因此审查是干净的。
     expect(await documentDiff(file)).toBeNull()
   })
 

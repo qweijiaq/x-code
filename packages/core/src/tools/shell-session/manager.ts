@@ -132,9 +132,9 @@ function terminationDisposition(result: ProcessTerminationResult): ShellTerminat
   return result.failure ? 'failed' : 'still-running'
 }
 
-/** A non-zero exit is a normal command result (`grep` with no match,
- *  `command -v` not found, a failing test). Only transport/spawn/timeout/
- *  signal failures are tool errors; the exit code stays in the payload. */
+/** 非零退出是正常的命令结果（`grep` 无匹配、`command -v` 找不到、一次失败的
+ *  测试）。只有 transport/spawn/timeout/signal 故障才是工具错误；退出码
+ *  保留在载荷里。 */
 export function shellTransportError(session: {
   spawnOutcome?: string
   timedOut?: boolean
@@ -241,10 +241,9 @@ export class UnifiedShellSessionManager implements ShellSessionController {
       )
     }
 
-    // No await is allowed between this arbitration check and the activation
-    // commit below. A concurrent dispose either marks the starting session
-    // before this point (so we clean it up without publishing started), or
-    // observes the fully activated session and terminates it normally.
+    // 这个仲裁检查和下面的 activation 提交之间不允许任何 await。并发 dispose
+    // 要么在此点之前标记正在启动的会话（于是我们清理它而不发布 started），
+    // 要么观察到已完全激活的会话并正常终止它。
     if (!this.acceptingStarts || session.managerDrainingReason !== undefined) {
       return this.settleFailedSpawn(
         session,
@@ -985,10 +984,9 @@ export class UnifiedShellSessionManager implements ShellSessionController {
             }
           }
 
-          // Once the tree is confirmed, deadline and abort no longer describe
-          // a live background process. Waiting only on composite completion
-          // lets stream EOF or the bounded trailing-output grace finish without
-          // a permanently resolved wake source spinning the microtask queue.
+          // 一旦进程树确认退出，deadline 和 abort 就不再描述一个存活的后台
+          // 进程。只等 composite completion，就能让流 EOF 或有界的尾部输出
+          // 宽限期结束，而不让一个永久已决议的唤醒源空转微任务队列。
           if (session.treeConfirmedExited) {
             await session.completion.promise
             continue

@@ -1,12 +1,11 @@
 /**
- * Local model discovery for desktop users running Ollama or LM Studio.
+ * 为运行 Ollama 或 LM Studio 的桌面用户做本地模型发现。
  *
- * Rather than adding providers to core's catalog (which powers env-key
- * detection and the CLI's picker), the desktop runtime discovers local
- * servers at startup and wraps the core registry: ids such as
- * `ollama:llama3.2` and `lmstudio:qwen2.5-coder-7b` resolve to an
- * OpenAI-compatible client pointed at the local server. Unknown ids fall
- * through to the core registry unchanged.
+ * 与其给核心 catalog 增加 provider（它驱动 env-key 检测和 CLI 的选择器），
+ * 桌面运行时在启动时发现本地服务器并包装核心注册表：诸如
+ * `ollama:llama3.2` 和 `lmstudio:qwen2.5-coder-7b` 这样的 id 会解析为
+ * 指向本地服务器的 OpenAI 兼容客户端。未知 id
+ * 原样落到核心注册表。
  */
 import type { LanguageModel } from 'ai'
 
@@ -81,8 +80,8 @@ async function probeLmStudio(): Promise<LocalModelInfo[]> {
     }))
 }
 
-/** Probe both local servers in parallel. Errors (not running, timeout) are
- *  treated as "no models" so startup never fails because of a local server. */
+/** 并行探测两个本地服务器。错误（未运行、超时）视为
+ *  「无模型」，这样启动绝不会因本地服务器而失败。 */
 export async function discoverLocalModels(): Promise<LocalModelInfo[]> {
   const results = await Promise.allSettled([probeOllama(), probeLmStudio()])
   const models: LocalModelInfo[] = []
@@ -114,8 +113,8 @@ function createLocalModel(id: string): LanguageModel | null {
   return createLocalOpenAICompatibleModel(provider, info.baseUrl, model)
 }
 
-/** Wrap the core registry so `<local>:<model>` ids resolve to local servers.
- *  Every other id is delegated unchanged (and still throws when unavailable). */
+/** 包装核心注册表，使 `<local>:<model>` id 解析到本地服务器。
+ *  其他所有 id 原样委托（不可用时仍会抛出）。 */
 export function withLocalModels(base: CoreModelRegistry): CoreModelRegistry {
   return new Proxy(base, {
     get(target, property, receiver) {
@@ -127,7 +126,7 @@ export function withLocalModels(base: CoreModelRegistry): CoreModelRegistry {
   }) as CoreModelRegistry
 }
 
-/** Whether a model id belongs to a discovered local server. */
+/** 判断模型 id 是否属于已发现的本地服务器。 */
 export function isLocalModelId(id: string): boolean {
   return discovered.has(id)
 }

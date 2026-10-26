@@ -1,9 +1,8 @@
-// @x-code-cli/cli — Shell detection and persistence-command helpers.
+// @x-code-cli/cli — Shell 检测与持久化命令辅助函数。
 //
-// Shell detection is needed by multiple message-printing functions in
-// index.ts. The formatPersistCommand helper extracts the copy-pasted
-// switch(shell) block that appeared identically in printNoApiKeyMessage
-// and printNoWebSearchKeyHint.
+// index.ts 中多个打印消息的函数都需要 Shell 检测。formatPersistCommand
+// 辅助函数提取了那个可复制的 switch(shell) 块——它此前一字不差地同时出现在
+// printNoApiKeyMessage 和 printNoWebSearchKeyHint 中。
 
 export type ShellType = 'powershell' | 'cmd' | 'bash' | 'zsh' | 'fish' | 'sh'
 
@@ -20,13 +19,12 @@ export function detectShell(): ShellType {
 }
 
 /**
- * Return a copy-pasteable shell command that persists an environment
- * variable. The returned string is the command only (no prefix, no
- * newline) — callers wrap it in chalk color and surrounding prose.
+ * 返回一条可复制粘贴的 shell 命令，用于持久化一个环境变量。返回的字符串只
+ * 是命令本身（无前缀、无换行）——调用方用 chalk 颜色和周围的文字来包装它。
  *
- *   envVar        — e.g. "ANTHROPIC_API_KEY"
- *   exampleValue  — e.g. "sk-ant-..."
- *   shell         — result from detectShell()
+ *   envVar        — 例如 "ANTHROPIC_API_KEY"
+ *   exampleValue  — 例如 "sk-ant-..."
+ *   shell         — detectShell() 的结果
  */
 export function formatPersistCommand(envVar: string, exampleValue: string, shell: ShellType): string {
   switch (shell) {

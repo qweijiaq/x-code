@@ -1,10 +1,8 @@
-// @x-code-cli/core — Shared minimal YAML frontmatter parser
+// @x-code-cli/core — 共享的最小 YAML frontmatter 解析器
 //
-// Used by commands, skills, and sub-agent loaders. Handles the subset
-// we need without a dependency on gray-matter: string scalars, number
-// scalars, inline/flow arrays, folded continuation lines, quote stripping,
-// and comment lines. Each consumer validates the parsed data further with
-// Zod or domain-specific logic.
+// 供命令、技能和子 agent 加载器使用。在不依赖 gray-matter 的情况下处理
+// 我们所需的子集：字符串标量、数字标量、内联/流式数组、折叠续行、引号剥离
+// 以及注释行。每个使用方都会再用 Zod 或领域专用逻辑进一步校验解析结果。
 
 export interface FrontmatterResult {
   data: Record<string, unknown>
@@ -12,19 +10,18 @@ export interface FrontmatterResult {
 }
 
 export interface ParseFrontmatterOptions {
-  /** When true, parse `[a, b]` as string arrays and digit-only values as
-   *  numbers. When false (default), all values remain strings. Sub-agents
-   *  need this for `tools: [...]` and `maxTurns: 10`; commands and skills
-   *  don't. */
+  /** 为 true 时，把 `[a, b]` 解析为字符串数组、把纯数字值解析为数字。
+   *  为 false（默认）时所有值保持字符串。子 agent 需要它来解析
+   *  `tools: [...]` 和 `maxTurns: 10`；命令和技能则不需要。 */
   coerceTypes?: boolean
-  /** Memory topics mode: block lists (`key:` followed by indented `- item`
-   *  lines), `true`/`false` boolean scalars, `[a, b]` inline arrays, and
-   *  strict validation — unrecognized lines throw instead of being skipped. */
+  /** 记忆主题模式：块列表（`key:` 后跟缩进的 `- item` 行）、`true`/`false`
+   *  布尔标量、`[a, b]` 内联数组，以及严格校验——无法识别的行会抛出而不是被
+   *  跳过。 */
   blockLists?: boolean
 }
 
-/** Scalar parsing for blockLists mode: booleans, JSON-style double quotes,
- *  and YAML-style single quotes (escaped as ''). */
+/** blockLists 模式下的标量解析：布尔值、JSON 风格双引号，以及 YAML 风格
+ *  单引号（转义为 ''）。 */
 function parseBlockListScalar(value: string): string | boolean {
   const trimmed = value.trim()
   if (trimmed === 'true') return true
@@ -40,15 +37,15 @@ function parseBlockListScalar(value: string): string | boolean {
   return trimmed
 }
 
-/** Parse a `---` delimited YAML frontmatter block from the start of a
- *  markdown file. Returns null if no valid fence is found.
+/** 从 markdown 文件开头解析以 `---` 分隔的 YAML frontmatter 块。
+ *  若未找到有效栅栏则返回 null。
  *
- *  Supports:
- *  - Indented continuation lines (folded into previous line)
- *  - Inline arrays: `key: [a, b, c]` (when coerceTypes=true)
- *  - Integer scalars: `key: 42` (when coerceTypes=true)
- *  - Quoted string scalars (single or double)
- *  - Comment lines (lines starting with `#`) */
+ *  支持：
+ *  - 缩进续行（折叠进上一行）
+ *  - 内联数组：`key: [a, b, c]`（当 coerceTypes=true 时）
+ *  - 整数标量：`key: 42`（当 coerceTypes=true 时）
+ *  - 带引号的字符串标量（单引号或双引号）
+ *  - 注释行（以 `#` 开头的行） */
 export function parseFrontmatter(raw: string, options?: ParseFrontmatterOptions): FrontmatterResult | null {
   const coerce = options?.coerceTypes ?? false
   const blockLists = options?.blockLists ?? false

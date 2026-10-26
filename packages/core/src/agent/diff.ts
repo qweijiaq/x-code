@@ -1,19 +1,19 @@
-// @x-code-cli/core — Edit-tool diff payload.
+// @x-code-cli/core — Edit 工具的 diff 负载。
 //
-// Computed by tool-execution after a successful writeFile / edit, and
-// emitted to the UI via AgentCallbacks.onFileEdit so the scrollback row
-// can render a colored diff block under the tool bullet (matching
-// Claude Code's `Update(file)` → `Added X lines, removed Y` view).
+// 由 tool-execution 在 writeFile / edit 成功写入后计算，并通过
+// AgentCallbacks.onFileEdit 发给 UI，这样 scrollback 行就能在
+// 工具条目下方渲染彩色 diff 块（对应 Claude Code 的
+// `Update(file)` → `Added X lines, removed Y` 视图）。
 //
-// The model still sees only the short result string from executeWriteTool
-// (`File edited: ...`) — the diff payload is a UI-side side channel and
-// never round-trips through state.messages.
+// 模型看到的仍然是 executeWriteTool 返回的短结果字符串
+// （`File edited: ...`）——diff 负载只是 UI 侧的旁路通道，
+// 绝不会经 state.messages 往返。
 import { structuredPatch } from 'diff'
 
-/** One contiguous diff hunk. Mirrors `diff` package's `StructuredPatchHunk`
- *  shape but redefined here so consumers don't need a `diff` peer dep just
- *  to type the payload. Each entry in `lines` carries a leading sigil
- *  character: `' '` (context), `'+'` (added), `'-'` (removed). */
+/** 一个连续的 diff hunk。镜像 `diff` 包的 `StructuredPatchHunk`
+ *  结构，但在此处重新定义，这样消费方无需为类型化负载而引入
+ *  `diff` 这个 peer 依赖。`lines` 中的每一项都带一个前导 sigil
+ *  字符：`' '`（上下文）、`'+'`（新增）、`'-'`（删除）。 */
 export interface EditDiffHunk {
   oldStart: number
   oldLines: number
@@ -27,34 +27,33 @@ export interface EditDiffPayload {
   hunks: EditDiffHunk[]
   additions: number
   removals: number
-  /** True when the file did not exist before the write — used by the UI to
-   *  flip the header from "Added X lines, removed Y" to "Created N lines"
-   *  and render a content preview instead of an (empty) hunk list. */
+  /** 文件在写入前不存在时为 true——UI 用它把标题从
+   *  "Added X lines, removed Y" 切换为 "Created N lines"，
+   *  并渲染内容预览，而不是（空的）hunk 列表。 */
   isCreate: boolean
-  /** Full new file content. Populated for create payloads so the UI can
-   *  render the first ~10 lines as a preview under the "Created N lines"
-   *  header (matching Claude Code's FileWriteToolCreatedMessage). Left
-   *  undefined for update payloads — there's already a hunk list to show. */
+  /** 完整的文件新内容。为 create 负载填充，这样 UI 能在
+   *  "Created N lines" 标题下把前约 10 行渲染为预览
+   *  （对应 Claude Code 的 FileWriteToolCreatedMessage）。对 update 负载
+   *  保持 undefined——已经有 hunk 列表可展示了。 */
   content?: string
-  /** Snapshot used by the desktop "revert this edit" action. Only attached
-   *  when the file is small enough to hold in the event stream; omitted for
-   *  enormous files, in which case the UI disables per-edit revert. */
+  /** 桌面端 "revert this edit" 动作使用的快照。只有当文件足够小、
+   *  能放进事件流时才附带；对超大文件省略，此时 UI 会禁用
+   *  针对单次编辑的 revert。 */
   beforeContent?: string
   afterContent?: string
 }
 
 const CONTEXT_LINES = 3
 const DIFF_TIMEOUT_MS = 5_000
-/** Cap for the per-edit revert snapshots. Larger files stay editable but
- *  lose the one-click revert (the UI hides the action). */
+/** 单次编辑 revert 快照的上限。更大的文件仍可编辑，但会失去
+ *  一键 revert（UI 会隐藏该动作）。 */
 const MAX_REVERT_SNAPSHOT_CHARS = 2_000_000
 
 /**
- * Build a structured patch + counts for a single file change. Returns
- * `null` when no actual change was made (writeFile with identical content)
- * so callers can elide the diff display entirely. For brand-new files pass
- * `oldContent: null` — the helper still computes a hunk-less payload with
- * `additions = lineCount(newContent)`.
+ * 为单个文件变更构建结构化 patch + 计数。当实际上没有发生任何
+ * 变化（writeFile 内容完全相同）时返回 `null`，这样调用方可以
+ * 完全省略 diff 显示。对全新文件传入 `oldContent: null`——该辅助函数
+ * 仍会计算出一个无 hunk 的负载，其 `additions = lineCount(newContent)`。
  */
 export function computeEditDiff(
   filePath: string,
@@ -80,10 +79,9 @@ export function computeEditDiff(
     timeout: DIFF_TIMEOUT_MS,
   })
 
-  // structuredPatch returns `false`-y on timeout. The change really did
-  // happen on disk; we just don't have a hunk view, so fall back to a
-  // counts-only summary derived line-by-line. Better than dropping the
-  // payload (UI would silently skip the diff block).
+  // 超时时 structuredPatch 返回假值。变更确实已落到磁盘；
+  // 我们只是拿不到 hunk 视图，所以回退为逐行推导的纯计数摘要。
+  // 这比丢弃负载更好（否则 UI 会静默跳过 diff 块）。
   const hunks: EditDiffHunk[] = result?.hunks ? result.hunks.map(toHunk) : []
 
   let additions = 0
@@ -96,10 +94,10 @@ export function computeEditDiff(
   }
 
   if (additions === 0 && removals === 0 && hunks.length === 0) {
-    // Timed-out diff with no hunks — count lines manually so the header
-    // still makes sense. Approximation: max(0, newLines - oldLines) added,
-    // and max(0, oldLines - newLines) removed. Not accurate for a pure
-    // replace, but honest given we couldn't compute a real diff.
+    // 超时且没有 hunk——手动按行计数，让标题仍然有意义。
+    // 近似：新增 max(0, newLines - oldLines) 行，
+    // 删除 max(0, oldLines - newLines) 行。对纯替换不够精确，
+    // 但在无法计算真实 diff 的情况下是诚实的。
     const oldLines = countLines(oldContent)
     const newLines = countLines(newContent)
     additions = Math.max(0, newLines - oldLines)
@@ -133,9 +131,8 @@ function toHunk(h: {
   }
 }
 
-/** Count visible lines, treating a single trailing `\n` as a terminator
- *  (matches how editors number lines: a 3-line file is 3 lines whether or
- *  not it ends in a newline). */
+/** 统计可见行数，把单个尾部 `\n` 视为终止符
+ *  （与编辑器给行编号的方式一致：3 行文件无论是否以换行结尾都算 3 行）。 */
 function countLines(s: string): number {
   if (s.length === 0) return 0
   const parts = s.split('\n')

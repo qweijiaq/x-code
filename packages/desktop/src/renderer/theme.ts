@@ -1,5 +1,5 @@
-// Theme preference: light, dark, or follow the OS. The resolved value is
-// written to <html data-theme>, which the ink-wash CSS variables key off.
+// 主题偏好：浅色、深色或跟随系统。解析后的值写入 <html data-theme>，
+// ink-wash 的 CSS 变量以此为依据。
 export type ThemeSetting = 'light' | 'dark' | 'system'
 
 const STORAGE_KEY = 'xcode.theme'
@@ -26,11 +26,11 @@ export function applyTheme(setting: ThemeSetting): void {
   try {
     localStorage.setItem(STORAGE_KEY, setting)
   } catch {
-    // Preference is still applied for this session.
+    // 本次会话仍然应用该偏好。
   }
 }
 
-/** Apply the stored theme before the first paint (call from main.tsx). */
+/** 在首次绘制前应用存储的主题（从 main.tsx 调用）。 */
 export function initTheme(): ThemeSetting {
   const setting = storedTheme()
   const root = document.documentElement
@@ -39,8 +39,8 @@ export function initTheme(): ThemeSetting {
   return setting
 }
 
-/** Subscribe to OS theme changes while the setting is `system`. Returns an
- *  unsubscribe function. */
+/** 当设置为 `system` 时订阅系统主题变化。返回一个
+ *  取消订阅函数。 */
 export function watchSystemTheme(onChange: () => void): () => void {
   const media = window.matchMedia(DARK_QUERY)
   media.addEventListener('change', onChange)

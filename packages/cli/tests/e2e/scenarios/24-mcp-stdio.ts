@@ -2,13 +2,11 @@ import path from 'node:path'
 
 import type { Scenario } from '../framework/types.js'
 
-// Minimal stdio MCP server, inlined as source so the scenario is
-// self-contained (no cross-package file references). Implements the
-// handful of methods McpClient.connect → listTools → callTool needs;
-// the rest are answered with method-not-found so the SDK falls back.
-// The `greet` tool stamps an opaque marker into its response so we can
-// assert from the assistant text that the call actually round-tripped
-// — a plain "Hello, World!" could be hallucinated.
+// 最小化的 stdio MCP 服务器，以内联源码形式呈现，使场景自包含
+//（无跨包文件引用）。实现了 McpClient.connect → listTools → callTool
+// 所需的少数方法；其余以 method-not-found 应答，让 SDK 回退。
+// `greet` 工具在其响应中打上不透明标记，这样我们可以从 assistant 文本
+// 断言调用确实真的往返成功了 — 而一句普通的 "Hello, World!" 可能被模型幻觉出来。
 const MOCK_SERVER_SRC = String.raw`#!/usr/bin/env node
 let buf = ''
 process.stdin.setEncoding('utf-8')
@@ -51,10 +49,9 @@ const scenario: Scenario = {
   id: '24-mcp-stdio',
   name: 'MCP stdio: model calls mock__greet and quotes the server-stamped marker',
   async run(ctx) {
-    // 1. Write the inline mock MCP server into the tmpDir and the user
-    //    config that points to it. The harness already isolates
-    //    X_CODE_HOME under <tmpDir>/.x-code-home, so the same scenario
-    //    can run in parallel without trampling on the real ~/.x-code.
+    // 1. 把内联 mock MCP 服务器写入 tmpDir，以及指向它的用户配置。
+    //    harness 已经把 X_CODE_HOME 隔离在 <tmpDir>/.x-code-home 下，
+    //    所以同一场景可并行运行而不会踩到真实的 ~/.x-code。
     await ctx.writeFile('mock-server.mjs', MOCK_SERVER_SRC)
     const serverPath = path.join(ctx.tmpDir, 'mock-server.mjs')
 
@@ -63,7 +60,7 @@ const scenario: Scenario = {
       '.x-code-home/config.json',
       JSON.stringify(
         {
-          // X_CODE_MODEL is set by the harness, so we don't need `model`.
+          // X_CODE_MODEL 由 harness 设置，所以这里无需 `model`。
           mcpServers: {
             mock: {
               command: process.execPath,
@@ -76,9 +73,9 @@ const scenario: Scenario = {
       ),
     )
 
-    // 2. Run the CLI. --trust short-circuits the per-tool ask prompt so
-    //    the model can call mock__greet without onAskPermission
-    //    blocking print-mode (no UI to answer the dialog).
+    // 2. 运行 CLI。--trust 绕过每个工具的询问提示，让模型能调用
+    //    mock__greet，而 onAskPermission 不会阻塞 print 模式
+    //   （print 模式没有 UI 可应答对话框）。
     const r = await ctx.runCli(
       [
         'There is an MCP server named "mock" connected. It exposes a tool',
@@ -91,8 +88,8 @@ const scenario: Scenario = {
 
     ctx.expect.exitCode(r, 0)
     ctx.expect.toolCalled(r, 'mock__greet', { name: 'World' })
-    // The marker is a random-looking token the server stamps in. Models
-    // that didn't actually wait for the tool result can't reproduce it.
+    // 标记是服务器打入的随机外观 token。没有真正等待工具结果的
+    // 模型无法复现它。
     ctx.expect.assistantMentions(r, /MCP_MARKER_AB12CD34/)
     ctx.expect.noToolErrors(r)
   },

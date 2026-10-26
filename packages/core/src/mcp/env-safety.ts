@@ -1,44 +1,42 @@
-// @x-code-cli/core — Reject env vars that are runtime code-injection vectors
+// @x-code-cli/core — 拒绝作为运行时代码注入载体的环境变量
 //
-// MCP stdio servers inherit an `env` map straight through to spawn(). That
-// map can come from three sources:
-//   1. the user typing `xc mcp add --env KEY=VAL`
-//   2. the project / user mcp.json file
-//   3. a plugin manifest declaring its own mcpServers
+// MCP stdio 服务器会把 `env` 映射直接传给 spawn()。这个映射可能来自三个
+// 来源：
+//   1. 用户输入 `xc mcp add --env KEY=VAL`
+//   2. 项目 / 用户的 mcp.json 文件
+//   3. 声明自己 mcpServers 的插件 manifest
 //
-// (3) is the one this module exists to defend. Plugins run with the trust
-// the user gave them at install time, but a key like `NODE_OPTIONS=--require
-// ./evil.js` would let a plugin turn any node-based MCP server into
-// arbitrary code execution the next time it starts — escalating from
-// "manifest install" to "RCE under the user's account". The same trick
-// works on Linux (LD_PRELOAD) and macOS (DYLD_INSERT_LIBRARIES), and on
-// Python/Perl/Ruby runtimes via their respective *STARTUP / *OPT names.
+// (3) 正是本模块存在的目的。插件以用户安装时授予的信任运行，但像
+// `NODE_OPTIONS=--require ./evil.js` 这样的键会让插件在下一次启动任何
+// 基于 node 的 MCP 服务器时把它变成任意代码执行——从"manifest 安装"升级
+// 为"以用户账户执行 RCE"。同样的伎俩在 Linux（LD_PRELOAD）和 macOS
+// （DYLD_INSERT_LIBRARIES）上有效，也通过各自 *STARTUP / *OPT 名字对
+// Python/Perl/Ruby 运行时有效。
 //
-// We sit at the spawn boundary (registry.connectOneServer) so every source
-// is covered by one check, not just the CLI parser.
+// 我们位于 spawn 边界（registry.connectOneServer），因此所有来源都由同一个
+// 检查覆盖，而不只是 CLI 解析器。
 //
-// This is a denylist, not an allowlist: legitimate MCP servers need to
-// accept arbitrary env keys for API tokens / app config, so an allowlist
-// would be unworkable. The denylist is short and targeted at names whose
-// only legitimate purpose is "load this code on start".
+// 这是黑名单而非白名单：合法的 MCP 服务器需要接受任意 env 键来传 API
+// token / 应用配置，所以白名单不可行。黑名单很短，且只针对那些唯一合法
+// 用途就是"启动时加载代码"的名字。
 
-/** Env names that runtimes interpret as "load this code on start".
- *  Compared case-insensitively (see {@link assertSafeEnv}). */
+/** 运行时解释为"启动时加载这段代码"的环境变量名。
+ *  比较时忽略大小写（见 {@link assertSafeEnv}）。 */
 const DANGEROUS_ENV_KEYS = new Set<string>([
   // Node
   'NODE_OPTIONS',
-  // Linux dynamic linker
+  // Linux 动态链接器
   'LD_PRELOAD',
   'LD_LIBRARY_PATH',
   'LD_AUDIT',
-  // macOS dynamic linker
+  // macOS 动态链接器
   'DYLD_INSERT_LIBRARIES',
   'DYLD_LIBRARY_PATH',
   'DYLD_FRAMEWORK_PATH',
   'DYLD_FALLBACK_LIBRARY_PATH',
   'DYLD_FALLBACK_FRAMEWORK_PATH',
-  // Shell init / per-command hooks. BASH_ENV runs on non-interactive bash;
-  // ENV runs on POSIX sh; PROMPT_COMMAND on every interactive prompt.
+  // Shell 初始化 / 每条命令的钩子。BASH_ENV 在非交互 bash 中运行；
+  // ENV 在 POSIX sh 中运行；PROMPT_COMMAND 在每个交互提示符上运行。
   'BASH_ENV',
   'ENV',
   'PROMPT_COMMAND',
@@ -65,12 +63,11 @@ export class UnsafeEnvError extends Error {
   }
 }
 
-/** Throw {@link UnsafeEnvError} if `env` contains a denylisted key.
+/** 若 `env` 包含黑名单键则抛出 {@link UnsafeEnvError}。
  *
- *  Comparison is case-insensitive: Windows env names are case-insensitive
- *  at the OS level, so rejecting `NODE_OPTIONS` while allowing
- *  `Node_Options` would be theatre. POSIX env names are case-sensitive but
- *  no legitimate config uses non-uppercase variants of these keys. */
+ *  比较忽略大小写：Windows 环境变量名在 OS 层面大小写不敏感，所以拒绝
+ *  `NODE_OPTIONS` 却放行 `Node_Options` 只是做戏。POSIX 环境变量名大小写
+ *  敏感，但没有任何合法配置会使用这些键的非大写变体。 */
 export function assertSafeEnv(env: Record<string, string> | undefined): void {
   if (!env) return
   for (const k of Object.keys(env)) {

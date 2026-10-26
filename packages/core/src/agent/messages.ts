@@ -1,4 +1,4 @@
-// @x-code-cli/core — Message types and helpers
+// @x-code-cli/core — 消息类型与辅助函数
 import type { ModelMessage } from 'ai'
 
 import { errorMessage } from '../utils.js'
@@ -8,14 +8,12 @@ export interface ToolImage {
   mediaType: string
 }
 
-/** Create a tool result message. When `images` are supplied (e.g. browser
- *  screenshots from an MCP tool) the output switches to the multimodal
- *  `content` form so a vision-capable model actually sees them; the text
- *  stays as a leading text part. AI SDK v7 uses tagged `file` parts for
- *  inline base64 images in tool results; text-only providers get the media
- *  stripped/OCR'd upstream by downgradeBinaryPartsForProvider. The
- *  plain-string path is unchanged for the overwhelmingly-common text-only
- *  result. */
+/** 创建工具结果消息。当提供了 `images`（例如来自 MCP 工具的浏览器
+ *  截图）时，输出切换为多模态的 `content` 形式，让具备视觉能力的模型
+ *  真正看到它们；文本保留为前导的 text part。AI SDK v7 用带标签的
+ *  `file` part 承载工具结果中的内联 base64 图片；纯文本提供商则由
+ *  downgradeBinaryPartsForProvider 在上游把媒体剥离/OCR 掉。
+ *  对于占绝大多数的纯文本结果，纯字符串路径保持不变。 */
 export function toolResultMessage(
   toolCallId: string,
   toolName: string,
@@ -59,9 +57,9 @@ export function structuredToolResultMessage(toolCallId: string, toolName: string
   }
 }
 
-/** Reattach tool-returned media for Chat Completions providers whose `tool`
- *  role is text-only. The provider converter turns an image FilePart into an
- *  image URL on the wire. */
+/** 为 `tool` 角色是纯文本的 Chat Completions 提供商重新附着
+ *  工具返回的媒体。提供商转换器会把 image FilePart 转成
+ *  线上的 image URL。 */
 export function toolMediaUserMessage(images: readonly ToolImage[]): ModelMessage {
   return {
     role: 'user',
@@ -76,20 +74,19 @@ export function toolMediaUserMessage(images: readonly ToolImage[]): ModelMessage
   }
 }
 
-/** Standard error string returned to the model from a tool. The "Error: "
- *  prefix is load-bearing — handleToolCall checks for it via
- *  isToolErrorString to flip the scrollback line to red, and the model
- *  itself learns to read it as a failure marker. */
+/** 从工具返回给模型的标准错误字符串。"Error: " 前缀是承重的——
+ *  handleToolCall 通过 isToolErrorString 检查它，把 scrollback 行
+ *  翻转为红色，而模型本身也学会了把它读作失败标记。 */
 export function toolErrorString(message: string): string {
   return `Error: ${message}`
 }
 
-/** Wrap a thrown / unknown value into the standard tool-error string. */
+/** 把抛出的 / 未知的值包装成标准工具错误字符串。 */
 export function toolErrorFromUnknown(err: unknown): string {
   return toolErrorString(errorMessage(err))
 }
 
-/** Match the result-string prefix produced by toolErrorString. */
+/** 匹配 toolErrorString 产生的结果字符串前缀。 */
 export function isToolErrorString(value: string): boolean {
   return value.startsWith('Error:')
 }

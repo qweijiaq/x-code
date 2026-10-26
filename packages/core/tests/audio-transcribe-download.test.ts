@@ -176,7 +176,7 @@ describe('Whisper first-time setup', () => {
     await expect(transcribeAudio(audioPath)).resolves.toMatch(/expected 4/i)
     await expect(transcribeAudio(audioPath)).resolves.toMatch(/expected 4/i)
 
-    // Each transcription tries huggingface.co and then the mirror fallback.
+    // 每次转录先尝试 huggingface.co，然后回落到镜像。
     expect(fetchMock).toHaveBeenCalledTimes(4)
     await expect(fs.access(modelFile())).rejects.toThrow()
     expect(runner.runWhisperTranscription).not.toHaveBeenCalled()

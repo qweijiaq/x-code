@@ -1,10 +1,8 @@
 import { countSpillRiskRows } from '../src/ui/chat-input/text-helpers.js'
 
-// Spill-heal accounting: lines whose rendered tail lands at or near the
-// right edge may wrap one row later than countContentRows predicted on
-// some terminals (delayed-wrap phantom rows, wide/ambiguous width
-// disagreement). The MINIMAL-WRITE commit path force-repaints that many
-// top frame rows so spilled characters can't survive inside the frame.
+// Spill-heal 修正：渲染尾部落在右边缘附近的行，在某些终端上可能比
+// countContentRows 预测的晚一行换行（延迟换行的幽灵行、宽/模糊宽度不一致）。
+// MINIMAL-WRITE 提交路径会强制重绘等量的顶部帧行，避免溢出的字符残留在帧内。
 
 const COLS = 80
 
@@ -25,7 +23,7 @@ describe('countSpillRiskRows', () => {
   })
 
   it('measures CJK lines by visual width, not code-unit length', () => {
-    // 37 wide chars = 74 cells → clear of the edge; 40 chars = 80 → exact fit.
+    // 37 个宽字符 = 74 格 → 远离边缘；40 字符 = 80 → 恰好贴合。
     expect(countSpillRiskRows('冒'.repeat(37), COLS)).toBe(0)
     expect(countSpillRiskRows('冒'.repeat(40), COLS)).toBe(1)
   })

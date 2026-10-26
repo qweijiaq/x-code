@@ -162,9 +162,9 @@ describe('PTY shell provider', () => {
     }
   }, 20_000)
 
-  // A Windows Job must keep tracking descendants after the ConPTY root exits.
-  // POSIX PTYs instead use a process-group boundary and terminal close may reap
-  // that group with SIGHUP, so the equivalent contract is covered above.
+  // Windows Job 必须在 ConPTY 根进程退出后继续跟踪后代。
+  // 相比之下 POSIX PTY 使用进程组边界，终端关闭可能用 SIGHUP
+  // 回收该进程组，因此等价契约已在上方覆盖。
   it.runIf(process.platform === 'win32')(
     'does not confirm a PTY tree when the root exits before a detached descendant',
     async () => {

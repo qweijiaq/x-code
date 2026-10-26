@@ -1,4 +1,4 @@
-// @x-code-cli/core — grep tool (content search via ripgrep)
+// @x-code-cli/core — grep 工具（经 ripgrep 做内容搜索）
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
@@ -91,13 +91,13 @@ Usage:
       if (mode === 'files_with_matches') {
         args.push('--files-with-matches')
       } else if (mode === 'count') {
-        // --count emits one `path:N` line per matching file (N = matching lines).
+        // --count 对每个匹配文件输出一行 `path:N`（N = 匹配行数）。
         args.push('--count')
       } else {
-        // content mode — line-numbered matches, long lines previewed not dumped.
+        // content 模式 —— 带行号的匹配，长行只预览不整条倾倒。
         args.push('--no-heading', '--line-number', '--max-columns', String(MAX_COLUMNS), '--max-columns-preview')
-        // Context flags only make sense for content output. -C wins over -A/-B,
-        // matching ripgrep's own precedence.
+        // 上下文标志只对 content 输出有意义。-C 优先于 -A/-B，与 ripgrep
+        // 自身的优先级一致。
         if (context != null) {
           args.push('--context', String(context))
         } else {
@@ -107,8 +107,8 @@ Usage:
       }
 
       if (caseInsensitive) args.push('--ignore-case')
-      // ripgrep needs both flags for ". matches newline across lines": -U enables
-      // multiline, --multiline-dotall makes `.` cross line boundaries.
+      // ripgrep 需要两个标志才能让“.”跨行匹配换行：-U 开启多行，
+      // --multiline-dotall 让 `.` 越过行边界。
       if (multiline) args.push('--multiline', '--multiline-dotall')
       if (type) args.push('--type', type)
       if (globPattern) args.push('--glob', globPattern)

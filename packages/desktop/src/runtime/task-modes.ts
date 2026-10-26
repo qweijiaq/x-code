@@ -1,6 +1,6 @@
-// Task modes: product-level framing for the agent, injected through
-// AgentOptions.systemPromptExtra. Modes affect guidance only — there is no
-// hard tool isolation, so any tool remains available in any mode.
+// 任务模式：给 agent 的产品级框架，通过 AgentOptions.systemPromptExtra
+// 注入。模式只影响引导——没有硬性的工具隔离，
+// 因此任何模式下所有工具都可用。
 export const TASK_MODES = ['coding', 'writing', 'research', 'office'] as const
 
 export type TaskMode = (typeof TASK_MODES)[number]

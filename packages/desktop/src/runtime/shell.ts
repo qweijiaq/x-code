@@ -21,8 +21,8 @@ export function interactiveShell(): { file: string; args: string[] } {
     return { file: process.env.COMSPEC ?? 'cmd.exe', args: [] }
   }
   const file = process.env.SHELL?.trim() || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh')
-  // Login shell so .zprofile/.zlogin and .zshrc are both applied, matching the
-  // user's terminal app.
+  // 登录 shell，使 .zprofile/.zlogin 和 .zshrc 都生效，
+  // 与用户的终端应用一致。
   return { file, args: ['-l', '-i'] }
 }
 
@@ -38,10 +38,10 @@ export function ptyEnv(): Record<string, string> {
   env.TERM = 'xterm-256color'
   env.COLORTERM ??= 'truecolor'
   env.PYTHONIOENCODING ??= 'utf-8'
-  // A GUI launch inherits no LANG/LC_CTYPE from Finder, which leaves zsh and
-  // most CLIs in the C locale: Chinese input and filenames then arrive as
-  // escape sequences or replacement characters. Default the PTY to UTF-8
-  // unless the login shell already provided a UTF-8 locale.
+  // 从 GUI 启动不会从 Finder 继承 LANG/LC_CTYPE，这会让 zsh 和
+  // 大多数 CLI 处于 C locale：中文输入和文件名会变成
+  // 转义序列或替换字符。默认 PTY 为 UTF-8，
+  // 除非登录 shell 已提供 UTF-8 locale。
   if (env.LC_ALL && !isUtf8Locale(env.LC_ALL)) env.LC_ALL = 'en_US.UTF-8'
   if (env.LC_CTYPE && !isUtf8Locale(env.LC_CTYPE)) env.LC_CTYPE = 'en_US.UTF-8'
   if (!isUtf8Locale(env.LANG)) env.LANG = 'en_US.UTF-8'
@@ -95,7 +95,7 @@ export class ShellManager {
     try {
       shell.kill()
     } catch {
-      // Already gone.
+      // 已经不存在了。
     }
   }
 

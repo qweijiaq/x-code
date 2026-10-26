@@ -58,8 +58,8 @@ function ensurePosixSpawnHelperExecutable(): void {
 
 function loadNodePty(): NodePtyModule {
   if (loadedNodePty) return loadedNodePty
-  // pnpm's content-addressed copy can lose the executable bit from node-pty's
-  // macOS spawn helper even when the tarball metadata is correct.
+  // pnpm 的内容寻址副本可能会弄丢 node-pty macOS spawn helper 的可执行位，
+  // 即使 tarball 元数据是正确的。
   ensurePosixSpawnHelperExecutable()
   loadedNodePty = require('node-pty') as NodePtyModule
   return loadedNodePty
@@ -69,7 +69,7 @@ function stringEnvironment(env: NodeJS.ProcessEnv | undefined): Record<string, s
   const values = Object.fromEntries(
     Object.entries(env ?? process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
   )
-  // The cloned environment bypasses node-pty's identity-based sanitization.
+  // 克隆出来的环境绕过了 node-pty 基于身份的清理。
   for (const key of ['TMUX', 'TMUX_PANE', 'STY', 'WINDOW', 'WINDOWID', 'TERMCAP', 'COLUMNS', 'LINES'])
     delete values[key]
   values.TERM ??= 'xterm-256color'

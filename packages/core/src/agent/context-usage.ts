@@ -1,22 +1,21 @@
-// @x-code-cli/core — Context composition breakdown
+// @x-code-cli/core — 上下文构成拆解
 //
-// Providers only ever report the TOTAL input-token count of a request —
-// none of them split it into "how much was system prompt vs conversation".
-// The /usage composition display therefore estimates each category locally
-// (same bytes-per-token ratio as context-window.ts), then calibrates the
-// split so the parts sum exactly to the real number the API reported.
+// 提供商只会报告一次请求的「总」输入 token 数——没有任何一家
+// 把它拆成「多少是系统提示词 vs 对话」。因此 /usage 的构成展示
+// 在本地估算每个类别（与 context-window.ts 相同的字节/token 比例），
+// 然后校准拆分比例，使各部分之和恰好等于 API 报告的真实数字。
 //
-// Category mapping (mirrors Cursor's Context Usage panel):
-//   - system:        base system prompt + plan-mode overlay
-//   - tools:         built-in tool JSON schemas sent in the request
-//   - rules:         knowledge context (user AGENTS.md, memory profile,
-//                    project AGENTS.md chain, AGENTS.local.md)
-//   - skills:        the `## Available Skills` block
-//   - mcp:           the `## MCP Tools` / `## Deferred Tools` block plus the
-//                    schemas of MCP / dynamically-activated tools
-//   - subagents:     the task tool's description (embeds the agent list)
-//   - summary:       the `[Previous conversation summary]` compaction message
-//   - conversation:  everything else in the message history
+// 类别映射（对应 Cursor 的 Context Usage 面板）：
+//   - system:        基础系统提示词 + plan 模式覆盖层
+//   - tools:         请求中发送的内置工具 JSON schema
+//   - rules:         知识上下文（用户 AGENTS.md、记忆 profile、
+//                    项目 AGENTS.md 链、AGENTS.local.md）
+//   - skills:        `## Available Skills` 块
+//   - mcp:           `## MCP Tools` / `## Deferred Tools` 块，加上
+//                    MCP / 动态激活工具的 schema
+//   - subagents:     task 工具的描述（内嵌 agent 列表）
+//   - summary:       `[Previous conversation summary]` 压缩消息
+//   - conversation:  消息历史中的其余一切
 import type { ModelMessage } from 'ai'
 
 import { toSystemPromptEntries } from '../mcp/tool-bridge.js'
@@ -41,14 +40,14 @@ export type ContextCategoryKey =
 export interface ContextCategoryEstimate {
   key: ContextCategoryKey
   label: string
-  /** Raw bytes-based estimate, NOT yet calibrated to the real API total. */
+  /** 基于字节的原始估算，尚未校准到真实 API 总数。 */
   estimatedTokens: number
 }
 
 export interface ContextBreakdown {
-  /** Non-zero categories in display order (mirrors Cursor's panel order). */
+  /** 按展示顺序排列的非零类别（对应 Cursor 的面板顺序）。 */
   categories: ContextCategoryEstimate[]
-  /** Non-overlapping initialization sub-parts for diagnosing prompt growth. */
+  /** 不重叠的初始化子部分，用于诊断提示词增长。 */
   details?: ContextDetailEstimate[]
   warnings?: string[]
   estimatedTotal: number
@@ -60,34 +59,33 @@ export interface ContextDetailEstimate {
 }
 
 export interface CalibratedContextCategory extends ContextCategoryEstimate {
-  /** Rounded to integers and adjusted so the sum equals `realTotal`. */
+  /** 取整到整数，并调整使总和等于 `realTotal`。 */
   tokens: number
 }
 
 export interface ContextBreakdownInput {
-  /** The full byte-stable system prompt (`state.systemPromptCache`). */
+  /** 完整的字节稳定系统提示词（`state.systemPromptCache`）。 */
   systemPrompt: string
-  /** Knowledge context embedded at the end of the system prompt. */
+  /** 嵌入在系统提示词末尾的知识上下文。 */
   knowledgeContext?: string
-  /** Recomputed `## Available Skills` block (may be just the install hint). */
+  /** 重新计算的 `## Available Skills` 块（可能只是安装提示）。 */
   skillBlock?: string
-  /** Recomputed `## MCP Tools` + `## Deferred Tools` blocks (may be ''). */
+  /** 重新计算的 `## MCP Tools` + `## Deferred Tools` 块（可能为 ''）。 */
   mcpDeferredBlock?: string
   messages: ModelMessage[]
-  /** The effective tool map for the next request (base + activated). */
+  /** 下一次请求的有效工具映射（基础 + 已激活）。 */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools: Record<string, any>
-  /** Names of tools that are MCP-backed (or dynamically activated), counted
-   *  under the mcp category instead of tools. */
+  /** MCP 支撑（或动态激活）的工具名，计入 mcp 类别而非 tools。 */
   mcpToolNames?: ReadonlySet<string>
-  /** Full catalog and activated set let /usage distinguish schemas sent now
-   *  from name-only deferred metadata. */
+  /** 完整 catalog 和已激活集合让 /usage 能区分「现在发送的 schema」
+   *  和「仅名字的 deferred 元数据」。 */
   deferredTools?: readonly { name: string; source: 'builtin' | 'mcp' }[]
   activatedToolNames?: ReadonlySet<string>
 }
 
-// Must stay byte-identical to compression.ts's private constant — the
-// estimator relies on the same prefix to detect the compaction message.
+// 必须与 compression.ts 的私有常量字节一致——估算器依赖
+// 相同的前缀来检测压缩消息。
 const SUMMARY_PREFIX = '[Previous conversation summary]\n'
 
 const CATEGORY_LABELS: Record<ContextCategoryKey, string> = {
@@ -130,17 +128,16 @@ function markdownSectionDetails(text: string, headingLevel: 2 | 3, labelPrefix: 
     .filter((section) => section.estimatedTokens > 0)
 }
 
-/** Estimate the per-category token split of the next request's context.
- *  Returns an empty breakdown when the system prompt hasn't been built yet
- *  (nothing was ever sent to the model). */
+/** 估算下一次请求上下文的逐类别 token 拆分。当系统提示词
+ *  尚未构建时（从未向模型发送过任何内容）返回空拆解。 */
 export function estimateContextBreakdown(input: ContextBreakdownInput): ContextBreakdown {
   const systemTotal = estimateTextTokenCount(input.systemPrompt)
   const skillTokens = input.skillBlock ? estimateTextTokenCount(input.skillBlock) : 0
   const mcpBlockTokens = input.mcpDeferredBlock ? estimateTextTokenCount(input.mcpDeferredBlock) : 0
   const rulesTokens = input.knowledgeContext ? estimateTextTokenCount(input.knowledgeContext) : 0
-  // The system prompt is a strict concatenation: base (with the capability
-  // blocks substituted in) + '\n\n' + knowledge + plan overlay. Subtracting
-  // the known sub-blocks isolates the base prompt + overlay exactly.
+  // 系统提示词是严格拼接：基础（含替换进来的 capability 块）
+  // + '\n\n' + knowledge + plan 覆盖层。减去已知子块就能精确
+  // 隔离出基础提示词 + 覆盖层。
   const systemTokens = Math.max(0, systemTotal - skillTokens - mcpBlockTokens - rulesTokens)
 
   let toolsTokens = 0
@@ -238,10 +235,9 @@ export function estimateContextBreakdown(input: ContextBreakdownInput): ContextB
   }
 }
 
-/** Scale the raw estimates so their sum equals the real input-token count
- *  the provider reported (`realTotal`), absorbing tokenizer drift and
- *  provider-side prompt transforms. Rounding drift lands on the largest
- *  category so the displayed parts always add up to `realTotal`. */
+/** 缩放原始估算，使它们的和等于提供商报告的真实输入 token 数
+ *  （`realTotal`），吸收 tokenizer 漂移和提供商侧的提示词转换。
+ *  取整误差落到最大类别上，使展示的各部分始终相加等于 `realTotal`。 */
 export function calibrateContextBreakdown(breakdown: ContextBreakdown, realTotal: number): CalibratedContextCategory[] {
   if (breakdown.estimatedTotal <= 0 || realTotal <= 0) return []
   const scale = realTotal / breakdown.estimatedTotal
@@ -258,18 +254,16 @@ export function calibrateContextBreakdown(breakdown: ContextBreakdown, realTotal
   return categories
 }
 
-/** Assemble the estimator input from the live session state, mirroring what
- *  agentLoop actually sends on the next turn: the cached system prompt, the
- *  same capability blocks (recomputed with the same formatters), and the
- *  effective tool map (base + activated deferred tools). Returns null before
- *  the first turn, when no system prompt has been built yet. */
+/** 从活跃会话状态组装估算器输入，镜像 agentLoop 在下一轮实际
+ *  发送的内容：缓存的系统提示词、相同的 capability 块（用相同
+ *  的 formatter 重新计算）、以及有效工具映射（基础 + 已激活的
+ *  deferred 工具）。在第一轮之前、系统提示词尚未构建时返回 null。 */
 export function buildContextBreakdownInput(options: AgentOptions, state: LoopState): ContextBreakdownInput | null {
   if (!state.systemPromptCache) return null
 
-  // buildTools is the loop's session-start routine and re-populates
-  // state.deferredCatalog (deterministic — content-identical to the existing
-  // catalog, but a NEW reference). This is a read-only report path: snapshot
-  // and restore so live session state is never mutated by it.
+  // buildTools 是 loop 的会话启动例程，会重新填充 state.deferredCatalog
+  // （确定性的——内容与现有 catalog 相同，但是一个新的引用）。
+  // 这是只读的报告路径：快照并恢复，这样活跃会话状态绝不会被它改动。
   const catalogBefore = state.deferredCatalog
   const manualExecutorsBefore = new Map(state.manualToolExecutors)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -283,11 +277,10 @@ export function buildContextBreakdownInput(options: AgentOptions, state: LoopSta
   }
   const tools = composeTurnTools(baseTools, state.deferredCatalog, state.activatedTools, state.permissionMode)
 
-  // Prefer the blocks snapshotted at prompt-build time (loop.ts): a
-  // mid-session /skill or /mcp refresh changes what the registries would
-  // produce NOW, which would no longer match what is embedded in
-  // systemPromptCache. Fall back to recomputing for states that never went
-  // through the prompt build (tests, resumed sessions before the next turn).
+  // 优先使用构建提示词时快照下来的块（loop.ts）：会话中途的
+  // /skill 或 /mcp 刷新会改变 registry 现在会产生的内容，
+  // 那将不再与 systemPromptCache 里嵌入的内容一致。对于从未经过
+  // 提示词构建的状态（测试、下一轮之前的已恢复会话），回退到重新计算。
   const blocks = state.systemPromptBlocks
   const skillBlock =
     blocks?.skill ??
@@ -307,10 +300,9 @@ export function buildContextBreakdownInput(options: AgentOptions, state: LoopSta
           )
         : formatMcpCapabilities(activeMcpRegistry ? toSystemPromptEntries(activeMcpRegistry.list()) : undefined))
 
-  // MCP-backed tools: alwaysLoad entries are registered directly in
-  // buildTools, the rest arrive via the deferred catalog. The registry list
-  // also covers the no-deferral fallback (tiny catalog) where every MCP tool
-  // is injected full.
+  // MCP 支撑的工具：alwaysLoad 条目直接在 buildTools 里注册，
+  // 其余经 deferred catalog 到达。registry 列表也覆盖了
+  // 无延迟回退（极小 catalog）的情况，此时每个 MCP 工具都被完整注入。
   const mcpToolNames = new Set<string>()
   for (const entry of state.deferredCatalog ?? []) {
     if (entry.source === 'mcp') mcpToolNames.add(entry.name)

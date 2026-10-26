@@ -82,12 +82,12 @@ const ManualPanel = lazy(() => import('./ManualPanel.js').then((module) => ({ de
 
 if (isUiSmoke) {
   try {
-    // Smoke runs share Electron's localStorage with the real app; keep their
-    // checklist state under separate keys.
+    // Smoke 运行与真实应用共享 Electron 的 localStorage；把它们的
+    // 清单状态放到独立的 key 下。
     localStorage.removeItem('xcode.smoke.usage.v1')
     localStorage.removeItem('xcode.smoke.usage.dismissed')
   } catch {
-    // Smoke-only reset.
+    // 仅 Smoke 使用的重置。
   }
 }
 const wantsSettings = new URLSearchParams(window.location.search).has('settings')
@@ -377,7 +377,7 @@ const SourceList = memo(function SourceList({ text }: { text: string }): React.J
           const parsed = new URL(url)
           label = `${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`.slice(0, 48)
         } catch {
-          // Keep the raw URL.
+          // 保留原始 URL。
         }
         return (
           <button
@@ -467,7 +467,7 @@ function rememberLastDocument(workspace: string, filePath: string): void {
     parsed[workspace] = filePath
     localStorage.setItem(LAST_DOCUMENTS_KEY, JSON.stringify(parsed))
   } catch {
-    // Remembering the last document is a convenience only.
+    // 记住上次文档只是便利功能。
   }
 }
 
@@ -480,7 +480,7 @@ function forgetLastDocument(workspace: string, filePath: string): void {
     delete parsed[workspace]
     localStorage.setItem(LAST_DOCUMENTS_KEY, JSON.stringify(parsed))
   } catch {
-    // Ignore.
+    // 忽略。
   }
 }
 
@@ -502,7 +502,7 @@ function readUsage(): Record<UsageKey, boolean> {
     const parsed = raw ? (JSON.parse(raw) as Partial<Record<UsageKey, unknown>>) : {}
     for (const key of Object.keys(empty) as UsageKey[]) empty[key] = parsed[key] === true
   } catch {
-    // A corrupt usage record should not block the checklist.
+    // 损坏的使用记录不应阻塞清单。
   }
   return empty
 }
@@ -511,7 +511,7 @@ function writeUsage(usage: Record<UsageKey, boolean>): void {
   try {
     localStorage.setItem(USAGE_KEY, JSON.stringify(usage))
   } catch {
-    // Ignore quota errors.
+    // 忽略配额错误。
   }
 }
 
@@ -534,7 +534,7 @@ export function App(): React.JSX.Element {
     return watchSystemTheme(() => applyTheme('system'))
   }, [themeSetting])
 
-  // Other windows share localStorage; follow theme/language changes made there.
+  // 其他窗口共享 localStorage；跟随那里发生的主题/语言变更。
   useEffect(() => {
     const onStorage = (event: StorageEvent): void => {
       if (event.key === 'xcode.theme') setThemeSetting(storedTheme())
@@ -658,7 +658,7 @@ export function App(): React.JSX.Element {
   const [modelQuery, setModelQuery] = useState('')
   const [modelScan, setModelScan] = useState<string | null>(null)
   const [appState, setAppState] = useState<AppState | null>(null)
-  // Keep window titles distinguishable when several workspaces are open.
+  // 多个工作区同时打开时，保持窗口标题可区分。
   useEffect(() => {
     const name = appState?.workspace?.split(/[\\/]/).filter(Boolean).pop()
     document.title = name ? `X-Code · ${name}` : 'X-Code'
@@ -720,8 +720,8 @@ export function App(): React.JSX.Element {
     .filter((value): value is string => Boolean(value))
     .join('\n')
 
-  // Tell main which session files this window owns so another window cannot
-  // load the same transcript and write it concurrently.
+  // 告诉主进程这个窗口拥有哪些会话文件，避免另一个窗口
+  // 加载同一份记录并并发写入。
   useEffect(() => {
     const filePaths = openSessionFileKey ? openSessionFileKey.split('\n') : []
     void window.xcode
@@ -733,7 +733,7 @@ export function App(): React.JSX.Element {
       .catch(() => undefined)
   }, [openSessionFileKey])
 
-  /** Show a tab whose session has not been written to disk yet (no messages sent). */
+  /** 显示一个尚未写入磁盘的会话标签页（还没有发送任何消息）。 */
   const activateEmptyTab = (sessionId: string): void => {
     setActiveSessionId(sessionId)
     setEntries([])
@@ -805,9 +805,8 @@ export function App(): React.JSX.Element {
     const dismissed = dismissedMentionRef.current
     if (dismissed && dismissed.atIdx === trigger.atIdx && dismissed.query === trigger.query) return
     dismissedMentionRef.current = null
-    // Only reset the highlight when the token itself changed. Keyup fires
-    // after every arrow-key press too; resetting there would snap the
-    // selection back to the first entry.
+    // 只有当 token 本身变化时才重置高亮。keyup 在每次方向键按下后
+    // 也会触发；在那里重置会把选中项弹回第一项。
     if (
       mention &&
       mention.atIdx === trigger.atIdx &&
@@ -831,7 +830,7 @@ export function App(): React.JSX.Element {
       if (!element) return
       element.focus()
       element.setSelectionRange(next.cursor, next.cursor)
-      // Keep browsing: picking a directory reopens the menu on its children.
+      // 保持浏览：选择目录后会在其子项上重新打开菜单。
       if (file.isDirectory) updateMention(next.text, next.cursor)
     })
   }
@@ -967,7 +966,7 @@ export function App(): React.JSX.Element {
     void refreshSessions()
     void refreshWorkspaces()
     void refreshCommands()
-    // The onboarding overlay needs the settings snapshot on first launch.
+    // 首次启动时，onboarding 遮罩需要设置快照。
     void refreshSettings()
     void refreshWorkspaceInsights()
   }, [])
@@ -999,7 +998,7 @@ export function App(): React.JSX.Element {
         })
       }
     } catch {
-      // Zoom is a cosmetic preference.
+      // 缩放只是外观偏好。
     }
   }, [])
 
@@ -1025,13 +1024,13 @@ export function App(): React.JSX.Element {
       const stored = Number(localStorage.getItem('xcode.zoom'))
       if (Number.isFinite(stored) && stored >= 0.7 && stored <= 1.6) current = stored
     } catch {
-      // Defaults to 1.
+      // 默认为 1。
     }
     const next = reset ? 1 : Math.min(1.6, Math.max(0.7, Math.round((current + delta) * 10) / 10))
     try {
       localStorage.setItem('xcode.zoom', String(next))
     } catch {
-      // Still applied for this session.
+      // 本次会话仍然生效。
     }
     void window.xcode.request({
       id: crypto.randomUUID(),
@@ -1040,7 +1039,7 @@ export function App(): React.JSX.Element {
     })
   }
 
-  // Per-session composer drafts survive session switches and app restarts.
+  // 每个会话的草稿在切换会话和应用重启后仍然保留。
   useEffect(() => {
     skipDraftSaveRef.current = draftKey
     try {
@@ -1066,7 +1065,7 @@ export function App(): React.JSX.Element {
     try {
       localStorage.setItem(draftKey, JSON.stringify({ text: input, attachments }))
     } catch {
-      // Drafts are best-effort.
+      // 草稿是尽力而为。
     }
   }, [draftKey, input, attachments])
 
@@ -1101,8 +1100,8 @@ export function App(): React.JSX.Element {
   }, [sessionQuery])
 
   useEffect(() => {
-    // Streaming deltas arrive many times per second; coalesce them into one
-    // render per frame so long conversations do not re-parse Markdown per token.
+    // 流式增量每秒到达多次；把它们合并成每帧一次渲染，
+    // 避免长对话对每个 token 重新解析 Markdown。
     const flushPendingText = (): void => {
       if (streamFrameRef.current !== null) {
         cancelAnimationFrame(streamFrameRef.current)
@@ -1121,8 +1120,8 @@ export function App(): React.JSX.Element {
       if (streamFrameRef.current !== null) return
       streamFrameRef.current = requestAnimationFrame(() => {
         streamFrameRef.current = null
-        // Rendering Markdown at 60fps for a growing answer is mostly wasted
-        // work; ~30fps keeps the stream smooth without re-parsing every frame.
+        // 对一个不断增长的答案以 60fps 渲染 Markdown 大多是浪费；
+        // ~30fps 让流保持流畅，同时不必每帧重新解析。
         if (performance.now() - lastTextFlushRef.current < 32 && pendingTextRef.current) {
           scheduleTextFlush()
           return
@@ -1175,11 +1174,11 @@ export function App(): React.JSX.Element {
           break
         }
         case 'agent:tool-call':
-          // toolSearch is an internal deferred-tool loader; the CLI hides it
-          // and the desktop transcript should too.
+          // toolSearch 是内部的延迟工具加载器；CLI 会隐藏它，
+          // 桌面记录也应该隐藏。
           if (event.toolName === 'toolSearch') break
-          // Text after a tool belongs after this card, not in the earlier
-          // assistant bubble that was created before the tool ran.
+          // 工具之后的文本属于这张卡片之后，而不是工具运行前
+          // 创建的那个更早的助手气泡。
           activeTextEntryId.current = null
           append({
             id: event.toolCallId,
@@ -1399,8 +1398,8 @@ export function App(): React.JSX.Element {
           setSettings(event.settings)
           break
         case 'app:settings-changed':
-          // Another window changed shared preferences. Coalesce bursts, then
-          // reload this window's runtime so keys/tools/plugins stay in sync.
+          // 另一个窗口修改了共享偏好。合并突发变更，然后
+          // 重新加载本窗口的运行时，使密钥/工具/插件保持同步。
           if (settingsSyncTimerRef.current) clearTimeout(settingsSyncTimerRef.current)
           settingsSyncTimerRef.current = setTimeout(() => {
             settingsSyncTimerRef.current = null
@@ -1453,9 +1452,8 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     if (!nearBottomRef.current) return
-    // Defer to the next frame so streaming markdown/code can finish its layout
-    // before we pin the transcript; writing scrollTop mid-commit causes the
-    // visible jump users notice while code is being generated.
+    // 推迟到下一帧，让流式 markdown/code 先完成布局再固定记录；
+    // 在提交中途写 scrollTop 会导致代码生成时用户可见的跳动。
     const frame = requestAnimationFrame(() => {
       const node = scrollRef.current
       if (node && nearBottomRef.current) node.scrollTop = node.scrollHeight
@@ -1472,8 +1470,7 @@ export function App(): React.JSX.Element {
   }
 
   const jumpToEntry = (entryId: string): void => {
-    // Stop auto-following the stream, otherwise the next delta snaps back to
-    // the bottom immediately after the jump.
+    // 停止自动跟随流，否则下一次增量会在跳转后立即弹回底部。
     nearBottomRef.current = false
     setShowScrollBottom(true)
     requestAnimationFrame(() => {
@@ -1525,9 +1522,8 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     if (!busy) return
-    // Session files are flushed while the turn is still running (especially
-    // when a long tool yields to the background), so refresh the sidebar
-    // during the turn instead of waiting for turn-end.
+    // 会话文件在轮次仍在运行时就会刷新（尤其是长时间工具退到
+    // 后台时），所以在轮次进行中刷新侧栏，而不是等 turn-end。
     const timer = setInterval(() => {
       void refreshSessions()
     }, 3_000)
@@ -1573,8 +1569,8 @@ export function App(): React.JSX.Element {
     }
     workspaceGuardBypassRef.current = false
     if (activeSessionId) {
-      // Give a brand-new tab a useful title immediately instead of waiting for
-      // the session file to be listed (which can lag behind a long turn).
+      // 立即给全新标签页一个有用的标题，而不是等会话文件被列出
+      // （后者可能落后于一个长轮次）。
       setTabTitles((prev) =>
         prev[activeSessionId] ? prev : { ...prev, [activeSessionId]: prompt.replace(/\s+/g, ' ').slice(0, 80) },
       )
@@ -1818,8 +1814,8 @@ export function App(): React.JSX.Element {
       return
     }
     let view = response.result as DocumentView
-    // A citation may point past the first batch; load batches until the page
-    // is rendered (bounded) before scrolling to it.
+    // 引用可能指向第一批之后；滚动前持续加载批次直到该页
+    // 渲染出来（有上限）。
     if (page && view.totalPages) {
       let attempts = 0
       while (view.hasMore && (view.pages?.at(-1)?.page ?? 0) < page && attempts < 5) {
@@ -2107,8 +2103,8 @@ export function App(): React.JSX.Element {
       await openDocument(last)
       return
     }
-    // No previous document in this workspace: show the recent list inside the
-    // panel instead of forcing a file dialog.
+    // 这个工作区没有之前的文档：在面板里显示最近列表，
+    // 而不是强制弹出文件对话框。
     openInspector('document')
     await refreshDocumentList()
   }
@@ -2138,8 +2134,8 @@ export function App(): React.JSX.Element {
   }
 
   const allowSandboxNetwork = async (): Promise<void> => {
-    // The runtime applies sandbox changes between turns; opening Settings is
-    // clearer than reporting an idle-only error while a reply is still running.
+    // 运行时在轮次之间应用沙箱变更；打开设置比在回复仍在运行时
+    // 报告「仅空闲时可用」的错误更清晰。
     if (busy) {
       await openSettings('tools')
       return
@@ -2263,7 +2259,7 @@ export function App(): React.JSX.Element {
     try {
       localStorage.setItem('xcode.lastSession', item.filePath)
     } catch {
-      // Restoring the last session is best-effort.
+      // 恢复上次会话是尽力而为。
     }
     await refreshState()
   }
@@ -2279,8 +2275,8 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     if (restoredSessionRef.current || activeSessionId || sessions.length === 0) return
-    // A secondary window starts from its requested session (or empty), never
-    // from the last session of the previous window.
+    // 次窗口从它请求的会话（或空）开始，而不是
+    // 上一个窗口的最后会话。
     const windowParams = new URLSearchParams(window.location.search)
     if (windowParams.get('session') || windowParams.get('fresh')) return
     let lastPath: string | null = null
@@ -2702,8 +2698,8 @@ export function App(): React.JSX.Element {
 
   const lastUserEntry = (): Entry | undefined => [...entries].reverse().find((entry) => entry.role === 'user')
 
-  /** Truncate the conversation to just before the most recent user turn.
-   *  Files are left untouched; this backs edit-and-resend and regenerate. */
+  /** 把对话截断到最近一次用户轮次之前。
+   *  文件保持不动；这支撑「编辑并重发」与「重新生成」。 */
   const rewindConversation = async (): Promise<boolean> => {
     const response = await window.xcode.request({
       id: crypto.randomUUID(),
@@ -2805,8 +2801,8 @@ export function App(): React.JSX.Element {
     await refreshState()
   }
 
-  /** Clipboard images have no filesystem path, so they are handed to the
-   *  runtime which writes them under the user data directory. */
+  /** 剪贴板图片没有文件系统路径，因此交给运行时，
+   *  由它写到用户数据目录下。 */
   const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>): void => {
     if (!(event.target instanceof Element) || !event.target.closest('.composer')) return
     const files = Array.from(event.clipboardData?.items ?? [])
@@ -3586,7 +3582,7 @@ export function App(): React.JSX.Element {
                     try {
                       localStorage.setItem(USAGE_DISMISSED_KEY, '1')
                     } catch {
-                      // Ignore.
+                      // 忽略。
                     }
                   }}
                 >
@@ -4716,8 +4712,8 @@ export function App(): React.JSX.Element {
               onKeyUp={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
               onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
               onKeyDown={(event) => {
-                // IME candidate selection sends Enter with isComposing=true
-                // (and keyCode 229). Never treat that as submit/send.
+                // IME 候选选择会以 isComposing=true（且 keyCode 229）
+                // 发送 Enter。绝不把它当作提交/发送。
                 if (event.nativeEvent.isComposing || event.keyCode === 229) return
                 if (mention !== null && mentionItems.length > 0) {
                   if (event.key === 'ArrowDown') {

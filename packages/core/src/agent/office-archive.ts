@@ -52,6 +52,8 @@ export async function detectOfficeKindFromArchive(
     terminate = unzip(
       archive,
       {
+        // OOXML 结构通过入口名识别（无需解压）；ODF 只解压其根部的 `mimetype` 文件，
+        // 稍后据此确认类型——所以 filter 只保留 mimetype。
         filter: (entry) => {
           entryCount++
           if (entryCount > MAX_OFFICE_ARCHIVE_ENTRIES) {

@@ -1,7 +1,6 @@
 import type { TurnOwner } from './agent/turn-coordinator.js'
 
-/** Slash commands that are safe to run without acquiring the active turn.
- * Keep this policy shared by the input gate and the command dispatcher. */
+/** 无需取得活动轮次就能安全运行的斜杠命令。让输入门禁和命令分发器共享这一策略。 */
 export function isSlashCommandAllowedWhileBusy(
   text: string,
   activeOwner: TurnOwner,

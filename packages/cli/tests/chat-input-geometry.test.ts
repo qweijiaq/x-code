@@ -17,7 +17,7 @@ describe('ChatInput large commit geometry', () => {
 })
 
 describe('moveCursorVisual (soft-wrap aware up/down)', () => {
-  // 'abcdefghij|klmno' — one logical line wrapped into two visual lines.
+  // 'abcdefghij|klmno' — 一条逻辑行软换行成两行视觉行。
   const wrapped = 'abcdefghijklmno'
 
   it('moves up one visual line within a soft-wrapped single line', () => {
@@ -42,37 +42,37 @@ describe('moveCursorVisual (soft-wrap aware up/down)', () => {
   })
 
   it('treats the wrap boundary as the next visual line leading position', () => {
-    // Cursor at offset 10 = end of 'abcdefghij' = start of 'klmno'.
-    // Ownership goes to the continuation line, so Up lands at column 0.
+    // 光标在 offset 10 = 'abcdefghij' 末尾 = 'klmno' 开头。
+    // 归属给续行，所以 Up 落到第 0 列。
     expect(moveCursorVisual(wrapped, 10, -1, 10)).toBe(0)
   })
 
   it('moves across hard newlines and wrapped lines alike', () => {
-    // raw: 'abc' + '\n' + 'defghijklm|no' (second raw line wraps at col 10)
+    // raw：'abc' + '\n' + 'defghijklm|no'（第二个 raw 行在第 10 列换行）
     const text = 'abc\ndefghijklmno'
-    // v2 'no' col 2 (raw offset 4+10+2=16, end of text) → v1 'defghijklm' col 2 → 4+2=6
+    // v2 'no' 第 2 列（raw offset 4+10+2=16，文本末尾）→ v1 'defghijklm' 第 2 列 → 4+2=6
     expect(moveCursorVisual(text, 16, -1, 10)).toBe(6)
-    // v1 col 2 → v0 'abc' col 2
+    // v1 第 2 列 → v0 'abc' 第 2 列
     expect(moveCursorVisual(text, 6, -1, 10)).toBe(2)
-    // v0 → null (top edge)
+    // v0 → null（顶边）
     expect(moveCursorVisual(text, 2, -1, 10)).toBeNull()
-    // v0 col 2 → v1 col 2
+    // v0 第 2 列 → v1 第 2 列
     expect(moveCursorVisual(text, 2, 1, 10)).toBe(6)
   })
 
   it('clamps the column when the target visual line is shorter', () => {
-    // 'abcd' + '\n' + 'xy': from col 3 down lands at end of 'xy' (offset 5+2=7).
+    // 'abcd' + '\n' + 'xy'：从第 3 列向下落到 'xy' 末尾（offset 5+2=7）。
     expect(moveCursorVisual('abcd\nxy', 3, 1, 10)).toBe(7)
   })
 
   it('handles CJK wide chars (two terminal cells each)', () => {
-    // 8 wide chars, width 16; vpWidth 10 → v0 = 5 chars, v1 = 3 chars.
+    // 8 个宽字符，宽度 16；vpWidth 10 → v0 = 5 字符，v1 = 3 字符。
     const cjk = '你好世界你好世界'
-    // End of input (v1 col 3, display col 6) → v0 display col 6 = char 3.
+    // 输入末尾（v1 第 3 列，显示列 6）→ v0 显示列 6 = 第 3 字符。
     expect(moveCursorVisual(cjk, 8, -1, 10)).toBe(3)
-    // Round-trip: v0 char 3 (display col 6) → v1 end.
+    // 往返：v0 第 3 字符（显示列 6）→ v1 末尾。
     expect(moveCursorVisual(cjk, 3, 1, 10)).toBe(8)
-    // Top edge still falls through.
+    // 顶边仍穿透。
     expect(moveCursorVisual(cjk, 2, -1, 10)).toBeNull()
   })
 })

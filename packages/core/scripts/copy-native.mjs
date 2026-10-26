@@ -18,7 +18,7 @@ try {
   const destinationManifest = await verifyWindowsNativeArtifacts(coreDir, destinationDir)
   destinationIsCurrent = JSON.stringify(destinationManifest) === JSON.stringify(sourceManifest)
 } catch {
-  // A missing, stale, or partial destination is replaced below.
+  // 缺失、过期或不完整的目标目录会在下面被替换。
 }
 
 async function copyIfChanged(relativeFile) {

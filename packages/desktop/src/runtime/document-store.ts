@@ -1,8 +1,8 @@
-// Persisted document metadata: recent documents and per-page OCR text.
+// 持久化文档元数据：最近文档和每页 OCR 文本。
 //
-// Page images are never persisted (they are re-rendered on demand); only the
-// OCR text the user asked for is kept, so reopening a scanned PDF shows the
-// recognised text until the user clears it.
+// 页面图片从不持久化（按需重新渲染）；只保留用户请求的
+// OCR 文本，这样重新打开扫描版 PDF 会显示
+// 识别出的文本，直到用户清除。
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -99,7 +99,7 @@ export function saveOcrPage(filePath: string, page: number, text: string): void 
   saveStore(store)
 }
 
-/** Clear OCR text for one document. Returns the number of pages removed. */
+/** 清除某个文档的 OCR 文本。返回被移除的页数。 */
 export function forgetOcr(filePath: string): number {
   const resolved = path.resolve(filePath)
   const store = loadStore()

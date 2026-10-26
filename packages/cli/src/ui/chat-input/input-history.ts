@@ -1,22 +1,18 @@
-// @x-code-cli/cli — Input history (Up/Down recall) backing store.
+// @x-code-cli/cli — 输入历史（Up/Down 回调）的后备存储。
 //
-// Persisted form: `.x-code/history.jsonl`, one JSON object per line, append-
-// only. Project-local so two unrelated projects don't pollute each other's
-// recall — matches our existing convention (`.x-code/sessions/`,
-// `.x-code/plans/`, `.x-code/memory/`). Claude Code instead uses a single
-// global file with a `project:` field per entry; we chose the simpler
-// per-project file because (a) it sidesteps the cross-process flush queue +
-// lockfile dance their global file needs, and (b) it makes history feel like
-// the rest of `.x-code/` — gitignored, scoped, throwaway-with-the-project.
+// 持久化形态：`.x-code/history.jsonl`，每行一个 JSON 对象，只追加。项目本地
+// 化，两个无关项目不会互相污染回调——与我们现有的约定一致（`.x-code/sessions/`、
+// `.x-code/plans/`、`.x-code/memory/`）。Claude Code 改用单个全局文件，每条记
+// 录带 `project:` 字段；我们选择了更简单的按项目分文件，因为 (a) 它绕过了他们
+// 全局文件所需的跨进程 flush 队列 + 锁文件那套繁琐机制，且 (b) 它让历史与
+// `.x-code/` 其余部分风格一致——gitignore、按作用域隔离、随项目即可丢弃。
 //
-// Startup reads only the tail of the file. Appends periodically compact an
-// oversized history through a temp-file + atomic rename so startup cost stays
-// bounded without risking the original file on an interrupted rewrite.
+// 启动时只读文件尾部。追加会周期性通过临时文件 + 原子重命名压缩过大的历史，
+// 这样启动成本保持有界，又不会在重写被中断时冒险损坏原文件。
 //
-// Writes are fire-and-forget from the UI and serialized per file inside this
-// process so compaction cannot race a later append. We deliberately skip a
-// cross-process lockfile: histories are project-local and each append remains
-// one append-mode write.
+// 写入由 UI 触发后即忘（fire-and-forget），并在本进程内按文件串行化，所以压缩
+// 不会与后续追加竞争。我们有意跳过跨进程锁文件：历史是项目本地的，每次追加都
+// 保持为一次追加模式的写入。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -34,16 +30,14 @@ const HISTORY_COMPACT_BYTES = 2 * 1024 * 1024
 const HISTORY_COMPACT_MAX = 500
 const HISTORY_READ_CHUNK = 64 * 1024
 
-/** Mirrors Claude Code's `MAX_HISTORY_ITEMS`. The user only sees the most
- *  recent 100 entries when pressing Up; disk compaction retains a wider
- *  500-entry window. */
+/** 对应 Claude Code 的 `MAX_HISTORY_ITEMS`。用户按 Up 时只会看到最近的 100 条
+ *  记录；磁盘压缩则保留更宽的 500 条窗口。 */
 const HISTORY_MAX = 100
 const historyWriteQueues = new Map<string, Promise<void>>()
 
 export interface InputHistoryEntry {
-  /** Pre-paste-expansion text (the placeholder form with `[Pasted text #N]`
-   *  refs intact). Restoring this keeps the input box compact rather than
-   *  unfolding the whole paste back into the live frame. */
+  /** 粘贴展开前的文本（保留 `[Pasted text #N]` 引用的占位形式）。恢复这种形式
+   *  能保持输入框紧凑，而不是把整段粘贴重新展开回实时帧。 */
   text: string
   pasted: PastedContents
   ts: number
@@ -53,9 +47,9 @@ function historyPath(cwd: string): string {
   return path.join(cwd, HISTORY_FILE)
 }
 
-/** Read up to HISTORY_MAX most-recent entries. Returned oldest-first so the
- *  caller can `push` new submits onto the tail and walk backwards via
- *  `arr[arr.length - 1 - i]` — same shape `historyRef` uses in-memory. */
+/** 最多读取 HISTORY_MAX 条最近记录。返回最旧在前，这样调用方可以把新提交
+ *  `push` 到尾部，再通过 `arr[arr.length - 1 - i]` 往回走——与内存中
+ *  `historyRef` 使用的形态一致。 */
 async function readHistoryTail(file: string, maxBytes: number): Promise<string> {
   const handle = await fs.open(file, 'r')
   try {
@@ -126,12 +120,12 @@ export async function loadInputHistory(cwd: string = process.cwd()): Promise<Inp
   try {
     raw = await readHistoryTail(historyPath(cwd), HISTORY_READ_BYTES)
   } catch {
-    // ENOENT on first run — empty history. Any other error is silently
-    // treated the same way: history is non-critical, never block startup.
+    // 首次运行时 ENOENT——历史为空。其他任何错误也一视同仁地静默处理：历史
+    // 并非关键路径，绝不阻塞启动。
     return []
   }
-  // Trailing newline is normal (every append ends with `\n`); filter empties
-  // along with any blank lines left by a partial write.
+  // 尾部换行是正常的（每次追加都以 `\n` 结尾）；过滤空行，以及部分写入留下的
+  // 任何空白行。
   const lines = raw.split('\n').filter((l) => l.length > 0)
   const tail = lines.length > HISTORY_MAX ? lines.slice(lines.length - HISTORY_MAX) : lines
   const out: InputHistoryEntry[] = []
@@ -145,17 +139,15 @@ export async function loadInputHistory(cwd: string = process.cwd()): Promise<Inp
         ts: typeof parsed.ts === 'number' ? parsed.ts : 0,
       })
     } catch {
-      // Corrupt line (mid-write crash, manual edit). Skip — better to lose
-      // one entry than break startup.
+      // 损坏的行（写入中途崩溃、手动编辑）。跳过——宁可丢一条，也别让启动中断。
     }
   }
   return out
 }
 
-/** Append one entry. Fire-and-forget: returns a promise so tests can await,
- *  but the call site can ignore it. Errors are swallowed because input
- *  history is a UX nicety, not load-bearing — losing one entry to a disk
- *  hiccup is preferable to surfacing an error to the user mid-prompt. */
+/** 追加一条记录。触发后即忘：返回 promise 供测试 await，但调用方可忽略。错误被
+ *  吞掉，因为输入历史是 UX 锦上添花，不是承重墙——因磁盘偶发故障丢一条记录，好过
+ *  在用户输入中途弹出一个错误。 */
 async function appendInputHistoryNow(entry: InputHistoryEntry, file: string): Promise<void> {
   await ensureProjectStorageDir(path.dirname(file))
   await fs.appendFile(file, `${JSON.stringify(entry)}\n`, { encoding: 'utf-8' })
@@ -171,7 +163,7 @@ export async function appendInputHistory(entry: InputHistoryEntry, cwd: string =
   try {
     await queued
   } catch {
-    /* best-effort */
+    /* 尽力而为 */
   } finally {
     if (historyWriteQueues.get(file) === queued) historyWriteQueues.delete(file)
   }
@@ -196,15 +188,13 @@ export function useInputHistory({
   setCompletionIndex,
   setAtCompletionIndex,
 }: UseInputHistoryOptions) {
-  // Navigation counters stay synchronous so rapid Up/Down presses never
-  // observe a React-state value from the previous render. History keeps the
-  // compact paste-reference form; restoring expanded pastes would flood the
-  // input box with the original content.
+  // 导航计数器保持同步，这样快速连续按 Up/Down 永远不会读到上一次渲染的 React
+  // 状态值。历史保留紧凑的粘贴引用形式；恢复展开后的粘贴会把原始内容灌满输入框。
   const historyRef = useRef<InputHistoryEntry[]>([])
   const historyIndexRef = useRef(0)
   const historyDraftRef = useRef<{ text: string; cursor: number; pasted: PastedContents } | null>(null)
-  // Pin storage to the launch directory so a tool-driven `cd` cannot split a
-  // session's reads and writes across two project history files.
+  // 把存储钉在启动目录，这样工具驱动的 `cd` 无法把一个会话的读写拆到两个项目
+  // 历史文件里。
   const initialCwdRef = useRef(process.cwd())
 
   useEffect(() => {

@@ -10,13 +10,13 @@ describe('buildCallableName', () => {
 
   it('sanitises disallowed chars to underscore', () => {
     const name = buildCallableName('my-server.v2', 'foo:bar', new Set())
-    // Hyphens, dots, colons → "_"; runs collapse to a single underscore
+    // 连字符、点、冒号 → “_”；连续多个会折叠成单个下划线
     expect(name).toBe('my_server_v2__foo_bar')
   })
 
   it('falls back to hash when sanitisation empties a part', () => {
-    // All-CJK server name has no [A-Za-z0-9_] chars — must still produce
-    // a valid, unique identifier rather than `__tool`.
+    // 全 CJK 服务器名没有任何 [A-Za-z0-9_] 字符 —— 仍必须生成
+    // 合法、唯一的标识符，而不是 `__tool`。
     const name = buildCallableName('文件系统', 'read', new Set())
     expect(name).toMatch(/^[a-f0-9]{6}__read$/)
   })
@@ -26,8 +26,8 @@ describe('buildCallableName', () => {
     const longTool = 'y'.repeat(40)
     const name = buildCallableName(longServer, longTool, new Set())
     expect(name.length).toBeLessThanOrEqual(MCP_MAX_NAME_LEN)
-    // Truncated form ends with `_<6-char hash>` so two long, similar
-    // names don't collapse to the same string.
+    // 截断形式以 `_<6 位哈希>` 结尾，这样两个长而相似的
+    // 名字不会折叠成同一个字符串。
     expect(name).toMatch(/_[a-f0-9]{6}$/)
   })
 
@@ -35,10 +35,10 @@ describe('buildCallableName', () => {
     const taken = new Set<string>()
     const a = buildCallableName('serverA', 'read', taken)
     taken.add(a)
-    // Same tool name on a "different" server that sanitises to the same id
+    // 在“不同”服务器上同名，但净化后得到相同 id
     const b = buildCallableName('serverA', 'read', taken)
     expect(a).not.toBe(b)
-    expect(b.startsWith(a)).toBe(true) // collision suffix appended
+    expect(b.startsWith(a)).toBe(true) // 追加了冲突后缀
   })
 
   it('always produces a unique name even on repeated collisions', () => {

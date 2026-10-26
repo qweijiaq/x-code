@@ -65,8 +65,8 @@ export interface ProcessPdfOptions {
   maxRenderedBytes?: number
   abortSignal?: AbortSignal
   onNotice?: (message: string) => void
-  /** Skip attachment compression and return the rendered PNG as-is. Used by
-   *  display-only previews, where model attachment limits do not apply. */
+  /** 跳过附件压缩，原样返回渲染出的 PNG。用于仅展示的预览，
+   *  那里不适用模型附件限制。 */
   rawImages?: boolean
 }
 
@@ -128,7 +128,7 @@ class PdfWorkerEndpoint {
 
   constructor() {
     if (process.platform === 'win32') {
-      // @napi-rs/canvas can fault the host when loaded in a Windows Worker thread; a process contains native faults.
+      // @napi-rs/canvas 在 Windows Worker 线程里加载时可能让宿主崩溃；用进程来隔离原生故障。
       this.child = fork(fileURLToPath(pdfWorkerUrl()), [], {
         execArgv: ['--max-old-space-size=512'],
         serialization: 'advanced',
@@ -321,7 +321,7 @@ class PdfWorkerClient {
         return
       }
       this.closing = true
-      // Immediate worker.terminate() can race @napi-rs/canvas finalizers and crash the host process on Windows.
+      // 立即 worker.terminate() 可能与 @napi-rs/canvas 的终结器竞争，并在 Windows 上使宿主进程崩溃。
       if (await this.waitForExit(PDF_WORKER_SHUTDOWN_TIMEOUT_MS)) {
         if (this.terminationPromise) await this.terminationPromise
         return

@@ -1,7 +1,7 @@
 /**
- * pnpm 10 blocks dependency build scripts unless allowlisted, so node-pty's
- * install step never chmods its prebuilt `spawn-helper`. Without the execute
- * bit, `pty.spawn()` fails with "posix_spawnp failed" on macOS/Linux.
+ * pnpm 10 会阻止未经白名单允许的依赖构建脚本，因此 node-pty 的
+ * 安装步骤不会给其预编译的 `spawn-helper` 设置可执行位。缺少可执行位时，
+ * `pty.spawn()` 会在 macOS/Linux 上以 "posix_spawnp failed" 失败。
  */
 import { chmodSync, existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'

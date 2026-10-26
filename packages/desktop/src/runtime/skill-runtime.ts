@@ -1,10 +1,10 @@
-// Isolated per-skill dependency runtime.
+// 每个技能隔离的依赖运行时。
 //
-// Skills are instructions plus optional scripts/manifests. Historically the
-// model ran `pip install` / `npm install` from the project cwd, which dropped
-// venvs and node_modules into the user's repository. This module gives every
-// skill a stable directory under `~/.x-code/skill-runtime/<slug>-<hash>` and
-// installs dependencies there on explicit user request.
+// 技能是说明加上可选的脚本/清单。历史上模型从项目 cwd 运行
+// `pip install` / `npm install`，把 venv 和 node_modules 落到用户的
+// 仓库里。这个模块为每个技能在
+// `~/.x-code/skill-runtime/<slug>-<hash>` 下提供稳定目录，并只在
+// 用户显式请求时在那里安装依赖。
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
@@ -70,7 +70,7 @@ export function detectSkillManifests(skillDir: string): SkillManifest[] {
     try {
       if (fs.statSync(path.join(skillDir, manifest.file)).isFile()) found.push(manifest)
     } catch {
-      // Not present.
+      // 不存在。
     }
   }
   return found
@@ -85,7 +85,7 @@ function readMeta(dir: string): RuntimeMeta | null {
     const parsed = JSON.parse(fs.readFileSync(metaPath(dir), 'utf8')) as RuntimeMeta
     if (parsed && typeof parsed === 'object' && typeof parsed.installedAt === 'number') return parsed
   } catch {
-    // No or malformed metadata.
+    // 没有元数据或元数据格式损坏。
   }
   return null
 }
@@ -101,7 +101,7 @@ function manifestMtimes(skillDir: string, manifests: SkillManifest[]): Record<st
     try {
       times[manifest.file] = fs.statSync(path.join(skillDir, manifest.file)).mtimeMs
     } catch {
-      // Vanished.
+      // 已消失。
     }
   }
   return times
@@ -158,8 +158,8 @@ function nodeModulesDir(dir: string): string {
   return path.join(dir, 'node', 'node_modules')
 }
 
-/** Activation text appended to SKILL.md. Keeps the model from installing
- *  dependencies in the project workspace. */
+/** 追加到 SKILL.md 的激活文本。防止模型在项目工作区
+ *  安装依赖。 */
 export function skillRuntimeHint(skill: SkillRuntimeTarget): string {
   const view = skillRuntimeView(skill)
   const lines = [
@@ -214,7 +214,7 @@ async function run(command: string, args: string[], cwd: string): Promise<void> 
   }
 }
 
-/** Install declared dependencies into the isolated runtime directory. */
+/** 把声明的依赖安装到隔离的运行时目录中。 */
 export async function installSkillRuntime(skill: SkillRuntimeTarget): Promise<SkillRuntimeView> {
   const view = skillRuntimeView(skill)
   if (view.manifests.length === 0)
@@ -262,9 +262,9 @@ export function clearSkillRuntime(skill: SkillRuntimeTarget): void {
   fs.rmSync(skillRuntimeDir(skill), { recursive: true, force: true })
 }
 
-/** Remove dependency folders that an older/external installer created inside
- *  the skill directory itself. Only the known runtime directory names are
- *  touched; SKILL.md and scripts are never removed. */
+/** 删除旧版/外部安装器在技能目录内部创建的依赖文件夹。
+ *  只触及已知的运行时目录名；SKILL.md 和脚本
+ *  绝不会被删除。 */
 export function clearLegacySkillRuntime(skill: SkillRuntimeTarget): string[] {
   const removed: string[] = []
   for (const name of ['runtime', '.runtime', 'venv', '.venv']) {
@@ -274,14 +274,14 @@ export function clearLegacySkillRuntime(skill: SkillRuntimeTarget): string[] {
       fs.rmSync(target, { recursive: true, force: true })
       removed.push(name)
     } catch {
-      // Not present.
+      // 不存在。
     }
   }
   return removed
 }
 
-/** Attach runtime paths to every registry entry before the activation tool
- *  renders SKILL.md. Safe to call after any reload. */
+/** 在激活工具渲染 SKILL.md 之前，把运行时路径附加到每个注册表条目。
+ *  在任何重载后调用都安全。 */
 export function applySkillRuntimeHints(registry: {
   listAll(): Array<SkillRuntimeTarget & { runtimeHint?: string }>
 }): void {

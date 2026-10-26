@@ -22,8 +22,8 @@ interface ToolPart {
   isError?: boolean
 }
 
-// Executable and tool protocol identifiers are stable machine syntax. This
-// never inspects user prose or tool-result prose to infer intent or meaning.
+// 可执行文件与工具协议标识符是稳定的机器语法。这里从不检查用户正文或工具
+// 结果正文来推断意图或含义。
 const VERIFICATION_COMMAND_RE =
   /(?:^|[\s"'=:/\\])(?:test|tests|build|typecheck|lint|check|ci|pytest|vitest|jest|eslint|tsc)(?=$|[\s"'&,;:/\\])/i
 

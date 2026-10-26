@@ -60,10 +60,9 @@ function skipEscape(value: string, start: number): number {
 }
 
 /**
- * Remove terminal instructions from untrusted text while preserving ordinary
- * Unicode and line structure. CR/CRLF are normalized to LF; every other C0/C1
- * control is removed. Unterminated control strings are discarded through EOF
- * so a truncated OSC/DCS cannot become active when adjacent output is written.
+ * 从不可信文本中移除终端指令，同时保留普通 Unicode 与行结构。CR/CRLF 被
+ * 归一化为 LF；其余 C0/C1 控制字符一律移除。未终止的控制串会被丢弃直到 EOF，
+ * 这样被截断的 OSC/DCS 不会在写入相邻输出时重新激活。
  */
 export function stripTerminalControls(input: string): string {
   const value = input.replace(/\r\n?/g, '\n')

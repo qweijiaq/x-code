@@ -1,8 +1,7 @@
-// @x-code-cli/cli — ModelMessage → DisplayMessage conversion.
+// @x-code-cli/cli — ModelMessage → DisplayMessage 转换。
 //
-// Extracted from use-agent.ts so the hook body stays focused on state
-// management. This module is UI-only — it never touches the core
-// agent loop.
+// 从 use-agent.ts 提取，让 hook 主体专注于状态管理。本模块仅用于 UI——它从不
+// 触碰 core agent 循环。
 import type { DisplayMessage, DisplayToolCall, ModelMessage } from '@x-code-cli/core'
 import { TOOL_SEARCH_TOOL_NAME, extractText } from '@x-code-cli/core'
 
@@ -15,10 +14,9 @@ type ContentPartLike = {
   output?: unknown
 }
 
-/** Pull a string output out of a tool-result part. AI SDK normalises
- *  tool outputs to `{ type: 'text' | 'error-text' | ..., value: string }`,
- *  but older / provider-specific shapes also pass through, so we
- *  defensively coerce. */
+/** 从工具结果部件中取出字符串输出。AI SDK 把工具输出规范化成
+ *  `{ type: 'text' | 'error-text' | ..., value: string }`，但更旧 / provider
+ *  特定的形状也会透传，所以我们防御性地强制转换。 */
 function readToolOutput(part: ContentPartLike): { output: string; isError: boolean } {
   const out = part.output as { type?: string; value?: unknown } | string | undefined
   if (typeof out === 'string') return { output: out, isError: false }
@@ -31,16 +29,13 @@ function readToolOutput(part: ContentPartLike): { output: string; isError: boole
   return { output: '', isError: false }
 }
 
-/** Convert a loaded ModelMessage[] back into the DisplayMessage[] shape
- *  that ChatInput renders. Splits each assistant message with N
- *  tool-calls into N+1 DisplayMessages (one text-only when there's
- *  text, then one per tool-call) so the live agent flow's rendering
- *  pattern is preserved verbatim — multiple parallel tool calls in a
- *  single turn still appear as separate `⎿` rows.
+/** 把加载的 ModelMessage[] 转换回 ChatInput 渲染的 DisplayMessage[] 形状。
+ *  把每个有 N 个工具调用的 assistant 消息拆成 N+1 条 DisplayMessage（有文本时
+ *  一条纯文本，然后每个工具调用一条），这样实时 agent 流的渲染模式就被原样
+ *  保留——单回合里多个并行的工具调用仍显示为分开的 `⎿` 行。
  *
- *  Tool messages don't become DisplayMessages of their own; their
- *  output is stitched onto the matching tool-call DisplayMessage by
- *  `toolCallId`. */
+ *  工具消息本身不变成 DisplayMessage；它们的输出通过 `toolCallId` 拼接到
+ *  匹配的工具调用 DisplayMessage 上。 */
 export function modelMessagesToDisplay(messages: ModelMessage[]): DisplayMessage[] {
   const toolResults = new Map<string, { output: string; isError: boolean }>()
   for (const msg of messages) {
@@ -71,9 +66,8 @@ export function modelMessagesToDisplay(messages: ModelMessage[]): DisplayMessage
       let tcIdx = 0
       for (const part of msg.content as ContentPartLike[]) {
         if (part?.type !== 'tool-call' || typeof part.toolCallId !== 'string') continue
-        // toolSearch is hidden from scrollback in the live flow (see
-        // use-agent.ts) — skip it here too so a resumed session doesn't
-        // suddenly surface the tool-search calls the live view hid.
+        // toolSearch 在实时流中从 scrollback 隐藏（见 use-agent.ts）——这里也
+        // 跳过它，这样恢复的会话不会突然露出实时视图隐藏过的工具搜索调用。
         if (part.toolName === TOOL_SEARCH_TOOL_NAME) continue
         if (
           part.toolName === 'shellOutput' &&

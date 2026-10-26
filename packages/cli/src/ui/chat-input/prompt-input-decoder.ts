@@ -12,8 +12,7 @@ function suffixPrefixLength(value: string, marker: string): number {
   return 0
 }
 
-/** Incrementally tokenizes terminal input without assuming Node chunk
- * boundaries align with keys or bracketed-paste markers. */
+/** 增量分词终端输入，而不假设 Node 的分块边界与按键或括号粘贴标记对齐。 */
 export class PromptInputDecoder {
   private pending = ''
   private pasteBuffer = ''

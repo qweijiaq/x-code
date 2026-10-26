@@ -1,10 +1,9 @@
-// @x-code-cli/core — File-based command loader
+// @x-code-cli/core — 基于文件的命令加载器
 //
-// Scans plugin-contributed `commands/` directories for `*.md` files and
-// returns CommandDefinitions ready to register in CommandRegistry.
-// Mirrors the sub-agents loader's structure — same minimal YAML
-// frontmatter parser, same "one bad file logged + skipped, never
-// crash the boot" error handling.
+// 扫描插件贡献的 `commands/` 目录中的 `*.md` 文件，返回可直接注册到
+// CommandRegistry 的 CommandDefinition。
+// 与 sub-agents 加载器结构一致 —— 同样的最小 YAML frontmatter 解析器，
+// 同样的“单个坏文件记录日志并跳过、绝不中断启动”的错误处理方式。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -29,14 +28,13 @@ async function loadCommandsFromDir(
   for (const entry of entries) {
     if (!entry.endsWith('.md')) continue
     const filePath = path.join(dir, entry)
-    const name = entry.slice(0, -3) // strip .md
+    const name = entry.slice(0, -3) // 去掉 .md 后缀
 
     try {
       const raw = await fs.readFile(filePath, 'utf-8')
       const parsed = parseFrontmatter(raw)
-      // Commands without frontmatter are still valid — the whole file
-      // becomes the body. Real Claude Code commands always have
-      // frontmatter, but be permissive.
+      // 没有 frontmatter 的命令仍然有效 —— 整个文件内容即命令体。
+      // 真正的 Claude Code 命令总是带 frontmatter，但这里保持宽容。
       const description = parsed?.data.description as string | undefined
       const body = (parsed ? parsed.body : raw).trim()
 
@@ -46,9 +44,9 @@ async function loadCommandsFromDir(
         body,
         source,
       }
-      // pluginId / pluginRoot only meaningful for plugin-sourced commands.
-      // For user / project commands ${CLAUDE_PLUGIN_ROOT} falls back to ''
-      // via expandCommandBody — safe no-op.
+      // pluginId / pluginRoot 仅对插件来源的命令有意义。
+      // 对 user / project 命令，${CLAUDE_PLUGIN_ROOT} 会在 expandCommandBody
+      // 中回退为空字符串 —— 是安全的空操作。
       if (pluginId) cmd.pluginId = pluginId
       if (pluginRoot) cmd.pluginRoot = pluginRoot
       out.push(cmd)
@@ -60,18 +58,17 @@ async function loadCommandsFromDir(
 }
 
 export interface LoadCommandsOptions {
-  /** Plugin-contributed command directories, each tagged with the
-   *  owning plugin's id and root dir. Order determines registry
-   *  insertion order (last-wins on name conflict). */
+  /** 插件贡献的命令目录，每个都带有所属插件的 id 和根目录。
+   *  顺序决定注册表插入顺序（名称冲突时后者获胜）。 */
   extraDirs?: ReadonlyArray<{ dir: string; pluginId: string; pluginRoot: string }>
 }
 
-/** Load slash commands from user (`~/.x-code/commands/*.md`) + plugin
- *  (extraDirs) + project (`<cwd>/.x-code/commands/*.md`) sources.
- *  Merge order is user → plugin → project so CommandRegistry's
- *  last-write-wins yields the precedence **project > plugin > user** —
- *  same as skills + sub-agents. `userXcodeDir()` is called at load time so
- *  `X_CODE_HOME` (used by tests) redirects the user-scope path. */
+/** 从 user（`~/.x-code/commands/*.md`）+ plugin（extraDirs）+ project
+ *  （`<cwd>/.x-code/commands/*.md`）三个来源加载斜杠命令。
+ *  合并顺序为 user → plugin → project，这样 CommandRegistry 的
+ *  last-write-wins 语义得到 **project > plugin > user** 的优先级 ——
+ *  与 skills + sub-agents 一致。`userXcodeDir()` 在加载时调用，因此
+ *  `X_CODE_HOME`（测试使用）能重定向 user 作用域路径。 */
 export async function loadPluginCommands(opts: LoadCommandsOptions = {}): Promise<CommandDefinition[]> {
   const userDir = path.join(userXcodeDir(), 'commands')
   const projectDir = path.join(process.cwd(), XCODE_DIR, 'commands')

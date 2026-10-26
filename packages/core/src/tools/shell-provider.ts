@@ -1,9 +1,8 @@
-// @x-code-cli/core — Cross-platform shell provider abstraction.
+// @x-code-cli/core — 跨平台 shell provider 抽象。
 //
-// Each shell (bash/zsh, PowerShell) spawns its own child process with its own
-// quoting/encoding quirks. Keeping those quirks behind a provider interface
-// means the tool-execution layer does not need platform branches and does not
-// hand-roll quote escapes for PowerShell.
+// 每种 shell（bash/zsh、PowerShell）各自派生子进程，各有一堆引号/编码上的
+// 怪癖。把这些怪癖藏在 provider 接口后面，意味着 tool-execution 层不需要
+// 平台分支，也不需要为 PowerShell 手写引号转义。
 import { type ResultPromise, execa } from 'execa'
 
 import os from 'node:os'
@@ -12,24 +11,22 @@ import { sanitizeShellEnv, wrapShellSpawn } from '../utils/shell-sandbox.js'
 
 export type ShellType = 'bash' | 'zsh' | 'powershell'
 
-// 20 MB — matches Claude Code's ripgrep buffer; generous enough for real
-// workloads, small enough to prevent an accidental `yes` or `find /` from
-// eating all memory. When exceeded, execa terminates the child with SIGTERM
-// and surfaces a "maxBuffer exceeded" error.
+// 20 MB —— 对齐 Claude Code 的 ripgrep 缓冲；对真实负载够宽裕，又小到能
+// 防止意外的 `yes` 或 `find /` 吃光所有内存。一旦超过，execa 会用 SIGTERM
+// 终止子进程，并抛出一个 "maxBuffer exceeded" 错误。
 const MAX_SHELL_BUFFER = 20 * 1024 * 1024
 
 export interface ShellSpawnOptions {
   timeout: number
   env?: NodeJS.ProcessEnv
   cwd?: string
-  /** When this signal aborts, execa kills the child process tree. Used to
-   *  honor user Esc / Ctrl+C cancellation mid-command without waiting for
-   *  the timeout. */
+  /** 当这个信号中止时，execa 会杀掉子进程树。用来在命令执行中途响应用户的
+   *  Esc / Ctrl+C 取消，而不必等到超时。 */
   signal?: AbortSignal
-  /** Collect the child's full stdout/stderr in memory (execa default: true).
-   *  Set false for a long-lived background shell that streams its own output
-   *  via the child streams — otherwise execa SIGTERMs it once total output
-   *  passes MAX_SHELL_BUFFER, which would kill a noisy dev server. */
+  /** 在内存里收集子进程完整的 stdout/stderr（execa 默认：true）。对长驻的
+   *  后台 shell，把它设为 false，让它通过子流自行流式输出 —— 否则一旦总
+   *  输出超过 MAX_SHELL_BUFFER，execa 就会 SIGTERM 它，这会杀掉一个吵吵闹闹
+   *  的 dev server。 */
   buffer?: boolean
 }
 
@@ -61,10 +58,9 @@ function createPosixProvider(executable: string, type: 'bash' | 'zsh'): ShellPro
   }
 }
 
-// PowerShell's -EncodedCommand accepts a base64 UTF-16LE payload. The char set
-// is [A-Za-z0-9+/=] which survives any outer quoting layer (cmd.exe, Node's
-// Windows argv-to-string serializer, etc.), so we never need to escape quotes
-// in the user's command.
+// PowerShell 的 -EncodedCommand 接受 base64 的 UTF-16LE 载荷。字符集是
+// [A-Za-z0-9+/=]，能穿过任何外层引号层（cmd.exe、Node 的 Windows
+// argv 转字符串序列化器等），所以我们永远不需要转义用户命令里的引号。
 function encodePowerShellCommand(psCommand: string): string {
   return Buffer.from(psCommand, 'utf16le').toString('base64')
 }
@@ -73,18 +69,17 @@ function createPowerShellProvider(executable: string): ShellProvider {
   return {
     type: 'powershell',
     spawn(command, opts) {
-      // Prefix/suffix run inside the same -EncodedCommand payload:
-      //   • OutputEncoding = UTF-8 — PS 5.1 on zh-CN Windows otherwise writes
-      //     output in GBK (mojibake when we decode as UTF-8). Avoids the
-      //     `chcp 65001 >nul && ...` cmd.exe wrapper.
-      //   • ProgressPreference = SilentlyContinue — first-run module loads
-      //     emit CLIXML progress records on stderr, which would surface as
-      //     noise in tool output.
-      //   • trailing `exit` — PowerShell does NOT propagate $LASTEXITCODE
-      //     to its own process exit code. Without this, `git push` failing
-      //     with exit 1 or `tsc` failing with exit 2 all come back as exit 0
-      //     or a generic 1, losing the signal. Prefer $LASTEXITCODE when a
-      //     native exe ran; fall back to $? for cmdlet-only pipelines.
+      // 前缀/后缀跑在同一个 -EncodedCommand 载荷里：
+      //   • OutputEncoding = UTF-8 —— 否则 zh-CN Windows 上的 PS 5.1 会用
+      //     GBK 写输出（我们按 UTF-8 解码就是乱码）。这也省掉了
+      //     `chcp 65001 >nul && ...` 的 cmd.exe 包装。
+      //   • ProgressPreference = SilentlyContinue —— 首次运行时模块加载会
+      //     在 stderr 上发 CLIXML 进度记录，否则会以噪音形式出现在工具
+      //     输出里。
+      //   • 末尾的 `exit` —— PowerShell 不会把 $LASTEXITCODE 传播到它自己
+      //     的进程退出码。没有这个，`git push` 失败退出 1、`tsc` 失败退出 2，
+      //     都会变成退出 0 或一个笼统的 1，丢失信号。跑过原生 exe 时优先用
+      //     $LASTEXITCODE；只有 cmdlet 的管道回退到 $?。
       const wrapped = [
         '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
         "$ProgressPreference = 'SilentlyContinue'",
@@ -103,8 +98,8 @@ function createPowerShellProvider(executable: string): ShellProvider {
 
 export function getShellProvider(): ShellProvider {
   if (os.platform() === 'win32') {
-    // Git Bash / MSYS2 / Cygwin set SHELL to a Unix-style path. Prefer that
-    // when present so the Unix tool ecosystem works as expected.
+    // Git Bash / MSYS2 / Cygwin 会把 SHELL 设成 Unix 风格路径。有它的话优先
+    // 用它，这样 Unix 工具生态能按预期工作。
     const shell = process.env.SHELL
     if (shell && /\b(bash|zsh)$/i.test(shell)) {
       return createPosixProvider(shell, shell.endsWith('zsh') ? 'zsh' : 'bash')

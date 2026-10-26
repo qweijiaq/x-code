@@ -1,4 +1,4 @@
-// @x-code-cli/core — listDir tool
+// @x-code-cli/core — listDir 工具
 import fs from 'node:fs/promises'
 
 import { tool } from 'ai'

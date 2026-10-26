@@ -20,12 +20,10 @@ import {
 } from '../src/agent/file-ingest.js'
 import { disposeOcrWorker } from '../src/agent/image-ocr.js'
 
-// Mock tesseract so the OCR fallback path doesn't spawn a real worker
-// thread on test images. Without this, when the sub-agent test forces
-// captionImage to reject, ingestFile falls through to ocrImage() which
-// crashes the worker on any non-decodable input and leaks an unhandled
-// exception into the test runner. Returning a deterministic stub keeps
-// the assertion focused on the notice + plumbing behavior.
+// Mock tesseract，这样 OCR 回退路径不会在测试图片上启动真实的工作线程。
+// 否则当 sub-agent 测试强制 captionImage 拒绝时，ingestFile 会回退到 ocrImage()，
+// 后者在任何无法解码的输入上都会让 worker 崩溃，并把未处理的异常泄漏进测试运行器。
+// 返回确定性的 stub 可以让断言聚焦在 notice + 管道行为上。
 vi.mock('tesseract.js', () => ({
   createWorker: vi.fn(async () => ({
     recognize: vi.fn(async () => ({ data: { text: 'mock local OCR result' } })),
@@ -571,10 +569,9 @@ describe('ingestFile', () => {
   })
 
   it('attaches images as base64 strings, not Buffers (session-jsonl-safe)', async () => {
-    // Regression: the image part used to carry the raw Buffer, which
-    // JSON.stringify persists as {"type":"Buffer","data":[...]} — a shape the
-    // SDK's ModelMessage schema rejects, so resuming any session with an
-    // image attachment failed every subsequent request.
+    // 回归修复：图片 part 过去携带原始 Buffer，JSON.stringify 会把它持久化为
+    // {"type":"Buffer","data":[...]} —— 这种形状会被 SDK 的 ModelMessage 模式拒绝，
+    // 因此恢复任何带图片附件的会话都会导致后续每次请求失败。
     const source = await fs.readFile(imageFile)
     const parts = await ingestFile({ raw: `@${imageFile}`, absolutePath: imageFile }, multimodalCaps)
     const imagePart = parts.find((part) => part.type === 'file')
@@ -729,10 +726,9 @@ describe('ingestFile', () => {
     expect(parts.every((part) => part.type === 'text')).toBe(true)
   }, 15_000)
 
-  // Regression: a multi-MB @path attachment used to be inlined verbatim,
-  // pushing the user message past the model's context window before the
-  // first turn could even start. Now we substitute a short hint that
-  // points the model at the readFile tool with offset/limit.
+  // 回归修复：多 MB 的 @path 附件过去会被原样内联，在第一个轮次开始之前
+  // 就把用户消息推到超过模型上下文窗口。现在我们替换为一段简短提示，
+  // 指引模型使用带 offset/limit 的 readFile 工具。
   it('replaces oversized text files with a hint to use readFile', async () => {
     const big = path.join(tmpDir, 'big.txt')
     await fs.writeFile(big, 'x'.repeat(MAX_INGEST_BYTES + 1))

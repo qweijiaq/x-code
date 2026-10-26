@@ -1,43 +1,41 @@
-// @x-code-cli/core — Per-provider extended-thinking / reasoning toggle
+// @x-code-cli/core — 各 provider 的扩展思考 / 推理开关
 //
-// AI SDK v7 provides a top-level `reasoning` parameter that works portably
-// across most providers (OpenAI, Anthropic, Google, xAI, DeepSeek, Moonshot).
-// We use it as the primary mechanism for reasoning control.
+// AI SDK v7 提供顶层的 `reasoning` 参数，可在大多数 provider 上可移植地工作
+// （OpenAI、Anthropic、Google、xAI、DeepSeek、Moonshot）。我们把它作为推理
+// 控制的主要机制。
 //
-// Exceptions that still need providerOptions / fetch shim injection:
-//   - deepseek: explicit tiers use native reasoningEffort so `max` does not
-//     round-trip through portable `xhigh` and emit a compatibility warning.
-//   - zhipu: goes through @ai-sdk/openai-compatible, SDK doesn't auto-translate
-//     `reasoning` for it. We inject `reasoning_effort` via fetch shim.
-//   - alibaba: uses `enableThinking` in providerOptions (no top-level support).
-//   - native `max` controls for newer Anthropic/OpenAI models also travel via
-//     providerOptions because the portable reasoning enum tops out at xhigh.
+// 仍需 providerOptions / fetch 垫片注入的例外：
+//   - deepseek：显式层级使用原生 reasoningEffort，这样 `max` 不会绕经可移植的
+//     `xhigh` 并产生兼容性警告。
+//   - zhipu：走 @ai-sdk/openai-compatible，SDK 不会为它自动翻译 `reasoning`。
+//     我们通过 fetch 垫片注入 `reasoning_effort`。
+//   - alibaba：在 providerOptions 中使用 `enableThinking`（无顶层支持）。
+//   - 较新 Anthropic/OpenAI 模型的原生 `max` 控件也通过 providerOptions 传递，
+//     因为可移植的 reasoning 枚举最高只到 xhigh。
 //
-// The user-facing controls:
-//   /thinking on|off — binary toggle (maps to 'high' / 'none')
-//   /model tier picker — explicit effort level (low/high/max etc.)
+// 面向用户的控件：
+//   /thinking on|off — 二元开关（映射为 'high' / 'none'）
+//   /model 层级选择器 — 显式 effort 等级（low/high/max 等）
 //
-// When `effort` is set (user picked a tier via /model), it takes priority
-// over the `enabled` flag. The /thinking toggle is only used as a fallback
-// for models without an explicit tier.
+// 当 `effort` 被设置（用户通过 /model 选择了层级）时，它优先于 `enabled`
+// 标志。/thinking 开关只作为没有显式层级模型的回退。
 import { providerOf } from './capabilities.js'
 import { PROVIDER_REASONING_PROFILES } from './catalog.js'
 import type { ReasoningTierOption, ReasoningTierProfile } from './catalog.js'
 import { getOpenAIChatGPTReasoningTiers, getOpenAIChatGPTRuntimeModel } from './openai-chatgpt-models.js'
 
-/** Whether the model exposes a granular reasoning-effort tier (vs. the
- *  binary /thinking toggle). A provider has tiers but only some of its
- *  model families honor them — modelPattern in PROVIDER_REASONING_TIERS
- *  gates that. Drives both the /model tier picker and the effort branch
- *  in getReasoningLevel. */
+/** 模型是否暴露细粒度的推理 effort 层级（相对于二元的 /thinking 开关）。
+ *  provider 有层级，但只有部分模型家族遵循它们——PROVIDER_REASONING_TIERS
+ *  中的 modelPattern 负责把关。它同时驱动 /model 层级选择器和
+ *  getReasoningLevel 中的 effort 分支。 */
 function getReasoningTierProfile(modelId: string): ReasoningTierProfile | undefined {
   return PROVIDER_REASONING_PROFILES[providerOf(modelId)]?.find(
     (profile) => !profile.modelPattern || profile.modelPattern.test(modelId),
   )
 }
 
-/** Some fixed-reasoning xAI models reject the effort field entirely. The
- * public grok-4.20 alias is not recognized by the SDK's equivalent guard. */
+/** 某些固定推理的 xAI 模型会完全拒绝 effort 字段。公开的 grok-4.20 别名
+ *  不被 SDK 的等价守卫识别。 */
 export function acceptsReasoningControl(modelId: string): boolean {
   if (providerOf(modelId) !== 'xai') return true
   const providerModelId = modelId.slice(modelId.indexOf(':') + 1)
@@ -58,8 +56,8 @@ export function getReasoningTierOptions(modelId: string): readonly ReasoningTier
 
 export type ReasoningLevel = 'provider-default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 
-/** Map our internal tier values (from PROVIDER_REASONING_TIERS) to the SDK's
- *  canonical reasoning levels. Most map 1:1 but 'max' maps to 'xhigh'. */
+/** 把内部层级值（来自 PROVIDER_REASONING_TIERS）映射到 SDK 的规范推理等级。
+ *  大多数是 1:1，但 'max' 映射为 'xhigh'。 */
 const TIER_TO_REASONING: Record<string, ReasoningLevel> = {
   none: 'none',
   minimal: 'minimal',
@@ -69,8 +67,8 @@ const TIER_TO_REASONING: Record<string, ReasoningLevel> = {
   max: 'xhigh',
 }
 
-/** Resolve the provider-native effort after applying model support and the
- * minimum valid effort for models that cannot turn reasoning off. */
+/** 在应用模型支持和无法关闭推理的模型的最低有效 effort 之后，解析出
+ *  provider 原生的 effort。 */
 export function getReasoningEffort(modelId: string, enabled: boolean, effort?: string): string | undefined {
   const profile = getReasoningTierProfile(modelId)
   if (!profile) return undefined
@@ -79,19 +77,18 @@ export function getReasoningEffort(modelId: string, enabled: boolean, effort?: s
 }
 
 /**
- * Compute the top-level `reasoning` value for streamText/generateText.
- * Returns undefined when the model doesn't support reasoning control
- * (custom provider, or Alibaba/Zhipu which use different mechanisms).
+ * 计算 streamText/generateText 的顶层 `reasoning` 值。
+ * 当模型不支持推理控制时返回 undefined（自定义 provider，或使用不同机制的
+ * Alibaba/Zhipu）。
  *
- * For providers that support the SDK's top-level `reasoning` parameter
- * (OpenAI, Anthropic, Google, xAI, DeepSeek, Moonshot), this is all
- * that's needed — the SDK handles the provider-specific translation.
+ * 对于支持 SDK 顶层 `reasoning` 参数的 provider（OpenAI、Anthropic、Google、
+ * xAI、DeepSeek、Moonshot），这就够了——SDK 会处理针对各 provider 的翻译。
  */
 export function getReasoningLevel(modelId: string, enabled: boolean, effort?: string): ReasoningLevel | undefined {
   const provider = providerOf(modelId)
   const chatGPTTiers = getOpenAIChatGPTReasoningTiers(modelId)
 
-  // These providers use separate mechanisms (providerOptions / fetch shim)
+  // 这些 provider 使用独立的机制（providerOptions / fetch 垫片）
   if (provider === 'alibaba' || provider === 'zhipu' || provider === 'custom' || !acceptsReasoningControl(modelId)) {
     return undefined
   }
@@ -107,10 +104,9 @@ export function getReasoningLevel(modelId: string, enabled: boolean, effort?: st
   }
 
   const effectiveEffort = getReasoningEffort(modelId, enabled, effort)
-  // DeepSeek exposes provider-native low/high/max values. Sending the
-  // portable max equivalent (`xhigh`) makes the SDK map it back to `max`
-  // and emit a compatibility warning, so explicit tiers travel only through
-  // providerOptions.deepseek.reasoningEffort.
+  // DeepSeek 暴露 provider 原生的 low/high/max 值。发送可移植的 max 等价物
+  // （`xhigh`）会让 SDK 把它映射回 `max` 并产生兼容性警告，因此显式层级只
+  // 通过 providerOptions.deepseek.reasoningEffort 传递。
   if (provider === 'deepseek' && effectiveEffort) return undefined
   if (effectiveEffort) {
     return TIER_TO_REASONING[effectiveEffort] ?? (effectiveEffort as ReasoningLevel)
@@ -120,8 +116,8 @@ export function getReasoningLevel(modelId: string, enabled: boolean, effort?: st
 }
 
 /**
- * Build provider-native reasoning options where the portable top-level
- * `reasoning` value cannot express the exact provider control.
+ * 在可移植的顶层 `reasoning` 值无法表达精确的 provider 控件时，
+ * 构建 provider 原生的推理选项。
  */
 export function getThinkingProviderOptions(
   modelId: string,
@@ -139,8 +135,8 @@ export function getThinkingProviderOptions(
       return { alibaba: { enableThinking: enabled } }
 
     case 'zhipu':
-      // Binary toggle via providerOptions for models that don't use tiers.
-      // Tiered models get reasoning_effort injected by the fetch shim.
+      // 对不使用层级的模型，通过 providerOptions 做二元开关。
+      // 分层级的模型由 fetch 垫片注入 reasoning_effort。
       const zhipuEffort = getReasoningEffort(modelId, enabled, effort)
       if (zhipuEffort) {
         return { zhipu: { thinking: { type: 'enabled' }, reasoningEffort: zhipuEffort } }
@@ -162,10 +158,9 @@ export function getThinkingProviderOptions(
   }
 }
 
-/** Merge thinking-mode providerOptions into an existing providerOptions
- *  bag without clobbering unrelated keys (e.g. Anthropic cache-control).
- *  Per-provider entries are deep-merged at one level: x.thinking and
- *  x.cacheControl can coexist on `providerOptions.anthropic`. */
+/** 把 thinking-mode 的 providerOptions 合并进已有的 providerOptions 袋，
+ *  而不破坏无关的键（如 Anthropic cache-control）。各 provider 条目做一层
+ *  深合并：x.thinking 和 x.cacheControl 可以共存于 `providerOptions.anthropic`。 */
 export function mergeThinkingOptions(
   base: Record<string, unknown> | undefined,
   thinking: Record<string, Record<string, unknown>>,

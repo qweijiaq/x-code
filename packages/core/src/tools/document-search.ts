@@ -1,7 +1,7 @@
-// @x-code-cli/core — documentSearch tool
+// @x-code-cli/core — documentSearch 工具
 //
-// Hybrid retrieval over the local document library. Local only: the query is
-// embedded on-device (when available) and matched against indexed chunks.
+// 在本地文档库上做混合检索。仅本地：查询会在设备上嵌入（可用时），并与已
+// 索引的分块做匹配。
 import { tool } from 'ai'
 
 import { z } from 'zod'

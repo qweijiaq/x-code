@@ -4,8 +4,8 @@ export interface SystemProxy {
   proxy: string
 }
 
-/** Parse the macOS `scutil --proxy` output. Exported for tests; returns null
- *  when no HTTP(S) proxy is enabled. */
+/** 解析 macOS `scutil --proxy` 输出。为测试导出；未启用 HTTP(S)
+ *  代理时返回 null。 */
 export function parseMacProxy(output: string): SystemProxy | null {
   const enabled = (key: string): boolean => {
     const match = output.match(new RegExp(`^\\s*${key}\\s*:\\s*1\\s*$`, 'm'))
@@ -26,9 +26,9 @@ export function parseMacProxy(output: string): SystemProxy | null {
   return null
 }
 
-/** Git (and other CLI children) do not inherit Chromium's system-proxy
- *  settings. On macOS, read the system proxy once and return env vars for
- *  child processes, unless the user already configured one explicitly. */
+/** Git（以及其他 CLI 子进程）不会继承 Chromium 的系统代理设置。
+ *  在 macOS 上读取一次系统代理并返回给子进程的环境变量，
+ *  除非用户已显式配置了代理。 */
 export function systemProxyEnv(
   env: NodeJS.ProcessEnv = process.env,
   run: typeof execFileSync = execFileSync,

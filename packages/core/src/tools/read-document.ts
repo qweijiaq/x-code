@@ -1,9 +1,8 @@
-// @x-code-cli/core — readDocument tool
+// @x-code-cli/core — readDocument 工具
 //
-// Deterministic, local extraction for documents and media. Unlike readFile,
-// which is optimized for source code, this tool understands document formats
-// and returns bounded text plus lightweight metadata. No document bytes are
-// sent to a model; OCR, transcription, and parsing happen locally.
+// 面向文档和媒体的确定性本地抽取。不同于针对源码优化的 readFile，这个工具
+// 理解文档格式，返回有界的文本外加轻量元数据。文档字节不会发给模型；OCR、
+// 转写和解析都在本地完成。
 import { tool } from 'ai'
 
 import { z } from 'zod'

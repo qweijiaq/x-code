@@ -127,7 +127,7 @@ describe('desktop API-key storage', () => {
     expect(process.env.ANTHROPIC_API_KEY).toBe('sk-secret-wxyz')
     expect(providerSecretStatus('anthropic')).toMatchObject({ source: 'stored', hint: '••••wxyz' })
 
-    // Re-reading from disk decrypts through the cipher.
+    // 从磁盘重新读取时会经由加密器解密。
     await loadSecrets()
     expect(providerSecretStatus('anthropic')).toMatchObject({ source: 'stored', hint: '••••wxyz' })
   })

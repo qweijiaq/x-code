@@ -26,7 +26,7 @@ describe('collapseStaleToolResults', () => {
 
     expect((out(messages[0]).value as string).startsWith('[Older browser_snapshot')).toBe(true)
     expect((out(messages[2]).value as string).startsWith('[Older browser_snapshot')).toBe(true)
-    expect(out(messages[3]).value).toBe('LATEST TREE') // newest untouched
+    expect(out(messages[3]).value).toBe('LATEST TREE') // 最新的一条未改动
   })
 
   it('collapses an older screenshot (content+media) to a text placeholder', () => {
@@ -45,7 +45,7 @@ describe('collapseStaleToolResults', () => {
     ]
     collapseStaleToolResults(messages, ['browser_take_screenshot'])
 
-    // old image is gone, replaced by text; latest still carries its media
+    // 旧图像已消失，被文本取代；最新一条仍保留其媒体
     expect(out(messages[0]).type).toBe('text')
     expect(out(messages[1]).type).toBe('content')
   })
@@ -69,7 +69,7 @@ describe('collapseStaleToolResults', () => {
       toolMsg('browser__browser_snapshot', textOut('TREE B')),
     ]
     collapseStaleToolResults(messages, ['browser_snapshot'])
-    expect(out(messages[1]).value).toBe('file contents') // untouched
+    expect(out(messages[1]).value).toBe('file contents') // 未改动
   })
 
   it('no-ops on an empty suffix list', () => {

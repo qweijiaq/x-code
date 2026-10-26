@@ -1,10 +1,9 @@
-// @x-code-cli/core — Local document library: indexing, stats, hybrid search.
+// @x-code-cli/core — 本地文档库：索引、统计、混合检索。
 //
-// Files are parsed by readDocument (local extraction), split into overlapping
-// chunks, and stored with their text in index.json. Vectors are optional: when
-// the BGE backend is available they live in vectors.f32, otherwise the library
-// degrades to keyword search. A file whose mtime and size did not change is
-// skipped, and unchanged chunks keep their existing vectors (hash reuse).
+// 文件由 readDocument 解析（本地抽取），切成带重叠的块，
+// 连同文本一起存入 index.json。向量是可选的：BGE 后端可用时
+// 它们存在 vectors.f32 里，否则库降级为关键词检索。mtime 和
+// 大小未变化的文件会被跳过，未变化的块保留其现有向量（哈希复用）。
 import crypto from 'node:crypto'
 import type { Dirent, Stats } from 'node:fs'
 import fs from 'node:fs/promises'
@@ -149,7 +148,7 @@ async function collectFiles(
       const fileStat = await fs.stat(full)
       out.push({ path: full, mtimeMs: fileStat.mtimeMs, size: fileStat.size })
     } catch {
-      // Unreadable file: skip.
+      // 不可读的文件：跳过。
     }
   }
 }
@@ -160,7 +159,7 @@ interface RawChunk {
   text: string
 }
 
-/** Split a extracted document into chunks, keeping PDF page numbers. */
+/** 把抽取出的文档切成块，保留 PDF 页码。 */
 function documentChunks(text: string, extension: string): RawChunk[] {
   if (extension === '.pdf') {
     const segments = text.split(/^--- Page (\d+) ---$/m)
@@ -291,17 +290,17 @@ export async function indexLibrary(
     }
   }
 
-  // Drop entries for files that no longer exist and were not part of this run.
+  // 删除已不存在且不属于本次运行的文件条目。
   const knownPaths = new Set(files.map((file) => file.path))
-  // Only forget files inside the indexed root that disappeared; unrelated
-  // library entries from other folders are preserved.
+  // 只遗忘索引根目录内消失的文件；来自其他文件夹的
+  // 无关库条目会被保留。
   const removed = previous.files.filter(
     (file) => file.path.startsWith(root + path.sep) && !knownPaths.has(file.path),
   ).length
   for (const file of previous.files) {
     if (file.path.startsWith(root + path.sep) && !knownPaths.has(file.path)) continue
     if (!knownPaths.has(file.path)) {
-      // Preserve entries from folders not touched by this run.
+      // 保留本次运行未触及的文件夹中的条目。
       files.push(file)
       characters += file.characters
       const oldChunks = previousChunksByPath.get(file.path) ?? []
@@ -309,7 +308,7 @@ export async function indexLibrary(
     }
   }
 
-  // Embed chunks that do not have a reusable vector yet.
+  // 对还没有可复用向量的块做嵌入。
   const vectorsByHash = new Map(reusable)
   let semantic = false
   if (options.semantic && pendingEmbedding.length > 0 && vectorsByHash.size < chunks.length) {

@@ -42,9 +42,9 @@ function formatBytes(bytes: number | undefined): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
 
-/** Best-effort progress from tools that print percentages (npm, pip, ffmpeg,
- *  curl, ...). Shell commands have no structured progress channel, so fall
- *  back to an indeterminate bar driven by the elapsed timer. */
+/** 从会打印百分比的工具（npm、pip、ffmpeg、curl 等）尽力提取进度。
+ *  shell 命令没有结构化的进度通道，因此退回由耗时计时器驱动的
+ *  不确定进度条。 */
 function lastPercent(text: string): number | null {
   let found: number | null = null
   for (const match of text.matchAll(/(\d{1,3})\s*%/g)) {

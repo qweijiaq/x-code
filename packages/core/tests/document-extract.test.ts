@@ -99,7 +99,7 @@ describe('readDocument MOBI', () => {
     name.copy(header, 0)
     header.writeUInt16BE(2, 76)
     const record0 = Buffer.alloc(16)
-    record0.writeUInt16BE(1, 0) // no compression
+    record0.writeUInt16BE(1, 0) // 无压缩
     record0.writeUInt32BE(Buffer.byteLength(text), 4)
     record0.writeUInt16BE(1, 8)
     record0.writeUInt16BE(4096, 10)
@@ -121,10 +121,10 @@ describe('readDocument MOBI', () => {
   })
 
   it('decompresses PalmDOC literals and back-references', () => {
-    // "abc" followed by a distance-3/length-3 pair -> "abcabc".
+    // "abc" 后跟一个 distance-3/length-3 对 -> "abcabc"。
     const input = Uint8Array.from([0x61, 0x62, 0x63, 0x80, 0x18])
     expect(Buffer.from(palmDocDecompress(input)).toString('utf8')).toBe('abcabc')
-    // 0xC3 = a space plus three literal bytes.
+    // 0xC3 = 一个空格加三个字面字节。
     expect(Buffer.from(palmDocDecompress(Uint8Array.from([0xc3, 0x78, 0x79, 0x7a]))).toString('utf8')).toBe(' xyz')
   })
 })
@@ -139,8 +139,8 @@ describe('readDocument video metadata', () => {
 
   it('reads MP4 duration from mvhd', async () => {
     const mvhd = Buffer.alloc(100)
-    mvhd.writeUInt32BE(1000, 12) // timescale
-    mvhd.writeUInt32BE(5000, 16) // duration -> 5 seconds
+    mvhd.writeUInt32BE(1000, 12) // timescale（时间刻度）
+    mvhd.writeUInt32BE(5000, 16) // duration（时长）→ 5 秒
     const moov = box('moov', box('mvhd', mvhd))
     const file = fixture('clip.mp4', moov)
     const result = await readDocument(file)

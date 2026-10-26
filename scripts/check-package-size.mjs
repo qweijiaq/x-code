@@ -6,7 +6,7 @@ const MIB = 1024 * 1024
 const limits = {
   packed: 3.5 * MIB,
   unpacked: 12.75 * MIB,
-  // Release staging adds LICENSE and both README files to the locally checked package.
+  // 发布暂存会给本地检查的包加上 LICENSE 和两个 README 文件。
   files: 45,
 }
 const cliPackage = JSON.parse(readFileSync(resolve('packages/cli/package.json'), 'utf8'))

@@ -1,25 +1,23 @@
-// @x-code-cli/core — Slash-command argument parser for /mcp add/add-json/remove
+// @x-code-cli/core — /mcp add/add-json/remove 的斜杠命令参数解析器
 //
-// Slash commands deliver one raw string (the text after `/mcp <sub>`) and we
-// have to coerce that into a structured McpServerConfig. The parser is
-// deliberately narrow:
-//   - one entry point per subcommand (parseAdd / parseAddJson / parseRemove)
-//   - returns a tagged ParseResult so the App.tsx caller branches once and
-//     gets either a usable command or a one-line error string
+// 斜杠命令只投递一个原始字符串（`/mcp <sub>` 之后的文本），我们必须把它
+// 转成结构化的 McpServerConfig。解析器刻意保持窄范围：
+//   - 每个子命令一个入口（parseAdd / parseAddJson / parseRemove）
+//   - 返回带标记的 ParseResult，让 App.tsx 调用方只分支一次，
+//     要么拿到可用的命令，要么拿到一行错误字符串
 //
-// Quoting rules we honour, intentionally minimal:
-//   - "double-quoted" and 'single-quoted' strings keep whitespace
-//   - backslash escapes ONLY whitespace and quote chars (and itself) —
-//     `\ ` for a literal space, `\"` for a literal quote, `\\` for a
-//     literal backslash. Backslash before anything else passes through
-//     verbatim. This is critical on Windows where users routinely paste
-//     paths like `D:\res\x-code-cli\tmp` — full POSIX-style escape would
-//     eat all those backslashes and silently corrupt the path.
-//   - everything else: whitespace splits tokens
+// 我们支持的引号规则，刻意保持最小：
+//   - "双引号" 和 '单引号' 包裹的字符串保留空白
+//   - 反斜杠只转义空白、引号字符（以及它自己）——
+//     `\ ` 表示字面空格，`\"` 表示字面引号，`\\` 表示字面反斜杠。
+//     反斜杠后跟其他字符则原样透传。这在 Windows 上很关键，用户经常
+//     粘贴 `D:\res\x-code-cli\tmp` 这样的路径——完全的 POSIX 风格转义
+//     会吞掉所有这些反斜杠并悄悄破坏路径。
+//   - 其余情况：空白切分 token
 //
-// Why we don't lean on a shell-words npm package: the surface here is
-// small, and a 50-line tokeniser keeps the parser entirely deterministic
-// for tests + free of cross-platform shell-escaping surprises.
+// 为什么不依赖 shell-words 这类 npm 包：这里的表面积很小，
+// 50 行的 tokenizer 让解析器对测试完全确定，且没有跨平台 shell
+// 转义带来的意外。
 import type { McpHttpServerConfig, McpServerConfig, McpStdioServerConfig } from './types.js'
 
 export type ConfigScope = 'user' | 'project'
@@ -41,7 +39,7 @@ export interface AddJsonCommand {
 export interface RemoveCommand {
   kind: 'remove'
   name: string
-  /** Undefined when the user didn't pass --scope; caller auto-detects. */
+  /** 用户未传 --scope 时为 undefined；由调用方自动探测。 */
   scope?: ConfigScope
 }
 
@@ -51,25 +49,23 @@ export type ParseResult<T extends ParsedCommand = ParsedCommand> =
   | { ok: true; command: T }
   | { ok: false; error: string }
 
-/** Names allowed in `mcpServers.<name>`. Tightened relative to the runtime
- *  name-mangling sanitizer because *config entry point* is a better place
- *  to refuse weird names — surprising sanitisation post-add ("I typed
- *  `my server!` and got `my_server___xxx`") is worse than a clear
- *  rejection. Length 32 leaves headroom for the `{server}__{tool}`
- *  format to stay well under the model-side 64-char tool name limit. */
+/** `mcpServers.<name>` 允许的名字。相比运行时的 name-mangling 消毒器更严格，
+ *  因为*配置入口*是拒绝奇怪名字的更好位置——添加之后才发生的意外消毒
+ *  （"我输入 `my server!` 结果变成 `my_server___xxx`"）比一次明确的拒绝
+ *  更糟糕。长度 32 为 `{server}__{tool}` 格式留出余量，使其远低于模型侧
+ *  64 字符的工具名上限。 */
 const NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/
 
-// ── Top-level entry points ─────────────────────────────────────────────────
+// ── 顶层入口 ─────────────────────────────────────────────────
 
-/** Parse args for `/mcp add [...flags] <name> <command-or-url> [args...]`. */
+/** 解析 /mcp add [...flags] <name> <command-or-url> [args...] 的参数。 */
 export function parseAdd(rawArg: string): ParseResult<AddCommand> {
   const tokRes = tokenize(rawArg)
   if (!tokRes.ok) return tokRes
   const tokens = tokRes.tokens
 
-  // First pass: pull flags off the front. Stop at the first non-flag token
-  // (which becomes the server name); the `--` separator hard-stops flag
-  // parsing and is then dropped — everything after is positional.
+  // 第一遍：从前面剥离 flag。遇到第一个非 flag token（即服务器名）就停下；
+  // `--` 分隔符会硬性终止 flag 解析并被丢弃——其后全部是位置参数。
   let isHttp = false
   let scope: ConfigScope = 'user'
   let timeout: number | undefined
@@ -87,9 +83,9 @@ export function parseAdd(rawArg: string): ParseResult<AddCommand> {
       break
     }
     if (t === '--http' || t === '--transport') {
-      // --http is our shorthand; --transport <name> is Claude/Gemini syntax
-      // (we accept only http here; sse is intentionally not supported per
-      // the design doc — MCP spec deprecated SSE in 2025-03).
+      // --http 是我们的简写；--transport <name> 是 Claude/Gemini 的语法
+      // （这里只接受 http；按设计文档，sse 有意不支持——
+      // MCP 规范已在 2025-03 弃用 SSE）。
       if (t === '--transport') {
         const next = tokens[i + 1]
         if (next !== 'http') {
@@ -123,8 +119,8 @@ export function parseAdd(rawArg: string): ParseResult<AddCommand> {
     if (t === '--header') {
       const v = tokens[i + 1]
       if (typeof v !== 'string') return err('--header requires a "Key: value" argument')
-      // Header format: "Key: Value" (RFC 7230 style). Be permissive with
-      // whitespace around the colon to match user habit.
+      // Header 格式："Key: Value"（RFC 7230 风格）。冒号两侧的空白宽容处理，
+      // 以贴合用户习惯。
       const colon = v.indexOf(':')
       if (colon <= 0) return err(`--header expects "Key: Value" (got ${v})`)
       headerEntries.push([v.slice(0, colon).trim(), v.slice(colon + 1).trim()])
@@ -143,15 +139,14 @@ export function parseAdd(rawArg: string): ParseResult<AddCommand> {
     return err(`Unknown flag: ${t}`)
   }
 
-  // Positional args. After the (optional) `--`, everything left is name +
-  // command/url + the rest. Stdio: tokens[i] = name, tokens[i+1] = command,
-  // tokens[i+2..] = args. HTTP: tokens[i] = name, tokens[i+1] = url, nothing
-  // after.
+  // 位置参数。（可选的）`--` 之后剩下的全是 name + command/url + 其余参数。
+  // Stdio：tokens[i] = name，tokens[i+1] = command，tokens[i+2..] = args。
+  // HTTP：tokens[i] = name，tokens[i+1] = url，后面不再有内容。
   //
-  // Users coming from Claude Code muscle-memory write `add <name> -- <cmd>`
-  // with the separator AFTER the name. Our flag loop already stops at the
-  // first non-flag (the name), so any `--` lands at positional[1]. Drop it
-  // — it's cosmetic, the actual command follows.
+  // 习惯 Claude Code 用法的用户会写 `add <name> -- <cmd>`，把分隔符放在
+  // name 之后。我们的 flag 循环已在第一个非 flag（即 name）处停下，所以
+  // 任何 `--` 都会落到 positional[1]。丢弃它——它只是装饰性的，
+  // 真正的命令跟在后面。
   let positional = tokens.slice(i)
   if (positional[1] === '--') {
     positional = [positional[0]!, ...positional.slice(2)]
@@ -183,9 +178,9 @@ export function parseAdd(rawArg: string): ParseResult<AddCommand> {
     return ok({ kind: 'add', name, scope, config })
   }
 
-  // stdio. `--` is allowed but optional. Some users will write
-  // `/mcp add fs npx -y @pkg/foo /tmp`, others `/mcp add fs -- npx -y ...`.
-  // Both reach this branch identically — we already stripped `--` upstream.
+  // stdio。`--` 允许但可选。有的用户会写 `/mcp add fs npx -y @pkg/foo /tmp`，
+  // 有的写 `/mcp add fs -- npx -y ...`。两种情况都会同样到达这个分支——
+  // 我们已在上游剥掉了 `--`。
   void sawDoubleDash
   if (headerEntries.length > 0) return err('--header is only valid for HTTP servers (--http)')
   const command = positional[1]!
@@ -199,28 +194,22 @@ export function parseAdd(rawArg: string): ParseResult<AddCommand> {
   return ok({ kind: 'add', name, scope, config })
 }
 
-/** Parse args for `/mcp add-json [--scope ...] <name> '<json>'`.
- *  The JSON blob is whatever the schema accepts — same validation runs
- *  on the loader side, so passing parseServerConfig here keeps errors
- *  uniform between "wrote it via CLI" and "edited the file by hand". */
+/** 解析 /mcp add-json [--scope ...] <name> '<json>' 的参数。 */
 export function parseAddJson(rawArg: string): ParseResult<AddJsonCommand> {
-  // add-json uniquely benefits from KEEPING the JSON literal intact rather
-  // than running it through the shell tokeniser (which would mangle nested
-  // quotes). Strategy: pull flags + name off the front via tokenize on the
-  // *prefix* up to where the JSON begins, then take the JSON as the
-  // suffix verbatim. We find the JSON start by looking for the first `{`
-  // after the name token.
+  // add-json 特别需要保持 JSON 字面量完整，而不是交给 shell tokenizer 处理
+  // （后者会破坏嵌套引号）。策略：在 JSON 开始之前的*前缀*上用 tokenize
+  // 剥离 flag + name，然后把 JSON 作为后缀原样取出。我们通过寻找 name token
+  // 之后的第一个 `{` 来定位 JSON 的起点。
 
   const trimmed = rawArg.trim()
   if (!trimmed) {
     return err("Usage: /mcp add-json [--scope user|project] <name> '<json>'")
   }
 
-  // Walk through tokens until we either run out of flags/name OR hit a
-  // token starting with `{`. The JSON blob may have been entered single-
-  // quoted to the slash command — in that case the tokeniser strips the
-  // quotes and we get a clean object string. If unquoted, the user
-  // shouldn't have nested whitespace anyway, so a single token suffices.
+  // 遍历 token，直到用完 flags/name 或者遇到以 `{` 开头的 token。JSON 块
+  // 可能是以单引号形式输入给斜杠命令的——此时 tokenizer 会剥掉引号，
+  // 我们得到一个干净的对象字符串。如果未加引号，用户本就不该有嵌套空白，
+  // 所以单个 token 就够用了。
   const tokRes = tokenize(trimmed)
   if (!tokRes.ok) return tokRes
   const tokens = tokRes.tokens
@@ -239,9 +228,8 @@ export function parseAddJson(rawArg: string): ParseResult<AddJsonCommand> {
   }
   i++
 
-  // The JSON might have been split across tokens if the user didn't quote
-  // it. Concatenate the remainder with single spaces; JSON parsing tolerates
-  // any whitespace between tokens so this round-trips fine in practice.
+  // 如果用户没有给 JSON 加引号，它可能被拆成多个 token。用单个空格拼接
+  // 剩余部分；JSON 解析容忍 token 之间的任何空白，实践中能正常往返。
   if (i >= tokens.length) {
     return err(`Missing JSON body for "${name}". Wrap it in single quotes: '{...}'`)
   }
@@ -254,18 +242,17 @@ export function parseAddJson(rawArg: string): ParseResult<AddJsonCommand> {
     return err(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`)
   }
 
-  // We validate via the same zod schema the loader uses, but we keep the
-  // dependency in the writer layer to avoid a circular import here — so
-  // signal "needs validation" by returning the parsed object as
-  // McpServerConfig and letting the caller validate. The writer DOES
-  // validate before writing (see config-writer.ts).
+  // 我们使用与 loader 相同的 zod schema 校验，但把依赖放在 writer 层，
+  // 以避免这里的循环导入——所以通过把解析出的对象当作 McpServerConfig 返回、
+  // 让调用方去校验来标记"需要校验"。writer 在写入前确实会校验
+  // （见 config-writer.ts）。
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return err('JSON body must be an object')
   }
   return ok({ kind: 'add-json', name, scope, config: parsed as McpServerConfig })
 }
 
-/** Parse args for `/mcp remove [--scope ...] <name>`. */
+/** 解析 /mcp remove [--scope ...] <name> 的参数。 */
 export function parseRemove(rawArg: string): ParseResult<RemoveCommand> {
   const tokRes = tokenize(rawArg)
   if (!tokRes.ok) return tokRes
@@ -291,7 +278,7 @@ export function parseRemove(rawArg: string): ParseResult<RemoveCommand> {
   return ok({ kind: 'remove', name, scope })
 }
 
-// ── Internals ──────────────────────────────────────────────────────────────
+// ── 内部实现 ──────────────────────────────────────────────────────────────
 
 function ok<T extends ParsedCommand>(command: T): ParseResult<T> {
   return { ok: true, command }
@@ -346,17 +333,16 @@ function parseScopeOnlyFlags(
   return { ok: true, scope, nextIndex: index }
 }
 
-/** Minimal POSIX-ish tokeniser. Supports "..."/'...' quoting and
- *  backslash-escape of any single char. Quotes are stripped from the
- *  output; escapes drop the backslash. Returns a tagged result so the
- *  caller can surface "unclosed quote" without throwing. */
+/** 极简的 POSIX 风格 tokenizer。支持 "..." / '...' 引号，以及任意单个字符的
+ *  反斜杠转义。输出中会剥掉引号；转义会去掉反斜杠。返回带标记的结果，
+ *  使调用方可以抛出"未闭合引号"而不必 throw。 */
 export function tokenize(input: string): { ok: true; tokens: string[] } | { ok: false; error: string } {
   const tokens: string[] = []
   let i = 0
   const n = input.length
 
   while (i < n) {
-    // Skip whitespace between tokens.
+    // 跳过 token 之间的空白。
     while (i < n && /\s/.test(input[i]!)) i++
     if (i >= n) break
 
@@ -368,14 +354,14 @@ export function tokenize(input: string): { ok: true; tokens: string[] } | { ok: 
       const c = input[i]!
       if (quote) {
         if (c === '\\' && quote === '"' && i + 1 < n) {
-          // Inside double quotes, allow backslash escape for " and \.
+          // 双引号内部，允许对 " 和 \ 做反斜杠转义。
           const next = input[i + 1]!
           if (next === '"' || next === '\\') {
             token += next
             i += 2
             continue
           }
-          // Otherwise keep the backslash literal — POSIX behaviour.
+          // 否则保留字面反斜杠——POSIX 行为。
           token += c
           i++
           continue
@@ -389,25 +375,23 @@ export function tokenize(input: string): { ok: true; tokens: string[] } | { ok: 
         i++
         continue
       }
-      // Unquoted.
+      // 未加引号。
       if (c === '"' || c === "'") {
         quote = c
         i++
         continue
       }
       if (c === '\\' && i + 1 < n) {
-        // Only escape whitespace, quotes, and backslash itself. Anything
-        // else passes through with the backslash intact so Windows paths
-        // like `D:\res\x-code-cli\tmp` survive — eating those backslashes
-        // would silently corrupt the path and the user wouldn't notice
-        // until the MCP server failed to access the directory.
+        // 只转义空白、引号和反斜杠本身。其他字符连同反斜杠一起原样透传，
+        // 使 `D:\res\x-code-cli\tmp` 这类 Windows 路径得以保留——吞掉这些
+        // 反斜杠会悄悄破坏路径，用户要到 MCP 服务器无法访问该目录时才会发现。
         const next = input[i + 1]!
         if (next === ' ' || next === '\t' || next === '"' || next === "'" || next === '\\') {
           token += next
           i += 2
           continue
         }
-        // Backslash followed by anything else: keep both chars literal.
+        // 反斜杠后跟其他任何字符：两个字符都按字面保留。
         token += c
         i++
         continue

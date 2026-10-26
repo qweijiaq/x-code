@@ -11,7 +11,7 @@ const external = [
   'electron',
   ...builtinModules,
   ...builtinModules.map((m) => `node:${m}`),
-  // Native addons and packages that resolve assets relative to their install path.
+  // 原生扩展和按安装路径解析资源的包。
   'node-pty',
   'fs-ext-extra-prebuilt',
   '@napi-rs/canvas',
@@ -64,8 +64,8 @@ await esbuild.build({
   outfile: path.join(outdir, 'runtime/index.mjs'),
   format: 'esm',
   banner: {
-    // Bundled CJS dependencies may call require() at runtime. Provide the
-    // Node ESM equivalents before esbuild's interop helper runs.
+    // 打包进来的 CJS 依赖可能在运行时调用 require()。
+    // 在 esbuild 的互操作辅助代码运行前提供 Node 的 ESM 等价实现。
     js: `
 import { fileURLToPath as ___fileURLToPath } from 'node:url';
 import { dirname as ___dirname_fn } from 'node:path';
@@ -77,8 +77,8 @@ var require = ___createRequire(import.meta.url);
   },
 })
 
-// Core resolves these workers relative to the bundled runtime module
-// (`./<name>.js`), so emit them beside dist/runtime/index.mjs.
+// Core 会相对打包后的 runtime 模块（`./<name>.js`）解析这些 worker，
+// 因此要把它们输出到 dist/runtime/index.mjs 旁边。
 const coreSrc = path.resolve(dir, '../core/src')
 await esbuild.build({
   ...common,

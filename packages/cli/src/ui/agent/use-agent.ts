@@ -1,4 +1,4 @@
-// @x-code-cli/cli — Agent state management hook
+// @x-code-cli/cli — Agent 状态管理 hook
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
@@ -100,12 +100,11 @@ function peerExecutionAuthority(peer: PublicPeer, messageId: string): ExecutionA
 }
 
 export function useAgent(initialModel: LanguageModel, options: AgentOptions, initialSession?: LoadedSession | null) {
-  // If we were launched with a pre-loaded session (--continue), seed the
-  // initial UI state from it so messages appear in scrollback before the
-  // user submits anything. Token usage is also restored so /usage shows
-  // the right totals immediately. The loopStateRef is hydrated in a
-  // matching useEffect below — refs can't be set during the useState
-  // initializer because useState runs before any other hook.
+  // 如果我们以预加载会话（--continue）启动，就用它来播种初始 UI 状态，让消息在
+  // 用户提交任何内容之前就出现在 scrollback 中。token 用量也会恢复，这样
+  // /usage 能立即显示正确的总数。loopStateRef 在下方匹配的 useEffect 里
+  // 水合——ref 不能在 useState 初始化器里设置，因为 useState 先于任何其他
+  // hook 运行。
   const [state, setState] = useState<AgentState>({
     ...initialAgentState,
     modelId: options.modelId,
@@ -125,21 +124,17 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
 
   const modelRef = useRef<LanguageModel>(initialModel)
   const modelIdRef = useRef<string>(options.modelId)
-  /** Mirrors state.permissionMode for the agentLoop options on each
-   *  submit. The loop reads it via options.permissionMode at start; once
-   *  inside the loop, the agent's tool dispatch mutates LoopState
-   *  directly, and we mirror that back here via the onPlanModeChange
-   *  callback. */
+  /** 为每次 submit 的 agentLoop 选项镜像 state.permissionMode。循环在开始时通过
+   *  options.permissionMode 读取它；进入循环后，agent 的工具分派直接变更
+   *  LoopState，我们再通过 onPlanModeChange 回调把它镜像回这里。 */
   const permissionModeRef = useRef<PermissionMode>(options.permissionMode ?? 'default')
-  /** Mirrors `state.activeToolCalls.length` for the abort() callback, which
-   *  needs to read it synchronously without depending on the React state
-   *  closure (re-binding the callback per state change would force ChatInput
-   *  to re-attach its key handler every render). */
+  /** 为 abort() 回调镜像 `state.activeToolCalls.length`，它需要同步读取这个值，
+   *  而不能依赖 React state 闭包（每次 state 变更都重新绑定回调会迫使
+   *  ChatInput 在每次渲染时重新挂载它的按键处理器）。 */
   const activeToolCallsLenRef = useRef(0)
-  // Mirror the /thinking toggle so the agent loop reads the LATEST value
-  // even when it was changed mid-session — same pattern as modelIdRef.
-  // Initial value comes from CLI options (which read it from
-  // ~/.x-code/config.json on launch).
+  // 镜像 /thinking 开关，这样 agent 循环读到的总是最新值——即便它在会话中途被
+  // 修改，与 modelIdRef 是同一模式。初始值来自 CLI options（在启动时从
+  // ~/.x-code/config.json 读取）。
   const thinkingRef = useRef<boolean>(options.thinking ?? false)
   const loopStateRef = useRef<LoopState | null>(null)
   const shellUiRuntimeRef = useRef<ShellUiRuntime | null>(null)
@@ -148,19 +143,17 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     managerInstanceId: string
     unsubscribe: () => void
   } | null>(null)
-  /** Detached point-in-time state used by `/fork` while an agentLoop is
-   *  active. The outer object is also a sentinel for a first request with no
-   *  completed context, where `snapshot` is null. */
+  /** `/fork` 在 agentLoop 活动期间使用的分离时间点状态。外层对象也是首个
+   *  请求（还没有已完成上下文，`snapshot` 为 null）的哨兵。 */
   const activeForkBoundaryRef = useRef<{ snapshot: SessionForkSnapshot | null; error?: string } | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
-  /** Identifies the controller owned by `/compact`. Manual compression uses
-   *  the shared loading/abort UI, but cancelling it must not append a normal
-   *  conversation interrupt message or mutate the model-message history. */
+  /** 标识 `/compact` 所拥有的 controller。手动压缩复用共享的 loading/abort UI，
+   *  但取消它时绝不能追加一条普通的中断对话消息，也不能变更 model-message
+   *  历史。 */
   const manualCompressionControllerRef = useRef<AbortController | null>(null)
-  /** Deferred interrupt notice text. Set by abort(), consumed by submit()'s
-   *  post-agentLoop path once processToolCalls has fully drained. This avoids
-   *  pushing a user-role message into state.messages while tool_results are
-   *  still being appended (which breaks assistant→tool ordering). */
+  /** 延迟的中断通知文本。由 abort() 设置，在 processToolCalls 完全排空后由
+   *  submit() 的 post-agentLoop 路径消费。这避免了在 tool_results 仍在追加时
+   *  把一条 user-role 消息推入 state.messages（那会破坏 assistant→tool 顺序）。 */
   const pendingAbortNoticeRef = useRef<string | null>(null)
   const turnCoordinatorRef = useRef(createTurnCoordinator())
   const initializedRef = useRef(false)
@@ -169,28 +162,25 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
   const planApprovalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingAuthorityRef = useRef<PendingAuthority | null>(null)
   const authorityRequestSequenceRef = useRef(0)
-  /** Pending tool calls keyed by toolCallId. A single slot can't survive
-   *  parallel tool calls in one turn — the SDK emits tool-call A, tool-call
-   *  B, tool-result A, tool-result B, so a shared slot gets overwritten and
-   *  later results fall through to an 'unknown' label. */
+  /** 以 toolCallId 为键的待处理工具调用。单个槽位无法在一个回合里并存多个
+   *  并行工具调用——SDK 发出 tool-call A、tool-call B、tool-result A、
+   *  tool-result B，所以共享槽位会被覆盖，后面的结果会落到 'unknown' 标签。 */
   const pendingToolsRef = useRef<Map<string, { toolName: string; input: Record<string, unknown>; startedAt: number }>>(
     new Map(),
   )
-  /** Edit-tool diff payloads keyed by toolCallId. Filled by `onFileEdit`
-   *  (which fires from tool-execution right before `onToolResult`) and
-   *  drained by `onToolResult` to attach the diff to the new
-   *  DisplayToolCall. Keyed separately from pendingToolsRef because not
-   *  every tool produces a diff and we don't want a default empty
-   *  field bloating the pending record. */
+  /** 以 toolCallId 为键的编辑工具 diff 载荷。由 `onFileEdit` 填充（它在
+   *  `onToolResult` 之前的工具执行阶段触发），并由 `onToolResult` 排空，把
+   *  diff 附加到新的 DisplayToolCall 上。与 pendingToolsRef 分开键控，因为不是
+   *  每个工具都产生 diff，我们也不想让一个默认空字段撑大待处理记录。 */
   const pendingEditDiffsRef = useRef<Map<string, import('@x-code-cli/core').EditDiffPayload>>(new Map())
-  /** Parallel to `permissionQueue`: resolvers for `onAskPermission` promises.
-   *  Kept in a ref so `abort()` can deny every queued gate synchronously
-   *  before `controller.abort()` — otherwise the core loop stays blocked
-   *  on the first shell while the UI still shows stale Yes/No. */
+  /** 与 `permissionQueue` 平行：`onAskPermission` promise 的 resolver。放在
+   *  ref 里，这样 `abort()` 可以在 `controller.abort()` 之前同步拒绝每个排队的
+   *  门控——否则核心循环会一直阻塞在第一个 shell 上，而 UI 仍显示过期的
+   *  Yes/No。 */
   const permissionResolversRef = useRef<Array<(decision: PermissionDecision) => void>>([])
   const submitRef = useRef<SubmitAgentInput | null>(null)
 
-  // Mid-turn input queue (user + peer entries) — extracted state machine.
+  // 中途回合输入队列（用户 + peer 条目）——提取出的状态机。
   const {
     queuedMessagesRef,
     consumedPeerInboxKeysRef,
@@ -297,7 +287,7 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     })
   }, [options.peerService])
 
-  /** Append a single message to `messages` (used by the stream buffer). */
+  /** 向 `messages` 追加一条消息（由流缓冲使用）。 */
   const appendMessage = useCallback((msg: DisplayMessage) => {
     setState((prev) => ({ ...prev, messages: [...prev.messages, msg] }))
   }, [])
@@ -305,8 +295,8 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
   const { appendTextDelta, flushBuffer, resetBuffer } = useStreamBuffer(appendMessage)
 
   const consumeQueuedInputsInDisplayOrder = useCallback(() => {
-    // Core drains queued input before agentLoop returns. Commit the preceding
-    // assistant tail first so React cannot append queued user rows ahead of it.
+    // 核心在 agentLoop 返回前排水排队输入。先提交前面的 assistant 尾部，
+    // 这样 React 就不会把排队的用户行追加到它之前。
     flushBuffer()
     return consumeQueuedInputs()
   }, [consumeQueuedInputs, flushBuffer])
@@ -336,8 +326,8 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     (delta: string) => {
       if (delta) {
         flushShellWaitUi()
-        // Text generation ends any in-flight read chain. Avoid a state update
-        // for subsequent chunks after the first one has restored "Working".
+        // 文本生成会结束任何进行中的读取链。第一条块已把状态恢复成 "Working"
+        // 之后，避免为后续块再做状态更新。
         setState((previous) => (previous.bufferingReads ? { ...previous, bufferingReads: false } : previous))
       }
       appendTextDelta(delta)
@@ -352,21 +342,18 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     }))
   }, [])
 
-  // Keep the ref synchronized with state so abort() can decide between
-  // `[Request interrupted by user]` and `... for tool use` without taking a
-  // state dependency in its useCallback (which would re-bind the prop every
-  // render).
+  // 保持 ref 与 state 同步，这样 abort() 可以在不引入 state 依赖（那会每次
+  // 渲染都重新绑定 prop）的情况下，在 `[Request interrupted by user]` 和
+  // `... for tool use` 之间做出选择。
   useEffect(() => {
     activeToolCallsLenRef.current = state.activeToolCalls.length
   }, [state.activeToolCalls.length])
 
-  // Hydrate the LoopState ref from the pre-loaded session on first
-  // render. Refs can't be initialised in useState (which runs first), so
-  // we do it here. Once-only — guarded by initializedRef downstream.
-  // useEffect order: this runs after mount but BEFORE the initialPrompt
-  // submit effect in App, so by the time the user sends their first
-  // message in a resumed session, agentLoop sees `existingState` and
-  // continues the same conversation.
+  // 在首次渲染时从预加载会话水合 LoopState ref。ref 不能在 useState（它先运行）
+  // 里初始化，所以我们在这里做。仅一次——由下游的 initializedRef 守护。
+  // useEffect 顺序：这在挂载之后、但在 App 中 initialPrompt submit effect 之前
+  // 运行，所以当用户在恢复的会话里发送第一条消息时，agentLoop 已经看到
+  // `existingState` 并继续同一段对话。
   useEffect(() => {
     if (initialSession && !loopStateRef.current) {
       loopStateRef.current = hydrateLoopState(initialSession, options.permissionMode ?? 'default', process.cwd())
@@ -374,9 +361,8 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Wire the async MCP startup callback: when background connections
-  // finish, invalidate the system prompt cache so the next turn rebuilds
-  // tools with the newly-available MCP entries.
+  // 接好异步 MCP 启动回调：当后台连接完成时，使系统提示词缓存失效，这样下一个
+  // 回合就能用新可用的 MCP 条目重建工具。
   useEffect(() => {
     options.onMcpReady = () => {
       invalidateToolSurfaceState(loopStateRef.current)
@@ -386,7 +372,7 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     }
   }, [options])
 
-  /** Initialize process-scoped services once. */
+  /** 初始化进程级服务（仅一次）。 */
   const initialize = useCallback(async () => {
     if (initializedRef.current) return
     initializedRef.current = true
@@ -436,14 +422,13 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     [appendMessage, options],
   )
 
-  /** Submit a user message.
+  /** 提交一条用户消息。
    *
-   *  `silent: true` skips appending the text to the UI scrollback while still
-   *  feeding it to the model (agentLoop pushes the user turn into
-   *  loopState.messages on its own). Used by slash commands like `/init` that
-   *  inject a long author-side prompt — the user already sees `/init` from
-   *  echoCommand, and dumping the full prompt body into scrollback would be
-   *  noise. The spinner / abort signal / session save still fire normally. */
+   *  `silent: true` 会跳过把文本追加到 UI scrollback，但仍把它喂给模型
+   *  （agentLoop 会自己把用户回合推入 loopState.messages）。用于 `/init` 这类
+   *  注入长篇作者侧提示词的斜杠命令——用户已经从 echoCommand 看到 `/init`，
+   *  再把完整提示词正文倒进 scrollback 就是噪音。spinner / abort 信号 /
+   *  会话保存仍照常触发。 */
   const submit = useCallback(
     async (text: string, submitOptions?: SubmitOptions): Promise<AgentLoopResult | null> => {
       const authority = submitOptions?.authority ?? currentAuthority()
@@ -485,8 +470,8 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
       if (externalSignal?.aborted) controller.abort()
       else externalSignal?.addEventListener('abort', abortFromExternal, { once: true })
 
-      // Track whether the stream produced any text for this submit, so the
-      // safety-net extraction below doesn't duplicate already-flushed text.
+      // 追踪这次 submit 的流是否产生过任何文本，这样下面的安全网提取就不会重复
+      // 已经冲刷过的文本。
       let sawTextDelta = false
 
       const callbacks: AgentCallbacks = {
@@ -498,11 +483,9 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         onAskPermission: (toolCall) => {
           return new Promise<PermissionDecision>((resolve) => {
             permissionResolversRef.current.push(resolve)
-            // MCP lookup: the registry holds the unmangled server + raw
-            // tool name pair we need for the dialog title and the
-            // always-allow label. Built-in tools miss the registry and
-            // leave `mcp` undefined — ChatInput falls back to its
-            // existing per-tool rendering for them.
+            // MCP 查找：registry 保存着我们用于对话框标题和 always-allow 标签的
+            // 去混淆后的 server + 原始工具名对。内置工具不在 registry 里，
+            // 会让 `mcp` 保持 undefined——ChatInput 为它们回退到现有的逐工具渲染。
             const mcpEntry = options.mcpRegistry?.get(toolCall.toolName)
             const entry: PendingPermission = {
               toolCallId: toolCall.toolCallId,
@@ -523,16 +506,13 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         },
         onAskUser: (question, opts) => {
           return new Promise<string>((resolve) => {
-            // In plan mode, append two UI-side meta options the model
-            // doesn't see in its tool input. Mirrors Claude Code's
-            // QuestionView footer (`Chat about this` /
-            // `Skip interview and plan immediately`) — the model is
-            // taught about them via the system-prompt overlay and
-            // recognizes them by their literal label when they come
-            // back as the answer.
+            // 在 plan 模式下，追加两个模型在其工具输入里看不到的 UI 侧元选项。
+            // 镜像 Claude Code 的 QuestionView footer（`Chat about this` /
+            // `Skip interview and plan immediately`）——模型通过系统提示词覆盖层
+            // 了解到它们，并在它们作为答案返回时按字面标签识别它们。
             //
-            // The trailing OTHER_OPTION is appended last so it's always
-            // the final row regardless of plan-mode footer presence.
+            // 尾部的 OTHER_OPTION 最后追加，这样无论 plan 模式 footer 是否存在，
+            // 它都始终是最后一行。
             const planMeta =
               permissionModeRef.current === 'plan'
                 ? [
@@ -559,15 +539,12 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
           })
         },
         onPlanApprovalRequest: (planText) => {
-          // Two-step UX: commit the plan body to scrollback as a regular
-          // assistant message (full markdown rendering — headings,
-          // bullets, code blocks all look right) and then pop a tight
-          // Yes/No dialog. Putting a 50-line plan body inside the
-          // SelectOptions `question` field instead overflows the frame,
-          // pushes Yes/No off-screen, and produces a wall of `?`-prefixed
-          // raw markdown the user can't navigate. The plan file on disk
-          // is still the authoritative copy — this scrollback render is
-          // for inline review.
+          // 两步 UX：把计划正文作为一条普通 assistant 消息提交到 scrollback
+          // （完整的 markdown 渲染——标题、列表项、代码块都正确呈现），然后弹出
+          // 一个紧凑的 Yes/No 对话框。把 50 行计划正文塞进 SelectOptions 的
+          // `question` 字段则会撑爆框架、把 Yes/No 挤出屏幕，并产生一墙带 `?`
+          // 前缀、用户无法导航的原始 markdown。磁盘上的计划文件仍是权威副本——
+          // 这份 scrollback 渲染只用于行内审阅。
           appendMessage({
             id: `plan-approval-${Date.now()}`,
             role: 'assistant',
@@ -592,9 +569,8 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
               abortAnswer: 'No',
             }
             pendingQuestionRef.current = pendingQuestion
-            // Delay opening the dialog so the plan-text commit
-            // paints first — avoids a simultaneous commit+grow
-            // that confuses the geometry engine.
+            // 延迟打开对话框，让计划文本提交先绘制出来——避免同时 commit+grow
+            // 而让几何引擎困惑。
             planApprovalTimerRef.current = setTimeout(() => {
               planApprovalTimerRef.current = null
               if (pendingQuestionRef.current !== pendingQuestion) return
@@ -605,14 +581,12 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         onPlanModeChange: (mode) => {
           permissionModeRef.current = mode
           setState((prev) => ({ ...prev, permissionMode: mode }))
-          // Mode is session-scoped (matches Claude Code) — not
-          // persisted to user config. Each new session starts in
-          // 'default' unless `--plan` was passed.
+          // 模式是会话级作用域（与 Claude Code 一致）——不持久化到用户配置。
+          // 每个新会话都以 'default' 开始，除非传入了 `--plan`。
         },
         onTodosUpdate: (todos) => {
-          // Direct mirror — the core agent has already validated the
-          // shape and applied auto-clear semantics; we just store what
-          // it gives us so ChatInput can re-render the todo panel.
+          // 直接镜像——核心 agent 已验证形状并应用了自动清除语义；我们只是存储
+          // 它给我们的内容，好让 ChatInput 重新渲染 todo 面板。
           setState((prev) => ({ ...prev, todos }))
         },
         onUsageUpdate: (usage) => {
@@ -649,13 +623,12 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
       try {
         await initialize()
         await applyModelRequestPreflight(modelIdRef.current)
-        // Resolve any @path / bare-path references in the input into proper
-        // content parts (images for multimodal providers, extracted text for
-        // PDF/Office/non-vision providers). Falls through to the plain-string
-        // fast path when nothing attachable is detected.
+        // 把输入中任何 @path / 裸路径引用解析成正确的 content 部件（多模态
+        // provider 得到图像，PDF/Office/非视觉 provider 得到提取文本）。当没有
+        // 检测到可附加内容时，回落到纯字符串快路径。
         //
-        // Ingest notices update the live spinner so long local processing and
-        // first-time model downloads remain visible without flooding history.
+        // Ingest 通知更新实时 spinner，让较长的本地处理和首次模型下载保持可见，
+        // 而不会淹没历史。
         const modelId = modelIdRef.current
         const providerCaps = capabilitiesOf(modelId)
         const activeLoopState =
@@ -675,10 +648,9 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
           }
           const finishFileIngestTools = (result: string, isError?: boolean) => {
             for (const toolCall of toolCalls) toolLifecycleCallbacks.onToolResult(toolCall.id, result, isError)
-            // fileIngest participates in the existing read-only grouping. An
-            // invisible non-collapsible sentinel flushes the completed batch
-            // immediately, before the provider starts its response, so the
-            // user sees `Read N files (...)` instead of a bare Working spinner.
+            // fileIngest 参与现有的只读分组。一个不可见的不可折叠哨兵会在
+            // provider 开始响应之前立即冲刷已完成的批次，这样用户看到的是
+            // `Read N files (...)` 而不是一个光秃秃的 Working spinner。
             appendMessage({
               id: `file-ingest-flush-${fileIngestSequenceRef.current++}`,
               role: 'assistant',
@@ -713,10 +685,9 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
           }
         }
         const content = submitOptions?.rawContent ? text : await prepareUserContent(text)
-        // agentLoop returns { state, turnCount } — we only keep the state
-        // (long-lived session). turnCount is per-invocation and the main
-        // interactive loop has no use for it (the cap mechanism is what
-        // sub-agents and --print mode use).
+        // agentLoop 返回 { state, turnCount }——我们只保留 state（长生命周期的
+        // 会话）。turnCount 是每次调用级的，主交互循环用不到它（上限机制是
+        // sub-agent 和 --print 模式用的）。
         if (submitOptions?.toolFilter && loopStateRef.current) {
           loopStateRef.current.systemPromptCache = null
           markExpectedCacheMiss(loopStateRef.current, 'tool-surface-change')
@@ -731,16 +702,14 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
             thinking: thinkingRef.current,
             toolFilter: submitOptions?.toolFilter ?? options.toolFilter,
             maxTurns: submitOptions?.maxTurns ?? options.maxTurns,
-            // permissionMode only matters for the FIRST submit (when
-            // createLoopState is called inside agentLoop). For subsequent
-            // submits the existing LoopState carries the live mode, so
-            // this read is just a no-op fallthrough.
+            // permissionMode 只在第一次 submit 时起作用（此时 createLoopState
+            // 在 agentLoop 内被调用）。对于后续 submit，已有的 LoopState 承载着
+            // 实时模式，所以这次读取只是一个 no-op 透传。
             permissionMode: permissionModeRef.current,
             abortSignal: controller.signal,
             executionAuthority: lease.authority as ExecutionAuthority,
-            // Mid-turn steering: messages the user queued while this turn
-            // runs are injected at tool boundaries / on stop. Stable
-            // callback — reads and clears queuedMessagesRef atomically.
+            // 中途回合转向：用户在本回合运行期间排队的消息在工具边界 / stop 时
+            // 注入。稳定回调——原子地读取并清空 queuedMessagesRef。
             consumeQueuedInputs: ownerMayDrainQueuedInputs(lease.owner) ? consumeQueuedInputsInDisplayOrder : undefined,
             prepareQueuedUserInput: ownerMayDrainQueuedInputs(lease.owner) ? prepareUserContent : undefined,
           },
@@ -757,11 +726,10 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         }
         const finalGoal = agentResult.state.goal ? { ...agentResult.state.goal } : null
 
-        // Finalize: drain whatever's left in the stream buffer into messages,
-        // then clear the loading flag. As a safety net, if streaming produced
-        // no text (e.g. the provider only emitted reasoning chunks before
-        // the final text landed on `response.messages`), extract the last
-        // assistant text from loopState so the user always sees a reply.
+        // 收尾：把流缓冲里剩下的内容排空到 messages，然后清除 loading 标志。
+        // 作为安全网，如果流没有产生文本（例如 provider 在最终文本落到
+        // `response.messages` 之前只发出了 reasoning 块），就从 loopState 提取
+        // 最后一段 assistant 文本，让用户总能看到回复。
         flushBuffer()
         flushShellWaitUi()
         if (!sawTextDelta && loopStateRef.current) {
@@ -778,11 +746,10 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         pendingToolsRef.current.clear()
         externalSignal?.removeEventListener('abort', abortFromExternal)
         if (controller.signal.aborted) {
-          // NOW safe to push the interrupt notice into state.messages:
-          // agentLoop has returned, meaning processToolCalls has fully
-          // drained and all tool_results are in place. Pushing earlier
-          // (inside abort()) would interleave a user message between the
-          // assistant's tool_calls and their results, breaking providers.
+          // 现在可以安全地把中断通知推入 state.messages 了：agentLoop 已返回，
+          // 意味着 processToolCalls 已完全排空，所有 tool_results 都已就位。更早
+          // 推入（在 abort() 里）会把一条用户消息插到 assistant 的 tool_calls 和
+          // 它们的结果之间，破坏 provider。
           const noticeText = pendingAbortNoticeRef.current
           if (noticeText && loopStateRef.current) {
             loopStateRef.current.messages.push({ role: 'user', content: noticeText })
@@ -791,16 +758,14 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
           }
           pendingAbortNoticeRef.current = null
 
-          // Esc path: anything queued after abort()'s own queue-restore
-          // (user hit Esc and Enter nearly simultaneously) would strand a
-          // "queued:" row with no spinner and no consumer. Fold it into
-          // the restored draft too — zero-loss like abort() itself.
+          // Esc 路径：在 abort() 自己的队列恢复之后排队的任何内容（用户几乎同时
+          // 按下 Esc 和 Enter）会留下一个没有 spinner 也没有消费者的 "queued:" 行。
+          // 把它也折回恢复的草稿里——像 abort() 本身一样零丢失。
           restoreQueueToDraft()
         }
-        // Keep the busy UI visible until abort persistence and queue restore
-        // finish. Clearing it earlier exposes an apparently idle prompt while
-        // the turn lease is still held, so a new submit is queued and then
-        // folded back into the draft instead of starting the recovery turn.
+        // 保持 busy UI 可见，直到 abort 持久化和队列恢复完成。更早清除它会在
+        // 回合租约仍被持有时暴露一个看似空闲的提示符，于是新的 submit 被排队，
+        // 然后折回草稿，而不是启动恢复回合。
         setState((prev) => ({
           ...prev,
           isLoading: false,
@@ -821,13 +786,11 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         consumedPeerInboxKeysRef.current.clear()
         pendingToolsRef.current.clear()
         externalSignal?.removeEventListener('abort', abortFromExternal)
-        // User-cancel path: agentLoop swallows AbortError into a clean
-        // 'aborted' outcome and returns normally, so we shouldn't reach
-        // here for an Esc/Ctrl+C abort. But if some unaborted-aware
-        // helper (e.g. memory load) does throw mid-flight while the
-        // controller is also aborted, suppress the error banner — the
-        // `[Request interrupted by user]` notice that abort() already
-        // wrote into messages is the user-visible signal we want.
+        // 用户取消路径：agentLoop 把 AbortError 吞成一个干净的 'aborted' 结果并
+        // 正常返回，所以对于 Esc/Ctrl+C 中止我们不应该走到这里。但如果某个
+        // 没有 abort 感知的辅助函数（如 memory 加载）在 controller 也已中止时
+        // 中途抛出，就抑制错误横幅——abort() 已经写进 messages 的
+        // `[Request interrupted by user]` 通知才是我们想要的用户可见信号。
         const wasAborted = controller.signal.aborted
         if (wasAborted) {
           const noticeText = pendingAbortNoticeRef.current
@@ -938,9 +901,8 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     [appendMessage, queueSeqRef, queuedMessagesRef, scheduleIdleDrain, submit],
   )
 
-  /** Synchronously reserve bounded source-aware queue capacity before a
-   *  PeerInbox claim is committed. The returned boolean is the ownership
-   *  handoff point used by the App adapter. */
+  /** 在提交 PeerInbox 认领之前，同步预留有界的、按来源区分的队列容量。返回的
+   *  布尔值是 App 适配器使用的所有权交接点。 */
   const enqueuePeerInput = useCallback(
     (input: { content: string; peer: PublicPeer; messageId: string; inboxKey: string }): boolean => {
       if (queuedMessagesRef.current.filter((entry) => entry.source === 'peer').length >= 50) return false
@@ -950,15 +912,14 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     [submitRawPeerContent, queuedMessagesRef],
   )
 
-  /** Self-reference for the idle-drain follow-up fired from inside
-   *  submit()'s success path — a direct recursive call would make the
-   *  useCallback depend on itself. Synced every render; the trailing
-   *  drain always reaches the latest submit closure. */
+  /** 供 submit() 成功路径内部触发的 idle-drain 后续使用的自引用——直接递归调用
+   *  会让 useCallback 依赖它自己。每次渲染都同步；末尾的排水总能触达最新的
+   *  submit 闭包。 */
   useEffect(() => {
     submitRef.current = submit
   })
 
-  /** Resolve the first pending permission request and pop it from the queue */
+  /** 解析第一个待处理的权限请求，并把它从队列中弹出 */
   const resolvePermission = useCallback((decision: PermissionDecision) => {
     setState((prev) => {
       const [head, ...tail] = prev.permissionQueue
@@ -992,7 +953,7 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     [options.peerService],
   )
 
-  /** Resolve a pending question */
+  /** 解析一个待处理的问题 */
   const resolveQuestion = useCallback((answer: string) => {
     const pendingQuestion = pendingQuestionRef.current
     pendingQuestionRef.current = null
@@ -1000,10 +961,9 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     setState((prev) => ({ ...prev, pendingQuestion: null }))
   }, [])
 
-  /** Pop a multi-choice question for the user. Same SelectOptions dialog
-   *  that `askUser` uses, exposed for slash commands like /model that need
-   *  an interactive picker. Returns a promise that resolves to the label
-   *  the user chose (or the free-form "Other" text). */
+  /** 为用户弹出一个多选问题。与 `askUser` 使用同一个 SelectOptions 对话框，
+   *  为 /model 这类需要交互式选择器的斜杠命令而暴露。返回一个 promise，解析为
+   *  用户选择的标签（或自由形式的 "Other" 文本）。 */
   const askQuestion = useCallback(
     (
       question: string,
@@ -1105,22 +1065,20 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     submit,
   })
 
-  /** Abort the in-flight turn. Mirrors Claude Code's onCancel:
+  /** 中止进行中的回合。镜像 Claude Code 的 onCancel：
    *
-   *    1. Flush any buffered streamed text into messages so the user sees
-   *       what the model produced before pressing Esc.
-   *    2. Append a `[Request interrupted by user]` (or `for tool use`)
-   *       notice so both the UI and the next-turn model context show
-   *       why the response stopped.
-   *    3. Trigger AbortController so streamText / shell execa unwind.
+   *    1. 把任何缓冲的流式文本冲刷进 messages，让用户看到模型在按下 Esc 之前
+   *       生成的内容。
+   *    2. 追加一条 `[Request interrupted by user]`（或 `for tool use`）通知，
+   *       让 UI 和下一回合的模型上下文都能显示响应为何停止。
+   *    3. 触发 AbortController，让 streamText / shell execa 展开。
    *
-   *  No-op when nothing is in flight (no controller or already aborted).
-   *  React state cleanup (isLoading=false, activeToolCalls=[]) happens in
-   *  submit()'s success path once agentLoop returns the 'aborted' outcome.
+   *  当没有进行中的内容（没有 controller 或已中止）时为 no-op。
+   *  React state 清理（isLoading=false, activeToolCalls=[]）发生在 submit()
+   *  的成功路径里，一旦 agentLoop 返回 'aborted' 结果就执行。
    *
-   *  Queued permission prompts and pending SelectOptions dialogs are
-   *  resolved synchronously so `processToolCalls` cannot stay blocked on
-   *  `await onAskPermission` / `onAskUser` after the user cancels. */
+   *  排队的权限提示和待处理的 SelectOptions 对话框被同步解析，这样在用户取消后，
+   *  `processToolCalls` 就不会一直阻塞在 `await onAskPermission` / `onAskUser` 上。 */
   const abort = useCallback(() => {
     const controller = abortControllerRef.current
     if (!controller || controller.signal.aborted) return
@@ -1130,9 +1088,8 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
       return
     }
 
-    // Drain the stream buffer first — appendMessage runs synchronously via
-    // setState so the partial assistant reply lands BEFORE the interrupt
-    // notice in scrollback order.
+    // 先排空流缓冲——appendMessage 通过 setState 同步运行，这样部分的 assistant
+    // 回复会在 scrollback 顺序里落到中断通知之前。
     flushBuffer()
     flushShellWaitUi()
 
@@ -1147,28 +1104,25 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
       kind: 'command-result',
     })
 
-    // Defer the state.messages mutation until agentLoop returns. Pushing
-    // the user-role notice NOW would interleave it between assistant
-    // tool_calls and their tool_results (processToolCalls is still running
-    // and will push synthetic results after the abort signal fires). That
-    // breaks the strict assistant→tool ordering providers require and causes
-    // "Tool result is missing for tool call ..." on the next request.
+    // 把 state.messages 的变更推迟到 agentLoop 返回。现在就推入 user-role 通知，
+    // 会把它插到 assistant tool_calls 和它们的 tool_results 之间（processToolCalls
+    // 仍在运行，并会在 abort 信号触发后推送合成结果）。那会破坏 provider 要求的
+    // 严格 assistant→tool 顺序，并在下一次请求时导致
+    // "Tool result is missing for tool call ..."。
     //
-    // Store the notice text; submit()'s post-loop abort path will push it
-    // and persist once processToolCalls has fully drained.
+    // 存储通知文本；submit() 的 post-loop abort 路径会在 processToolCalls 完全
+    // 排空后推送并持久化它。
     pendingAbortNoticeRef.current = noticeText
 
     pauseActiveGoalOnAbort()
 
-    // Unblock any `await onAskPermission` in the core loop (parallel tool
-    // calls queue extra UI rows, but execution is sequential — the first
-    // shell often sits here while the user thinks the UI is "frozen").
+    // 解阻核心循环里任何 `await onAskPermission`（并行工具调用会排队额外的 UI
+    // 行，但执行是顺序的——第一个 shell 常常卡在这里，而用户以为 UI "冻结"了）。
     drainPendingInteractions()
 
-    // Zero-loss queue restore (Codex's input_restore semantics): messages
-    // queued mid-turn but never injected go back into the input box as an
-    // editable draft instead of being silently dropped or auto-run after
-    // the interrupt. ChatInput applies `restoredDraft` on nonce change.
+    // 零丢失队列恢复（Codex 的 input_restore 语义）：中途排队但从未注入的消息
+    // 回到输入框，成为一个可编辑的草稿，而不是被静默丢弃或在中断后自动运行。
+    // ChatInput 在 nonce 变化时应用 `restoredDraft`。
     restoreQueueToDraft()
 
     controller.abort()
@@ -1264,7 +1218,7 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     hasPendingPeerInput,
   })
 
-  /** Manual context compression */
+  /** 手动上下文压缩 */
   const compact = useCallback(async () => {
     const ls = loopStateRef.current
     if (!ls) return { status: 'nothing' as const, reason: 'no-conversation' as const }
@@ -1304,7 +1258,7 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
 
     try {
       const compressionModel = await applyModelRequestPreflight(modelIdRef.current)
-      // Extract previous summary for incremental update + file tracking
+      // 提取之前的摘要，用于增量更新 + 文件追踪
       const firstMsg = ls.messages[0]
       const prefix = '[Previous conversation summary]\n'
       const previousSummary =
@@ -1354,17 +1308,15 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         }))
         await appendUsage(ls, usageModelId)
       }
-      // Messages changed — mirror the auto-compression paths: reset the
-      // cache-hit signal so the next turn doesn't wrongly assume a prefix
-      // match, and reset lastInputTokens so checkAndCompressContext won't
-      // re-trigger on a stale high value. Also write a compact-boundary
-      // to the jsonl so the loader can pick up the post-compaction state.
+      // 消息已变更——镜像自动压缩路径：重置 cache-hit 信号，让下一回合不会错误地
+      // 假定前缀匹配；重置 lastInputTokens，让 checkAndCompressContext 不会在
+      // 过期的较高值上再次触发。同时向 jsonl 写入一个 compact 边界，让加载器能
+      // 拾取压缩后的状态。
       ls.lastInputTokens = 0
       markExpectedCacheMiss(ls, 'compaction')
       const after = estimateTokenCount(ls.messages)
-      // Include the system prompt overhead so the reported numbers match
-      // the footer's "N / M · X%" indicator (which shows the full context
-      // the API actually received, not just the message body).
+      // 计入系统提示词开销，让报告的数字与 footer 的 "N / M · X%" 指示器一致
+      // （它显示的是 API 实际收到的完整上下文，而不仅是消息正文）。
       const sysCost = ls.systemPromptCache ? Math.ceil(Buffer.byteLength(ls.systemPromptCache, 'utf8') / 3) : 0
       debugLog('compression.manual.complete', `before=${before} after=${after} sysCost=${sysCost}`)
       return {
@@ -1384,15 +1336,14 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
       if (abortControllerRef.current === controller) abortControllerRef.current = null
       if (manualCompressionControllerRef.current === controller) manualCompressionControllerRef.current = null
       setState((prev) => ({ ...prev, isLoading: false, compressionLabel: null, reconnectLabel: null }))
-      // Plain text submitted while the spinner was visible enters the
-      // mid-turn queue. `/compact` has no agent loop to consume it, so put it
-      // back in the editable input instead of leaving a stranded queue row.
+      // spinner 可见期间提交的纯文本会进入中途队列。`/compact` 没有 agent 循环
+      // 来消费它，所以把它放回可编辑输入，而不是留下一个滞留的队列行。
       restoreQueueToDraft()
       lease.release()
     }
   }, [applyModelRequestPreflight, currentAuthority, restoreQueueToDraft])
 
-  /** Switch model at runtime */
+  /** 运行时切换模型 */
   const switchModel = useCallback(
     (newModelId: string, newModel: LanguageModel) => {
       modelRef.current = newModel
@@ -1404,43 +1355,34 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     [options.memoryService],
   )
 
-  /** Flip extended-thinking on/off at runtime. Picked up by the next
-   *  agent turn via thinkingRef.current. Persistence (saveUserConfig)
-   *  happens in the App.tsx command handler, not here — keeping this
-   *  hook free of disk side-effects matches the existing model-switch
-   *  separation. */
+  /** 在运行时开关扩展思考。下一个 agent 回合通过 thinkingRef.current 拾取。
+   *  持久化（saveUserConfig）发生在 App.tsx 的命令处理器里，不在这里——让这个
+   *  hook 无磁盘副作用，与现有的模型切换分离一致。 */
   const setThinking = useCallback((enabled: boolean) => {
     if (thinkingRef.current === enabled) return
     thinkingRef.current = enabled
     if (loopStateRef.current) markExpectedCacheMiss(loopStateRef.current, 'reasoning-change')
   }, [])
 
-  /** Read the current /thinking toggle (for status display). */
+  /** 读取当前的 /thinking 开关（用于状态显示）。 */
   const getThinking = useCallback(() => thinkingRef.current, [])
 
-  /** Drop the cached system prompt so the next agent turn rebuilds it
-   *  with whatever the current tool surface looks like.
+  /** 丢弃缓存的系统提示词，让下一个 agent 回合按当前工具面重新构建它。
    *
-   *  The cache is the tool-list + plan-overlay snapshot the agent loop
-   *  builds at the start of every session and reuses across turns to
-   *  preserve OpenAI-compatible providers' prefix caches. Anything that
-   *  changes the visible tools — `/mcp refresh` adding or removing
-   *  servers, `/mcp auth <name>` bringing a previously-needs_auth server
-   *  online — MUST invalidate the cache so the next streamText call
-   *  sends a prompt that matches the actual tool list. Otherwise the
-   *  model would see tools that don't exist (or miss new ones), and
-   *  the loop's `MCP tool not found: …` error path would fire. */
+   *  该缓存是 agent 循环在每个会话开始时构建、并跨回合复用的工具列表 +
+   *  plan 覆盖层快照，用于保留 OpenAI 兼容 provider 的前缀缓存。任何改变可见工具
+   *  的事情——`/mcp refresh` 增删 server、`/mcp auth <name>` 让一个此前需要 auth
+   *  的 server 上线——都必须使缓存失效，这样下一次 streamText 调用才会发送一个
+   *  与实际工具列表匹配的提示词。否则模型会看到不存在的工具（或漏掉新工具），
+   *  并触发循环里 `MCP tool not found: …` 的错误路径。 */
   const invalidateSystemPromptCache = useCallback(() => {
     invalidateToolSurfaceState(loopStateRef.current)
   }, [])
 
-  /** Set permission mode directly. Use this for /plan-style direct
-   *  setters where the user is unambiguously asking for a specific
-   *  target. Updates LoopState live (so the next agent turn picks up
-   *  the new mode), invalidates the system-prompt cache (so the next
-   *  turn rebuilds the prompt with the right overlay), reserves /
-   *  clears the plan-file path, and mirrors the change into the React
-   *  state for UI re-render. */
+  /** 直接设置权限模式。用于 /plan 风格的直接设置器，此时用户明确要求一个特定
+   *  目标。实时更新 LoopState（让下一个 agent 回合拾取新模式）、使系统提示词缓存
+   *  失效（让下一回合用正确的覆盖层重建提示词）、预留 / 清除计划文件路径，并把
+   *  变更镜像进 React state 以触发 UI 重渲染。 */
   const setPermissionMode = useCallback((next: PermissionMode) => {
     if (permissionModeRef.current === next) return
     permissionModeRef.current = next
@@ -1448,21 +1390,18 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
       loopStateRef.current.permissionMode = next
       loopStateRef.current.systemPromptCache = null
       markExpectedCacheMiss(loopStateRef.current, 'permission-mode-change')
-      // Clear the path on leaving plan mode so a future re-entry gets a
-      // fresh slug derived from whatever the user is asking next; the
-      // path is re-derived lazily in agentLoop / enterPlanMode handler
-      // from the next user message.
+      // 离开计划模式时清空路径，这样下次重新进入时会根据用户接下来的
+      // 问题生成新的 slug；路径会在 agentLoop / enterPlanMode 处理器中
+      // 根据下一条用户消息按需重新推导。
       if (next !== 'plan') loopStateRef.current.currentPlanPath = null
     }
     setState((prev) => ({ ...prev, permissionMode: next }))
   }, [])
 
-  /** Estimate the per-category token split of the current context (system
-   *  prompt / tools / rules / skills / MCP / subagents / summary /
-   *  conversation), mirroring what the next request would actually send.
-   *  Returns null before the first turn builds the system prompt. Used by
-   *  /usage to show a Cursor-style context composition — raw estimates;
-   *  calibration against the real reported input count happens at render. */
+  /** 估算当前上下文按类别的 token 分布（系统提示词 / 工具 / 规则 / 技能 / MCP /
+   *  sub-agent / 摘要 / 对话），镜像下一次请求实际会发送的内容。在第一个回合构建
+   *  系统提示词之前返回 null。由 /usage 用于展示 Cursor 风格的上下文构成——
+   *  原始估算；与真实上报的输入计数的校准发生在渲染时。 */
   const getContextBreakdown = useCallback((): ContextBreakdown | null => {
     const ls = loopStateRef.current
     if (!ls) return null

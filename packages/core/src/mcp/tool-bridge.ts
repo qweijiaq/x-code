@@ -1,56 +1,49 @@
-// @x-code-cli/core — MCP tool ↔ AI SDK adapter
+// @x-code-cli/core — MCP 工具 ↔ AI SDK 适配器
 //
-// Two responsibilities:
-//   1. Convert each McpToolEntry into an AI-SDK `tool({...})` definition
-//      so streamText() advertises it to the model alongside built-ins.
-//   2. Trim overlong server-supplied descriptions so they don't bloat
-//      the system prompt / tool list.
+// 两个职责：
+//   1. 把每个 McpToolEntry 转成 AI-SDK 的 `tool({...})` 定义，
+//      使 streamText() 把它与内置工具一起宣告给模型。
+//   2. 裁剪过长的服务器提供的描述，使它们不撑爆系统提示 / 工具列表。
 //
-// The tools are deliberately defined WITHOUT an `execute` function. The
-// AI SDK then routes the model's tool_call into `result.toolCalls` and
-// our `processToolCalls` dispatcher handles it manually — same path as
-// shell / writeFile / edit. This is what lets us gate every MCP call
-// through the permission + loop-guard machinery.
+// 这些工具刻意定义为没有 `execute` 函数。AI SDK 随后把模型的 tool_call 路由
+// 进 `result.toolCalls`，我们的 `processToolCalls` 分派器手工处理它——与
+// shell / writeFile / edit 同一路径。这正是我们能让每个 MCP 调用都经过
+// 权限 + loop-guard 机制的原因。
 import { jsonSchema, tool } from 'ai'
 
 import type { McpToolEntry } from './types.js'
 
-/** Hard cap on the model-facing description length per tool.
- *  - 200 chars is plenty for "what does this tool do?" guidance.
- *  - Some MCP servers in the wild paste multi-paragraph docs into the
- *    description field; left unbounded these blow up the system prompt
- *    and chew through the prompt cache window.
- *  - Truncation is character-based, with an ellipsis marker so the model
- *    knows the string was clipped (the marker also doubles as a hint
- *    to server authors when they see their own description in /mcp tools). */
+/** 每个工具面向模型描述长度的硬上限。
+ *  - 200 字符对 "这工具干嘛的？" 指导足够了。
+ *  - 野生的某些 MCP 服务器会把多段文档粘进 description 字段；不加限制
+ *    会撑爆系统提示、耗尽 prompt 缓存窗口。
+ *  - 截断按字符进行，带省略号标记，使模型知道字符串被裁剪了（该标记对
+ *    服务器作者也有提示作用——他们在 /mcp tools 里看到自己的描述时）。 */
 const DESCRIPTION_MAX_CHARS = 200
 
 export function truncateDescription(input: string): string {
   if (input.length <= DESCRIPTION_MAX_CHARS) return input
-  // Keep room for the ellipsis marker so the result is still <= cap.
+  // 为省略号标记留出空间，使结果仍 <= 上限。
   return input.slice(0, DESCRIPTION_MAX_CHARS - 1) + '…'
 }
 
-/** Adapt one MCP tool into an AI SDK Tool. No execute — we hand-dispatch
- *  in tool-execution. The schema is passed through as raw JSON Schema
- *  (the SDK has first-class support via `jsonSchema(...)` so we don't
- *  need a zod conversion step). */
+/** 把一个 MCP 工具适配成 AI SDK Tool。无 execute——我们在 tool-execution
+ *  里手工分派。schema 作为原始 JSON Schema 直通（SDK 通过 `jsonSchema(...)`
+ *  有一等支持，所以我们不需要 zod 转换步骤）。 */
 export function bridgeMcpTool(entry: McpToolEntry) {
   return tool({
     description: truncateDescription(entry.description || `MCP tool from ${entry.serverName}`),
-    // The SDK's jsonSchema() helper takes a JSON Schema object and
-    // produces a Schema instance compatible with `tool()`. MCP servers
-    // hand us back well-formed JSON Schema by spec, so no preprocessing.
+    // SDK 的 jsonSchema() 辅助器接受一个 JSON Schema 对象，产出与 `tool()`
+    // 兼容的 Schema 实例。MCP 服务器按规范交回良构的 JSON Schema，所以无需
+    // 预处理。
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     inputSchema: jsonSchema(entry.inputSchema as any),
-    // No execute — manual dispatch in tool-execution.ts gates the call
-    // through permissions + loop-guard.
+    // 无 execute——tool-execution.ts 里的手工分派让该调用经过权限 + loop-guard。
   })
 }
 
-/** Build the system-prompt-friendly view of every MCP tool — short
- *  description + the model-facing name. Used by `system-prompt.ts` to
- *  render the `## MCP Tools` section. */
+/** 构建每个 MCP 工具的系统提示友好视图——简短描述 + 面向模型的名字。
+ *  由 `system-prompt.ts` 用来渲染 `## MCP Tools` 段。 */
 export function toSystemPromptEntries(entries: readonly McpToolEntry[]) {
   return entries.map((e) => ({
     callableName: e.callableName,

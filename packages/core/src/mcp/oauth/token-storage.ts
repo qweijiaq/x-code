@@ -1,6 +1,6 @@
-// @x-code-cli/core — Per-server OAuth token + client info persistence
+// @x-code-cli/core — 每个服务器的 OAuth token + 客户端信息持久化
 //
-// One file: ~/.x-code/mcp-auth.json
+// 一个文件：~/.x-code/mcp-auth.json
 //
 //   {
 //     "sentry": {
@@ -11,13 +11,12 @@
 //     ...
 //   }
 //
-// Permissions: 0o600 (owner read/write only) on POSIX; on Windows the
-// mode bits are ignored but the file lives under the user profile so
-// other-user reach is bounded by OS ACLs. Atomic writes (tmp + rename)
-// so a crash mid-write can't corrupt previously-good tokens.
+// 权限：POSIX 上为 0o600（仅属主可读写）；Windows 上 mode 位被忽略，
+// 但文件位于用户 profile 下，其他用户的触及范围受 OS ACL 约束。
+// 原子写入（tmp + rename），使写入中途崩溃不会损坏先前完好的 token。
 //
-// The SDK's `OAuthClientProvider` interface (see ../oauth/provider.ts)
-// is the actual consumer — this module is the bare persistence layer.
+// SDK 的 `OAuthClientProvider` 接口（见 ../oauth/provider.ts）才是实际
+// 消费者——本模块只是裸持久化层。
 import type {
   OAuthClientInformationFull,
   OAuthClientInformationMixed,
@@ -34,14 +33,13 @@ function authFile(): string {
 }
 
 export interface StoredServerAuth {
-  /** Server URL — recorded so we can detect "this stored token belongs
-   *  to a different deployment" if the user repoints config later. */
+  /** 服务器 URL——记录下来是为了在用户日后改配置时，能检测出
+   *  "这个存储的 token 属于另一个部署"。 */
   url: string
   clientInformation?: OAuthClientInformationMixed
   tokens?: OAuthTokens
-  /** UTC ISO timestamp when the most recent tokens were obtained. Used
-   *  to compute expiry locally because OAuth `expires_in` is relative
-   *  to issuance, not absolute. */
+  /** 最近一次拿到 token 时的 UTC ISO 时间戳。用于在本地计算过期时间，
+   *  因为 OAuth 的 `expires_in` 是相对签发时刻的，不是绝对时间。 */
   tokensIssuedAt?: string
 }
 
@@ -89,12 +87,11 @@ export class McpTokenStorage {
     }))
   }
 
-  // ── helpers ────────────────────────────────────────────────────────────
+  // ── 辅助方法 ────────────────────────────────────────────────────────────
 
-  /** Compute the absolute expiry timestamp from issuedAt + expires_in.
-   *  Returns undefined when either is missing (some servers omit expiry —
-   *  in that case callers should optimistically use the token and let a
-   *  401 trigger refresh). */
+  /** 从 issuedAt + expires_in 计算绝对过期时间戳。
+   *  任一缺失时返回 undefined（有些服务器省略过期时间——此时调用方应
+   *  乐观地使用 token，让 401 触发刷新）。 */
   static expiresAt(stored: StoredServerAuth | undefined): number | undefined {
     const t = stored?.tokens
     if (!t) return undefined
@@ -104,9 +101,9 @@ export class McpTokenStorage {
     return issued + t.expires_in * 1000
   }
 
-  /** True iff stored tokens exist AND look fresh enough to use
-   *  (i.e. won't expire in the next `skewMs` window). When expiry
-   *  isn't known we return true and let the next 401 drive a refresh. */
+  /** 当且仅当存在存储 token 且看起来足够新鲜（即不会在接下来 `skewMs`
+   *  窗口内过期）时返回 true。过期时间未知时返回 true，交给下一次 401
+   *  驱动刷新。 */
   static isAccessTokenLikelyValid(stored: StoredServerAuth | undefined, skewMs = 60_000): boolean {
     if (!stored?.tokens?.access_token) return false
     const expiresAt = McpTokenStorage.expiresAt(stored)
@@ -114,7 +111,7 @@ export class McpTokenStorage {
     return Date.now() + skewMs < expiresAt
   }
 
-  // ── internals ──────────────────────────────────────────────────────────
+  // ── 内部实现 ──────────────────────────────────────────────────────────
 
   private async ensureLoaded(): Promise<void> {
     if (this.cache !== null) return
@@ -145,23 +142,22 @@ async function readFile(): Promise<FileShape> {
       return parsed as FileShape
     }
   } catch {
-    // missing / malformed — start clean
+    // 缺失 / 格式错误——从干净状态开始
   }
   return {}
 }
 
-/** Singleton instance. Wiring is simple: CLI startup constructs it once,
- *  passes it to loadMcpServers (which threads it into per-server OAuth
- *  providers) and to /mcp auth / /mcp logout handlers. */
+/** 单例实例。接线简单：CLI 启动时构造一次，传给 loadMcpServers
+ *  （它会把它穿进每个服务器的 OAuth provider）以及 /mcp auth /
+ *  /mcp logout 处理器。 */
 let globalInstance: McpTokenStorage | null = null
 export function getTokenStorage(): McpTokenStorage {
   if (!globalInstance) globalInstance = new McpTokenStorage()
   return globalInstance
 }
 
-/** Test hook — replace the singleton so unit tests don't touch
- *  ~/.x-code/. Note that X_CODE_HOME also reroutes the file, so most
- *  tests can just set that env var and avoid this hook. */
+/** 测试钩子——替换单例，使单元测试不触碰 ~/.x-code/。注意 X_CODE_HOME
+ *  也会重定向该文件，所以多数测试只需设置那个环境变量，不必用这个钩子。 */
 export function setTokenStorageForTesting(s: McpTokenStorage | null): void {
   globalInstance = s
 }

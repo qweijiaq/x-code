@@ -54,11 +54,11 @@ export function isPluginInstallCommand(command: string): boolean {
 }
 
 /**
- * Parse common marketplace skill-install commands without running them:
+ * 解析常见市场技能安装命令而不运行它们：
  *   npx skills add <source> [--skill <name>] [--all]
  *   npx add-skill <source> [--skill <name>]
  *   xc skill install <source>
- * A bare source is accepted as well.
+ * 也接受裸 source。
  */
 export function parseSkillInstallCommand(command: string): SkillInstallRequest {
   let tokens = tokenize(command)
@@ -254,8 +254,8 @@ async function downloadSkillFile(url: string): Promise<CopiedSkill> {
   }
 }
 
-/** Resolve an install command, fetch the source, and copy matching skills into
- *  the user skill directory. Returns the copied destination directories. */
+/** 解析安装命令，获取 source，并把匹配的技能复制到
+ *  用户技能目录。返回复制的目标目录。 */
 export async function installSkillsFromCommand(command: string): Promise<CopiedSkill[]> {
   const request = parseSkillInstallCommand(command)
   const source = parseSkillSource(request.source)

@@ -1,18 +1,16 @@
 #!/usr/bin/env node
 /**
- * Publish the verified desktop release to GitHub.
+ * 将已校验的桌面发布版发布到 GitHub。
  *
- * The release artifacts are produced by `pnpm release:desktop` and checked by
- * `pnpm verify:desktop-release`. This script creates the matching GitHub
- * release, uploads the artifacts, and publishes it. It uses the credential
- * already stored by Git (macOS Keychain, `gh auth setup-git`, or a credential
- * manager) and never prints the token.
+ * 发布产物由 `pnpm release:desktop` 生成，并由 `pnpm verify:desktop-release` 校验。
+ * 本脚本创建对应的 GitHub release、上传产物并正式发布。它使用 Git 已存储的凭据
+ * （macOS 钥匙串、`gh auth setup-git` 或凭据管理器），且绝不打印令牌。
  *
- * Usage:
- *   pnpm publish:desktop            # create/upload/publish v<package version>
- *   pnpm publish:desktop -- --draft # stop after upload, publish from GitHub
+ * 用法：
+ *   pnpm publish:desktop            # 创建/上传/发布 v<包版本>
+ *   pnpm publish:desktop -- --draft # 上传后停止，从 GitHub 手动发布
  *
- * Set HTTPS_PROXY if GitHub is only reachable through a proxy.
+ * 如果 GitHub 只能通过代理访问，请设置 HTTPS_PROXY。
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -123,8 +121,8 @@ function api(method, url, bodyPath, options = {}) {
   ]
   args.push('-X', method, '-H', 'Accept: application/vnd.github+json', '-H', 'X-GitHub-Api-Version: 2022-11-28')
   if (isUpload) {
-    // HTTP/2 uploads intermittently reset behind proxies; HTTP/1.1 is slower
-    // but reliable for 200 MB+ assets.
+    // 代理背后的 HTTP/2 上传会间歇性重置；HTTP/1.1 更慢，
+    // 但对 200 MB 以上的产物更可靠。
     args.push('--http1.1', '-H', 'Content-Type: application/octet-stream')
   }
   if (bodyPath) args.push('--data-binary', `@${bodyPath}`)
