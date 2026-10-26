@@ -84,7 +84,7 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **Providers**: Settings → Models and keys. Anthropic, OpenAI, DeepSeek, Gemini, Qwen, xAI, Zhipu, Moonshot, Kimi and any OpenAI-compatible endpoint.
 - **Test connection**: sends a real request and reports latency and model id.
 - **Custom model**: custom model id and base URL; keys stay local.
-- **Context meter**: used / limit and percentage below the composer; automatic compression starts at 80% and keeps roughly the latest 20k tokens.
+- **Context meter**: used / limit and percentage below the composer; automatic compression starts at 80% and keeps roughly the latest 20k tokens. Resumed sessions are judged by the live context, not the cumulative input tokens of the whole history.
 - **Per-model limit**: set a ceiling (at least 32768 tokens) for the active model; it affects only that model.
 - **Switching models**: keeps the last usage reading and replaces only the ceiling.
 - **ChatGPT sign-in**: shared with the CLI; subscription or API keys per provider.
@@ -120,7 +120,7 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **Task modes**: coding / writing / research / office adjust what answers emphasize, not the available tools. Empty-state suggestions come from the current workspace.
 - **Plan mode**: `/plan` enters read-only exploration; the agent proposes a plan and writes after approval.
 - **Goal loops**: `/goal` runs execute → verify → repair until passing or a stop condition is reached.
-- **Background tasks**: long shell commands can be inspected and stopped in the background task panel.
+- **Background tasks**: long shell commands can be inspected and stopped in the background task panel. The panel shows elapsed time, output size and a progress bar (a real percentage when the command prints one, an activity animation otherwise); the Tools menu shows the running count. Press Enter while a turn is running to queue a prompt; Stop ends the current reply but leaves backgrounded tasks running.
 - **Browser sub-agent**: enable in Settings → Tools; `task` can then delegate clicking, typing and sign-in. First use launches a managed Chrome through `npx @playwright/mcp`.
 - **Automatic visual checks**: the root agent can take one localhost screenshot after a significant visual change; independent from the browser sub-agent.
 - **Memory**: manage user memory in Settings → Memory; project knowledge comes from layered `AGENTS.md` / `AGENTS.local.md` files.

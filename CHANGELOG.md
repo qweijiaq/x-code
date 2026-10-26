@@ -7,6 +7,9 @@
 - rescan skill directories when SKILL.md files change and discover nested `@scope/<name>` layouts
 - add Settings → Skills actions to rescan skills and refresh the environment
 - give the app icon transparent macOS margins instead of a white square
+- use the live context size instead of cumulative input tokens when a resumed session checks whether to compact
+- queue prompts with Enter while a turn is running; the Stop button ends the reply but leaves background tasks running
+- show elapsed time, output size and a determinate/indeterminate progress bar for background tasks
 
 ## v1.0.0 (2026-10-25)
 
