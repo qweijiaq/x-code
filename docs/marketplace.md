@@ -66,7 +66,7 @@ xc plugin marketplace remove community
 | ----------------------- | --------------------- |
 | `anthropic-marketplace` | `github:anthropics/…` |
 | `claude-plugins`        | `github:anthropics/…` |
-| `x-code-official`       | `github:woai3c/…`     |
+| `x-code-official`       | `github:qweijiaq/…`   |
 
 用保留名但源不对的订阅会被 API 直接拒：
 

@@ -99,7 +99,7 @@ Windows 的 `X_CODE_HOME` 必须位于支持 persistent ACL 的本机 volume，�
 - **This session is not a named agent**：使用 `xc --name <名称>` 重启。
 - **No other reachable sessions**：确认两端均已命名、使用相同的 `X_CODE_HOME`；Windows 上还需使用同一账户和兼容的 integrity level。
 - **Windows peer runtime directory is not private**：将 `X_CODE_HOME` 移到本机 NTFS/ReFS 上仅当前账户可控制的目录；不要使用 UNC、映射网络驱动器或 junction/symlink。
-- **Windows peer broker is missing/hash mismatch**：重新安装 x-code-cli；不会从 PATH 查找或自动下载替代 helper。
+- **Windows peer broker is missing/hash mismatch**：重新安装 X-Code；不会从 PATH 查找或自动下载替代 helper。
 - **Name is ambiguous**：从 `/list-agents` 复制精确的 `peer:<uuid>` 地址。
 - **消息一直处于 held**：在 `dialogExpiryMs` 到期前到接收终端选择 Accept 或 Refuse。
 - **需要诊断日志**：设置 `DEBUG_STDOUT=1` 启动；日志写入 `~/.x-code/logs/debug.log`。

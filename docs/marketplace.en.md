@@ -74,7 +74,7 @@ A small set of marketplace names is reserved to prevent impersonation:
 | ----------------------- | --------------------- |
 | `anthropic-marketplace` | `github:anthropics/…` |
 | `claude-plugins`        | `github:anthropics/…` |
-| `x-code-official`       | `github:woai3c/…`     |
+| `x-code-official`       | `github:qweijiaq/…`   |
 
 Trying to subscribe to a reserved name with a non-canonical source is
 rejected at the API level:

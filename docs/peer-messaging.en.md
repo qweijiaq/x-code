@@ -99,7 +99,7 @@ Messages arriving while the receiver is busy are queued and processed without in
 - **This session is not a named agent** — restart it with `xc --name <name>`.
 - **No other reachable sessions** — verify that both sessions are named and share the same `X_CODE_HOME`; on Windows they must also use the same account and a compatible integrity level.
 - **Windows peer runtime directory is not private** — move `X_CODE_HOME` to a current-account-controlled directory on local NTFS/ReFS; do not use UNC paths, mapped network drives, or junctions/symlinks.
-- **Windows peer broker is missing/hash mismatch** — reinstall x-code-cli. X-Code will not search `PATH` or download a fallback helper.
+- **Windows peer broker is missing/hash mismatch** — reinstall X-Code. X-Code will not search `PATH` or download a fallback helper.
 - **Name is ambiguous** — copy the exact `peer:<uuid>` address from `/list-agents`.
 - **A message stays held** — accept or refuse it in the receiving terminal before `dialogExpiryMs` elapses.
 - **Need diagnostics** — launch with `DEBUG_STDOUT=1`; details go to `~/.x-code/logs/debug.log`.

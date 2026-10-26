@@ -47,7 +47,7 @@ import type { KnownMarketplace, KnownMarketplaces, Marketplace, MarketplaceEntry
 export const RESERVED_MARKETPLACE_NAMES: Readonly<Record<string, string>> = {
   'anthropic-marketplace': 'anthropics',
   'claude-plugins': 'anthropics',
-  'x-code-official': 'woai3c',
+  'x-code-official': 'qweijiaq',
 }
 
 // ── Source normalisation (wire format → internal PluginSource) ──────────

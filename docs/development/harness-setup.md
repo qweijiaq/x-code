@@ -16,8 +16,8 @@ A repository administrator should:
 2. Configure a branch rule or ruleset that requires a PR and the intended current check contexts. The workflow currently defines `Lint & Format`, `Type Check`, `Test` on Ubuntu/macOS/Windows, `Windows Native Source`, `Package Check`, and `Commit Message Check`.
 3. Open a harmless Draft PR from a repository branch. Confirm the template appears, each expected job starts, a failed/cancelled/timed-out job blocks the selected boundary, and Draft is not treated as Ready.
 4. If outside contributions are supported, repeat from a fork and verify token permissions, dependency installation, and secret isolation. The PR workflow has read-only contents permission and uses only the automatic `GITHUB_TOKEN`; confirm organization/repository policy agrees.
-5. Recheck the effective external state with `gh api repos/woai3c/x-code-cli/branches/main`,
-   `gh api repos/woai3c/x-code-cli/branches/main/protection`, and `gh api repos/woai3c/x-code-cli/rulesets`. An
+5. Recheck the effective external state with `gh api repos/qweijiaq/x-code/branches/main`,
+   `gh api repos/qweijiaq/x-code/branches/main/protection`, and `gh api repos/qweijiaq/x-code/rulesets`. An
    unprotected branch returns HTTP 404 from the protection endpoint; do not treat that expected response as configured
    protection.
 6. Record the exact required check contexts and review rule in the repository's maintained governance owner, then update the MR/PR CI and Draft/Ready rows in [`agent-workflow.md`](agent-workflow.md).

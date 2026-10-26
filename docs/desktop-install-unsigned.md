@@ -64,8 +64,8 @@ chmod +x X-Code-<version>-x64.AppImage
 如果你不想信任下载的二进制文件，可以从源码构建：
 
 ```bash
-git clone <repository>
-cd x-code-cli
+git clone https://github.com/qweijiaq/x-code.git
+cd x-code
 pnpm install
 pnpm dev:desktop
 ```

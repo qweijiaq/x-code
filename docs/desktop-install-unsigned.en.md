@@ -64,8 +64,8 @@ chmod +x X-Code-<version>-x64.AppImage
 If you would rather not trust a downloaded binary, build from source:
 
 ```bash
-git clone <repository>
-cd x-code-cli
+git clone https://github.com/qweijiaq/x-code.git
+cd x-code
 pnpm install
 pnpm dev:desktop
 ```
