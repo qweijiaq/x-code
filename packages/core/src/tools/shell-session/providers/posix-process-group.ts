@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 
 import { sanitizeShellEnv, wrapShellSpawn } from '../../../utils/shell-sandbox.js'
+import { applyUtf8Locale } from '../../../utils/utf8-locale.js'
 import type {
   ManagedExitStatus,
   ManagedProcess,
@@ -283,9 +284,15 @@ export class PosixProcessGroupProvider implements ManagedShellProvider {
   spawnManaged(command: string, options: ManagedShellSpawnOptions): ManagedSpawnAttempt {
     const frames = new ActivationFrameBuffer(options.outputCapture)
     const wrapped = wrapShellSpawn(this.executable, ['-c', command])
+    const env: Record<string, string | undefined> = {
+      ...sanitizeShellEnv(options.env ?? process.env),
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUNBUFFERED: '1',
+    }
+    applyUtf8Locale(env)
     const child = spawn(wrapped.executable, wrapped.args, {
       cwd: options.cwd,
-      env: { ...sanitizeShellEnv(options.env ?? process.env), PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+      env,
       detached: true,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,

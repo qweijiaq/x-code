@@ -26,12 +26,25 @@ export function interactiveShell(): { file: string; args: string[] } {
   return { file, args: ['-l', '-i'] }
 }
 
+function isUtf8Locale(value: string | undefined): boolean {
+  return value !== undefined && /utf-?8/i.test(value)
+}
+
 export function ptyEnv(): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === 'string') env[key] = value
   }
   env.TERM = 'xterm-256color'
+  env.COLORTERM ??= 'truecolor'
+  env.PYTHONIOENCODING ??= 'utf-8'
+  // A GUI launch inherits no LANG/LC_CTYPE from Finder, which leaves zsh and
+  // most CLIs in the C locale: Chinese input and filenames then arrive as
+  // escape sequences or replacement characters. Default the PTY to UTF-8
+  // unless the login shell already provided a UTF-8 locale.
+  if (env.LC_ALL && !isUtf8Locale(env.LC_ALL)) env.LC_ALL = 'en_US.UTF-8'
+  if (env.LC_CTYPE && !isUtf8Locale(env.LC_CTYPE)) env.LC_CTYPE = 'en_US.UTF-8'
+  if (!isUtf8Locale(env.LANG)) env.LANG = 'en_US.UTF-8'
   return env
 }
 

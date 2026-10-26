@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { applyLoginShellEnv, parseLoginShellEnv } from '../src/runtime/shell-env.js'
+import { ptyEnv } from '../src/runtime/shell.js'
 
 describe('login shell environment', () => {
   it('parses the marker-delimited NUL-separated snapshot', () => {
@@ -39,5 +40,36 @@ describe('login shell environment', () => {
     expect(current.PWD).toBeUndefined()
     expect(current._).toBeUndefined()
     expect(result).toEqual({ added: 1, updated: ['PATH'] })
+  })
+})
+
+describe('terminal environment', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('defaults a GUI-launched shell to UTF-8', () => {
+    vi.stubEnv('LANG', '')
+    vi.stubEnv('LC_CTYPE', '')
+    vi.stubEnv('LC_ALL', '')
+
+    const env = ptyEnv()
+
+    expect(env.LANG).toBe('en_US.UTF-8')
+    expect(env.TERM).toBe('xterm-256color')
+  })
+
+  it('replaces a non-UTF-8 locale instead of keeping C', () => {
+    vi.stubEnv('LANG', 'C')
+    vi.stubEnv('LC_CTYPE', 'C')
+    vi.stubEnv('LC_ALL', 'C')
+
+    expect(ptyEnv()).toMatchObject({ LANG: 'en_US.UTF-8', LC_CTYPE: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' })
+  })
+
+  it('preserves a UTF-8 locale chosen by the user', () => {
+    vi.stubEnv('LANG', 'zh_CN.UTF-8')
+    vi.stubEnv('LC_CTYPE', 'zh_CN.UTF-8')
+    vi.stubEnv('LC_ALL', '')
+
+    expect(ptyEnv()).toMatchObject({ LANG: 'zh_CN.UTF-8', LC_CTYPE: 'zh_CN.UTF-8' })
   })
 })

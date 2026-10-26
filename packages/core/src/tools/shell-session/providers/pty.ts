@@ -6,6 +6,7 @@ import { constants as osConstants } from 'node:os'
 import path from 'node:path'
 
 import { sanitizeShellEnv, wrapShellSpawn } from '../../../utils/shell-sandbox.js'
+import { applyUtf8Locale } from '../../../utils/utf8-locale.js'
 import type {
   ManagedExitStatus,
   ManagedProcess,
@@ -73,6 +74,7 @@ function stringEnvironment(env: NodeJS.ProcessEnv | undefined): Record<string, s
     delete values[key]
   values.TERM ??= 'xterm-256color'
   values.COLORTERM ??= 'truecolor'
+  applyUtf8Locale(values)
   values.PYTHONIOENCODING = 'utf-8'
   values.PYTHONUNBUFFERED = '1'
   return values
