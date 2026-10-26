@@ -108,7 +108,7 @@ process.on('exit', () => {
   fs.rmSync(payloadPath, { force: true })
 })
 
-function api(method, url, bodyPath) {
+function api(method, url, bodyPath, options = {}) {
   const args = ['--config', configPath, '--silent', '--show-error', '--fail-with-body', '--max-time', '1800']
   args.push('-X', method, '-H', 'Accept: application/vnd.github+json', '-H', 'X-GitHub-Api-Version: 2022-11-28')
   if (url.includes('uploads.github.com')) args.push('-H', 'Content-Type: application/octet-stream')
@@ -116,7 +116,9 @@ function api(method, url, bodyPath) {
   args.push(url)
   const result = spawnSync('curl', args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 })
   if (result.status !== 0) {
-    fail(`${method} ${url} failed: ${(result.stdout || result.stderr).trim().slice(0, 400)}`)
+    const body = (result.stdout || '').trim()
+    if (options.allow404 && /"status"\s*:\s*"404"/.test(body)) return null
+    fail(`${method} ${url} failed: ${(body || result.stderr).trim().slice(0, 400)}`)
   }
   return result.stdout ? JSON.parse(result.stdout) : null
 }
@@ -133,15 +135,16 @@ fs.writeFileSync(
   }),
 )
 
-let release = null
-try {
-  release = api('GET', `https://api.github.com/repos/${repo}/releases/tags/${tag}`)
+let release = api('GET', `https://api.github.com/repos/${repo}/releases/tags/${tag}`, undefined, {
+  allow404: true,
+})
+if (release) {
   if (!release.draft) {
     console.log(`release ${tag} is already published: ${release.html_url}`)
     process.exit(0)
   }
   console.log(`reusing draft release ${release.id}`)
-} catch {
+} else {
   release = api('POST', `https://api.github.com/repos/${repo}/releases`, payloadPath)
   console.log(`created draft release ${release.id}`)
 }
