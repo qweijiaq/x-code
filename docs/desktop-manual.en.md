@@ -171,7 +171,7 @@ Typing `/` lists every command; `/help` shows the full list. Common commands inc
 - **Restore**: adds missing files only and never overwrites; skills/commands/sub-agents reload immediately and the session list refreshes.
 - **Diagnostics**: Settings → Tools → Diagnostics and support, or the palette. The JSON snapshot excludes keys, MCP env/headers and command contents.
 - **Error log**: renderer errors append to `~/.x-code/logs/desktop-errors.log`; a render crash shows a recovery screen with reload and diagnostics export.
-- **Updates**: Settings → Desktop updates. Checks the official GitHub Release `RELEASE.json` by default; you can also paste the HTTPS URL of your own release directory, then download and verify the installer (sha256) before installing manually. Automatic install still requires a signed app.
+- **Updates**: Settings → Desktop updates. Checks the official GitHub Release `RELEASE.json` by default (using the system proxy); you can also paste the HTTPS URL of your own release directory. Downloads show bytes, speed, percentage and a progress bar, and can be cancelled. The installer goes to the system Downloads folder by default; **Choose location** opens a save dialog, and the final path plus **Show in Finder** appear after the SHA-256 check. Automatic installation still requires a signed app.
 
 ## Troubleshooting
 

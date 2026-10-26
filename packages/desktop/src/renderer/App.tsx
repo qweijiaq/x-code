@@ -3589,7 +3589,7 @@ export function App(): React.JSX.Element {
                           </>
                         ) : (
                           <button
-                            className="session-action"
+                            className="session-action session-menu-toggle"
                             data-testid="session-menu-toggle"
                             title={t('更多操作')}
                             aria-label={t('更多操作')}

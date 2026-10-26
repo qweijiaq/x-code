@@ -2661,6 +2661,22 @@ body::before {
   color: var(--paper);
 }
 
+.session-action.session-menu-toggle {
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--ink-45);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.session-action.session-menu-toggle:hover {
+  border: none;
+  border-radius: 4px;
+  background: var(--ink-08);
+  color: var(--ink);
+}
+
 .session-menu-scrim {
   position: fixed;
   inset: 0;
@@ -2677,7 +2693,7 @@ body::before {
   border: 1px solid var(--ink-20);
   border-radius: 8px;
   background: var(--paper);
-  box-shadow: 0 8px 24px rgba(28, 26, 22, 0.18);
+  box-shadow: 0 4px 12px rgba(20, 18, 15, 0.1);
 }
 
 .session-menu button {

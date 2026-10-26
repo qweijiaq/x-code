@@ -178,8 +178,9 @@ execute any script from a skill.
 ## Updates
 
 **Settings → Desktop updates** checks the official GitHub Release
-`RELEASE.json` by default; you can also paste the HTTPS URL of your own release
-directory. If the release lists an installer for this platform, the app can
-download it to a temp directory, verify its `sha256`, and open the installer
-for a manual install. Automatic download-and-install is not enabled yet: it
-needs a signed app and a stable feed.
+`RELEASE.json` by default (through the system proxy); you can also paste the
+HTTPS URL of your own release directory. Downloads show progress and can be
+cancelled; the installer goes to the system Downloads folder by default, with a
+**Choose location** option and a SHA-256 check before the manual install.
+Automatic download-and-install is not enabled yet: it needs a signed app and a
+stable feed.
