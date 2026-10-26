@@ -65,11 +65,17 @@ if (isHeadlessSmoke) {
   }
   // Reuse locally cached OCR language data so smoke runs do not depend on
   // downloading tessdata; CI without a cache still falls back to the network.
-  try {
-    fs.mkdirSync(smokeHome, { recursive: true })
-    fs.cpSync(path.join(originalHome, 'tessdata'), path.join(smokeHome, 'tessdata'), { recursive: true })
-  } catch {
-    // No cached tessdata.
+  // The verifier points X_CODE_HOME at its own temp dir, so also try the real
+  // user cache when that directory has no tessdata.
+  const tessSources = [path.join(originalHome, 'tessdata'), path.join(os.homedir(), '.x-code', 'tessdata')]
+  for (const source of tessSources) {
+    try {
+      fs.mkdirSync(smokeHome, { recursive: true })
+      fs.cpSync(source, path.join(smokeHome, 'tessdata'), { recursive: true })
+      break
+    } catch {
+      // Try the next cache location.
+    }
   }
   // Sessions, plugins, and workspace scans resolve against the workspace.
   // Keep them inside the disposable smoke home so a test run never writes

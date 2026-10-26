@@ -36,6 +36,14 @@ jobs:
       - name: Build
         run: pnpm --filter @x-code-cli/desktop build
 
+      # Headless smokes run OCR; seed the language cache so they never depend on
+      # the tessdata CDN being reachable at test time.
+      - name: Cache OCR language data
+        run: |
+          mkdir -p "$HOME/.x-code/tessdata"
+          curl -fsSL https://tessdata.projectnaptha.com/4.0.0/eng.traineddata.gz | gunzip > "$HOME/.x-code/tessdata/eng.traineddata"
+          curl -fsSL https://tessdata.projectnaptha.com/4.0.0/chi_sim.traineddata.gz | gunzip > "$HOME/.x-code/tessdata/chi_sim.traineddata"
+
       - name: UI smoke
         run: pnpm --filter @x-code-cli/desktop smoke:ui
 
