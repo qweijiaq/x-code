@@ -46,11 +46,7 @@ The community build is ad-hoc signed, not notarized, so macOS asks for approval
 once. Full steps — including the `xattr` fallback for "app is damaged" — are in
 the [unsigned install guide](./docs/desktop-install-unsigned.en.md).
 
-The CLI installs with npm:
-
-```bash
-npm install -g @x-code-cli/cli
-```
+The CLI is built from this repository — see [Terminal companion](#terminal-companion).
 
 Windows and Linux desktop builds are not part of the 1.0 support statement yet.
 
@@ -131,9 +127,12 @@ without spending tokens.
 ## Terminal companion
 
 The CLI is the same agent without the window — useful for SSH, scripts,
-`--print` automation and piping.
+`--print` automation and piping. It is built from this repository:
 
 ```bash
+pnpm build
+pnpm --filter @x-code-cli/cli link --global   # exposes xc / x-code
+
 cd your-project
 xc                                      # interactive session
 xc "Explain the overall architecture"   # run one prompt

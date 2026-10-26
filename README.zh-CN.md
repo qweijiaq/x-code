@@ -40,11 +40,7 @@
 遇到“应用已损坏”时的 `xattr` 处理方式见
 [未签名版安装指南](./docs/desktop-install-unsigned.md)。
 
-CLI 通过 npm 安装：
-
-```bash
-npm install -g @x-code-cli/cli
-```
+CLI 从本仓库构建，见[终端形态](#终端形态)。
 
 Windows / Linux 桌面版暂不在 1.0 的支持范围内。
 
@@ -112,8 +108,12 @@ DeepSeek 模型时，也可以直接用模型 Key 走内置搜索。
 ## 终端形态
 
 CLI 是同一个 Agent 的命令行界面，适合 SSH、脚本、`--print` 自动化和管道。
+它从本仓库构建：
 
 ```bash
+pnpm build
+pnpm --filter @x-code-cli/cli link --global   # 提供 xc / x-code 命令
+
 cd your-project
 xc                                      # 交互式会话
 xc "解释项目的整体架构"                  # 单次提示
