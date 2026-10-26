@@ -5,7 +5,10 @@ import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
-const DOWNLOAD_TIMEOUT_MS = 10 * 60_000
+// 245 MB installers can take much longer than a fixed 10-minute cap on slow
+// links. Abort only when the stream stops producing data.
+const DOWNLOAD_IDLE_TIMEOUT_MS = 60_000
+const PROGRESS_INTERVAL_MS = 200
 
 export interface ReleaseArtifact {
   file: string
@@ -91,6 +94,7 @@ export interface DownloadUpdateOptions {
   /** Injectable for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch
   maxBytes?: number
+  onProgress?: (progress: { receivedBytes: number; totalBytes?: number; bytesPerSecond?: number }) => void
 }
 
 /** Download the platform installer into `destDir` and verify its SHA-256. */
@@ -102,50 +106,86 @@ export async function downloadUpdateArtifact(options: DownloadUpdateOptions): Pr
   const maxBytes = options.maxBytes ?? MAX_DOWNLOAD_BYTES
   const fetchImpl = options.fetchImpl ?? fetch
 
-  const response = await fetchImpl(url, {
-    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-  })
-  if (!response.ok) throw new Error(`下载安装包失败：HTTP ${response.status}`)
-  const declared = Number(response.headers.get('content-length') ?? 0)
-  if (Number.isFinite(declared) && declared > maxBytes) throw new Error('安装包超过大小上限')
-  if (!response.body) throw new Error('下载响应为空')
-
-  const fileName = path.basename(artifact.file)
-  await fs.promises.mkdir(options.destDir, { recursive: true })
-  const tempPath = path.join(options.destDir, `${fileName}.part`)
-  const finalPath = path.join(options.destDir, fileName)
-  const hash = createHash('sha256')
-  let bytes = 0
-  const counter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      bytes += chunk.length
-      if (bytes > maxBytes) {
-        callback(new Error('安装包超过大小上限'))
-        return
-      }
-      hash.update(chunk)
-      callback(null, chunk)
-    },
-  })
+  const controller = new AbortController()
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
+  let idleTimedOut = false
+  const resetIdle = (): void => {
+    if (idleTimer) clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => {
+      idleTimedOut = true
+      controller.abort()
+    }, DOWNLOAD_IDLE_TIMEOUT_MS)
+  }
+  resetIdle()
 
   try {
-    await pipeline(
-      Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-      counter,
-      fs.createWriteStream(tempPath),
-    )
+    const response = await fetchImpl(url, { signal: controller.signal })
+    resetIdle()
+    if (!response.ok) throw new Error(`下载安装包失败：HTTP ${response.status}`)
+    const declared = Number(response.headers.get('content-length') ?? 0)
+    if (Number.isFinite(declared) && declared > maxBytes) throw new Error('安装包超过大小上限')
+    if (!response.body) throw new Error('下载响应为空')
+    const totalBytes = Number.isFinite(declared) && declared > 0 ? declared : undefined
+
+    const fileName = path.basename(artifact.file)
+    await fs.promises.mkdir(options.destDir, { recursive: true })
+    const tempPath = path.join(options.destDir, `${fileName}.part`)
+    const finalPath = path.join(options.destDir, fileName)
+    const hash = createHash('sha256')
+    let bytes = 0
+    const startedAt = Date.now()
+    let lastEmit = 0
+    const emitProgress = (force = false): void => {
+      if (!options.onProgress) return
+      const now = Date.now()
+      if (!force && now - lastEmit < PROGRESS_INTERVAL_MS) return
+      lastEmit = now
+      options.onProgress({
+        receivedBytes: bytes,
+        ...(totalBytes !== undefined ? { totalBytes } : {}),
+        bytesPerSecond: bytes > 0 ? Math.round(bytes / Math.max(0.001, (now - startedAt) / 1000)) : 0,
+      })
+    }
+    emitProgress(true)
+    const counter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        bytes += chunk.length
+        resetIdle()
+        if (bytes > maxBytes) {
+          callback(new Error('安装包超过大小上限'))
+          return
+        }
+        hash.update(chunk)
+        emitProgress()
+        callback(null, chunk)
+      },
+    })
+
+    try {
+      await pipeline(
+        Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+        counter,
+        fs.createWriteStream(tempPath),
+      )
+    } catch (error) {
+      await fs.promises.rm(tempPath, { force: true })
+      throw error
+    }
+
+    emitProgress(true)
+    const sha256 = hash.digest('hex')
+    if (sha256 !== artifact.sha256) {
+      await fs.promises.rm(tempPath, { force: true })
+      throw new Error('安装包校验失败（sha256 不一致）')
+    }
+
+    await fs.promises.rm(finalPath, { force: true })
+    await fs.promises.rename(tempPath, finalPath)
+    return { version: options.release.version, filePath: finalPath, fileName, bytes, sha256 }
   } catch (error) {
-    await fs.promises.rm(tempPath, { force: true })
+    if (idleTimedOut) throw new Error(`下载超时：${DOWNLOAD_IDLE_TIMEOUT_MS / 1000} 秒内没有收到新数据`)
     throw error
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer)
   }
-
-  const sha256 = hash.digest('hex')
-  if (sha256 !== artifact.sha256) {
-    await fs.promises.rm(tempPath, { force: true })
-    throw new Error('安装包校验失败（sha256 不一致）')
-  }
-
-  await fs.promises.rm(finalPath, { force: true })
-  await fs.promises.rename(tempPath, finalPath)
-  return { version: options.release.version, filePath: finalPath, fileName, bytes, sha256 }
 }

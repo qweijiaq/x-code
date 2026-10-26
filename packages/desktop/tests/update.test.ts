@@ -85,6 +85,21 @@ describe('downloadUpdateArtifact', () => {
     expect(fs.existsSync(path.join(dir, 'X-Code-1.2.3-arm64.dmg.part'))).toBe(false)
   })
 
+  it('reports download progress including the declared total', async () => {
+    const events: Array<{ receivedBytes: number; totalBytes?: number }> = []
+    await downloadUpdateArtifact({
+      feed: 'https://example.com/x-code/RELEASE.json',
+      release: release(),
+      platform: 'darwin',
+      arch: 'arm64',
+      destDir: dir,
+      fetchImpl: async () => new Response(payload, { headers: { 'content-length': String(payload.length) } }),
+      onProgress: (progress) => events.push(progress),
+    })
+    expect(events.length).toBeGreaterThan(0)
+    expect(events.at(-1)).toMatchObject({ receivedBytes: payload.length, totalBytes: payload.length })
+  })
+
   it('deletes the partial file when the checksum does not match', async () => {
     await expect(
       downloadUpdateArtifact({

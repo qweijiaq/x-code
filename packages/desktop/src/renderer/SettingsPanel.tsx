@@ -92,6 +92,11 @@ function newerVersion(latest: string, current: string): boolean {
   return false
 }
 
+function formatUpdateBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(0, bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function mcpSummary(server: McpServerView): string {
   const command = server.config.command
   const url = server.config.url
@@ -186,6 +191,11 @@ export function SettingsPanel({
   const [updateFeedDraft, setUpdateFeedDraft] = useState(settings.updateFeed)
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [updateDownload, setUpdateDownload] = useState<UpdateDownloadView | null>(null)
+  const [updateProgress, setUpdateProgress] = useState<{
+    receivedBytes: number
+    totalBytes?: number
+    bytesPerSecond?: number
+  } | null>(null)
   const [updateBusy, setUpdateBusy] = useState(false)
   const [installCommand, setInstallCommand] = useState('')
   const [skillCommand, setSkillCommand] = useState('')
@@ -897,6 +907,7 @@ export function SettingsPanel({
   const downloadUpdate = async (): Promise<void> => {
     setUpdateBusy(true)
     setUpdateDownload(null)
+    setUpdateProgress(null)
     setError(null)
     setNotice(null)
     try {
@@ -909,6 +920,7 @@ export function SettingsPanel({
       setNotice(t('安装包已下载并通过校验'))
     } finally {
       setUpdateBusy(false)
+      setUpdateProgress(null)
     }
   }
 
@@ -1054,6 +1066,18 @@ export function SettingsPanel({
     return off
   }, [])
 
+  useEffect(() => {
+    const off = window.xcode.onEvent((event) => {
+      if (event.type !== 'app:update-download-progress') return
+      setUpdateProgress({
+        receivedBytes: event.receivedBytes,
+        ...(event.totalBytes !== undefined ? { totalBytes: event.totalBytes } : {}),
+        ...(event.bytesPerSecond !== undefined ? { bytesPerSecond: event.bytesPerSecond } : {}),
+      })
+    })
+    return off
+  }, [])
+
   const previewRisk = preview
     ? preview.hookEvents.length > 0 ||
       preview.hasPathHooks ||
@@ -1185,6 +1209,29 @@ export function SettingsPanel({
                   {updateResult.notes ? ` · ${updateResult.notes}` : ''}
                 </div>
               ) : null}
+              {updateBusy && updateProgress ? (
+                <div className="update-progress-wrap" data-testid="update-progress">
+                  <div className="update-progress">
+                    <span
+                      className="update-progress-fill"
+                      style={
+                        updateProgress.totalBytes
+                          ? {
+                              width: `${Math.min(100, Math.round((updateProgress.receivedBytes / updateProgress.totalBytes) * 100))}%`,
+                            }
+                          : undefined
+                      }
+                    />
+                  </div>
+                  <div className="settings-note">
+                    {t('已下载 {{done}} / {{total}} · {{speed}}/s', {
+                      done: formatUpdateBytes(updateProgress.receivedBytes),
+                      total: updateProgress.totalBytes ? formatUpdateBytes(updateProgress.totalBytes) : t('未知大小'),
+                      speed: formatUpdateBytes(updateProgress.bytesPerSecond ?? 0),
+                    })}
+                  </div>
+                </div>
+              ) : null}
               {updateDownload ? (
                 <div className="settings-note" data-testid="update-downloaded">
                   {t('已下载 {{file}}（{{size}} MB），校验通过。', {
@@ -1214,7 +1261,16 @@ export function SettingsPanel({
                     disabled={updateBusy}
                     onClick={() => void downloadUpdate()}
                   >
-                    {updateBusy ? t('下载中…') : t('下载更新')}
+                    {updateBusy
+                      ? updateProgress?.totalBytes
+                        ? t('下载中 {{percent}}%…', {
+                            percent: Math.min(
+                              100,
+                              Math.round((updateProgress.receivedBytes / updateProgress.totalBytes) * 100),
+                            ),
+                          })
+                        : t('下载中…')
+                      : t('下载更新')}
                   </button>
                 ) : null}
                 {updateDownload ? (

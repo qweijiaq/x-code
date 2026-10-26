@@ -1238,6 +1238,12 @@ export type RuntimeEvent =
   | { type: 'app:open-session'; sessionId: string }
   | { type: 'app:new-session' }
   | { type: 'library:progress'; phase: string; processed: number; total: number; chunks: number }
+  | {
+      type: 'app:update-download-progress'
+      receivedBytes: number
+      totalBytes?: number
+      bytesPerSecond?: number
+    }
   | { type: 'checks:finished'; results: ProjectCheckResultView[]; auto: boolean; fixPrompt: string }
   | { type: 'background:changed' }
   | { type: 'mcp:auth-url'; server: string; url: string }

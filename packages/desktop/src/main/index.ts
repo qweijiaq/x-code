@@ -1263,6 +1263,13 @@ function installIpc(): void {
           platform: process.platform,
           arch: process.arch,
           destDir: path.join(app.getPath('temp'), 'xcode-updates'),
+          onProgress: (progress) => {
+            if (!senderWindow || senderWindow.isDestroyed()) return
+            senderWindow.webContents.send('runtime:event', {
+              type: 'app:update-download-progress',
+              ...progress,
+            })
+          },
         })
         downloadedUpdateFiles.add(path.resolve(download.filePath))
         return {
