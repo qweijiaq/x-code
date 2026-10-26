@@ -108,19 +108,32 @@ process.on('exit', () => {
   fs.rmSync(payloadPath, { force: true })
 })
 
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+
 function api(method, url, bodyPath, options = {}) {
   const args = ['--config', configPath, '--silent', '--show-error', '--fail-with-body', '--max-time', '1800']
   args.push('-X', method, '-H', 'Accept: application/vnd.github+json', '-H', 'X-GitHub-Api-Version: 2022-11-28')
-  if (url.includes('uploads.github.com')) args.push('-H', 'Content-Type: application/octet-stream')
+  if (url.includes('uploads.github.com')) {
+    // HTTP/2 uploads intermittently reset behind proxies; HTTP/1.1 is slower
+    // but reliable for 200 MB+ assets.
+    args.push('--http1.1', '-H', 'Content-Type: application/octet-stream')
+  }
   if (bodyPath) args.push('--data-binary', `@${bodyPath}`)
   args.push(url)
-  const result = spawnSync('curl', args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 })
-  if (result.status !== 0) {
+  const attempts = options.retries ?? 1
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const result = spawnSync('curl', args, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 })
+    if (result.status === 0) return result.stdout ? JSON.parse(result.stdout) : null
     const body = (result.stdout || '').trim()
     if (options.allow404 && /"status"\s*:\s*"404"/.test(body)) return null
-    fail(`${method} ${url} failed: ${(body || result.stderr).trim().slice(0, 400)}`)
+    const detail = (body || result.stderr).trim().slice(0, 400)
+    if (attempt < attempts) {
+      console.log(`upload attempt ${attempt}/${attempts} failed (${detail}); retrying in 5s`)
+      sleepSync(5_000)
+      continue
+    }
+    fail(`${method} ${url} failed after ${attempts} attempt(s): ${detail}`)
   }
-  return result.stdout ? JSON.parse(result.stdout) : null
 }
 
 fs.writeFileSync(
@@ -149,27 +162,37 @@ if (release) {
   console.log(`created draft release ${release.id}`)
 }
 
-const uploaded = new Set((release.assets ?? []).map((asset) => asset.name))
+const uploaded = new Map((release.assets ?? []).map((asset) => [asset.name, asset]))
 for (const file of assets) {
   const name = path.basename(file)
-  if (uploaded.has(name)) {
+  const size = fs.statSync(file).size
+  const existing = uploaded.get(name)
+  if (existing && existing.state === 'uploaded' && existing.size === size) {
     console.log(`skip ${name} (already uploaded)`)
     continue
   }
-  console.log(`uploading ${name} (${(fs.statSync(file).size / 1024 / 1024).toFixed(1)} MB)`)
+  if (existing) {
+    console.log(`removing incomplete ${name} (state=${existing.state}, size=${existing.size})`)
+    api('DELETE', `https://api.github.com/repos/${repo}/releases/assets/${existing.id}`)
+  }
+  console.log(`uploading ${name} (${(size / 1024 / 1024).toFixed(1)} MB)`)
   const asset = api(
     'POST',
     `https://uploads.github.com/repos/${repo}/releases/${release.id}/assets?name=${encodeURIComponent(name)}`,
     file,
+    { retries: 4 },
   )
   console.log(`uploaded ${asset.name} (${asset.size} bytes)`)
 }
 
 const finalRelease = api('GET', `https://api.github.com/repos/${repo}/releases/${release.id}`)
-const finalNames = new Set((finalRelease.assets ?? []).map((asset) => asset.name))
+const finalAssets = new Map((finalRelease.assets ?? []).map((asset) => [asset.name, asset]))
 for (const file of assets) {
   const name = path.basename(file)
-  if (!finalNames.has(name)) fail(`asset missing after upload: ${name}`)
+  const asset = finalAssets.get(name)
+  if (!asset || asset.size !== fs.statSync(file).size) {
+    fail(`asset missing or incomplete after upload: ${name}`)
+  }
 }
 
 if (draftOnly) {
