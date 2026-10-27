@@ -601,6 +601,9 @@ export const EN: Record<string, string> = {
   '{{count}} 个运行中': '{{count}} running',
   '{{count}} 个后台任务运行中；当前回复仍在等待。':
     '{{count}} background task(s) running; the current reply is still waiting.',
+  '{{count}} 个后台任务运行中，可以继续提问；完成后会通知。':
+    '{{count}} background task(s) running; you can keep asking, and you will be notified when they finish.',
+  查看: 'View',
   停止等待: 'Stop waiting',
   停止等待并执行排队: 'Stop waiting and run queued',
   '命令名（不含斜杠，如 review-doc）': 'Command name (no slash, e.g. review-doc)',

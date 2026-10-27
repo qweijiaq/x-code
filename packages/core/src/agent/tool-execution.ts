@@ -557,7 +557,13 @@ async function commitShellObservation(ctx: HandlerCtx, observation: ShellObserva
   const canonicalOutput = formatShellExecutionResult(observation.result)
   const baseOutput = truncateShellResult(ctx, canonicalOutput)
   if (observation.kind === 'running') {
-    appendAndNotifyShellResult(ctx, baseOutput, observation.result.isError)
+    // 让模型知道这是后台任务而不是失败；同时明确不要用 shellOutput 空轮询，
+    // 否则会把前台对话一直占住。
+    const shellId = observation.result.shellId
+    const note = shellId
+      ? `\n\n[Background shell] This command is still running as shell ${shellId}. Do not poll it with shellOutput just to wait; finish your reply so the user can keep chatting. The background panel shows progress; check again only when the user asks.`
+      : '\n\n[Background shell] This command is still running. Finish your reply so the user can keep chatting; the background panel shows progress.'
+    appendAndNotifyShellResult(ctx, `${baseOutput}${note}`, observation.result.isError)
     return
   }
 
@@ -618,6 +624,13 @@ async function handleShellOutput(ctx: HandlerCtx): Promise<void> {
     turnAbortSignal: ctx.options.abortSignal,
   })
   await commitShellObservation(ctx, observation)
+  const explicitlyImmediate =
+    ctx.input.block === false || ctx.input.yieldTimeMs === 0 || (ctx.input.block === true && ctx.input.timeout === 0)
+  if (observation.kind === 'running' && !hasInput && !explicitlyImmediate) {
+    // 被动等待后台 shell 已经占用了默认的等待窗口；再让模型继续轮询只会
+    // 把前台卡住。结束本轮，后台面板继续跟踪任务。
+    ctx.control.stopTurn = true
+  }
 }
 
 /** ── killShell ── */

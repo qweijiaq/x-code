@@ -456,3 +456,64 @@ describe('shell terminal observation abort handling', () => {
     expect(state.shellSessions.list()).toEqual([])
   })
 })
+
+describe('background shell pauses the foreground turn', () => {
+  function runningObservation(shellId: string) {
+    return {
+      kind: 'running' as const,
+      result: {
+        chunkId: 'chunk-bg',
+        wallTimeMs: 5_000,
+        output: 'still running\n',
+        isError: false,
+        originalBytes: 15,
+        omittedBytes: 0,
+        shellId,
+        running: true,
+        rootExited: false,
+        treeConfirmedExited: false,
+        cleanupResidual: false,
+        lifecycle: 'running' as const,
+        timedOut: false,
+        waitInterrupted: false,
+        managerDraining: false,
+      },
+    }
+  }
+
+  it('stops the turn after a default passive wait still sees a running shell', async () => {
+    const state = createLoopState('default', { projectCwd: process.cwd() })
+    const options: AgentOptions = { modelId: 'test-model', trustMode: true, printMode: false }
+    const callbacks = makeCallbacks()
+    vi.spyOn(state.shellSessions, 'interact').mockResolvedValue(runningObservation('shell-bg') as never)
+
+    const execution = await processToolCalls(
+      [{ toolName: 'shellOutput', toolCallId: 'wait-bg', input: { shellId: 'shell-bg' } }],
+      state,
+      options,
+      callbacks,
+      stubModel,
+    )
+
+    expect(execution.stopTurn).toBe(true)
+    expect(String(vi.mocked(callbacks.onToolResult).mock.calls[0]?.[1])).toContain('[Background shell]')
+    expect(String(vi.mocked(callbacks.onToolResult).mock.calls[0]?.[1])).toContain('shell-bg')
+  })
+
+  it('leaves an explicitly non-blocking status check alone', async () => {
+    const state = createLoopState('default', { projectCwd: process.cwd() })
+    const options: AgentOptions = { modelId: 'test-model', trustMode: true, printMode: false }
+    const callbacks = makeCallbacks()
+    vi.spyOn(state.shellSessions, 'interact').mockResolvedValue(runningObservation('shell-bg') as never)
+
+    const execution = await processToolCalls(
+      [{ toolName: 'shellOutput', toolCallId: 'peek-bg', input: { shellId: 'shell-bg', block: false } }],
+      state,
+      options,
+      callbacks,
+      stubModel,
+    )
+
+    expect(execution.stopTurn).toBe(false)
+  })
+})

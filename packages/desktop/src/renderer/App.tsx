@@ -4558,6 +4558,14 @@ export function App(): React.JSX.Element {
               </button>
             </div>
           ) : null}
+          {!busy && backgroundActive > 0 ? (
+            <div className="background-wait idle" data-testid="background-idle">
+              <span>{t('{{count}} 个后台任务运行中，可以继续提问；完成后会通知。', { count: backgroundActive })}</span>
+              <button className="btn btn-quiet" onClick={() => setBackgroundOpen(true)}>
+                {t('查看')}
+              </button>
+            </div>
+          ) : null}
           {queuedItems.length > 0 ? (
             <div className="queued-list" data-testid="queued-list">
               {queuedItems.map((item, index) => (

@@ -14,10 +14,11 @@ Instructions:
 - Always quote file paths that contain spaces with double quotes.
 - Run independent commands in separate parallel tool calls; chain dependent commands using syntax valid for the current shell.
 - For git commands: prefer creating a new commit rather than amending. Never skip hooks (--no-verify) unless the user explicitly asks. Before running destructive operations (git reset --hard, git push --force), consider safer alternatives.
-- The default initial wait is 10 seconds. If the command is still running, the result includes a shell id; read new output with shellOutput or stop it with killShell.
+- The default initial wait is 10 seconds. If the command is still running, the result includes a shell id. Do not poll it with shellOutput just to wait: finish your reply so the user can keep chatting; the background panel tracks it. Check output only when the user asks for status, or stop it with killShell.
+- For commands you expect to be long-running, set yieldTimeMs: 0 so they start in the background immediately.
 - When output is truncated, the complete output is saved to a temporary log. Use readFile with the returned path and offset/limit to inspect it.
 - Set tty: true for interactive programs. Continue the terminal with shellOutput chars, including terminal control input such as Ctrl+C.
-- Set yieldTimeMs: 0 for an immediate background result. timeout is an optional hard runtime limit.`,
+- timeout is an optional hard runtime limit.`,
   inputSchema: z.object({
     command: z.string().describe('The command to execute'),
     timeout: z

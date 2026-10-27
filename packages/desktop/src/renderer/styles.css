@@ -6712,6 +6712,12 @@ body::before,
   font-size: 11px;
 }
 
+.background-wait.idle {
+  border-color: rgba(95, 122, 97, 0.28);
+  background: rgba(95, 122, 97, 0.07);
+  color: var(--ink-70);
+}
+
 .queued-list {
   display: flex;
   flex-direction: column;
