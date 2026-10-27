@@ -142,6 +142,18 @@ The **Outline** tab in the right-hand inspector (also the top-bar outline button
 - **Automatic visual checks**: the root agent can take one localhost screenshot after a significant visual change; independent from the browser sub-agent.
 - **Memory**: manage user memory in Settings → Memory; project knowledge comes from layered `AGENTS.md` / `AGENTS.local.md` files.
 
+## Background Task Queries and Cross-window Progress
+
+You do not need to memorize task ids or open the panel to ask about progress:
+
+1. Run a long command, or ask the agent to dispatch a `task` with `background: true`.
+2. Ask "where is it now / how far along is it". The model calls `backgroundList` to find the task, then `backgroundGet` / `backgroundOutput` for status, elapsed time, tool-call count and the output tail. It should not present unqueried state as fact.
+3. `backgroundOutput` returns immediately by default (`block: false`). The model should use `block: true` only when you ask it to wait for completion (up to 5 minutes).
+4. While a reply is running, pressing Enter queues the prompt; a text-only prompt can use **Open in new window**. The new window gets the fork-time snapshot and sees background shells/sub-agents from other windows through the shared main-process view (about 2 seconds refresh), so you can ask about their current progress. The parent window's in-flight model reasoning is not shared.
+5. The Background tasks panel lists shells and sub-agents from all windows: local tasks can be stopped there; tasks from other windows appear as dashed cards with status/output snapshots and must be stopped in their original window.
+
+Background task state lives in the app process; unfinished tasks are lost when the app quits, while output already written to the transcript remains. The shared view covers background shells/sub-agents, not two writers in one model turn.
+
 ## Settings Reference
 
 - **Models and keys**: providers, keys, base URLs, custom models, connection tests, context limits.
