@@ -8382,3 +8382,624 @@ iframe.file-preview {
 .chat > .message.user {
   margin-right: max(0px, calc((100% - 840px) / 2));
 }
+
+/* ── App-wide surface polish ─────────────────────────────────────────── */
+
+/* Top bar: a quiet, sticky chrome bar. */
+.topbar {
+  position: relative;
+  z-index: 6;
+  gap: 10px;
+  padding: 9px var(--column);
+  border-bottom: 1px solid var(--ink-08);
+  background: var(--paper);
+  backdrop-filter: blur(18px);
+}
+
+.brand {
+  gap: 9px;
+}
+
+.seal {
+  width: 31px;
+  height: 31px;
+  border-radius: 8px;
+  font-size: 15px;
+  transform: rotate(-2deg);
+}
+
+.brand-title {
+  font-size: 14.5px;
+  letter-spacing: 0.18em;
+}
+
+.brand-sub {
+  margin-top: 1px;
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+}
+
+.status {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+
+.model-chip,
+.mode-chip {
+  padding: 5px 9px;
+  border-color: var(--ink-08);
+  border-radius: 8px;
+  background: var(--paper);
+  font-size: 11.5px;
+}
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+.topbar-actions {
+  gap: 3px;
+}
+
+/* Tabs: rounded chips instead of underlined blocks. */
+.tab-bar {
+  height: 38px;
+  gap: 4px;
+  padding: 3px var(--column);
+  border-bottom: 1px solid var(--ink-08);
+  background: var(--paper);
+}
+
+.tab-scroll {
+  gap: 4px;
+}
+
+.tab-item {
+  max-width: 200px;
+  border-bottom: none;
+  border-radius: 8px;
+}
+
+.tab-item:hover {
+  background: var(--paper-2);
+}
+
+.tab-item.active {
+  border-bottom-color: transparent;
+  background: var(--paper-2);
+  box-shadow: inset 0 0 0 1px var(--ink-08);
+}
+
+.tab-label {
+  padding: 5px 4px 5px 10px;
+  font-size: 11px;
+}
+
+.tab-close {
+  opacity: 0;
+  padding: 0 7px 0 2px;
+  border-radius: 5px;
+}
+
+.tab-item:hover .tab-close,
+.tab-item.active .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: rgba(176, 58, 46, 0.08);
+}
+
+.tab-add {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+/* Sidebar: a quiet navigation column with softer rows. */
+.sidebar {
+  width: 272px;
+  border-right-color: var(--ink-08);
+  background: linear-gradient(180deg, var(--paper) 0%, var(--paper-2) 100%);
+}
+
+.sidebar-section {
+  max-height: 44%;
+}
+
+.sidebar-sessions-section {
+  border-top-color: var(--ink-08);
+}
+
+.sidebar-head {
+  padding: 14px 14px 7px;
+}
+
+.sidebar-title {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.sidebar-add {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  border-color: var(--ink-08);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.sidebar-add:hover {
+  border-color: var(--cinnabar);
+  background: rgba(176, 58, 46, 0.05);
+}
+
+.sidebar-projects,
+.sidebar-sessions {
+  padding: 0 9px 10px;
+}
+
+.sidebar-project {
+  gap: 2px;
+  padding: 8px 11px;
+  border-left: none;
+  border-radius: 9px;
+}
+
+.sidebar-project:hover {
+  background: rgba(28, 26, 22, 0.04);
+}
+
+.sidebar-project.active {
+  background: rgba(176, 58, 46, 0.065);
+  box-shadow: inset 2px 0 0 var(--cinnabar);
+}
+
+.sidebar-project-name {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.sidebar-project-path {
+  font-size: 9.5px;
+}
+
+.sidebar-session {
+  gap: 3px;
+  padding: 9px 11px 9px 12px;
+  border-left: none;
+  border-radius: 9px;
+}
+
+.sidebar-session:hover {
+  border-left-color: transparent;
+  background: rgba(28, 26, 22, 0.04);
+}
+
+.sidebar-session-row.active .sidebar-session {
+  border-left: none;
+  background: rgba(176, 58, 46, 0.065);
+  box-shadow: inset 2px 0 0 var(--cinnabar);
+}
+
+.sidebar-session-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-70);
+}
+
+.sidebar-session-row.active .sidebar-session-title {
+  color: var(--ink);
+}
+
+.sidebar-session-meta {
+  font-size: 9px;
+  opacity: 0.8;
+}
+
+.sidebar-search {
+  padding: 0 10px 8px;
+}
+
+.sidebar-search input {
+  height: 30px;
+  padding: 0 10px;
+  border-color: var(--ink-08);
+  border-radius: 9px;
+  background: var(--paper);
+  font-size: 11px;
+}
+
+.sidebar-search input:focus {
+  border-color: rgba(176, 58, 46, 0.45);
+  box-shadow: 0 0 0 3px rgba(176, 58, 46, 0.06);
+}
+
+.sidebar-archived-toggle {
+  margin: 0 14px 8px;
+  padding: 3px 0;
+  font-size: 9.5px;
+}
+
+/* Getting-started card: a compact checklist instead of loose rows. */
+.usage-checklist {
+  margin: 0 12px 10px;
+  padding: 10px;
+  border: 1px solid var(--ink-08);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.usage-checklist .sidebar-head {
+  padding: 0 2px 6px;
+}
+
+.usage-progress {
+  font-size: 9px;
+  letter-spacing: 0.02em;
+}
+
+.usage-item {
+  padding: 5px 7px;
+  border-radius: 7px;
+  font-size: 10.5px;
+}
+
+.usage-item:hover {
+  background: var(--paper-2);
+}
+
+.usage-check {
+  width: 16px;
+  color: var(--ink-45);
+}
+
+.usage-item.done .usage-check {
+  color: var(--mineral);
+}
+
+/* Inspector: a segmented tab strip with a calm body. */
+.inspector {
+  border-left-color: var(--ink-08);
+  background: var(--paper);
+}
+
+.inspector-head {
+  min-height: 48px;
+  padding: 6px 10px;
+  border-bottom-color: var(--ink-08);
+  background: var(--paper);
+}
+
+.inspector-tabs {
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--ink-08);
+  border-radius: 9px;
+  background: var(--paper-2);
+}
+
+.inspector-tab {
+  padding: 5px 10px;
+  border: none;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.inspector-tab:hover {
+  background: rgba(28, 26, 22, 0.04);
+}
+
+.inspector-tab.active {
+  border-bottom-color: transparent;
+  background: var(--paper);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset;
+  color: var(--cinnabar);
+}
+
+.inspector-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+
+.inspector-close:hover {
+  background: var(--paper-2);
+}
+
+/* Settings: pill tabs, card-like rows, softer controls. */
+.settings-drawer {
+  width: min(780px, 94vw);
+  border-left-color: var(--ink-08);
+  background-image: none;
+  box-shadow: -30px 0 80px -60px rgba(28, 26, 22, 0.55);
+}
+
+.settings-drawer::before {
+  display: none;
+}
+
+.settings-tabs {
+  gap: 3px;
+  padding: 8px 20px;
+  border-bottom-color: var(--ink-08);
+  background: var(--paper);
+}
+
+.settings-tab {
+  padding: 7px 11px;
+  border-bottom: none;
+  border-radius: 8px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.settings-tab:hover {
+  background: var(--paper-2);
+}
+
+.settings-tab.active {
+  border-bottom-color: transparent;
+  background: var(--paper-2);
+  box-shadow: inset 0 0 0 1px var(--ink-08);
+  color: var(--ink);
+}
+
+.settings-body {
+  padding: 20px 26px 44px;
+}
+
+.settings-section-title {
+  margin: 20px 0 10px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-45);
+}
+
+.settings-section-title:first-child {
+  margin-top: 0;
+}
+
+.settings-note {
+  margin-bottom: 14px;
+  font-size: 11.5px;
+  line-height: 1.75;
+}
+
+.setting-row,
+.provider-row {
+  margin: 2px -10px;
+  padding: 13px 10px;
+  border-bottom: 1px solid var(--ink-08);
+  border-radius: 10px;
+  transition: background 140ms ease;
+}
+
+.setting-row:hover,
+.provider-row:hover {
+  background: rgba(28, 26, 22, 0.025);
+}
+
+.setting-row:last-child,
+.provider-row:last-child {
+  border-bottom-color: transparent;
+}
+
+.setting-name {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.setting-desc {
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.setting-meta,
+.setting-code {
+  font-size: 10.5px;
+}
+
+.settings-input,
+.settings-textarea {
+  padding: 8px 11px;
+  border-color: var(--ink-08);
+  border-radius: 9px;
+  background: var(--paper);
+  font-size: 12px;
+}
+
+.settings-input:focus,
+.settings-textarea:focus {
+  border-color: rgba(176, 58, 46, 0.5);
+  box-shadow: 0 0 0 3px rgba(176, 58, 46, 0.06);
+}
+
+.settings-toggle {
+  padding: 6px 11px;
+  border-color: var(--ink-08);
+  border-radius: 999px;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+.settings-toggle:hover {
+  border-color: var(--ink-20);
+  background: var(--paper-2);
+}
+
+.settings-toggle.on {
+  border-color: rgba(95, 122, 97, 0.35);
+  background: rgba(95, 122, 97, 0.09);
+}
+
+.settings-callout {
+  padding: 13px 15px;
+  border-radius: 11px;
+}
+
+.settings-badge {
+  border-radius: 999px;
+}
+
+.settings-btn {
+  border-radius: 8px;
+}
+
+/* Menus and popovers share one floating surface. */
+.model-menu,
+.mode-menu,
+.tools-menu,
+.slash-palette,
+.session-menu {
+  padding: 6px;
+  border-color: var(--ink-08);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.45) inset,
+    0 24px 60px -40px rgba(28, 26, 22, 0.5);
+}
+
+.tools-item,
+.slash-item,
+.session-menu button,
+.model-item,
+.mode-item {
+  border-radius: 8px;
+}
+
+.tools-item:hover,
+.slash-item:hover,
+.session-menu button:hover,
+.model-item:hover,
+.mode-item:hover {
+  background: var(--paper-2);
+}
+
+/* Approval cards and overlays. */
+.modal-scrim,
+.drawer-scrim {
+  background: rgba(28, 26, 22, 0.3);
+}
+
+.approval-card {
+  border: 1px solid var(--ink-08);
+  border-radius: 16px;
+  background: var(--paper);
+  box-shadow: 0 30px 80px -50px rgba(28, 26, 22, 0.7);
+}
+
+.approval-head {
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--ink-08);
+}
+
+.approval-title {
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.approval-body {
+  border-radius: 10px;
+  background: var(--paper-2);
+}
+
+.approval-actions {
+  gap: 8px;
+  padding: 12px 18px 16px;
+}
+
+.approval-actions .btn {
+  border-radius: 9px;
+}
+
+/* Drawer headers and panels. */
+.drawer-head {
+  min-height: 50px;
+  border-bottom-color: var(--ink-08);
+  background: var(--paper);
+}
+
+.drawer-seal {
+  border-radius: 8px;
+}
+
+.drawer-title {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.drawer-sub {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+/* Buttons: consistent quiet/primary surfaces. */
+.btn {
+  border-radius: 8px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.btn-quiet {
+  border-color: var(--ink-08);
+}
+
+.btn-quiet:hover {
+  background: var(--paper-2);
+}
+
+/* Terminal and file panes sit inside the same paper system. */
+.terminal-drawer .drawer-head,
+.document-drawer .drawer-head,
+.git-drawer .drawer-head,
+.checks-drawer .drawer-head {
+  background: var(--paper);
+}
+
+/* Keyboard focus: a soft ring instead of a dashed outline. */
+:focus-visible {
+  outline: 2px solid rgba(176, 58, 46, 0.5);
+  outline-offset: 2px;
+}
+
+:root[data-theme='dark'] .sidebar {
+  background: linear-gradient(180deg, var(--paper) 0%, var(--paper-2) 100%);
+}
+
+:root[data-theme='dark'] .usage-checklist {
+  background: var(--paper);
+}
+
+:root[data-theme='dark'] .modal-scrim,
+:root[data-theme='dark'] .drawer-scrim {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.sidebar-session-row .sidebar-session,
+.sidebar-session-row.active .sidebar-session {
+  border-radius: 9px;
+}
