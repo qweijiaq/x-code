@@ -34,7 +34,7 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **Regenerate**: regenerate the last answer; turns with attachments must be edited to text first.
 - **Rewind**: `/rewind` or the palette; choose code only, conversation only, or both.
 - **Fork**: `/fork` copies the current session into an independent conversation.
-- **Keep working while busy**: pressing Enter during a reply queues the prompt. A text-only queued item offers **Continue in new window**, which forks the last saved session, opens the copy in a new window and submits that prompt there while the original reply keeps running. Prompts with attachments do not offer this action yet.
+- **Keep working while busy**: pressing Enter during a reply queues the prompt. A text-only queued item offers **Open in new window**, which forks the last saved session, prepends a hidden fork-time status snapshot of the parent (current turn, partial reply, background shells/sub-agents, changed files), and submits the question there while the original reply keeps running. The new window can answer "where was it at fork time", but the snapshot does not update live. Prompts with attachments do not offer this action yet.
 - **Recover a damaged session**: when transcript integrity fails, the app offers to salvage parseable messages into a new session without modifying the original file.
 
 ## Conversation outline
@@ -137,7 +137,7 @@ The **Outline** tab in the right-hand inspector (also the top-bar outline button
 - **Goal loops**: `/goal` runs execute → verify → repair until passing or a stop condition is reached.
 - **Background shells**: a command that outlives its initial wait moves to the background task panel. If the model makes one default passive status check and it is still running, the current reply ends automatically and the composer becomes usable. The composer shows the running count and a **View** entry; the panel shows elapsed time, output size, a progress bar and a stop action (a real percentage when the command prints one, an activity animation otherwise).
 - **Background sub-agents**: for long independent investigation, review or organizing, the agent can dispatch `task` with `background: true`; the call returns a task id immediately. The sub-agent runs in its own context, and the panel shows status, duration, tool-call count, result and a stop action, with a system notification on completion. The result is not merged into the main conversation's model context automatically; open the panel or reference the result in your next prompt.
-- **Continue in the background**: pressing Enter while a reply is running queues the prompt. A text-only queued item offers **Continue in new window**, which forks the last saved session and submits that prompt in a new window while the original reply keeps running. If the reply is still waiting on a background task, a banner offers **Stop waiting** (or **Stop waiting and run queued**); it ends only the current reply and leaves the background task running.
+- **Open in a new window**: pressing Enter while a reply is running queues the prompt. A text-only queued item offers **Open in new window**, which forks the last saved session, prepends a hidden fork-time snapshot of the parent (current turn, partial reply, background tasks, changed files) and submits the prompt in a new window while the original reply keeps running. The snapshot is a point-in-time view, not a live sync. If the reply is still waiting on a background task, a banner offers **Stop waiting** (or **Stop waiting and run queued**); it ends only the current reply and leaves the background task running.
 - **Browser sub-agent**: enable in Settings → Tools; `task` can then delegate clicking, typing and sign-in. First use launches a managed Chrome through `npx @playwright/mcp`.
 - **Automatic visual checks**: the root agent can take one localhost screenshot after a significant visual change; independent from the browser sub-agent.
 - **Memory**: manage user memory in Settings → Memory; project knowledge comes from layered `AGENTS.md` / `AGENTS.local.md` files.
@@ -195,7 +195,7 @@ Typing `/` lists every command; `/help` shows the full list. Common commands inc
 - **Constant permission prompts**: add a rule in Settings → Permissions or enable always-allow for that tool; destructive commands still prompt.
 - **Blank document or no text**: scanned PDFs need OCR; click OCR in the document panel or ask the agent to use `readDocument`.
 - **A background task seems to have no result**: open the Background tasks panel to see the sub-agent result and tool calls; background sub-agent results do not enter the main conversation context automatically. Unfinished background tasks are lost when the app quits, while output already written to the transcript remains.
-- **Continue in new window is missing or fails**: the action only appears for text-only queued prompts. It needs a saved session, and a failed transcript-integrity check blocks the fork. For a prompt with attachments, remove it from the queue and send it normally.
+- **Open in new window is missing or fails**: the action only appears for text-only queued prompts. It needs a saved session, and a failed transcript-integrity check blocks the fork. For a prompt with attachments, remove it from the queue and send it normally.
 - **Terminal shows garbled Chinese**: the built-in terminal forces a UTF-8 locale; if your environment sets `LANG`/`LC_CTYPE` to `C` or empty, the app switches it to `en_US.UTF-8`. If it still looks wrong, confirm the command itself emits UTF-8 (`file`, `locale`) and reopen the terminal tab.
 - **Terminal will not start**: confirm the runtime is connected; the terminal uses a PTY and reports failures at the top.
 - **Blank window**: use the crash recovery screen to reload and export diagnostics; the log is `~/.x-code/logs/desktop-errors.log`.
@@ -212,7 +212,7 @@ Typing `/` lists every command; `/help` shows the full list. Common commands inc
 - macOS signing, notarization and automatic install updates require Apple credentials.
 - The real-LLM E2E suite needs provider credentials; its 26 scenarios now pass on `deepseek-flash`, but it is still not part of the default CI/release gate.
 - Background sub-agent results appear in the panel and tool card; they are not merged into the main conversation's model context automatically.
-- **Continue in new window** forks the last saved session snapshot, so it excludes output still being generated; queued prompts with attachments are not supported yet.
+- **Open in new window** includes a fork-time status snapshot, so the new window can answer "where was it at fork time"; it cannot see the parent's later progress. Queued prompts with attachments are not supported yet.
 - The new and original windows share the same workspace. This is not two parallel turns in one session; editing the same files in both can still conflict, so use a worktree when coding work overlaps.
 - Background shell/sub-agent state lives in the current app process. It is not restored after quitting; output already written to the transcript remains.
 - Desktop peer messaging is not enabled.

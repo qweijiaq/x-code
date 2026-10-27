@@ -915,7 +915,7 @@ export interface RequestMap {
   'goal:get': { params: Record<string, never>; result: TextReport }
   'app:quit': { params: Record<string, never>; result: null }
   'app:new-window': {
-    params: { sessionFilePath?: string; workspacePath?: string; prompt?: string }
+    params: { sessionFilePath?: string; workspacePath?: string; prompt?: string; displayPrompt?: string }
     result: { created: boolean; focused: boolean }
   }
   'app:set-window-sessions': { params: { filePaths: string[] }; result: null }
@@ -995,7 +995,7 @@ export interface RequestMap {
   }
   'session:fork-background': {
     params: Record<string, never>
-    result: { sessionId: string; filePath: string }
+    result: { sessionId: string; filePath: string; snapshot: string }
   }
   'approval:respond': {
     params: {

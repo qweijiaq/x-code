@@ -748,9 +748,10 @@ export const EN: Record<string, string> = {
   '相对路径，如 notes/todo.md': 'Relative path, e.g. notes/todo.md',
   确认删除主题: 'Confirm delete topic',
   移出队列: 'Remove from queue',
-  在新窗口继续: 'Continue in new window',
-  '在新窗口后台继续，当前回复不受影响': 'Continue in a new window; the current reply keeps running',
-  '已在新窗口后台继续；当前回复不受影响': 'Continued in a new window; the current reply is unaffected',
+  在新窗口另开: 'Open in a new window',
+  '在新窗口另开任务，使用 fork 时的状态快照，不共享实时进度':
+    'Open a separate task in a new window using a fork-time status snapshot; live progress is not shared',
+  '已在新窗口另开任务；当前回复不受影响': 'Opened a separate task in a new window; the current reply is unaffected',
   稍后配置: 'Configure later',
   '窗口在后台时，任务完成、执行失败或需要你确认时发送系统通知。':
     'Send a system notification when a task finishes, fails, or needs your approval while the window is in the background.',

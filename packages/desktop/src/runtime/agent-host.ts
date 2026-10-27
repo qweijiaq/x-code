@@ -220,6 +220,7 @@ import { exportUserBackup, importUserBackup } from './user-backup.js'
 interface ActiveTurn {
   id: string
   text: string
+  startedAt: number
 }
 
 interface PendingApproval {
@@ -861,10 +862,11 @@ export class AgentHost {
 
   /** 当前回复仍在运行时，从最近一次落盘的会话派生一个独立分支；
    *  不切换当前活动会话，供新窗口在后台继续。 */
-  async forkSavedSessionForBackground(): Promise<{ sessionId: string; filePath: string }> {
+  async forkSavedSessionForBackground(): Promise<{ sessionId: string; filePath: string; snapshot: string }> {
     const state = this.loopState
     const sourceFilePath = state?.sessionFilePath
     if (!state || !sourceFilePath) throw new Error('当前会话还没有保存的上下文，无法在后台继续')
+    const snapshot = await this.forkStatusSnapshot()
     const loaded = await loadCoreSession(sourceFilePath)
     if (!loaded) throw new Error('无法读取当前会话，无法在后台继续')
     if (loaded.transcriptIntegrity === 'failed') throw new Error('会话完整性校验失败，无法在后台继续')
@@ -891,7 +893,66 @@ export class AgentHost {
       this.modelId,
       { cwd: this.requireBootstrap().workspace, name: `后台分支 ${stamp}` },
     )
-    return { sessionId: forked.sessionId, filePath: forked.filePath }
+    return { sessionId: forked.sessionId, filePath: forked.filePath, snapshot }
+  }
+
+  /** 生成一份给新窗口模型看的、fork 时刻的父窗口状态快照。它不是实时
+   *  数据源；新窗口不应该假装能持续观察父窗口。 */
+  private async forkStatusSnapshot(): Promise<string> {
+    const workspace = this.requireBootstrap().workspace
+    const lines = [
+      '[Parent window snapshot — captured when this session was forked. It is historical context, not a live feed.]',
+      `Captured: ${new Date().toISOString()}`,
+      `Workspace: ${workspace}`,
+      `Model: ${this.modelId}; task mode: ${this.taskMode}`,
+    ]
+    if (this.activeTurn) {
+      const elapsed = Math.max(0, Math.round((Date.now() - this.activeTurn.startedAt) / 1000))
+      lines.push(`Active turn: running for ${elapsed}s (${this.activeTurn.id})`)
+      const tail = this.activeTurn.text.trim().slice(-1_200)
+      if (tail) lines.push(`Partial assistant text (tail):\n${tail}`)
+    } else {
+      lines.push('Active turn: none (the parent was idle when this snapshot was taken)')
+    }
+
+    const shells = this.backgroundSessions().filter((session) =>
+      ['starting', 'running', 'terminating', 'finalizing'].includes(session.status),
+    )
+    if (shells.length > 0) {
+      lines.push('Background shells:')
+      for (const shell of shells.slice(0, 8)) {
+        lines.push(`- ${shell.shellId} [${shell.status}] ${shell.command} (${shell.elapsedMs ?? 0}ms)`)
+        const tail = shell.recentOutput.trim().slice(-400)
+        if (tail) lines.push(`  output tail: ${tail.replace(/\s+/g, ' ')}`)
+      }
+    }
+
+    const tasks = this.backgroundTaskList().filter((task) => task.status === 'running')
+    if (tasks.length > 0) {
+      lines.push('Background sub-agent tasks:')
+      for (const task of tasks.slice(0, 8)) {
+        lines.push(`- ${task.id} [${task.status}] ${task.agentName}: ${task.description} (${task.durationMs ?? 0}ms)`)
+      }
+    }
+
+    try {
+      const git = await gitStatus(workspace)
+      if (git.isRepo && git.files.length > 0) {
+        lines.push(
+          `Changed files (${git.files.length}): ${git.files
+            .slice(0, 20)
+            .map((file) => file.path)
+            .join(', ')}`,
+        )
+      }
+    } catch {
+      // Git status is optional context; a failed read must not block the fork.
+    }
+
+    lines.push(
+      '[End snapshot. This window cannot see live progress from the parent. If asked about progress, say this is the state at fork time.]',
+    )
+    return lines.join('\n')
   }
 
   backgroundSessions(): BackgroundShellView[] {
@@ -1592,7 +1653,7 @@ export class AgentHost {
     if (!model) throw new Error('no-model-configured')
 
     const turnId = `turn-${++this.turnSeq}`
-    const turn: ActiveTurn = { id: turnId, text: '' }
+    const turn: ActiveTurn = { id: turnId, text: '', startedAt: Date.now() }
     this.activeTurn = turn
     const controller = new AbortController()
     this.controller = controller

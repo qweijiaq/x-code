@@ -534,10 +534,13 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       method: 'session:fork-background',
       params: {},
     })
+    const forkResult = backgroundFork.ok
+      ? (backgroundFork.result as { sessionId: string; snapshot?: string })
+      : undefined
     checks.sessionForkBackground = {
-      ok: backgroundFork.ok,
+      ok: Boolean(forkResult && forkResult.snapshot?.includes('Parent window snapshot')),
       detail: backgroundFork.ok
-        ? `fork=${(backgroundFork.result as { sessionId: string }).sessionId}`
+        ? `fork=${forkResult?.sessionId ?? ''} snapshot=${forkResult?.snapshot?.slice(0, 40) ?? 'missing'}`
         : backgroundFork.error.message,
     }
 

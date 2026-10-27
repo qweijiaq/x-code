@@ -689,7 +689,9 @@ export function App(): React.JSX.Element {
   const [showScrollBottom, setShowScrollBottom] = useState(false)
   const uiSmokeRan = useRef(false)
   const promptAutoSubmitRef = useRef(false)
-  const submitRef = useRef<(prompt: string, alreadyShown?: boolean, attachments?: string[]) => void>(() => {})
+  const submitRef = useRef<
+    (prompt: string, alreadyShown?: boolean, attachments?: string[], displayText?: string) => void
+  >(() => {})
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -1496,11 +1498,12 @@ export function App(): React.JSX.Element {
     const params = new URLSearchParams(window.location.search)
     const prompt = params.get('prompt')
     if (!prompt) return
+    const displayPrompt = params.get('displayPrompt') ?? undefined
     const requestedSession = params.get('session')
     if (requestedSession && !sessions.some((session) => session.filePath === requestedSession)) return
     const timer = setTimeout(() => {
       promptAutoSubmitRef.current = true
-      submitRef.current(prompt)
+      submitRef.current(prompt, false, [], displayPrompt)
     }, 600)
     return () => clearTimeout(timer)
   }, [sessions])
@@ -1579,9 +1582,15 @@ export function App(): React.JSX.Element {
     }
   }, [])
 
-  const submit = async (promptText: string, alreadyShown = false, files: string[] = attachments): Promise<void> => {
+  const submit = async (
+    promptText: string,
+    alreadyShown = false,
+    files: string[] = attachments,
+    displayText?: string,
+  ): Promise<void> => {
     const prompt = promptText.trim() || (files.length > 0 ? t('请阅读并分析这些附件。') : '')
     if (!prompt) return
+    const display = displayText?.trim() || prompt
     if (!alreadyShown && !busyRef.current && !workspaceGuardOff && !workspaceGuardBypassRef.current) {
       const external = detectExternalWorkspacePaths(prompt, appState?.workspace ?? settings?.workspace ?? '')
       if (external.length > 0) {
@@ -1596,7 +1605,7 @@ export function App(): React.JSX.Element {
       // 立即给全新标签页一个有用的标题，而不是等会话文件被列出
       // （后者可能落后于一个长轮次）。
       setTabTitles((prev) =>
-        prev[activeSessionId] ? prev : { ...prev, [activeSessionId]: prompt.replace(/\s+/g, ' ').slice(0, 80) },
+        prev[activeSessionId] ? prev : { ...prev, [activeSessionId]: display.replace(/\s+/g, ' ').slice(0, 80) },
       )
     }
     if (editArmed && !alreadyShown && !busyRef.current) {
@@ -1606,7 +1615,7 @@ export function App(): React.JSX.Element {
     }
     setReport(null)
     if (!alreadyShown) {
-      append({ role: 'user', text: prompt, attachments: files })
+      append({ role: 'user', text: display, attachments: files })
     }
     if (busyRef.current) {
       queueRef.current.push({ prompt, attachments: files })
@@ -1630,7 +1639,8 @@ export function App(): React.JSX.Element {
       setBusy(false)
     }
   }
-  submitRef.current = (prompt, alreadyShown, files) => void submit(prompt, alreadyShown, files)
+  submitRef.current = (prompt, alreadyShown, files, displayText) =>
+    void submit(prompt, alreadyShown, files, displayText)
 
   const continueInCurrentWorkspace = (): void => {
     const guard = workspaceGuard
@@ -3534,7 +3544,7 @@ export function App(): React.JSX.Element {
     setQueuedItems([...queueRef.current])
   }
 
-  const continueQueuedInBackground = async (index: number): Promise<void> => {
+  const openQueuedInNewWindow = async (index: number): Promise<void> => {
     const item = queueRef.current[index]
     if (!item) return
     const forked = await window.xcode.request({
@@ -3546,14 +3556,17 @@ export function App(): React.JSX.Element {
       append({ role: 'error', text: forked.error.message })
       return
     }
-    const fork = forked.result as { sessionId: string; filePath: string }
+    const fork = forked.result as { sessionId: string; filePath: string; snapshot?: string }
+    const snapshot = fork.snapshot?.trim()
+    const prompt = snapshot ? `${snapshot}\n\n[User question]\n${item.prompt}` : item.prompt
     const opened = await window.xcode.request({
       id: crypto.randomUUID(),
       method: 'app:new-window',
       params: {
         sessionFilePath: fork.filePath,
         workspacePath: appState?.workspace ?? settings?.workspace,
-        prompt: item.prompt,
+        prompt,
+        displayPrompt: item.prompt,
       },
     })
     if (!opened.ok) {
@@ -3562,7 +3575,7 @@ export function App(): React.JSX.Element {
     }
     const currentIndex = queueRef.current.indexOf(item)
     if (currentIndex >= 0) removeQueued(currentIndex)
-    setNotice(t('已在新窗口后台继续；当前回复不受影响'))
+    setNotice(t('已在新窗口另开任务；当前回复不受影响'))
   }
 
   return (
@@ -4629,10 +4642,10 @@ export function App(): React.JSX.Element {
                   {item.attachments.length === 0 ? (
                     <button
                       className="queued-background"
-                      title={t('在新窗口后台继续，当前回复不受影响')}
-                      onClick={() => void continueQueuedInBackground(index)}
+                      title={t('在新窗口另开任务，使用 fork 时的状态快照，不共享实时进度')}
+                      onClick={() => void openQueuedInNewWindow(index)}
                     >
-                      {t('在新窗口继续')}
+                      {t('在新窗口另开')}
                     </button>
                   ) : null}
                   <button className="attachment-remove" title={t('移出队列')} onClick={() => removeQueued(index)}>
