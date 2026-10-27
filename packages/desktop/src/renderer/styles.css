@@ -9031,3 +9031,75 @@ iframe.file-preview {
     transform: rotate(360deg);
   }
 }
+
+/* The top bar and tab strip span the conversation and the inspector; the
+   inspector now starts below them instead of overlapping their icons. */
+.workspace-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.conversation {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Action columns stack their pill controls with breathing room. */
+.setting-actions-col {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  min-width: 104px;
+}
+
+.setting-actions-col > .btn,
+.setting-actions-col > .settings-toggle,
+.setting-actions-col > .settings-input {
+  width: 100%;
+}
+
+/* Icon-only close buttons must center the glyph inside their hit area. */
+.inspector-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.inspector-close:hover {
+  border-color: var(--ink-08);
+  background: var(--paper-2);
+}
+
+.tab-close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 3px;
+  padding: 0;
+  border-radius: 5px;
+  line-height: 1;
+}
+
+.attachment-remove {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  line-height: 1;
+}

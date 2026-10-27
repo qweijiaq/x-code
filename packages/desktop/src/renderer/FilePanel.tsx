@@ -27,6 +27,34 @@ function previewKind(path: string): 'html' | 'markdown' | null {
   return null
 }
 
+/** Text/markdown/html stay in the lightweight editor; binary documents and
+ *  images open in the document panel, which already knows how to render them. */
+const DOCUMENT_PREVIEW_EXTENSIONS = new Set([
+  'pdf',
+  'doc',
+  'docx',
+  'odt',
+  'xls',
+  'xlsx',
+  'ods',
+  'csv',
+  'ppt',
+  'pptx',
+  'odp',
+  'png',
+  'jpg',
+  'jpeg',
+  'webp',
+  'gif',
+  'bmp',
+  'tif',
+  'tiff',
+])
+
+function documentPreviewExtension(path: string): boolean {
+  return DOCUMENT_PREVIEW_EXTENSIONS.has(path.split('.').pop()?.toLowerCase() ?? '')
+}
+
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   ts: 'typescript',
   tsx: 'typescript',
@@ -95,6 +123,7 @@ interface Props {
   workspace: string
   initialPath?: string | null
   onOpenEditor?: (path: string, line?: number) => void
+  onOpenDocument?: (path: string) => void
   onClose: () => void
   /** 在统一检查器内渲染，而非固定抽屉。 */
   embedded?: boolean
@@ -104,6 +133,7 @@ export function FilePanel({
   workspace,
   initialPath,
   onOpenEditor,
+  onOpenDocument,
   onClose,
   embedded = false,
 }: Props): React.JSX.Element {
@@ -169,6 +199,10 @@ export function FilePanel({
 
   useEffect(() => {
     if (!initialPath) return
+    if (onOpenDocument && documentPreviewExtension(initialPath)) {
+      onOpenDocument(initialPath)
+      return
+    }
     let cancelled = false
     void (async () => {
       const response = await request('files:read', { path: initialPath })
@@ -189,7 +223,7 @@ export function FilePanel({
     return () => {
       cancelled = true
     }
-  }, [initialPath])
+  }, [initialPath, onOpenDocument])
 
   const toggleDir = async (entry: FileTreeEntryView): Promise<void> => {
     setError(null)
@@ -204,6 +238,10 @@ export function FilePanel({
 
   const openFile = async (entry: FileTreeEntryView): Promise<void> => {
     if (dirty && !window.confirm(t('有未保存的修改，放弃并切换文件？'))) return
+    if (onOpenDocument && documentPreviewExtension(entry.path)) {
+      onOpenDocument(entry.path)
+      return
+    }
     setSelected(entry)
     setPreview(false)
     setCursor({ line: 1, column: 1, selected: 0 })

@@ -4304,880 +4304,899 @@ export function App(): React.JSX.Element {
           </button>
         </nav>
 
-        {findOpen ? (
-          <div className="find-bar" data-testid="find-bar">
-            <input
-              autoFocus
-              value={findQuery}
-              placeholder={t('在当前会话中查找…')}
-              onChange={(event) => {
-                setFindQuery(event.target.value)
-                setFindIndex(0)
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  goFind(event.shiftKey ? -1 : 1)
-                } else if (event.key === 'Escape') {
-                  event.preventDefault()
-                  setFindOpen(false)
-                }
-              }}
-            />
-            <span className="find-count">
-              {findMatchIds.length > 0 ? `${findActiveIndex + 1} / ${findMatchIds.length}` : t('无匹配')}
-            </span>
-            <button className="btn btn-quiet" onClick={() => goFind(-1)} title={t('上一个')}>
-              ↑
-            </button>
-            <button className="btn btn-quiet" onClick={() => goFind(1)} title={t('下一个')}>
-              ↓
-            </button>
-            <button className="btn btn-quiet" onClick={() => setFindOpen(false)} title={t('关闭')}>
-              ×
-            </button>
-          </div>
-        ) : null}
-
-        <main className="chat" ref={scrollRef} onScroll={handleChatScroll}>
-          {entries.length === 0 ? (
-            <div className="empty">
-              <p className="empty-title">{t('静候一问')}</p>
-              <p className="empty-sub" data-testid="starter-hint">
-                {starterHint}
-              </p>
-              <div className="mode-suggestions" data-testid="workspace-starters">
-                {starterSuggestions.map((suggestion) => (
-                  <button key={suggestion} className="mode-suggestion" onClick={() => setInput(suggestion)}>
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {turnItems.map((item) => {
-            if (item.kind === 'toggle') {
-              return (
-                <div className="turn-tool-toggle" data-testid="turn-tool-toggle" key={`turn-toggle-${item.key}`}>
-                  <span>{t('工具调用 {{count}} 次', { count: item.count })}</span>
-                  {item.failures > 0 ? (
-                    <span className="tool-failure">{t('{{count}} 个失败', { count: item.failures })}</span>
-                  ) : null}
-                  <span className="spacer" />
-                  <button
-                    type="button"
-                    className="btn btn-quiet"
-                    data-testid="turn-tool-toggle-button"
-                    onClick={() => toggleTurnTools(item.key)}
-                  >
-                    {item.collapsed ? t('展开') : t('收起')}
-                  </button>
-                </div>
-              )
-            }
-            const entry = item.entry
-            const toolGuidance =
-              entry.role === 'tool' && entry.toolOutput
-                ? toolEnvironmentHint(entry.toolOutput, settings?.shellSandbox.enabled === true)
-                : null
-            const tempOutputs =
-              entry.role === 'tool' && !entry.reverted && !entry.movedDeliverables?.length
-                ? tempDeliverables(entry.toolOutput)
-                : []
-            return entry.role === 'tool' ? (
-              <article key={entry.id} className={`tool-card ${entry.toolStatus ?? 'running'}`}>
-                <div className="tool-head">
-                  <span className="tool-name">{entry.toolName ?? 'tool'}</span>
-                  <span className={`tool-state ${entry.toolStatus ?? 'running'}`}>
-                    {t(TOOL_STATUS_LABEL[entry.toolStatus ?? 'running'])}
-                  </span>
-                  <span className="spacer" />
-                  <span className="tool-target">{summarizeInput(entry.toolInput)}</span>
-                  {entry.toolName === 'readDocument' && typeof entry.toolInput?.filePath === 'string' ? (
-                    <button
-                      className="session-action"
-                      onClick={() => void openDocument(String(entry.toolInput?.filePath))}
-                    >
-                      {t('预览')}
-                    </button>
-                  ) : null}
-                </div>
-                {entry.toolProgress ? <div className="tool-progress">{entry.toolProgress}</div> : null}
-                {entry.subagent ? <SubAgentBlock agent={entry.subagent} /> : null}
-                {entry.diff ? (
-                  <DiffView
-                    diff={entry.diff}
-                    reverted={entry.reverted}
-                    onOpenEditor={(path, line) => openInEditor(path, line)}
-                    onRevert={
-                      entry.diff.revertible && entry.toolCallId
-                        ? () => void revertEdit(entry.toolCallId!, entry.id)
-                        : undefined
+        <div className="workspace-body">
+          <div className="conversation">
+            {findOpen ? (
+              <div className="find-bar" data-testid="find-bar">
+                <input
+                  autoFocus
+                  value={findQuery}
+                  placeholder={t('在当前会话中查找…')}
+                  onChange={(event) => {
+                    setFindQuery(event.target.value)
+                    setFindIndex(0)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      goFind(event.shiftKey ? -1 : 1)
+                    } else if (event.key === 'Escape') {
+                      event.preventDefault()
+                      setFindOpen(false)
                     }
-                  />
-                ) : null}
-                {entry.toolOutput ? (
-                  <details className="tool-output">
-                    <summary>{t('结果')}</summary>
-                    <pre>{entry.toolOutput}</pre>
-                  </details>
-                ) : null}
-                {toolGuidance ? (
-                  <div className="tool-guidance" data-testid="tool-environment-hint">
-                    <span>
-                      {toolGuidance === 'network'
-                        ? settings?.shellSandbox.allowNetwork
-                          ? t('命令没能联网；如果本机网络正常，请检查命令使用的代理或地址。')
-                          : t('命令没能联网。Shell 沙箱当前禁止网络访问；如果本机网络正常，允许网络后重试。')
-                        : toolGuidance === 'write'
-                          ? t('命令被 Shell 沙箱拦截：只能写入工作区和临时目录。')
-                          : t('命令找不到。如果刚在电脑终端安装了它，刷新登录 shell 环境后重试。')}
-                    </span>
-                    <span className="spacer" />
-                    {toolGuidance === 'network' && !settings?.shellSandbox.allowNetwork ? (
-                      <button className="btn btn-quiet" onClick={() => void allowSandboxNetwork()}>
-                        {t('允许网络')}
-                      </button>
-                    ) : null}
-                    {toolGuidance === 'command' ? (
-                      <button className="btn btn-quiet" onClick={() => void refreshAgentEnvironment()}>
-                        {t('刷新环境')}
-                      </button>
-                    ) : null}
-                    {toolGuidance !== 'command' ? (
-                      <button className="btn btn-quiet" onClick={() => void openSettings('tools')}>
-                        {t('沙箱设置')}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {tempOutputs.length > 0 ? (
-                  <div className="tool-guidance" data-testid="temp-deliverable-hint">
-                    <span>
-                      {t('交付物写到了系统临时目录：{{files}}', {
-                        files: tempOutputs.map((item) => item.split(/[\\/]/).pop() || item).join('、'),
-                      })}
-                    </span>
-                    <span className="spacer" />
-                    <button
-                      className="btn btn-quiet"
-                      disabled={busy || movingTempEntry === entry.id}
-                      title={busy ? t('当前回复结束后可以移动') : undefined}
-                      onClick={() => void moveTempDeliverables(entry.id, tempOutputs)}
-                    >
-                      {movingTempEntry === entry.id ? t('移动中…') : t('移动到工作区')}
-                    </button>
-                  </div>
-                ) : null}
-                {entry.movedDeliverables?.length ? (
-                  <div className="tool-guidance success" data-testid="temp-deliverable-moved">
-                    <span>
-                      {t('已移动到工作区：{{files}}', {
-                        files: entry.movedDeliverables.map((item) => item.split(/[\\/]/).pop() || item).join('、'),
-                      })}
-                    </span>
-                  </div>
-                ) : null}
-                {entry.toolOutput && (entry.toolName === 'webSearch' || entry.toolName === 'webFetch') ? (
-                  <SourceList text={entry.toolOutput} />
-                ) : null}
-              </article>
-            ) : (
-              <article
-                key={entry.id}
-                id={`entry-${entry.id}`}
-                data-entry-id={entry.id}
-                className={`message ${entry.role} ${findMatchIds.includes(entry.id) ? 'find-hit' : ''} ${
-                  entry.id === findActiveId ? 'find-current' : ''
-                }`}
-              >
-                <span className="role">{t(ROLE_LABEL[entry.role])}</span>
-                {entry.role === 'assistant' || entry.role === 'user' ? (
-                  <MarkdownView text={entry.text} streaming={busy && entry.id === activeTextEntryId.current} />
-                ) : (
-                  <span className="message-text">{entry.text}</span>
-                )}
-                {entry.attachments?.length ? (
-                  <div className="message-attachments">
-                    {entry.attachments.map((file) =>
-                      isImageAttachment(file) ? (
-                        <AttachmentImage
-                          key={file}
-                          file={file}
-                          variant="message"
-                          onOpen={(src, name) => setImageLightbox({ src, name })}
-                        />
-                      ) : (
-                        <span className="message-attachment-file" key={file} title={file}>
-                          {attachmentName(file)}
-                        </span>
-                      ),
-                    )}
-                  </div>
-                ) : null}
-                {entry.attachmentViews?.length ? (
-                  <div className="message-attachments">
-                    {entry.attachmentViews.map((attachment, index) => {
-                      const dataUrl = attachment.dataUrl
-                      return dataUrl ? (
-                        <button
-                          key={`${attachment.name}-${index}`}
-                          type="button"
-                          className="message-attachment"
-                          title={attachment.name}
-                          onClick={() => setImageLightbox({ src: dataUrl, name: attachment.name })}
-                        >
-                          <img src={dataUrl} alt={attachment.name} loading="lazy" />
-                          <span>{attachment.name}</span>
-                        </button>
-                      ) : attachment.path && isImageAttachment(attachment.path) ? (
-                        <AttachmentImage
-                          key={`${attachment.name}-${index}`}
-                          file={attachment.path}
-                          variant="message"
-                          onOpen={(src, name) => setImageLightbox({ src, name })}
-                        />
-                      ) : (
-                        <span
-                          key={`${attachment.name}-${index}`}
-                          className="message-attachment-file"
-                          title={attachment.name}
-                        >
-                          {attachment.name}
-                        </span>
-                      )
-                    })}
-                  </div>
-                ) : null}
-                {entry.text ? (
-                  <span className="message-actions">
-                    {entry.role === 'assistant' || entry.role === 'user' ? <CopyButton text={entry.text} /> : null}
-                    {entry.role === 'assistant' && entry.id === lastAssistantId && !busy ? (
-                      <button type="button" className="copy-btn" onClick={() => void regenerateLast()}>
-                        {t('重新生成')}
-                      </button>
-                    ) : null}
-                    {entry.role === 'user' && entry.id === lastUserId && !busy ? (
-                      <button type="button" className="copy-btn" onClick={beginEditLast}>
-                        {t('编辑并重发')}
-                      </button>
-                    ) : null}
-                  </span>
-                ) : null}
-              </article>
-            )
-          })}
-        </main>
-        {showScrollBottom ? (
-          <button
-            className="scroll-bottom"
-            title={t('回到底部')}
-            aria-label={t('回到底部')}
-            onClick={() => {
-              const node = scrollRef.current
-              if (node) node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
-              nearBottomRef.current = true
-              setShowScrollBottom(false)
-            }}
-          >
-            ↓
-          </button>
-        ) : null}
-
-        {notice ? <div className="notice">{notice}</div> : null}
-
-        {todos.length > 0 ? (
-          <div className="todos">
-            <span className="todos-title">{t('待办')}</span>
-            {todos.map((todo, index) => (
-              <span key={index} className={`todo ${todo.status}`}>
-                <span className="todo-glyph" aria-hidden="true">
-                  {todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '◐' : '○'}
+                  }}
+                />
+                <span className="find-count">
+                  {findMatchIds.length > 0 ? `${findActiveIndex + 1} / ${findMatchIds.length}` : t('无匹配')}
                 </span>
-                {todo.status === 'in_progress' ? todo.activeForm : todo.content}
-              </span>
-            ))}
-          </div>
-        ) : null}
-
-        {report ? (
-          <div className="report-shell">
-            <pre className="report" aria-label={t('诊断结果')}>
-              {report}
-            </pre>
-            <button
-              className="report-close"
-              data-testid="report-close"
-              aria-label={t('关闭结果')}
-              title={t('关闭结果')}
-              onClick={() => setReport(null)}
-            >
-              ×
-            </button>
-          </div>
-        ) : null}
-
-        <footer className="composer">
-          {mention !== null && mentionItems.length > 0 ? (
-            <div className="slash-palette mention-palette" data-testid="mention-palette">
-              {mentionItems.map((file, index) => (
-                <button
-                  key={file.path}
-                  className={`slash-item ${index === mentionIndex ? 'active' : ''}`}
-                  onMouseDown={(event) => {
-                    event.preventDefault()
-                    pickMention(file)
-                  }}
-                >
-                  <span className="slash-name">
-                    {file.relative}
-                    {file.isDirectory ? '/' : ''}
-                  </span>
-                  <span className="slash-desc">{file.isDirectory ? t('目录') : ''}</span>
+                <button className="btn btn-quiet" onClick={() => goFind(-1)} title={t('上一个')}>
+                  ↑
                 </button>
-              ))}
-            </div>
-          ) : null}
-          {paletteCommands.length > 0 ? (
-            <div className="slash-palette" data-testid="slash-palette" ref={slashPaletteRef}>
-              {paletteCommands.map((command, index) => (
-                <button
-                  key={command.name}
-                  className={`slash-item ${index === paletteIndex ? 'active' : ''}`}
-                  onMouseDown={(event) => {
-                    event.preventDefault()
-                    runSlashCommand(command)
-                  }}
-                >
-                  <span className="slash-name">{command.name}</span>
-                  <span className="slash-desc">{command.description}</span>
+                <button className="btn btn-quiet" onClick={() => goFind(1)} title={t('下一个')}>
+                  ↓
                 </button>
-              ))}
-            </div>
-          ) : null}
-          {editArmed ? (
-            <div className="edit-badge" data-testid="edit-badge">
-              <span>{t('编辑模式：发送后将重写上一轮，文件改动会保留')}</span>
+                <button className="btn btn-quiet" onClick={() => setFindOpen(false)} title={t('关闭')}>
+                  ×
+                </button>
+              </div>
+            ) : null}
+
+            <main className="chat" ref={scrollRef} onScroll={handleChatScroll}>
+              {entries.length === 0 ? (
+                <div className="empty">
+                  <p className="empty-title">{t('静候一问')}</p>
+                  <p className="empty-sub" data-testid="starter-hint">
+                    {starterHint}
+                  </p>
+                  <div className="mode-suggestions" data-testid="workspace-starters">
+                    {starterSuggestions.map((suggestion) => (
+                      <button key={suggestion} className="mode-suggestion" onClick={() => setInput(suggestion)}>
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {turnItems.map((item) => {
+                if (item.kind === 'toggle') {
+                  return (
+                    <div className="turn-tool-toggle" data-testid="turn-tool-toggle" key={`turn-toggle-${item.key}`}>
+                      <span>{t('工具调用 {{count}} 次', { count: item.count })}</span>
+                      {item.failures > 0 ? (
+                        <span className="tool-failure">{t('{{count}} 个失败', { count: item.failures })}</span>
+                      ) : null}
+                      <span className="spacer" />
+                      <button
+                        type="button"
+                        className="btn btn-quiet"
+                        data-testid="turn-tool-toggle-button"
+                        onClick={() => toggleTurnTools(item.key)}
+                      >
+                        {item.collapsed ? t('展开') : t('收起')}
+                      </button>
+                    </div>
+                  )
+                }
+                const entry = item.entry
+                const toolGuidance =
+                  entry.role === 'tool' && entry.toolOutput
+                    ? toolEnvironmentHint(entry.toolOutput, settings?.shellSandbox.enabled === true)
+                    : null
+                const tempOutputs =
+                  entry.role === 'tool' && !entry.reverted && !entry.movedDeliverables?.length
+                    ? tempDeliverables(entry.toolOutput)
+                    : []
+                return entry.role === 'tool' ? (
+                  <article key={entry.id} className={`tool-card ${entry.toolStatus ?? 'running'}`}>
+                    <div className="tool-head">
+                      <span className="tool-name">{entry.toolName ?? 'tool'}</span>
+                      <span className={`tool-state ${entry.toolStatus ?? 'running'}`}>
+                        {t(TOOL_STATUS_LABEL[entry.toolStatus ?? 'running'])}
+                      </span>
+                      <span className="spacer" />
+                      <span className="tool-target">{summarizeInput(entry.toolInput)}</span>
+                      {entry.toolName === 'readDocument' && typeof entry.toolInput?.filePath === 'string' ? (
+                        <button
+                          className="session-action"
+                          onClick={() => void openDocument(String(entry.toolInput?.filePath))}
+                        >
+                          {t('预览')}
+                        </button>
+                      ) : null}
+                    </div>
+                    {entry.toolProgress ? <div className="tool-progress">{entry.toolProgress}</div> : null}
+                    {entry.subagent ? <SubAgentBlock agent={entry.subagent} /> : null}
+                    {entry.diff ? (
+                      <DiffView
+                        diff={entry.diff}
+                        reverted={entry.reverted}
+                        onOpenEditor={(path, line) => openInEditor(path, line)}
+                        onRevert={
+                          entry.diff.revertible && entry.toolCallId
+                            ? () => void revertEdit(entry.toolCallId!, entry.id)
+                            : undefined
+                        }
+                      />
+                    ) : null}
+                    {entry.toolOutput ? (
+                      <details className="tool-output">
+                        <summary>{t('结果')}</summary>
+                        <pre>{entry.toolOutput}</pre>
+                      </details>
+                    ) : null}
+                    {toolGuidance ? (
+                      <div className="tool-guidance" data-testid="tool-environment-hint">
+                        <span>
+                          {toolGuidance === 'network'
+                            ? settings?.shellSandbox.allowNetwork
+                              ? t('命令没能联网；如果本机网络正常，请检查命令使用的代理或地址。')
+                              : t('命令没能联网。Shell 沙箱当前禁止网络访问；如果本机网络正常，允许网络后重试。')
+                            : toolGuidance === 'write'
+                              ? t('命令被 Shell 沙箱拦截：只能写入工作区和临时目录。')
+                              : t('命令找不到。如果刚在电脑终端安装了它，刷新登录 shell 环境后重试。')}
+                        </span>
+                        <span className="spacer" />
+                        {toolGuidance === 'network' && !settings?.shellSandbox.allowNetwork ? (
+                          <button className="btn btn-quiet" onClick={() => void allowSandboxNetwork()}>
+                            {t('允许网络')}
+                          </button>
+                        ) : null}
+                        {toolGuidance === 'command' ? (
+                          <button className="btn btn-quiet" onClick={() => void refreshAgentEnvironment()}>
+                            {t('刷新环境')}
+                          </button>
+                        ) : null}
+                        {toolGuidance !== 'command' ? (
+                          <button className="btn btn-quiet" onClick={() => void openSettings('tools')}>
+                            {t('沙箱设置')}
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {tempOutputs.length > 0 ? (
+                      <div className="tool-guidance" data-testid="temp-deliverable-hint">
+                        <span>
+                          {t('交付物写到了系统临时目录：{{files}}', {
+                            files: tempOutputs.map((item) => item.split(/[\\/]/).pop() || item).join('、'),
+                          })}
+                        </span>
+                        <span className="spacer" />
+                        <button
+                          className="btn btn-quiet"
+                          disabled={busy || movingTempEntry === entry.id}
+                          title={busy ? t('当前回复结束后可以移动') : undefined}
+                          onClick={() => void moveTempDeliverables(entry.id, tempOutputs)}
+                        >
+                          {movingTempEntry === entry.id ? t('移动中…') : t('移动到工作区')}
+                        </button>
+                      </div>
+                    ) : null}
+                    {entry.movedDeliverables?.length ? (
+                      <div className="tool-guidance success" data-testid="temp-deliverable-moved">
+                        <span>
+                          {t('已移动到工作区：{{files}}', {
+                            files: entry.movedDeliverables.map((item) => item.split(/[\\/]/).pop() || item).join('、'),
+                          })}
+                        </span>
+                      </div>
+                    ) : null}
+                    {entry.toolOutput && (entry.toolName === 'webSearch' || entry.toolName === 'webFetch') ? (
+                      <SourceList text={entry.toolOutput} />
+                    ) : null}
+                  </article>
+                ) : (
+                  <article
+                    key={entry.id}
+                    id={`entry-${entry.id}`}
+                    data-entry-id={entry.id}
+                    className={`message ${entry.role} ${findMatchIds.includes(entry.id) ? 'find-hit' : ''} ${
+                      entry.id === findActiveId ? 'find-current' : ''
+                    }`}
+                  >
+                    <span className="role">{t(ROLE_LABEL[entry.role])}</span>
+                    {entry.role === 'assistant' || entry.role === 'user' ? (
+                      <MarkdownView text={entry.text} streaming={busy && entry.id === activeTextEntryId.current} />
+                    ) : (
+                      <span className="message-text">{entry.text}</span>
+                    )}
+                    {entry.attachments?.length ? (
+                      <div className="message-attachments">
+                        {entry.attachments.map((file) =>
+                          isImageAttachment(file) ? (
+                            <AttachmentImage
+                              key={file}
+                              file={file}
+                              variant="message"
+                              onOpen={(src, name) => setImageLightbox({ src, name })}
+                            />
+                          ) : (
+                            <span className="message-attachment-file" key={file} title={file}>
+                              {attachmentName(file)}
+                            </span>
+                          ),
+                        )}
+                      </div>
+                    ) : null}
+                    {entry.attachmentViews?.length ? (
+                      <div className="message-attachments">
+                        {entry.attachmentViews.map((attachment, index) => {
+                          const dataUrl = attachment.dataUrl
+                          return dataUrl ? (
+                            <button
+                              key={`${attachment.name}-${index}`}
+                              type="button"
+                              className="message-attachment"
+                              title={attachment.name}
+                              onClick={() => setImageLightbox({ src: dataUrl, name: attachment.name })}
+                            >
+                              <img src={dataUrl} alt={attachment.name} loading="lazy" />
+                              <span>{attachment.name}</span>
+                            </button>
+                          ) : attachment.path && isImageAttachment(attachment.path) ? (
+                            <AttachmentImage
+                              key={`${attachment.name}-${index}`}
+                              file={attachment.path}
+                              variant="message"
+                              onOpen={(src, name) => setImageLightbox({ src, name })}
+                            />
+                          ) : (
+                            <span
+                              key={`${attachment.name}-${index}`}
+                              className="message-attachment-file"
+                              title={attachment.name}
+                            >
+                              {attachment.name}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    ) : null}
+                    {entry.text ? (
+                      <span className="message-actions">
+                        {entry.role === 'assistant' || entry.role === 'user' ? <CopyButton text={entry.text} /> : null}
+                        {entry.role === 'assistant' && entry.id === lastAssistantId && !busy ? (
+                          <button type="button" className="copy-btn" onClick={() => void regenerateLast()}>
+                            {t('重新生成')}
+                          </button>
+                        ) : null}
+                        {entry.role === 'user' && entry.id === lastUserId && !busy ? (
+                          <button type="button" className="copy-btn" onClick={beginEditLast}>
+                            {t('编辑并重发')}
+                          </button>
+                        ) : null}
+                      </span>
+                    ) : null}
+                  </article>
+                )
+              })}
+            </main>
+            {showScrollBottom ? (
               <button
-                className="attachment-remove"
-                title={t('取消')}
+                className="scroll-bottom"
+                title={t('回到底部')}
+                aria-label={t('回到底部')}
                 onClick={() => {
-                  setEditArmed(false)
-                  setInput('')
-                  setAttachments([])
+                  const node = scrollRef.current
+                  if (node) node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
+                  nearBottomRef.current = true
+                  setShowScrollBottom(false)
                 }}
               >
-                ×
+                ↓
               </button>
-            </div>
-          ) : null}
-          {busy && backgroundActive > 0 ? (
-            <div className="background-wait" data-testid="background-wait">
-              <span>{t('{{count}} 个后台任务运行中；当前回复仍在等待。', { count: backgroundActive })}</span>
-              <button className="btn btn-quiet" onClick={() => void abort()}>
-                {queued > 0 ? t('停止等待并执行排队') : t('停止等待')}
-              </button>
-            </div>
-          ) : null}
-          {!busy && backgroundActive > 0 ? (
-            <div className="background-wait idle" data-testid="background-idle">
-              <span>{t('{{count}} 个后台任务运行中，可以继续提问；完成后会通知。', { count: backgroundActive })}</span>
-              <button className="btn btn-quiet" onClick={() => setBackgroundOpen(true)}>
-                {t('查看')}
-              </button>
-            </div>
-          ) : null}
-          {queuedItems.length > 0 ? (
-            <div className="queued-list" data-testid="queued-list">
-              {queuedItems.map((item, index) => (
-                <div className="queued-item" key={`${index}-${item.prompt.slice(0, 24)}`}>
-                  <span className="queued-text">{item.prompt}</span>
-                  {item.attachments.length === 0 ? (
-                    <button
-                      className="queued-background"
-                      title={t('在新窗口另开任务，使用 fork 时的状态快照，不共享实时进度')}
-                      onClick={() => void openQueuedInNewWindow(index)}
-                    >
-                      {t('在新窗口另开')}
-                    </button>
-                  ) : null}
-                  <button className="attachment-remove" title={t('移出队列')} onClick={() => removeQueued(index)}>
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {recording || voiceBusy ? (
-            <div className={`recording-bar ${voiceBusy ? 'busy' : ''}`} data-testid="recording-bar">
-              <span className="recording-dot" aria-hidden="true" />
-              <span className="recording-time">{formatDuration(recordingSeconds)}</span>
-              {recording ? (
-                <span className="recording-level" aria-hidden="true">
-                  <span style={{ width: `${Math.round(audioLevel * 100)}%` }} />
-                </span>
-              ) : null}
-              <span className="recording-hint">{voiceBusy ? t('正在转写…') : t('正在录音…')}</span>
-              <span className="spacer" />
-              {recording ? (
-                <>
-                  <button className="btn btn-quiet" onClick={() => void stopRecording(false)}>
-                    {t('取消')}
-                  </button>
-                  <button className="btn" onClick={() => void stopRecording(true)}>
-                    {t('完成并转写')}
-                  </button>
-                </>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="composer-attachments" data-testid="attachments" hidden={attachments.length === 0}>
-            {attachments.map((file) => (
-              <span className="attachment-chip" key={file} title={file}>
-                {isImageAttachment(file) ? (
-                  <AttachmentImage file={file} variant="chip" onOpen={(src, name) => setImageLightbox({ src, name })} />
-                ) : null}
-                <span className="attachment-name">{file.split(/[\\/]/).pop() ?? file}</span>
+            ) : null}
+
+            {notice ? <div className="notice">{notice}</div> : null}
+
+            {todos.length > 0 ? (
+              <div className="todos">
+                <span className="todos-title">{t('待办')}</span>
+                {todos.map((todo, index) => (
+                  <span key={index} className={`todo ${todo.status}`}>
+                    <span className="todo-glyph" aria-hidden="true">
+                      {todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '◐' : '○'}
+                    </span>
+                    {todo.status === 'in_progress' ? todo.activeForm : todo.content}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            {report ? (
+              <div className="report-shell">
+                <pre className="report" aria-label={t('诊断结果')}>
+                  {report}
+                </pre>
                 <button
-                  className="attachment-remove"
-                  title={t('移除附件')}
-                  onClick={() => setAttachments((current) => current.filter((entry) => entry !== file))}
+                  className="report-close"
+                  data-testid="report-close"
+                  aria-label={t('关闭结果')}
+                  title={t('关闭结果')}
+                  onClick={() => setReport(null)}
                 >
                   ×
                 </button>
-              </span>
-            ))}
-          </div>
-          <div className="markdown-bar">
-            <button
-              type="button"
-              className={`btn btn-quiet markdown-toggle ${markdownToolsOpen ? 'active' : ''}`}
-              data-testid="markdown-toggle"
-              title={t('Markdown 格式')}
-              aria-label={t('Markdown 格式')}
-              onClick={() => setMarkdownToolsOpen((open) => !open)}
-            >
-              MD
-            </button>
-            {markdownToolsOpen ? (
-              <div className="markdown-toolbar" data-testid="markdown-toolbar">
-                <button
-                  type="button"
-                  data-testid="markdown-bold"
-                  title={`${t('粗体')} (⌘B)`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyMarkdown('bold')}
-                >
-                  <strong>B</strong>
-                </button>
-                <button
-                  type="button"
-                  title={`${t('斜体')} (⌘I)`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyMarkdown('italic')}
-                >
-                  <em>I</em>
-                </button>
-                <button
-                  type="button"
-                  title={`${t('行内代码')} (⌘E)`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyMarkdown('code')}
-                >
-                  {'</>'}
-                </button>
-                <button
-                  type="button"
-                  title={t('代码块')}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyMarkdown('codeBlock')}
-                >
-                  {'{ }'}
-                </button>
-                <button
-                  type="button"
-                  title={t('链接')}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyMarkdown('link')}
-                >
-                  {t('链接')}
-                </button>
-                <button
-                  type="button"
-                  title={t('列表')}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyMarkdown('list')}
-                >
-                  {t('列表')}
-                </button>
-                <button
-                  type="button"
-                  title={t('引用')}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyMarkdown('quote')}
-                >
-                  {t('引用')}
-                </button>
               </div>
             ) : null}
-            <span className="spacer" />
-            {markdownToolsOpen ? (
-              <button
-                type="button"
-                className={`btn btn-quiet markdown-preview-toggle ${markdownPreview ? 'active' : ''}`}
-                data-testid="markdown-preview-toggle"
-                onClick={() => setMarkdownPreview((preview) => !preview)}
-              >
-                {t('预览')}
-              </button>
-            ) : null}
-          </div>
-          {markdownToolsOpen && markdownPreview ? (
-            <div className="markdown-preview" data-testid="markdown-preview">
-              {input.trim() ? <MarkdownView text={input} /> : <div className="menu-hint">{t('暂无内容')}</div>}
-            </div>
-          ) : null}
-          <div className="composer-box">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              rows={1}
-              placeholder={busy ? t('落笔未竟…') : t('写下你的问题，或输入指令…')}
-              onChange={(event) => {
-                setInput(event.target.value)
-                updateMention(event.target.value, event.target.selectionStart)
-              }}
-              onKeyUp={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
-              onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
-              onKeyDown={(event) => {
-                // IME 候选选择会以 isComposing=true（且 keyCode 229）
-                // 发送 Enter。绝不把它当作提交/发送。
-                if (event.nativeEvent.isComposing || event.keyCode === 229) return
-                if (mention !== null && mentionItems.length > 0) {
-                  if (event.key === 'ArrowDown') {
-                    event.preventDefault()
-                    setMentionIndex((index) => (index + 1) % mentionItems.length)
-                    return
-                  }
-                  if (event.key === 'ArrowUp') {
-                    event.preventDefault()
-                    setMentionIndex((index) => (index - 1 + mentionItems.length) % mentionItems.length)
-                    return
-                  }
-                  if (event.key === 'Tab' || event.key === 'Enter') {
-                    event.preventDefault()
-                    const picked = mentionItems[mentionIndex]
-                    if (picked) pickMention(picked)
-                    return
-                  }
-                  if (event.key === 'Escape') {
-                    event.preventDefault()
-                    dismissedMentionRef.current = { atIdx: mention.atIdx, query: mention.query }
-                    setMention(null)
-                    return
-                  }
-                }
-                if (paletteCommands.length > 0) {
-                  if (event.key === 'ArrowDown') {
-                    event.preventDefault()
-                    setPaletteIndex((index) => (index + 1) % paletteCommands.length)
-                    return
-                  }
-                  if (event.key === 'ArrowUp') {
-                    event.preventDefault()
-                    setPaletteIndex((index) => (index - 1 + paletteCommands.length) % paletteCommands.length)
-                    return
-                  }
-                  if (event.key === 'Tab') {
-                    event.preventDefault()
-                    const command = paletteCommands[paletteIndex]
-                    if (command) setInput(command.name)
-                    return
-                  }
-                  if (event.key === 'Escape') {
-                    event.preventDefault()
-                    setInput('')
-                    return
-                  }
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault()
-                    const command = paletteCommands[paletteIndex]
-                    if (command) runSlashCommand(command)
-                    return
-                  }
-                }
-                if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
-                  const key = event.key.toLowerCase()
-                  if (key === 'b') {
-                    event.preventDefault()
-                    applyMarkdown('bold')
-                    return
-                  }
-                  if (key === 'i') {
-                    event.preventDefault()
-                    applyMarkdown('italic')
-                    return
-                  }
-                  if (key === 'e') {
-                    event.preventDefault()
-                    applyMarkdown('code')
-                    return
-                  }
-                }
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  if (input.startsWith('/')) {
-                    const match = input.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/)
-                    const name = match?.[1]
-                    if (name === 'export') {
-                      const format = (match?.[2] ?? '').trim().toLowerCase()
-                      setInput('')
-                      void exportCurrentSession(format === 'json' ? 'json' : format === 'pdf' ? 'pdf' : 'markdown')
-                      return
-                    }
-                    if (name && customCommands.some((command) => command.name === name)) {
-                      setInput('')
-                      void runCustomCommand(name, (match?.[2] ?? '').trim())
-                      return
-                    }
-                    append({
-                      role: 'system',
-                      text: t('未知命令：{{command}}（输入 /help 查看命令）', { command: input.trim() }),
-                    })
-                    setInput('')
-                    return
-                  }
-                  if (!input.trim() && attachments.length === 0) return
-                  const prompt = input
-                  setInput('')
-                  void submit(prompt)
-                }
-              }}
-            />
-            <button
-              className="btn attach"
-              data-testid="document-button"
-              title={t('文档面板')}
-              aria-label={t('文档面板')}
-              onClick={() => void openDocumentPanel()}
-            >
-              <DocumentIcon />
-            </button>
-            <button className="btn attach" title={t('选择文档或媒体文件')} onClick={() => void pickDocument()}>
-              <AttachIcon />
-            </button>
-            <div className="menu-anchor capture-anchor">
-              <button
-                className={`btn attach ${captureMenuOpen ? 'active' : ''}`}
-                title={t('截图')}
-                data-testid="capture-button"
-                onClick={() => setCaptureMenuOpen((open) => !open)}
-              >
-                <CaptureIcon />
-              </button>
-              {captureMenuOpen ? (
-                <>
-                  <div className="capture-scrim" onClick={() => setCaptureMenuOpen(false)} aria-hidden="true" />
-                  <div className="capture-menu" role="menu" data-testid="capture-menu">
-                    <button className="capture-item" data-testid="capture-region" onClick={() => void captureRegion()}>
-                      <RegionIcon />
-                      <span>{t('框选区域')}</span>
+
+            <footer className="composer">
+              {mention !== null && mentionItems.length > 0 ? (
+                <div className="slash-palette mention-palette" data-testid="mention-palette">
+                  {mentionItems.map((file, index) => (
+                    <button
+                      key={file.path}
+                      className={`slash-item ${index === mentionIndex ? 'active' : ''}`}
+                      onMouseDown={(event) => {
+                        event.preventDefault()
+                        pickMention(file)
+                      }}
+                    >
+                      <span className="slash-name">
+                        {file.relative}
+                        {file.isDirectory ? '/' : ''}
+                      </span>
+                      <span className="slash-desc">{file.isDirectory ? t('目录') : ''}</span>
                     </button>
-                    <button className="capture-item" data-testid="capture-screen" onClick={() => void captureScreen()}>
-                      <CaptureIcon />
-                      <span>{t('整个屏幕')}</span>
+                  ))}
+                </div>
+              ) : null}
+              {paletteCommands.length > 0 ? (
+                <div className="slash-palette" data-testid="slash-palette" ref={slashPaletteRef}>
+                  {paletteCommands.map((command, index) => (
+                    <button
+                      key={command.name}
+                      className={`slash-item ${index === paletteIndex ? 'active' : ''}`}
+                      onMouseDown={(event) => {
+                        event.preventDefault()
+                        runSlashCommand(command)
+                      }}
+                    >
+                      <span className="slash-name">{command.name}</span>
+                      <span className="slash-desc">{command.description}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {editArmed ? (
+                <div className="edit-badge" data-testid="edit-badge">
+                  <span>{t('编辑模式：发送后将重写上一轮，文件改动会保留')}</span>
+                  <button
+                    className="attachment-remove"
+                    title={t('取消')}
+                    onClick={() => {
+                      setEditArmed(false)
+                      setInput('')
+                      setAttachments([])
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : null}
+              {busy && backgroundActive > 0 ? (
+                <div className="background-wait" data-testid="background-wait">
+                  <span>{t('{{count}} 个后台任务运行中；当前回复仍在等待。', { count: backgroundActive })}</span>
+                  <button className="btn btn-quiet" onClick={() => void abort()}>
+                    {queued > 0 ? t('停止等待并执行排队') : t('停止等待')}
+                  </button>
+                </div>
+              ) : null}
+              {!busy && backgroundActive > 0 ? (
+                <div className="background-wait idle" data-testid="background-idle">
+                  <span>
+                    {t('{{count}} 个后台任务运行中，可以继续提问；完成后会通知。', { count: backgroundActive })}
+                  </span>
+                  <button className="btn btn-quiet" onClick={() => setBackgroundOpen(true)}>
+                    {t('查看')}
+                  </button>
+                </div>
+              ) : null}
+              {queuedItems.length > 0 ? (
+                <div className="queued-list" data-testid="queued-list">
+                  {queuedItems.map((item, index) => (
+                    <div className="queued-item" key={`${index}-${item.prompt.slice(0, 24)}`}>
+                      <span className="queued-text">{item.prompt}</span>
+                      {item.attachments.length === 0 ? (
+                        <button
+                          className="queued-background"
+                          title={t('在新窗口另开任务，使用 fork 时的状态快照，不共享实时进度')}
+                          onClick={() => void openQueuedInNewWindow(index)}
+                        >
+                          {t('在新窗口另开')}
+                        </button>
+                      ) : null}
+                      <button className="attachment-remove" title={t('移出队列')} onClick={() => removeQueued(index)}>
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {recording || voiceBusy ? (
+                <div className={`recording-bar ${voiceBusy ? 'busy' : ''}`} data-testid="recording-bar">
+                  <span className="recording-dot" aria-hidden="true" />
+                  <span className="recording-time">{formatDuration(recordingSeconds)}</span>
+                  {recording ? (
+                    <span className="recording-level" aria-hidden="true">
+                      <span style={{ width: `${Math.round(audioLevel * 100)}%` }} />
+                    </span>
+                  ) : null}
+                  <span className="recording-hint">{voiceBusy ? t('正在转写…') : t('正在录音…')}</span>
+                  <span className="spacer" />
+                  {recording ? (
+                    <>
+                      <button className="btn btn-quiet" onClick={() => void stopRecording(false)}>
+                        {t('取消')}
+                      </button>
+                      <button className="btn" onClick={() => void stopRecording(true)}>
+                        {t('完成并转写')}
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+              <div className="composer-attachments" data-testid="attachments" hidden={attachments.length === 0}>
+                {attachments.map((file) => (
+                  <span className="attachment-chip" key={file} title={file}>
+                    {isImageAttachment(file) ? (
+                      <AttachmentImage
+                        file={file}
+                        variant="chip"
+                        onOpen={(src, name) => setImageLightbox({ src, name })}
+                      />
+                    ) : null}
+                    <span className="attachment-name">{file.split(/[\\/]/).pop() ?? file}</span>
+                    <button
+                      className="attachment-remove"
+                      title={t('移除附件')}
+                      onClick={() => setAttachments((current) => current.filter((entry) => entry !== file))}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="markdown-bar">
+                <button
+                  type="button"
+                  className={`btn btn-quiet markdown-toggle ${markdownToolsOpen ? 'active' : ''}`}
+                  data-testid="markdown-toggle"
+                  title={t('Markdown 格式')}
+                  aria-label={t('Markdown 格式')}
+                  onClick={() => setMarkdownToolsOpen((open) => !open)}
+                >
+                  MD
+                </button>
+                {markdownToolsOpen ? (
+                  <div className="markdown-toolbar" data-testid="markdown-toolbar">
+                    <button
+                      type="button"
+                      data-testid="markdown-bold"
+                      title={`${t('粗体')} (⌘B)`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyMarkdown('bold')}
+                    >
+                      <strong>B</strong>
+                    </button>
+                    <button
+                      type="button"
+                      title={`${t('斜体')} (⌘I)`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyMarkdown('italic')}
+                    >
+                      <em>I</em>
+                    </button>
+                    <button
+                      type="button"
+                      title={`${t('行内代码')} (⌘E)`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyMarkdown('code')}
+                    >
+                      {'</>'}
+                    </button>
+                    <button
+                      type="button"
+                      title={t('代码块')}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyMarkdown('codeBlock')}
+                    >
+                      {'{ }'}
+                    </button>
+                    <button
+                      type="button"
+                      title={t('链接')}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyMarkdown('link')}
+                    >
+                      {t('链接')}
+                    </button>
+                    <button
+                      type="button"
+                      title={t('列表')}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyMarkdown('list')}
+                    >
+                      {t('列表')}
+                    </button>
+                    <button
+                      type="button"
+                      title={t('引用')}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyMarkdown('quote')}
+                    >
+                      {t('引用')}
                     </button>
                   </div>
-                </>
-              ) : null}
-            </div>
-            <button
-              className={`btn attach ${recording ? 'recording' : ''}`}
-              data-testid="mic-button"
-              title={recording ? t('停止录音并转写') : t('语音输入')}
-              disabled={voiceBusy}
-              onClick={toggleRecording}
-            >
-              {recording ? <StopIcon /> : <MicIcon />}
-            </button>
-            {busy ? (
-              <button
-                className="send stop"
-                title={backgroundActive > 0 ? t('停止当前回复；后台任务会继续运行') : t('停止当前回复')}
-                onClick={() => void abort()}
-              >
-                {t('停止')}
-              </button>
-            ) : (
-              <button
-                className="send"
-                title={t('落笔')}
-                aria-label={t('落笔')}
-                disabled={!canSend}
-                onClick={() => {
-                  const prompt = input
-                  setInput('')
-                  void submit(prompt)
-                }}
-              >
-                <SendIcon />
-              </button>
-            )}
-          </div>
-          <div className="composer-hint">
-            <span>{busy ? t('Enter 排队 · 停止按钮结束当前任务') : t('Enter 发送 · Shift+Enter 换行')}</span>
-            <button type="button" className="capability-hint" onClick={() => setPaletteOpen(true)}>
-              {window.xcode.platform === 'darwin' ? '⌘K' : 'Ctrl+K'} {t('全部能力')}
-            </button>
-            {settings?.shellSandbox.supported &&
-            settings.shellSandbox.enabled &&
-            !settings.shellSandbox.allowNetwork ? (
-              <button
-                type="button"
-                className="sandbox-hint"
-                data-testid="sandbox-network-hint"
-                title={t(
-                  'Agent 的 Shell 正在沙箱中运行，网络访问已关闭：npm install、git clone、curl 等联网命令会失败。点击调整。',
-                )}
-                onClick={() => void openSettings('tools')}
-              >
-                {t('沙箱 · 网络关闭')}
-              </button>
-            ) : null}
-            {contextPercent !== null ? (
-              <span
-                className={`context-meter ${contextPercent >= 85 ? 'danger' : contextPercent >= 65 ? 'warn' : ''}`}
-                title={t('上下文 {{used}} / {{total}} tokens', {
-                  used: usedContextTokens,
-                  total: contextWindow ?? 0,
-                })}
-              >
-                <span className="context-track">
-                  <span className="context-fill" style={{ width: `${contextPercent}%` }} />
-                </span>
-                <span className="context-numbers">
-                  {formatContextTokens(usedContextTokens)} / {formatContextTokens(contextWindow ?? 0)}
-                </span>
-                <span className="context-percent">{contextPercent}%</span>
-              </span>
-            ) : null}
-            {usage ? (
-              <span className="usage">
-                ↑{usage.inputTokens} ↓{usage.outputTokens}
-              </span>
-            ) : null}
-            {queued > 0 ? <span className="queued">{t('已排队 {{count}}', { count: queued })}</span> : null}
-          </div>
-        </footer>
-      </div>
-
-      {inspectorTab ? (
-        <Inspector tab={inspectorTab} onTab={openInspector} onClose={closeInspector}>
-          {inspectorTab === 'outline' ? <OutlinePanel entries={entries} onJump={jumpToEntry} /> : null}
-          {inspectorTab === 'document' ? (
-            <DocumentPanel
-              view={documentView}
-              loading={documentLoading}
-              error={documentError}
-              onClose={closeInspector}
-              onReload={() => {
-                const current = documentView?.path
-                if (current) void openDocument(current)
-              }}
-              onAttach={(path) => {
-                setAttachments((current) => [...new Set([...current, path])])
-                closeInspector()
-              }}
-              onAsk={(prompt, path) => {
-                void submit(prompt, false, [path])
-                closeInspector()
-              }}
-              onSummarize={(path) => {
-                void submit(t('请总结这个文件的内容与结构。'), false, [path])
-                closeInspector()
-              }}
-              onOcrPage={ocrDocumentPage}
-              onLoadMore={loadMoreDocumentPages}
-              loadingMore={documentLoadingMore}
-              onForgetOcr={forgetDocumentOcr}
-              documents={documentRecent}
-              onSwitchDocument={switchDocument}
-              onPickDocument={pickDocumentToPreview}
-              onDiff={fetchDocumentDiff}
-              onApplyHunks={applyReviewedHunks}
-              onSaveBaseline={saveDocumentBaseline}
-              focusPage={documentFocusPage}
-              embedded
-            />
-          ) : null}
-          {inspectorTab === 'git' ? (
-            <GitPanel
-              status={gitStatusView}
-              loading={gitLoading}
-              error={gitError}
-              selected={gitSelected}
-              diff={gitDiffText}
-              diffTruncated={gitDiffTruncated}
-              busy={gitBusy}
-              onRefresh={() => void refreshGit()}
-              onSelect={(path, staged) => void selectGitFile(path, staged)}
-              onUndo={() => void undoGitTurn()}
-              onOpenEditor={(path, line) => openInEditor(path, line)}
-              onClose={closeInspector}
-              embedded
-            />
-          ) : null}
-          {inspectorTab === 'checks' ? (
-            <ChecksPanel
-              checks={projectChecks}
-              results={checkResults}
-              autoChecks={checkAuto}
-              loading={checksLoading}
-              error={checksError}
-              onRefresh={() => void refreshChecks()}
-              onRun={() => void runChecksNow()}
-              onToggleAuto={() => void toggleAutoChecks()}
-              onFix={fixFromChecks}
-              onClose={closeInspector}
-              embedded
-            />
-          ) : null}
-          {inspectorTab === 'file' ? (
-            <Suspense fallback={null}>
-              <FilePanel
-                workspace={appState?.workspace ?? settings?.workspace ?? ''}
-                initialPath={fileInitialPath}
-                onOpenEditor={(path, line) => openInEditor(path, line)}
-                onClose={() => {
-                  closeInspector()
-                  setFileInitialPath(null)
-                }}
-                embedded
-              />
-            </Suspense>
-          ) : null}
-          {inspectorTab === 'terminal' ? (
-            <aside className="terminal-drawer embedded" data-testid="terminal-shell" aria-label={t('终端')}>
-              <header className="drawer-head">
-                <span className="drawer-seal" aria-hidden="true">
-                  端
-                </span>
-                <div className="drawer-titles">
-                  <div className="drawer-title">{t('终端')}</div>
-                  <div className="drawer-sub">PTY · runtime process</div>
-                </div>
+                ) : null}
                 <span className="spacer" />
-                <button className="btn btn-quiet" onClick={closeInspector}>
-                  {t('关闭')}
+                {markdownToolsOpen ? (
+                  <button
+                    type="button"
+                    className={`btn btn-quiet markdown-preview-toggle ${markdownPreview ? 'active' : ''}`}
+                    data-testid="markdown-preview-toggle"
+                    onClick={() => setMarkdownPreview((preview) => !preview)}
+                  >
+                    {t('预览')}
+                  </button>
+                ) : null}
+              </div>
+              {markdownToolsOpen && markdownPreview ? (
+                <div className="markdown-preview" data-testid="markdown-preview">
+                  {input.trim() ? <MarkdownView text={input} /> : <div className="menu-hint">{t('暂无内容')}</div>}
+                </div>
+              ) : null}
+              <div className="composer-box">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  rows={1}
+                  placeholder={busy ? t('落笔未竟…') : t('写下你的问题，或输入指令…')}
+                  onChange={(event) => {
+                    setInput(event.target.value)
+                    updateMention(event.target.value, event.target.selectionStart)
+                  }}
+                  onKeyUp={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+                  onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+                  onKeyDown={(event) => {
+                    // IME 候选选择会以 isComposing=true（且 keyCode 229）
+                    // 发送 Enter。绝不把它当作提交/发送。
+                    if (event.nativeEvent.isComposing || event.keyCode === 229) return
+                    if (mention !== null && mentionItems.length > 0) {
+                      if (event.key === 'ArrowDown') {
+                        event.preventDefault()
+                        setMentionIndex((index) => (index + 1) % mentionItems.length)
+                        return
+                      }
+                      if (event.key === 'ArrowUp') {
+                        event.preventDefault()
+                        setMentionIndex((index) => (index - 1 + mentionItems.length) % mentionItems.length)
+                        return
+                      }
+                      if (event.key === 'Tab' || event.key === 'Enter') {
+                        event.preventDefault()
+                        const picked = mentionItems[mentionIndex]
+                        if (picked) pickMention(picked)
+                        return
+                      }
+                      if (event.key === 'Escape') {
+                        event.preventDefault()
+                        dismissedMentionRef.current = { atIdx: mention.atIdx, query: mention.query }
+                        setMention(null)
+                        return
+                      }
+                    }
+                    if (paletteCommands.length > 0) {
+                      if (event.key === 'ArrowDown') {
+                        event.preventDefault()
+                        setPaletteIndex((index) => (index + 1) % paletteCommands.length)
+                        return
+                      }
+                      if (event.key === 'ArrowUp') {
+                        event.preventDefault()
+                        setPaletteIndex((index) => (index - 1 + paletteCommands.length) % paletteCommands.length)
+                        return
+                      }
+                      if (event.key === 'Tab') {
+                        event.preventDefault()
+                        const command = paletteCommands[paletteIndex]
+                        if (command) setInput(command.name)
+                        return
+                      }
+                      if (event.key === 'Escape') {
+                        event.preventDefault()
+                        setInput('')
+                        return
+                      }
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault()
+                        const command = paletteCommands[paletteIndex]
+                        if (command) runSlashCommand(command)
+                        return
+                      }
+                    }
+                    if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
+                      const key = event.key.toLowerCase()
+                      if (key === 'b') {
+                        event.preventDefault()
+                        applyMarkdown('bold')
+                        return
+                      }
+                      if (key === 'i') {
+                        event.preventDefault()
+                        applyMarkdown('italic')
+                        return
+                      }
+                      if (key === 'e') {
+                        event.preventDefault()
+                        applyMarkdown('code')
+                        return
+                      }
+                    }
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      if (input.startsWith('/')) {
+                        const match = input.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/)
+                        const name = match?.[1]
+                        if (name === 'export') {
+                          const format = (match?.[2] ?? '').trim().toLowerCase()
+                          setInput('')
+                          void exportCurrentSession(format === 'json' ? 'json' : format === 'pdf' ? 'pdf' : 'markdown')
+                          return
+                        }
+                        if (name && customCommands.some((command) => command.name === name)) {
+                          setInput('')
+                          void runCustomCommand(name, (match?.[2] ?? '').trim())
+                          return
+                        }
+                        append({
+                          role: 'system',
+                          text: t('未知命令：{{command}}（输入 /help 查看命令）', { command: input.trim() }),
+                        })
+                        setInput('')
+                        return
+                      }
+                      if (!input.trim() && attachments.length === 0) return
+                      const prompt = input
+                      setInput('')
+                      void submit(prompt)
+                    }
+                  }}
+                />
+                <button
+                  className="btn attach"
+                  data-testid="document-button"
+                  title={t('文档面板')}
+                  aria-label={t('文档面板')}
+                  onClick={() => void openDocumentPanel()}
+                >
+                  <DocumentIcon />
                 </button>
-              </header>
-              <Suspense fallback={null}>
-                <TerminalPanel />
-              </Suspense>
-            </aside>
+                <button className="btn attach" title={t('选择文档或媒体文件')} onClick={() => void pickDocument()}>
+                  <AttachIcon />
+                </button>
+                <div className="menu-anchor capture-anchor">
+                  <button
+                    className={`btn attach ${captureMenuOpen ? 'active' : ''}`}
+                    title={t('截图')}
+                    data-testid="capture-button"
+                    onClick={() => setCaptureMenuOpen((open) => !open)}
+                  >
+                    <CaptureIcon />
+                  </button>
+                  {captureMenuOpen ? (
+                    <>
+                      <div className="capture-scrim" onClick={() => setCaptureMenuOpen(false)} aria-hidden="true" />
+                      <div className="capture-menu" role="menu" data-testid="capture-menu">
+                        <button
+                          className="capture-item"
+                          data-testid="capture-region"
+                          onClick={() => void captureRegion()}
+                        >
+                          <RegionIcon />
+                          <span>{t('框选区域')}</span>
+                        </button>
+                        <button
+                          className="capture-item"
+                          data-testid="capture-screen"
+                          onClick={() => void captureScreen()}
+                        >
+                          <CaptureIcon />
+                          <span>{t('整个屏幕')}</span>
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+                <button
+                  className={`btn attach ${recording ? 'recording' : ''}`}
+                  data-testid="mic-button"
+                  title={recording ? t('停止录音并转写') : t('语音输入')}
+                  disabled={voiceBusy}
+                  onClick={toggleRecording}
+                >
+                  {recording ? <StopIcon /> : <MicIcon />}
+                </button>
+                {busy ? (
+                  <button
+                    className="send stop"
+                    title={backgroundActive > 0 ? t('停止当前回复；后台任务会继续运行') : t('停止当前回复')}
+                    onClick={() => void abort()}
+                  >
+                    {t('停止')}
+                  </button>
+                ) : (
+                  <button
+                    className="send"
+                    title={t('落笔')}
+                    aria-label={t('落笔')}
+                    disabled={!canSend}
+                    onClick={() => {
+                      const prompt = input
+                      setInput('')
+                      void submit(prompt)
+                    }}
+                  >
+                    <SendIcon />
+                  </button>
+                )}
+              </div>
+              <div className="composer-hint">
+                <span>{busy ? t('Enter 排队 · 停止按钮结束当前任务') : t('Enter 发送 · Shift+Enter 换行')}</span>
+                <button type="button" className="capability-hint" onClick={() => setPaletteOpen(true)}>
+                  {window.xcode.platform === 'darwin' ? '⌘K' : 'Ctrl+K'} {t('全部能力')}
+                </button>
+                {settings?.shellSandbox.supported &&
+                settings.shellSandbox.enabled &&
+                !settings.shellSandbox.allowNetwork ? (
+                  <button
+                    type="button"
+                    className="sandbox-hint"
+                    data-testid="sandbox-network-hint"
+                    title={t(
+                      'Agent 的 Shell 正在沙箱中运行，网络访问已关闭：npm install、git clone、curl 等联网命令会失败。点击调整。',
+                    )}
+                    onClick={() => void openSettings('tools')}
+                  >
+                    {t('沙箱 · 网络关闭')}
+                  </button>
+                ) : null}
+                {contextPercent !== null ? (
+                  <span
+                    className={`context-meter ${contextPercent >= 85 ? 'danger' : contextPercent >= 65 ? 'warn' : ''}`}
+                    title={t('上下文 {{used}} / {{total}} tokens', {
+                      used: usedContextTokens,
+                      total: contextWindow ?? 0,
+                    })}
+                  >
+                    <span className="context-track">
+                      <span className="context-fill" style={{ width: `${contextPercent}%` }} />
+                    </span>
+                    <span className="context-numbers">
+                      {formatContextTokens(usedContextTokens)} / {formatContextTokens(contextWindow ?? 0)}
+                    </span>
+                    <span className="context-percent">{contextPercent}%</span>
+                  </span>
+                ) : null}
+                {usage ? (
+                  <span className="usage">
+                    ↑{usage.inputTokens} ↓{usage.outputTokens}
+                  </span>
+                ) : null}
+                {queued > 0 ? <span className="queued">{t('已排队 {{count}}', { count: queued })}</span> : null}
+              </div>
+            </footer>
+          </div>
+
+          {inspectorTab ? (
+            <Inspector tab={inspectorTab} onTab={openInspector} onClose={closeInspector}>
+              {inspectorTab === 'outline' ? <OutlinePanel entries={entries} onJump={jumpToEntry} /> : null}
+              {inspectorTab === 'document' ? (
+                <DocumentPanel
+                  view={documentView}
+                  loading={documentLoading}
+                  error={documentError}
+                  onClose={closeInspector}
+                  onReload={() => {
+                    const current = documentView?.path
+                    if (current) void openDocument(current)
+                  }}
+                  onAttach={(path) => {
+                    setAttachments((current) => [...new Set([...current, path])])
+                    closeInspector()
+                  }}
+                  onAsk={(prompt, path) => {
+                    void submit(prompt, false, [path])
+                    closeInspector()
+                  }}
+                  onSummarize={(path) => {
+                    void submit(t('请总结这个文件的内容与结构。'), false, [path])
+                    closeInspector()
+                  }}
+                  onOcrPage={ocrDocumentPage}
+                  onLoadMore={loadMoreDocumentPages}
+                  loadingMore={documentLoadingMore}
+                  onForgetOcr={forgetDocumentOcr}
+                  documents={documentRecent}
+                  onSwitchDocument={switchDocument}
+                  onPickDocument={pickDocumentToPreview}
+                  onDiff={fetchDocumentDiff}
+                  onApplyHunks={applyReviewedHunks}
+                  onSaveBaseline={saveDocumentBaseline}
+                  focusPage={documentFocusPage}
+                  embedded
+                />
+              ) : null}
+              {inspectorTab === 'git' ? (
+                <GitPanel
+                  status={gitStatusView}
+                  loading={gitLoading}
+                  error={gitError}
+                  selected={gitSelected}
+                  diff={gitDiffText}
+                  diffTruncated={gitDiffTruncated}
+                  busy={gitBusy}
+                  onRefresh={() => void refreshGit()}
+                  onSelect={(path, staged) => void selectGitFile(path, staged)}
+                  onUndo={() => void undoGitTurn()}
+                  onOpenEditor={(path, line) => openInEditor(path, line)}
+                  onClose={closeInspector}
+                  embedded
+                />
+              ) : null}
+              {inspectorTab === 'checks' ? (
+                <ChecksPanel
+                  checks={projectChecks}
+                  results={checkResults}
+                  autoChecks={checkAuto}
+                  loading={checksLoading}
+                  error={checksError}
+                  onRefresh={() => void refreshChecks()}
+                  onRun={() => void runChecksNow()}
+                  onToggleAuto={() => void toggleAutoChecks()}
+                  onFix={fixFromChecks}
+                  onClose={closeInspector}
+                  embedded
+                />
+              ) : null}
+              {inspectorTab === 'file' ? (
+                <Suspense fallback={null}>
+                  <FilePanel
+                    workspace={appState?.workspace ?? settings?.workspace ?? ''}
+                    initialPath={fileInitialPath}
+                    onOpenEditor={(path, line) => openInEditor(path, line)}
+                    onOpenDocument={(path) => void openDocument(path)}
+                    onClose={() => {
+                      closeInspector()
+                      setFileInitialPath(null)
+                    }}
+                    embedded
+                  />
+                </Suspense>
+              ) : null}
+              {inspectorTab === 'terminal' ? (
+                <aside className="terminal-drawer embedded" data-testid="terminal-shell" aria-label={t('终端')}>
+                  <header className="drawer-head">
+                    <span className="drawer-seal" aria-hidden="true">
+                      端
+                    </span>
+                    <div className="drawer-titles">
+                      <div className="drawer-title">{t('终端')}</div>
+                      <div className="drawer-sub">PTY · runtime process</div>
+                    </div>
+                    <span className="spacer" />
+                    <button className="btn btn-quiet" onClick={closeInspector}>
+                      {t('关闭')}
+                    </button>
+                  </header>
+                  <Suspense fallback={null}>
+                    <TerminalPanel />
+                  </Suspense>
+                </aside>
+              ) : null}
+            </Inspector>
           ) : null}
-        </Inspector>
-      ) : null}
+        </div>
+      </div>
 
       {approval ? (
         <div className="modal-scrim">

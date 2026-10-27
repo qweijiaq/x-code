@@ -60,6 +60,7 @@ The **Outline** tab in the right-hand inspector (also the top-bar outline button
 - **Pages and sheets**: PDFs support page rendering, extracted text, OCR and page jumps; Excel files show sheet tabs; Markdown has a rendered view.
 - **Ask about a document**: attach it to the conversation, request a summary, or ask per page.
 - **Review changes**: if an editable document changes after opening, view the diff and accept hunks, or save the current content as the new baseline.
+- **File browser**: text files open in the lightweight editor; PDF, Word, Excel, PowerPoint and image files switch to the document panel preview instead of showing binary content as source.
 - **Document library**: Settings → Document library builds a local index with keyword and optional semantic search. Content stays on this machine.
 - **Export**: the `documentExport` tool and the document panel can write PDF, DOCX, XLSX, CSV and other local files.
 
