@@ -6744,6 +6744,22 @@ body::before,
   white-space: nowrap;
 }
 
+.queued-background {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--ink-20);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-45);
+  font: inherit;
+  cursor: pointer;
+}
+
+.queued-background:hover {
+  border-color: var(--ochre);
+  color: var(--ochre);
+}
+
 .sidebar-archived-toggle {
   margin: 0 12px 8px;
   padding: 2px 0;

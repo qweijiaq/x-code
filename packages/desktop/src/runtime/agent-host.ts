@@ -6,6 +6,7 @@ import path from 'node:path'
 import { generateText } from 'ai'
 
 import {
+  BackgroundTaskRegistry,
   KEEP_RECENT_TOKENS,
   MIN_CONTEXT_WINDOW_OVERRIDE,
   PROVIDERS,
@@ -40,6 +41,7 @@ import {
   indexLibrary,
   libraryStats,
   listSessions,
+  loadSession as loadCoreSession,
   loadLocalHookConfigs,
   loadPluginCommands,
   loadUserConfig,
@@ -94,6 +96,7 @@ import type {
   ApprovalKind,
   ApprovalRequestEvent,
   BackgroundShellView,
+  BackgroundTaskView,
   BackupExportView,
   BackupImportView,
   BranchListView,
@@ -436,6 +439,7 @@ export class AgentHost {
   private demo = true
   private activeTurn: ActiveTurn | null = null
   private controller: AbortController | null = null
+  private readonly backgroundTasks = new BackgroundTaskRegistry()
   private approvals = new Map<string, PendingApproval>()
   private mcp: McpService | null = null
   private disabledTools = new Set<string>()
@@ -855,6 +859,41 @@ export class AgentHost {
     return { sessionId: loaded.view.sessionId, filePath: loaded.view.filePath, view: loaded.view }
   }
 
+  /** 当前回复仍在运行时，从最近一次落盘的会话派生一个独立分支；
+   *  不切换当前活动会话，供新窗口在后台继续。 */
+  async forkSavedSessionForBackground(): Promise<{ sessionId: string; filePath: string }> {
+    const state = this.loopState
+    const sourceFilePath = state?.sessionFilePath
+    if (!state || !sourceFilePath) throw new Error('当前会话还没有保存的上下文，无法在后台继续')
+    const loaded = await loadCoreSession(sourceFilePath)
+    if (!loaded) throw new Error('无法读取当前会话，无法在后台继续')
+    if (loaded.transcriptIntegrity === 'failed') throw new Error('会话完整性校验失败，无法在后台继续')
+    const stamp = new Date().toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    const forked = await forkSessionFile(
+      {
+        sourceSessionId: loaded.sessionId,
+        trackedMessages: loaded.trackedMessages,
+        contextSecurity: loaded.contextSecurity,
+        sourceIntegrityValid: true,
+        taskSlug: loaded.taskSlug,
+        tokenUsageTotal: loaded.tokenUsage.totalTokens,
+        goal: loaded.goal,
+        goalInputs: loaded.goalInputs,
+        memoryRecallAttachments: loaded.memoryRecallAttachments,
+        memoryRecallTombstones: loaded.memoryRecallTombstones,
+        memoryGeneration: loaded.memoryGeneration,
+      },
+      this.modelId,
+      { cwd: this.requireBootstrap().workspace, name: `后台分支 ${stamp}` },
+    )
+    return { sessionId: forked.sessionId, filePath: forked.filePath }
+  }
+
   backgroundSessions(): BackgroundShellView[] {
     const sessions = this.loopState?.shellSessions.list() ?? []
     // shell 会话时间戳使用 Date.now()；performance.now() 会产生
@@ -884,6 +923,30 @@ export class AgentHost {
     if (!manager) return { ok: false }
     await manager.terminate(shellId, 'kill-tool')
     return { ok: true }
+  }
+
+  backgroundTaskList(): BackgroundTaskView[] {
+    const now = Date.now()
+    return this.backgroundTasks.list().map((task) => ({
+      id: task.id,
+      toolCallId: task.toolCallId,
+      agentName: task.agentName,
+      description: task.description,
+      status: task.status,
+      startedAt: task.startedAt,
+      ...(task.endedAt !== undefined ? { endedAt: task.endedAt } : {}),
+      durationMs: Math.max(0, (task.endedAt ?? now) - task.startedAt),
+      ...(task.resultText ? { resultText: task.resultText } : {}),
+      ...(task.error ? { error: task.error } : {}),
+      ...(task.turnCount !== undefined ? { turnCount: task.turnCount } : {}),
+      ...(task.toolCallCount !== undefined ? { toolCallCount: task.toolCallCount } : {}),
+    }))
+  }
+
+  stopBackgroundTask(taskId: string): { ok: boolean } {
+    const ok = this.backgroundTasks.abort(taskId)
+    if (ok) this.send({ type: 'background:changed' })
+    return { ok }
   }
 
   async libraryStats(): Promise<LibraryStatsView> {
@@ -1558,6 +1621,7 @@ export class AgentHost {
           ...bootstrap.baseOptions,
           modelId: this.modelId,
           abortSignal: controller.signal,
+          backgroundTaskRegistry: this.backgroundTasks,
           systemPromptExtra: `${taskModeInstruction(this.taskMode)}\nSave user-facing deliverables under ${this.requireBootstrap().workspace}; use the system temp directory only for disposable intermediates.`,
         },
         callbacks,
@@ -3381,6 +3445,19 @@ export class AgentHost {
               aborted: event.aborted,
             })
             break
+        }
+      },
+      onBackgroundTaskEvent: (event) => {
+        const task = this.backgroundTaskList().find((entry) => entry.id === event.task.id)
+        if (!task) return
+        send({ type: 'agent:background-task', phase: event.kind, task })
+        send({ type: 'background:changed' })
+        if (event.kind === 'end') {
+          this.notify(
+            task.status === 'completed' ? '后台任务已完成' : '后台任务已结束',
+            `${task.agentName} — ${task.description} · ${task.status}`,
+            this.loopState?.sessionId,
+          )
         }
       },
       onError: (error) => {

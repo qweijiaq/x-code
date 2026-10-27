@@ -786,6 +786,21 @@ export interface BackgroundShellView {
   omittedBytes: number
 }
 
+export interface BackgroundTaskView {
+  id: string
+  toolCallId: string
+  agentName: string
+  description: string
+  status: 'running' | 'completed' | 'failed' | 'aborted'
+  startedAt: number
+  endedAt?: number
+  durationMs?: number
+  resultText?: string
+  error?: string
+  turnCount?: number
+  toolCallCount?: number
+}
+
 // ─── Agent 视图 ────────────────────────────────────────────────────────────
 
 export interface UsageView {
@@ -900,7 +915,7 @@ export interface RequestMap {
   'goal:get': { params: Record<string, never>; result: TextReport }
   'app:quit': { params: Record<string, never>; result: null }
   'app:new-window': {
-    params: { sessionFilePath?: string; workspacePath?: string }
+    params: { sessionFilePath?: string; workspacePath?: string; prompt?: string }
     result: { created: boolean; focused: boolean }
   }
   'app:set-window-sessions': { params: { filePaths: string[] }; result: null }
@@ -938,8 +953,12 @@ export interface RequestMap {
   }
   'app:state': { params: Record<string, never>; result: AppState }
   'app:save-pasted-image': { params: { data: string; mime: string }; result: { path: string } }
-  'background:list': { params: Record<string, never>; result: { sessions: BackgroundShellView[] } }
+  'background:list': {
+    params: Record<string, never>
+    result: { sessions: BackgroundShellView[]; tasks: BackgroundTaskView[] }
+  }
   'background:stop': { params: { shellId: string }; result: { ok: boolean } }
+  'background:stop-task': { params: { taskId: string }; result: { ok: boolean } }
   'models:set': { params: { modelId: string }; result: AppState }
   'models:discover': { params: Record<string, never>; result: AppState }
   'session:list': { params: Record<string, never>; result: SessionListItem[] }
@@ -973,6 +992,10 @@ export interface RequestMap {
   'session:fork': {
     params: { name?: string }
     result: { sessionId: string; filePath: string; view: LoadedSessionView }
+  }
+  'session:fork-background': {
+    params: Record<string, never>
+    result: { sessionId: string; filePath: string }
   }
   'approval:respond': {
     params: {
@@ -1238,6 +1261,7 @@ export type RuntimeEvent =
       aborted?: boolean
     }
   | { type: 'agent:todos'; todos: TodoView[] }
+  | { type: 'agent:background-task'; phase: 'start' | 'end'; task: BackgroundTaskView }
   | { type: 'agent:usage'; usage: UsageView }
   | { type: 'agent:context-compressed'; summary: string }
   | { type: 'agent:compression-progress'; description: string }

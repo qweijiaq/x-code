@@ -688,6 +688,7 @@ export function App(): React.JSX.Element {
   const nearBottomRef = useRef(true)
   const [showScrollBottom, setShowScrollBottom] = useState(false)
   const uiSmokeRan = useRef(false)
+  const promptAutoSubmitRef = useRef(false)
   const submitRef = useRef<(prompt: string, alreadyShown?: boolean, attachments?: string[]) => void>(() => {})
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
@@ -1217,6 +1218,18 @@ export function App(): React.JSX.Element {
             prev.map((entry) => (entry.toolCallId === event.toolCallId ? { ...entry, diff: event.payload } : entry)),
           )
           break
+        case 'agent:background-task':
+          if (event.phase === 'end') {
+            append({
+              role: event.task.status === 'completed' ? 'system' : 'error',
+              text: t('后台任务结束：{{agent}} — {{description}}（{{status}}）', {
+                agent: event.task.agentName,
+                description: event.task.description,
+                status: event.task.status,
+              }),
+            })
+          }
+          break
         case 'agent:subagent':
           setEntries((prev) =>
             prev.map((entry) => {
@@ -1479,11 +1492,18 @@ export function App(): React.JSX.Element {
   }
 
   useEffect(() => {
-    const prompt = new URLSearchParams(window.location.search).get('prompt')
+    if (promptAutoSubmitRef.current) return
+    const params = new URLSearchParams(window.location.search)
+    const prompt = params.get('prompt')
     if (!prompt) return
-    const timer = setTimeout(() => submitRef.current(prompt), 600)
+    const requestedSession = params.get('session')
+    if (requestedSession && !sessions.some((session) => session.filePath === requestedSession)) return
+    const timer = setTimeout(() => {
+      promptAutoSubmitRef.current = true
+      submitRef.current(prompt)
+    }, 600)
     return () => clearTimeout(timer)
-  }, [])
+  }, [sessions])
 
   useEffect(() => {
     if (!wantsSlashDemo) return
@@ -1539,10 +1559,14 @@ export function App(): React.JSX.Element {
         params: {},
       })
       if (cancelled || !response.ok) return
-      const sessions = (response.result as { sessions: Array<{ status?: string }> }).sessions
-      const active = sessions.filter((session) =>
-        ['starting', 'running', 'terminating', 'finalizing'].includes(session.status ?? ''),
-      ).length
+      const result = response.result as {
+        sessions: Array<{ status?: string }>
+        tasks?: Array<{ status?: string }>
+      }
+      const active =
+        result.sessions.filter((session) =>
+          ['starting', 'running', 'terminating', 'finalizing'].includes(session.status ?? ''),
+        ).length + (result.tasks ?? []).filter((task) => task.status === 'running').length
       setBackgroundActive(active)
     }
     void refreshBackgroundCount()
@@ -3510,6 +3534,37 @@ export function App(): React.JSX.Element {
     setQueuedItems([...queueRef.current])
   }
 
+  const continueQueuedInBackground = async (index: number): Promise<void> => {
+    const item = queueRef.current[index]
+    if (!item) return
+    const forked = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'session:fork-background',
+      params: {},
+    })
+    if (!forked.ok) {
+      append({ role: 'error', text: forked.error.message })
+      return
+    }
+    const fork = forked.result as { sessionId: string; filePath: string }
+    const opened = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'app:new-window',
+      params: {
+        sessionFilePath: fork.filePath,
+        workspacePath: appState?.workspace ?? settings?.workspace,
+        prompt: item.prompt,
+      },
+    })
+    if (!opened.ok) {
+      append({ role: 'error', text: opened.error.message })
+      return
+    }
+    const currentIndex = queueRef.current.indexOf(item)
+    if (currentIndex >= 0) removeQueued(currentIndex)
+    setNotice(t('已在新窗口后台继续；当前回复不受影响'))
+  }
+
   return (
     <div
       className="app"
@@ -4571,6 +4626,15 @@ export function App(): React.JSX.Element {
               {queuedItems.map((item, index) => (
                 <div className="queued-item" key={`${index}-${item.prompt.slice(0, 24)}`}>
                   <span className="queued-text">{item.prompt}</span>
+                  {item.attachments.length === 0 ? (
+                    <button
+                      className="queued-background"
+                      title={t('在新窗口后台继续，当前回复不受影响')}
+                      onClick={() => void continueQueuedInBackground(index)}
+                    >
+                      {t('在新窗口继续')}
+                    </button>
+                  ) : null}
                   <button className="attachment-remove" title={t('移出队列')} onClick={() => removeQueued(index)}>
                     ×
                   </button>

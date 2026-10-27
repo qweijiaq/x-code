@@ -248,11 +248,15 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       }
       case 'background:list': {
         await ensureInitialized()
-        return ok(request.id, { sessions: host.backgroundSessions() })
+        return ok(request.id, { sessions: host.backgroundSessions(), tasks: host.backgroundTaskList() })
       }
       case 'background:stop': {
         await ensureInitialized()
         return ok(request.id, await host.stopBackgroundShell(request.params.shellId))
+      }
+      case 'background:stop-task': {
+        await ensureInitialized()
+        return ok(request.id, host.stopBackgroundTask(request.params.taskId))
       }
       case 'models:set': {
         await ensureInitialized()
@@ -317,6 +321,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       case 'session:fork': {
         await ensureInitialized()
         return ok(request.id, await host.forkCurrentSession(request.params.name))
+      }
+      case 'session:fork-background': {
+        await ensureInitialized()
+        return ok(request.id, await host.forkSavedSessionForBackground())
       }
       case 'workspace:list': {
         await ensureInitialized()

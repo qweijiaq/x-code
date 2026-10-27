@@ -1,6 +1,7 @@
 // @x-code-cli/core — 公共类型定义
 import type { LanguageModel, ModelMessage, UserContent } from 'ai'
 
+import type { BackgroundTaskEvent, BackgroundTaskRegistry } from '../agent/background-tasks.js'
 import type { EditDiffPayload } from '../agent/diff.js'
 import type { SubAgentRegistry } from '../agent/sub-agents/registry.js'
 import type { SubAgentEvent } from '../agent/sub-agents/types.js'
@@ -310,6 +311,8 @@ export interface AgentCallbacks {
   /** 由子代理运行器触发，用于流式传递子代理循环的进度。
    *  CLI UI 用这些事件构建折叠 / 展开的任务块。 */
   onSubAgentEvent?: (event: SubAgentEvent) => void
+  /** 后台子代理的启动/结束通知；进度仍通过 onSubAgentEvent 流式发出。 */
+  onBackgroundTaskEvent?: (event: BackgroundTaskEvent) => void
   /** 可选的、来自持久记忆工作线程的程序化遥测。CLI
    *  有意保持此项未设置，让后台持久化保持静默。 */
   onMemoryWrite?: (notice: MemoryWriteNotice) => void
@@ -376,6 +379,9 @@ export interface AgentOptions {
   /** 子代理注册表。CLI 在启动时扫描内置 + 自定义代理定义后注入。
    *  缺失 = 不注册 task 工具（无子代理支持）。 */
   subAgentRegistry?: SubAgentRegistry
+  /** 后台子代理注册表。桌面 runtime 注入；CLI 不注入时 `task.background`
+   *  仍按同步任务执行，保持原有行为。 */
+  backgroundTaskRegistry?: BackgroundTaskRegistry
   /** 工具允许/拒绝过滤器。子代理循环用它限制子代理能调用哪些
    *  工具。`task` 始终在 `deny` 中。 */
   toolFilter?: { allow?: string[]; deny?: string[] }

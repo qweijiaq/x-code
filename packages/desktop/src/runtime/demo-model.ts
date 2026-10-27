@@ -211,6 +211,33 @@ export function createDemoModel(): MockLanguageModelV3 {
         return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
       }
 
+      if (lastUserText.includes('[background-task-demo]') && !pendingCallId) {
+        pendingCallId = `demo-bg-task-${Date.now()}`
+        const parts: LanguageModelV3StreamPart[] = [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 'demo-text' },
+          { type: 'text-delta', id: 'demo-text', delta: '演示模式：启动一个后台子代理。\n' },
+          { type: 'text-end', id: 'demo-text' },
+          {
+            type: 'tool-call',
+            toolCallId: pendingCallId,
+            toolName: 'task',
+            input: JSON.stringify({
+              description: 'Background demo',
+              subagent_type: 'general-purpose',
+              prompt: 'Reply with one short sentence.',
+              background: true,
+            }),
+          },
+          {
+            type: 'finish',
+            finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' },
+            usage: usage(),
+          },
+        ]
+        return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
+      }
+
       const text =
         '这是演示模型（未配置 API Key）。在项目 .env 中配置任意受支持的 API Key 后重启，即可使用真实模型。\n\n输入包含 [tool-demo] 时，会触发一次写入工具调用，用来验证权限与 diff。'
       return textStream(text)

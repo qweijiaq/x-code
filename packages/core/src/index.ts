@@ -344,6 +344,8 @@ export { generateSessionSummary } from './agent/session-summary.js'
 
 // 子 agent
 export { createSubAgentRegistry, createBuiltInRegistry, SubAgentRegistry } from './agent/sub-agents/index.js'
+export { BackgroundTaskRegistry } from './agent/background-tasks.js'
+export type { BackgroundTaskEvent, BackgroundTaskSnapshot, BackgroundTaskStatus } from './agent/background-tasks.js'
 export type { SubAgentDefinition, SubAgentEvent, SubAgentTrace } from './agent/sub-agents/index.js'
 // 托管浏览器——私有 MCP 生命周期（gracefulShutdown 会关闭浏览器）。
 export { shutdownBrowserMcp } from './agent/browser/registry.js'

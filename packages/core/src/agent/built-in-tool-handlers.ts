@@ -24,6 +24,57 @@ export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Recor
     const taskPrompt = input.prompt as string
 
     reportProgress(toolCallId, `Task: ${description} (${agentName})`)
+    const registry = options.backgroundTaskRegistry
+    if (input.background === true && registry) {
+      const { task, signal } = registry.start({
+        toolCallId,
+        agentName,
+        description,
+        parentSignal: options.abortSignal,
+      })
+      callbacks.onBackgroundTaskEvent?.({ kind: 'start', task })
+      pushToolResult(
+        state,
+        callbacks,
+        toolCallId,
+        toolName,
+        `Background task started: ${task.id} (${agentName} — ${description}). It runs independently; progress appears in the background task panel. Do not wait for it.`,
+      )
+      const childOptions: typeof options = { ...options, abortSignal: signal }
+      void runSubAgent(
+        {
+          parentState: state,
+          parentOptions: childOptions,
+          callbacks,
+          toolCallId,
+          agentName,
+          description,
+          prompt: taskPrompt,
+          knowledgeContext: state.knowledgeContext ?? '',
+          isGitRepo: state.isGitRepo ?? false,
+        },
+        parentModel,
+        context.runSubAgentLoop,
+      )
+        .then((result) => {
+          const finished = registry.complete(task.id, {
+            status: result.aborted ? 'aborted' : 'completed',
+            resultText: result.resultText,
+            tokenUsage: result.tokenUsage,
+            turnCount: result.turnCount,
+            toolCallCount: result.toolCallCount,
+          })
+          if (finished) callbacks.onBackgroundTaskEvent?.({ kind: 'end', task: finished })
+        })
+        .catch((error: unknown) => {
+          const finished = registry.complete(task.id, {
+            status: signal.aborted ? 'aborted' : 'failed',
+            error: error instanceof Error ? error.message : String(error),
+          })
+          if (finished) callbacks.onBackgroundTaskEvent?.({ kind: 'end', task: finished })
+        })
+      return
+    }
     const result = await runSubAgent(
       {
         parentState: state,

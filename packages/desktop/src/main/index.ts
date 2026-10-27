@@ -1445,6 +1445,7 @@ function installIpc(): void {
       const params = request.params as {
         sessionFilePath?: string
         workspacePath?: string
+        prompt?: string
       }
       const rawSessionFilePath =
         typeof params.sessionFilePath === 'string' && params.sessionFilePath.trim()
@@ -1489,6 +1490,9 @@ function installIpc(): void {
         query.set('session', sessionFilePath)
       }
       if (workspacePath) query.set('workspace', workspacePath)
+      if (typeof params.prompt === 'string' && params.prompt.trim() && params.prompt.length <= 100_000) {
+        query.set('prompt', params.prompt)
+      }
       createWindow(true, query.toString(), workspacePath)
       return { id: request.id, ok: true, result: { created: true, focused: false } }
     }

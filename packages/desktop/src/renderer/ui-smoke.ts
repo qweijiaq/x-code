@@ -380,6 +380,30 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail: `hint=${tempHint} moved=${tempMoved}${tempError ? ` error=${tempError.slice(0, 120)}` : ''}`,
     }
 
+    await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'agent:submit',
+      params: { prompt: '[background-task-demo]' },
+    })
+    let backgroundTaskSeen = false
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const list = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'background:list',
+        params: {},
+      })
+      const tasks = list.ok ? ((list.result as { tasks?: Array<{ agentName?: string }> }).tasks ?? []) : []
+      if (tasks.some((task) => task.agentName === 'general-purpose')) {
+        backgroundTaskSeen = true
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    checks.backgroundTask = {
+      ok: backgroundTaskSeen,
+      detail: `task=${backgroundTaskSeen}`,
+    }
+
     let subagentStart = false
     let subagentEnd = false
     const offSubagent = window.xcode.onEvent((event) => {
@@ -503,6 +527,18 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       }
     } else {
       checks.sessionResume = { ok: false, detail: 'no session to resume' }
+    }
+
+    const backgroundFork = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'session:fork-background',
+      params: {},
+    })
+    checks.sessionForkBackground = {
+      ok: backgroundFork.ok,
+      detail: backgroundFork.ok
+        ? `fork=${(backgroundFork.result as { sessionId: string }).sessionId}`
+        : backgroundFork.error.message,
     }
 
     const settingsResponse = await window.xcode.request({
@@ -1764,9 +1800,14 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       params: {},
     })
     checks.backgroundList = {
-      ok: background.ok && Array.isArray((background.result as { sessions: unknown[] }).sessions),
+      ok:
+        background.ok &&
+        Array.isArray((background.result as { sessions: unknown[] }).sessions) &&
+        Array.isArray((background.result as { tasks?: unknown[] }).tasks),
       detail: background.ok
-        ? `${(background.result as { sessions: unknown[] }).sessions.length} background session(s)`
+        ? `${(background.result as { sessions: unknown[] }).sessions.length} background session(s), ${
+            (background.result as { tasks?: unknown[] }).tasks?.length ?? 0
+          } task(s)`
         : background.error.message,
     }
 

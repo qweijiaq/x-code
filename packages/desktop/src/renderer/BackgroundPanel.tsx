@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import type {
   BackgroundShellView,
+  BackgroundTaskView,
   RequestMap,
   RequestMethod,
   RuntimeRequest,
@@ -22,6 +23,13 @@ const STATUS_LABEL: Record<BackgroundShellView['status'], string> = {
   finalizing: '收尾中',
   exited: '已结束',
   failed: '失败',
+}
+
+const TASK_STATUS_LABEL: Record<BackgroundTaskView['status'], string> = {
+  running: '运行中',
+  completed: '已完成',
+  failed: '失败',
+  aborted: '已停止',
 }
 
 function isActive(status: BackgroundShellView['status']): boolean {
@@ -57,6 +65,7 @@ function lastPercent(text: string): number | null {
 export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
   const { t } = useTranslation()
   const [sessions, setSessions] = useState<BackgroundShellView[]>([])
+  const [tasks, setTasks] = useState<BackgroundTaskView[]>([])
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [stopping, setStopping] = useState<string | null>(null)
@@ -64,7 +73,9 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
   const refresh = useCallback(async (): Promise<void> => {
     const response = await request('background:list', {})
     if (response.ok) {
-      setSessions((response.result as { sessions: BackgroundShellView[] }).sessions)
+      const result = response.result as { sessions: BackgroundShellView[]; tasks?: BackgroundTaskView[] }
+      setSessions(result.sessions)
+      setTasks(result.tasks ?? [])
       setError(null)
     } else {
       setError(response.error.message)
@@ -93,7 +104,19 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
     }
   }
 
-  const activeCount = sessions.filter((session) => isActive(session.status)).length
+  const stopTask = async (taskId: string): Promise<void> => {
+    setStopping(taskId)
+    try {
+      await request('background:stop-task', { taskId })
+      await refresh()
+    } finally {
+      setStopping(null)
+    }
+  }
+
+  const activeCount =
+    sessions.filter((session) => isActive(session.status)).length +
+    tasks.filter((task) => task.status === 'running').length
 
   return (
     <>
@@ -106,7 +129,7 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
           <div className="drawer-titles">
             <div className="drawer-title">{t('后台任务')}</div>
             <div className="drawer-sub">
-              {t('自动超出等待时间的 shell 命令')}
+              {t('后台 shell 与子代理任务')}
               {activeCount > 0 ? ` · ${t('{{count}} 个运行中', { count: activeCount })}` : ''}
             </div>
           </div>
@@ -117,7 +140,51 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
         </header>
         <div className="background-body">
           {error ? <div className="settings-warn">{error}</div> : null}
-          {!error && sessions.length === 0 ? <div className="background-empty">{t('暂无后台任务')}</div> : null}
+          {!error && sessions.length === 0 && tasks.length === 0 ? (
+            <div className="background-empty">{t('暂无后台任务')}</div>
+          ) : null}
+          {tasks.map((task) => {
+            const open = expanded === task.id
+            const active = task.status === 'running'
+            return (
+              <div className="background-item task" key={task.id}>
+                <div className="background-row">
+                  <span className={`background-status ${task.status}`}>{TASK_STATUS_LABEL[task.status]}</span>
+                  <code className="background-command" title={task.description}>
+                    {task.agentName} · {task.description}
+                  </code>
+                  {active ? (
+                    <button
+                      className="btn btn-quiet"
+                      disabled={stopping === task.id}
+                      onClick={() => void stopTask(task.id)}
+                    >
+                      {stopping === task.id ? t('停止中…') : t('停止')}
+                    </button>
+                  ) : (
+                    <span className="background-meta">
+                      {task.turnCount !== undefined ? t('{{count}} 轮', { count: task.turnCount }) : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="background-stats">
+                  <span>
+                    {active ? t('已运行') : t('耗时')} {formatElapsed(task.durationMs)}
+                  </span>
+                  {task.toolCallCount !== undefined ? (
+                    <span>{t('{{count}} 次工具调用', { count: task.toolCallCount })}</span>
+                  ) : null}
+                </div>
+                {task.error ? <div className="settings-warn">{task.error}</div> : null}
+                {task.resultText ? (
+                  <button className="background-toggle" onClick={() => setExpanded(open ? null : task.id)}>
+                    {open ? t('收起结果') : t('查看结果')}
+                  </button>
+                ) : null}
+                {open && task.resultText ? <pre className="background-output">{task.resultText}</pre> : null}
+              </div>
+            )
+          })}
           {sessions.map((session) => {
             const open = expanded === session.shellId
             const active = isActive(session.status)

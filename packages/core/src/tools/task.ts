@@ -25,6 +25,7 @@ Use it when a directed search is insufficient. Do not delegate known-symbol sear
 
 Prompt contract:
 - Give a valid subagent_type, a 3-5 word description, and a self-contained prompt with the goal, paths or symbols, known facts, constraints, write permission, and required output.
+- Set background: true for long independent work; the call returns a task id immediately, the user can keep chatting, and progress appears in the background task panel.
 - Ask for concrete snippets or file:line references when needed, and trust a complete result instead of repeating its exploration.
 
 Independent read-only agents may run concurrently in one assistant message. Never run concurrent agents that can write the same files or resources.`
@@ -41,6 +42,12 @@ export function createTaskTool(registry: SubAgentRegistry) {
         .string()
         .describe(
           'The complete task instruction sent to the sub-agent. Be specific — the sub-agent has no prior context.',
+        ),
+      background: z
+        .boolean()
+        .optional()
+        .describe(
+          'Start the sub-agent in the background and return immediately with a task id. Use for long independent work; the user can keep chatting. Progress appears in the background task panel.',
         ),
     }),
     // 无 execute —— 在 tool-execution.ts 里手动处理

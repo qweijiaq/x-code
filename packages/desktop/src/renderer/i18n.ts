@@ -604,6 +604,13 @@ export const EN: Record<string, string> = {
   '{{count}} 个后台任务运行中，可以继续提问；完成后会通知。':
     '{{count}} background task(s) running; you can keep asking, and you will be notified when they finish.',
   查看: 'View',
+  '后台 shell 与子代理任务': 'Background shells and sub-agent tasks',
+  已停止: 'Stopped',
+  '{{count}} 次工具调用': '{{count}} tool calls',
+  查看结果: 'View result',
+  收起结果: 'Hide result',
+  '后台任务结束：{{agent}} — {{description}}（{{status}}）':
+    'Background task finished: {{agent}} — {{description}} ({{status}})',
   停止等待: 'Stop waiting',
   停止等待并执行排队: 'Stop waiting and run queued',
   '命令名（不含斜杠，如 review-doc）': 'Command name (no slash, e.g. review-doc)',
@@ -741,6 +748,9 @@ export const EN: Record<string, string> = {
   '相对路径，如 notes/todo.md': 'Relative path, e.g. notes/todo.md',
   确认删除主题: 'Confirm delete topic',
   移出队列: 'Remove from queue',
+  在新窗口继续: 'Continue in new window',
+  '在新窗口后台继续，当前回复不受影响': 'Continue in a new window; the current reply keeps running',
+  '已在新窗口后台继续；当前回复不受影响': 'Continued in a new window; the current reply is unaffected',
   稍后配置: 'Configure later',
   '窗口在后台时，任务完成、执行失败或需要你确认时发送系统通知。':
     'Send a system notification when a task finishes, fails, or needs your approval while the window is in the background.',
