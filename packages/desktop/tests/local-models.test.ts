@@ -18,7 +18,7 @@ describe('local model discovery', () => {
       }),
     )
 
-    const models = await discoverLocalModels()
+    const models = await discoverLocalModels(true)
     expect(models.map((model) => model.id)).toEqual(['ollama:llama3.2:latest', 'lmstudio:qwen2.5-coder-7b'])
     expect(isLocalModelId('ollama:llama3.2:latest')).toBe(true)
     expect(isLocalModelId('anthropic:claude-sonnet-5')).toBe(false)
@@ -32,7 +32,7 @@ describe('local model discovery', () => {
         throw new Error('connection refused')
       }),
     )
-    await expect(discoverLocalModels()).resolves.toEqual([])
+    await expect(discoverLocalModels(true)).resolves.toEqual([])
   })
 
   it('delegates non-local ids to the wrapped registry', async () => {
@@ -44,7 +44,7 @@ describe('local model discovery', () => {
         return new Response('not found', { status: 404 })
       }),
     )
-    await discoverLocalModels()
+    await discoverLocalModels(true)
     const fallback = { marker: 'remote' }
     const base = {
       languageModel: vi.fn((id: string) => (id === 'ollama:llama3.2' ? { marker: 'should-not-use-base' } : fallback)),
