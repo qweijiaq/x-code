@@ -30,6 +30,7 @@ import type {
   RuntimeOutbound,
   RuntimeRequest,
   RuntimeResponse,
+  SharedBackgroundSnapshot,
   SmokeReport,
 } from '../shared/protocol.js'
 import { downloadUpdateArtifact, parseReleaseInfo, pickUpdateArtifact } from './update.js'
@@ -217,6 +218,8 @@ interface RuntimeContext {
   workspace?: string
   /** 在此窗口标签页中打开的会话文件（规范路径）。 */
   sessionFiles: Set<string>
+  /** 运行时上报的后台任务快照，供其他窗口只读查询。 */
+  sharedBackground?: SharedBackgroundSnapshot
 }
 
 /** 每个窗口拥有自己的 AgentHost 运行时，使会话可以
@@ -312,6 +315,37 @@ function onRuntimeMessage(message: RuntimeOutbound, context: RuntimeContext): vo
         }
       }
       try {
+        if (message.method === 'background:publish') {
+          const snapshot = message.params?.background
+          if (!snapshot || typeof snapshot.workspace !== 'string' || !Array.isArray(snapshot.items)) {
+            throw new Error('Invalid background snapshot')
+          }
+          context.sharedBackground = {
+            workspace: canonicalDirectory(snapshot.workspace),
+            updatedAt: typeof snapshot.updatedAt === 'number' ? snapshot.updatedAt : Date.now(),
+            items: snapshot.items.slice(0, 50),
+          }
+          reply({ ok: true, result: null })
+          return
+        }
+        if (message.method === 'background:list-shared') {
+          const requested =
+            typeof message.params?.workspace === 'string' && message.params.workspace.trim()
+              ? canonicalDirectory(message.params.workspace)
+              : undefined
+          const items = [...runtimeContexts.values()]
+            .filter((entry) => !entry.window.isDestroyed() && entry.sharedBackground)
+            .filter((entry) => !requested || canonicalDirectory(entry.sharedBackground!.workspace) === requested)
+            .flatMap((entry) => entry.sharedBackground!.items)
+          const seen = new Set<string>()
+          const unique = items.filter((item) => {
+            if (seen.has(item.id)) return false
+            seen.add(item.id)
+            return true
+          })
+          reply({ ok: true, result: { items: unique, updatedAt: Date.now() } })
+          return
+        }
         if (message.method === 'app:notify') {
           const title = typeof message.params?.title === 'string' ? message.params.title : ''
           const body = typeof message.params?.body === 'string' ? message.params.body : ''

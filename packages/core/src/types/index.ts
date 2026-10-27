@@ -327,6 +327,25 @@ export interface StreamRetryEvent {
 
 // ─── 代理选项 ───
 
+export interface BackgroundInfoItem {
+  id: string
+  kind: 'shell' | 'agent'
+  status: string
+  description: string
+  elapsedMs?: number
+  outputTail?: string
+  resultText?: string
+  exitCode?: number
+  turnCount?: number
+  toolCallCount?: number
+  /** 来自另一个窗口的共享快照。 */
+  shared?: boolean
+}
+
+export interface BackgroundInfoProvider {
+  list(): Promise<BackgroundInfoItem[]>
+}
+
 export interface AgentOptions {
   modelId: string
   trustMode: boolean
@@ -382,6 +401,9 @@ export interface AgentOptions {
   /** 后台子代理注册表。桌面 runtime 注入；CLI 不注入时 `task.background`
    *  仍按同步任务执行，保持原有行为。 */
   backgroundTaskRegistry?: BackgroundTaskRegistry
+  /** 跨窗口/跨 runtime 的后台任务视图；桌面端用它把其他窗口的任务
+   *  提供给 backgroundList/Get/Output。 */
+  backgroundInfoProvider?: BackgroundInfoProvider
   /** 工具允许/拒绝过滤器。子代理循环用它限制子代理能调用哪些
    *  工具。`task` 始终在 `deny` 中。 */
   toolFilter?: { allow?: string[]; deny?: string[] }

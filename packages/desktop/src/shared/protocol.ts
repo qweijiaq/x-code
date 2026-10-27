@@ -799,6 +799,27 @@ export interface BackgroundTaskView {
   error?: string
   turnCount?: number
   toolCallCount?: number
+  /** 来自另一个窗口的共享快照。 */
+  shared?: boolean
+}
+
+export interface SharedBackgroundItem {
+  id: string
+  kind: 'shell' | 'agent'
+  status: string
+  description: string
+  elapsedMs?: number
+  outputTail?: string
+  resultText?: string
+  exitCode?: number
+  turnCount?: number
+  toolCallCount?: number
+}
+
+export interface SharedBackgroundSnapshot {
+  workspace: string
+  updatedAt: number
+  items: SharedBackgroundItem[]
 }
 
 // ─── Agent 视图 ────────────────────────────────────────────────────────────
@@ -959,6 +980,7 @@ export interface RequestMap {
   }
   'background:stop': { params: { shellId: string }; result: { ok: boolean } }
   'background:stop-task': { params: { taskId: string }; result: { ok: boolean } }
+  'background:shared': { params: Record<string, never>; result: { items: SharedBackgroundItem[] } }
   'models:set': { params: { modelId: string }; result: AppState }
   'models:discover': { params: Record<string, never>; result: AppState }
   'session:list': { params: Record<string, never>; result: SessionListItem[] }
@@ -1309,6 +1331,8 @@ export type MainRequestMethod =
   | 'app:safe-storage-status'
   | 'app:safe-storage-encrypt'
   | 'app:safe-storage-decrypt'
+  | 'background:publish'
+  | 'background:list-shared'
 
 /** 字段是方法特定的；只有 `app:render-pdf` 使用 html/title，
  *  safeStorage 方法使用 `data`（明文或 base64 密文），而
@@ -1320,6 +1344,8 @@ export type MainRequestParams = {
   data?: string
   path?: string
   sessionId?: string
+  workspace?: string
+  background?: SharedBackgroundSnapshot
 }
 
 /** 运行时 utility 进程 → 主进程。 */

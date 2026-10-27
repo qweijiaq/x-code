@@ -258,6 +258,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, host.stopBackgroundTask(request.params.taskId))
       }
+      case 'background:shared': {
+        await ensureInitialized()
+        return ok(request.id, { items: await host.querySharedBackground() })
+      }
       case 'models:set': {
         await ensureInitialized()
         return ok(request.id, host.setModel(request.params.modelId))

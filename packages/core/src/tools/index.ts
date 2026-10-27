@@ -5,6 +5,7 @@
 // 当前的 MemoryService 和 LoopState；子 agent 永远不会拿到它。
 import { askUser } from './ask-user.js'
 import { killShell, shellOutput } from './background-shell.js'
+import { backgroundGet, backgroundList, backgroundOutput } from './background-tasks.js'
 import { batchRename } from './batch-rename.js'
 import { convert } from './convert.js'
 import { documentExport } from './document-export.js'
@@ -43,6 +44,9 @@ export const toolRegistry = {
   todoWrite,
   shellOutput,
   killShell,
+  backgroundList,
+  backgroundGet,
+  backgroundOutput,
   batchRename,
   convert,
   transcribe,

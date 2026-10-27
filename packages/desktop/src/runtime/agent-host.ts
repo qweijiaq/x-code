@@ -134,6 +134,8 @@ import type {
   SessionSearchResult,
   SettingsActionResult,
   SettingsSnapshot,
+  SharedBackgroundItem,
+  SharedBackgroundSnapshot,
   SkillImportResult,
   SkillMarketListView,
   SkillMarketProvider,
@@ -441,6 +443,7 @@ export class AgentHost {
   private activeTurn: ActiveTurn | null = null
   private controller: AbortController | null = null
   private readonly backgroundTasks = new BackgroundTaskRegistry()
+  private backgroundPublishTimer: ReturnType<typeof setInterval> | null = null
   private approvals = new Map<string, PendingApproval>()
   private mcp: McpService | null = null
   private disabledTools = new Set<string>()
@@ -744,17 +747,25 @@ export class AgentHost {
    *  也能发出系统通知。 */
   private watchShellSessions(state: LoopState): void {
     this.shellUnsubscribe?.()
+    if (!this.backgroundPublishTimer) {
+      this.backgroundPublishTimer = setInterval(() => this.publishBackgroundState(), 2_000)
+      this.backgroundPublishTimer.unref?.()
+    }
+    this.publishBackgroundState()
     this.shellUnsubscribe = state.shellSessions.subscribe((event) => {
       if (event.kind === 'snapshot') {
         this.send({ type: 'background:changed' })
+        this.publishBackgroundState()
         return
       }
       if (event.kind === 'started' || event.kind === 'yielded') {
         this.send({ type: 'background:changed' })
+        this.publishBackgroundState()
         return
       }
       if (event.kind === 'root-exited' || event.kind === 'residual-registered') {
         this.send({ type: 'background:changed' })
+        this.publishBackgroundState()
         if (!this.activeTurn && event.kind === 'root-exited') {
           this.notify(
             '后台任务已结束',
@@ -1008,6 +1019,58 @@ export class AgentHost {
     const ok = this.backgroundTasks.abort(taskId)
     if (ok) this.send({ type: 'background:changed' })
     return { ok }
+  }
+
+  /** 向主进程发布一份紧凑快照，供其他窗口只读查询。 */
+  private sharedBackgroundItems(): SharedBackgroundItem[] {
+    const now = Date.now()
+    const shells: SharedBackgroundItem[] = this.backgroundSessions().map((shell) => ({
+      id: shell.shellId,
+      kind: 'shell',
+      status: shell.status,
+      description: shell.command,
+      ...(shell.elapsedMs !== undefined ? { elapsedMs: shell.elapsedMs } : {}),
+      outputTail: shell.recentOutput.slice(-1_000),
+      ...(shell.exitCode !== undefined ? { exitCode: shell.exitCode } : {}),
+    }))
+    const tasks: SharedBackgroundItem[] = this.backgroundTaskList().map((task) => ({
+      id: task.id,
+      kind: 'agent',
+      status: task.status,
+      description: `${task.agentName}: ${task.description}`,
+      elapsedMs: task.durationMs ?? Math.max(0, now - task.startedAt),
+      ...(task.turnCount !== undefined ? { turnCount: task.turnCount } : {}),
+      ...(task.toolCallCount !== undefined ? { toolCallCount: task.toolCallCount } : {}),
+      ...(task.resultText ? { resultText: task.resultText.slice(0, 4_000) } : {}),
+      ...(task.error ? { resultText: task.error.slice(0, 1_000) } : {}),
+    }))
+    return [...shells, ...tasks].slice(0, 50)
+  }
+
+  publishBackgroundState(): void {
+    const workspace = this.loopState ? this.requireBootstrap().workspace : undefined
+    if (!workspace) return
+    const snapshot: SharedBackgroundSnapshot = {
+      workspace,
+      updatedAt: Date.now(),
+      items: this.sharedBackgroundItems(),
+    }
+    void requestMain('background:publish', { workspace, background: snapshot }).catch(() => undefined)
+  }
+
+  async querySharedBackground(): Promise<SharedBackgroundItem[]> {
+    try {
+      const result = await requestMain<{ items?: SharedBackgroundItem[] }>(
+        'background:list-shared',
+        {
+          workspace: this.requireBootstrap().workspace,
+        },
+        5_000,
+      )
+      return Array.isArray(result?.items) ? result.items : []
+    } catch {
+      return []
+    }
   }
 
   async libraryStats(): Promise<LibraryStatsView> {
@@ -1638,11 +1701,48 @@ export class AgentHost {
     if (persist && !this.demo) saveUserConfig({ model: modelId })
   }
 
+  private async backgroundPromptSummary(): Promise<string> {
+    const now = Date.now()
+    const localIds = new Set<string>()
+    const lines: string[] = []
+    for (const shell of this.backgroundSessions()) {
+      localIds.add(shell.shellId)
+      if (!['starting', 'running', 'terminating', 'finalizing'].includes(shell.status)) continue
+      const elapsed = Math.max(0, Math.round((shell.elapsedMs ?? 0) / 1000))
+      lines.push(`- shell ${shell.shellId} [${shell.status}] ${shell.command} · ${elapsed}s`)
+    }
+    for (const task of this.backgroundTaskList()) {
+      localIds.add(task.id)
+      if (task.status !== 'running') continue
+      const elapsed = Math.max(0, Math.round((task.durationMs ?? now - task.startedAt) / 1000))
+      lines.push(
+        `- task ${task.id} [${task.status}] ${task.agentName}: ${task.description} · ${elapsed}s${
+          task.toolCallCount !== undefined ? ` · ${task.toolCallCount} tools` : ''
+        }`,
+      )
+    }
+    for (const item of await this.querySharedBackground()) {
+      if (localIds.has(item.id)) continue
+      if (!['starting', 'running', 'terminating', 'finalizing'].includes(item.status)) continue
+      const elapsed = Math.max(0, Math.round((item.elapsedMs ?? 0) / 1000))
+      lines.push(`- ${item.kind} ${item.id} [${item.status}] ${item.description} · ${elapsed}s · from another window`)
+    }
+    if (lines.length === 0) return ''
+    lines.unshift('[Background context — tasks still running in this window and other windows]')
+    lines.push(
+      'Use backgroundList, backgroundGet or backgroundOutput to inspect any of these; do not claim live progress you have not queried.',
+      '[/Background context]',
+    )
+    return lines.join('\n')
+  }
+
   async submit(prompt: string, attachments: string[] = []): Promise<TurnResult> {
     if (this.activeTurn) throw new Error('turn-busy')
     // 缓存 30 秒：使其他终端安装的工具在下一轮可见，
     // 且无需每轮都付出登录 shell 启动的成本。
     await refreshShellEnvironment()
+    const backgroundContext = await this.backgroundPromptSummary()
+    const promptWithBackground = backgroundContext ? `${backgroundContext}\n\n[User message]\n${prompt}` : prompt
     const bootstrap = this.requireBootstrap()
     const existing = this.loopState
     const state = existing ?? createLoopState('default', { projectCwd: bootstrap.workspace })
@@ -1674,7 +1774,7 @@ export class AgentHost {
     const callbacks = this.buildCallbacks(turnId, turn)
     let reason = 'completed'
     try {
-      const content = await this.prepareUserContent(prompt, attachments, state, controller.signal)
+      const content = await this.prepareUserContent(promptWithBackground, attachments, state, controller.signal)
       const result = await agentLoop(
         content,
         model,
@@ -1683,6 +1783,7 @@ export class AgentHost {
           modelId: this.modelId,
           abortSignal: controller.signal,
           backgroundTaskRegistry: this.backgroundTasks,
+          backgroundInfoProvider: { list: () => this.querySharedBackground() },
           systemPromptExtra: `${taskModeInstruction(this.taskMode)}\nSave user-facing deliverables under ${this.requireBootstrap().workspace}; use the system temp directory only for disposable intermediates.`,
         },
         callbacks,
@@ -3513,6 +3614,7 @@ export class AgentHost {
         if (!task) return
         send({ type: 'agent:background-task', phase: event.kind, task })
         send({ type: 'background:changed' })
+        this.publishBackgroundState()
         if (event.kind === 'end') {
           this.notify(
             task.status === 'completed' ? '后台任务已完成' : '后台任务已结束',

@@ -8,6 +8,7 @@ import type {
   RequestMethod,
   RuntimeRequest,
   RuntimeResponse,
+  SharedBackgroundItem,
 } from '../shared/protocol.js'
 
 function request<T extends RequestMethod>(method: T, params: RequestMap[T]['params']): Promise<RuntimeResponse> {
@@ -66,6 +67,7 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
   const { t } = useTranslation()
   const [sessions, setSessions] = useState<BackgroundShellView[]>([])
   const [tasks, setTasks] = useState<BackgroundTaskView[]>([])
+  const [shared, setShared] = useState<SharedBackgroundItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [stopping, setStopping] = useState<string | null>(null)
@@ -79,6 +81,10 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
       setError(null)
     } else {
       setError(response.error.message)
+    }
+    const sharedResponse = await request('background:shared', {})
+    if (sharedResponse.ok) {
+      setShared((sharedResponse.result as { items?: SharedBackgroundItem[] }).items ?? [])
     }
   }, [])
 
@@ -114,9 +120,12 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
     }
   }
 
+  const localIds = new Set([...sessions.map((session) => session.shellId), ...tasks.map((task) => task.id)])
+  const sharedItems = shared.filter((item) => !localIds.has(item.id))
   const activeCount =
     sessions.filter((session) => isActive(session.status)).length +
-    tasks.filter((task) => task.status === 'running').length
+    tasks.filter((task) => task.status === 'running').length +
+    sharedItems.filter((item) => item.status === 'running').length
 
   return (
     <>
@@ -140,7 +149,7 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
         </header>
         <div className="background-body">
           {error ? <div className="settings-warn">{error}</div> : null}
-          {!error && sessions.length === 0 && tasks.length === 0 ? (
+          {!error && sessions.length === 0 && tasks.length === 0 && sharedItems.length === 0 ? (
             <div className="background-empty">{t('暂无后台任务')}</div>
           ) : null}
           {tasks.map((task) => {
@@ -182,6 +191,35 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
                   </button>
                 ) : null}
                 {open && task.resultText ? <pre className="background-output">{task.resultText}</pre> : null}
+              </div>
+            )
+          })}
+          {sharedItems.map((item) => {
+            const open = expanded === `shared-${item.id}`
+            const text = item.resultText ?? item.outputTail ?? ''
+            return (
+              <div className="background-item task shared" key={`shared-${item.id}`}>
+                <div className="background-row">
+                  <span className={`background-status ${item.status}`}>{item.status}</span>
+                  <code className="background-command" title={item.description}>
+                    {item.kind === 'shell' ? 'shell' : 'agent'} · {item.description}
+                  </code>
+                  <span className="background-meta">{t('其他窗口')}</span>
+                </div>
+                <div className="background-stats">
+                  <span>
+                    {t('已运行')} {formatElapsed(item.elapsedMs)}
+                  </span>
+                  {item.toolCallCount !== undefined ? (
+                    <span>{t('{{count}} 次工具调用', { count: item.toolCallCount })}</span>
+                  ) : null}
+                </div>
+                {text ? (
+                  <button className="background-toggle" onClick={() => setExpanded(open ? null : `shared-${item.id}`)}>
+                    {open ? t('收起结果') : t('查看输出')}
+                  </button>
+                ) : null}
+                {open && text ? <pre className="background-output">{text}</pre> : null}
               </div>
             )
           })}

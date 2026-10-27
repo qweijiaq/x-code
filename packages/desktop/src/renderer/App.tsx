@@ -1563,21 +1563,41 @@ export function App(): React.JSX.Element {
       })
       if (cancelled || !response.ok) return
       const result = response.result as {
-        sessions: Array<{ status?: string }>
-        tasks?: Array<{ status?: string }>
+        sessions: Array<{ shellId?: string; status?: string }>
+        tasks?: Array<{ id?: string; status?: string }>
       }
-      const active =
-        result.sessions.filter((session) =>
-          ['starting', 'running', 'terminating', 'finalizing'].includes(session.status ?? ''),
-        ).length + (result.tasks ?? []).filter((task) => task.status === 'running').length
-      setBackgroundActive(active)
+      const localIds = new Set<string>()
+      let active = 0
+      for (const session of result.sessions) {
+        if (session.shellId) localIds.add(session.shellId)
+        if (['starting', 'running', 'terminating', 'finalizing'].includes(session.status ?? '')) active += 1
+      }
+      for (const task of result.tasks ?? []) {
+        if (task.id) localIds.add(task.id)
+        if (task.status === 'running') active += 1
+      }
+      const sharedResponse = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'background:shared',
+        params: {},
+      })
+      if (sharedResponse.ok) {
+        const items = (sharedResponse.result as { items?: Array<{ id?: string; status?: string }> }).items ?? []
+        for (const item of items) {
+          if (item.id && localIds.has(item.id)) continue
+          if (item.status === 'running') active += 1
+        }
+      }
+      if (!cancelled) setBackgroundActive(active)
     }
     void refreshBackgroundCount()
+    const timer = setInterval(() => void refreshBackgroundCount(), 3_000)
     const off = window.xcode.onEvent((event) => {
       if (event.type === 'background:changed') void refreshBackgroundCount()
     })
     return () => {
       cancelled = true
+      clearInterval(timer)
       off()
     }
   }, [])

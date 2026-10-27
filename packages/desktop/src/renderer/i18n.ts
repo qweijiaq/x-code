@@ -609,6 +609,7 @@ export const EN: Record<string, string> = {
   '{{count}} 次工具调用': '{{count}} tool calls',
   查看结果: 'View result',
   收起结果: 'Hide result',
+  其他窗口: 'Other window',
   '后台任务结束：{{agent}} — {{description}}（{{status}}）':
     'Background task finished: {{agent}} — {{description}} ({{status}})',
   停止等待: 'Stop waiting',

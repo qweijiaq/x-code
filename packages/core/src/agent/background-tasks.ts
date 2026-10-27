@@ -29,6 +29,7 @@ export type BackgroundTaskEvent = { kind: 'start' | 'end'; task: BackgroundTaskS
 interface Entry {
   task: BackgroundTaskSnapshot
   controller: AbortController
+  waiters: Set<(task: BackgroundTaskSnapshot) => void>
 }
 
 /** 跟踪后台子代理。注册表只保存状态和停止句柄；实际运行由 agent loop
@@ -48,7 +49,7 @@ export class BackgroundTaskRegistry {
       status: 'running',
       startedAt: Date.now(),
     }
-    this.entries.set(id, { task, controller })
+    this.entries.set(id, { task, controller, waiters: new Set() })
     const signal = input.parentSignal ? AbortSignal.any([input.parentSignal, controller.signal]) : controller.signal
     return { task: { ...task }, signal }
   }
@@ -76,6 +77,8 @@ export class BackgroundTaskRegistry {
       turnCount: patch.turnCount,
       toolCallCount: patch.toolCallCount,
     }
+    for (const resolve of entry.waiters) resolve({ ...entry.task })
+    entry.waiters.clear()
     return { ...entry.task }
   }
 
@@ -86,6 +89,26 @@ export class BackgroundTaskRegistry {
 
   list(): BackgroundTaskSnapshot[] {
     return [...this.entries.values()].map((entry) => ({ ...entry.task })).sort((a, b) => a.startedAt - b.startedAt)
+  }
+
+  /** 等待任务结束；超时或中止时返回当前快照，不抛错。 */
+  waitFor(id: string, timeoutMs: number, signal?: AbortSignal): Promise<BackgroundTaskSnapshot | null> {
+    const entry = this.entries.get(id)
+    if (!entry) return Promise.resolve(null)
+    if (entry.task.status !== 'running') return Promise.resolve({ ...entry.task })
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const finish = (task: BackgroundTaskSnapshot): void => {
+        if (timer) clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+        entry.waiters.delete(finish)
+        resolve(task)
+      }
+      const onAbort = (): void => finish({ ...entry.task })
+      entry.waiters.add(finish)
+      timer = setTimeout(() => finish({ ...entry.task }), Math.max(0, timeoutMs))
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
   }
 
   abort(id: string): boolean {

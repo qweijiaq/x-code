@@ -5415,6 +5415,11 @@ body::before,
   background: var(--paper-2);
 }
 
+.background-item.shared {
+  border-style: dashed;
+  background: transparent;
+}
+
 .background-row {
   display: flex;
   flex-wrap: wrap;

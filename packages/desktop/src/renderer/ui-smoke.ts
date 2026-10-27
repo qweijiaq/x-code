@@ -403,6 +403,24 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       ok: backgroundTaskSeen,
       detail: `task=${backgroundTaskSeen}`,
     }
+    let backgroundSharedSeen = false
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const shared = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'background:shared',
+        params: {},
+      })
+      const items = shared.ok ? ((shared.result as { items?: Array<{ kind?: string }> }).items ?? []) : []
+      if (items.some((item) => item.kind === 'agent')) {
+        backgroundSharedSeen = true
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    checks.backgroundShared = {
+      ok: backgroundSharedSeen,
+      detail: `shared=${backgroundSharedSeen}`,
+    }
 
     let subagentStart = false
     let subagentEnd = false
