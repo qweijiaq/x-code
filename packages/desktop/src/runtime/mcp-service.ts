@@ -158,9 +158,22 @@ export class McpService {
     this.onChange()
   }
 
-  async shutdown(): Promise<void> {
-    await this.connecting?.catch(() => undefined)
-    await this.registry.shutdown()
+  async shutdown(timeoutMs = 1_500): Promise<void> {
+    const bounded = (task: Promise<unknown> | null | undefined): Promise<void> =>
+      new Promise((resolve) => {
+        let settled = false
+        const finish = (): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          resolve()
+        }
+        const timer = setTimeout(finish, timeoutMs)
+        void (task ?? Promise.resolve()).catch(() => undefined).then(finish)
+      })
+    // 连接中的 MCP server 可能永远不返回；切工作区不能被它拖住。
+    await bounded(this.connecting)
+    await bounded(this.registry.shutdown())
   }
 
   getRegistry(): McpRegistry {

@@ -23,8 +23,11 @@ export interface LocalModelInfo {
 }
 
 const DISCOVERY_TIMEOUT_MS = 700
+const DISCOVERY_CACHE_MS = 30_000
 const MAX_MODELS_PER_SERVER = 12
 const discovered = new Map<string, LocalModelInfo>()
+let lastDiscoveryAt = 0
+let lastDiscovery: LocalModelInfo[] = []
 
 function normalizeRoot(value: string): string {
   return value.trim().replace(/\/+$/, '').replace(/\/v1$/, '')
@@ -82,7 +85,10 @@ async function probeLmStudio(): Promise<LocalModelInfo[]> {
 
 /** 并行探测两个本地服务器。错误（未运行、超时）视为
  *  「无模型」，这样启动绝不会因本地服务器而失败。 */
-export async function discoverLocalModels(): Promise<LocalModelInfo[]> {
+export async function discoverLocalModels(force = false): Promise<LocalModelInfo[]> {
+  if (!force && lastDiscoveryAt > 0 && Date.now() - lastDiscoveryAt < DISCOVERY_CACHE_MS) {
+    return lastDiscovery
+  }
   const results = await Promise.allSettled([probeOllama(), probeLmStudio()])
   const models: LocalModelInfo[] = []
   for (const result of results) {
@@ -90,6 +96,8 @@ export async function discoverLocalModels(): Promise<LocalModelInfo[]> {
   }
   discovered.clear()
   for (const model of models) discovered.set(model.id, model)
+  lastDiscovery = models
+  lastDiscoveryAt = Date.now()
   return models
 }
 

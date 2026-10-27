@@ -9003,3 +9003,31 @@ iframe.file-preview {
 .sidebar-session-row.active .sidebar-session {
   border-radius: 9px;
 }
+
+.sidebar-project:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.sidebar-project.switching {
+  opacity: 1;
+  background: rgba(176, 58, 46, 0.06);
+}
+
+.project-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border: 1.5px solid var(--ink-20);
+  border-top-color: var(--cinnabar);
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: project-spin 0.8s linear infinite;
+}
+
+@keyframes project-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

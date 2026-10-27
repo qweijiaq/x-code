@@ -37,6 +37,7 @@ import {
   getModelContextWindowOverride,
   getPermissionLevel,
   getPluginUserConfig,
+  getSessionFilePath,
   hydrateLoopState,
   indexLibrary,
   libraryStats,
@@ -653,7 +654,10 @@ export class AgentHost {
 
     if (this.loopState && this.loopState.messages.length > 0) {
       const model = this.demo ? createDemoModel() : this.model
-      if (model) await saveSession(this.loopState, model).catch(() => undefined)
+      // 切到另一个工作区不需要等旧会话落盘；先把路径钉在旧工作区，
+      // 避免后台 flush 时 cwd 已经变成新目录。
+      this.loopState.sessionFilePath ??= getSessionFilePath(this.loopState, this.requireBootstrap().workspace)
+      if (model) void saveSession(this.loopState, model).catch(() => undefined)
     }
     this.cancelAllApprovals()
     this.workspaceOverride = resolved
@@ -1657,7 +1661,7 @@ export class AgentHost {
   /** 重新探测 Ollama / LM Studio 并就地刷新模型列表。 */
   async discoverLocal(): Promise<AppState> {
     if (this.activeTurn) throw new Error('turn-busy')
-    const local = await discoverLocalModels()
+    const local = await discoverLocalModels(true)
     if (this.state) {
       this.state.models = [
         ...this.state.models.filter((model) => !model.id.startsWith('ollama:') && !model.id.startsWith('lmstudio:')),

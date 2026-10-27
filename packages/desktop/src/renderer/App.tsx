@@ -570,6 +570,7 @@ export function App(): React.JSX.Element {
   const terminalOpen = inspectorTab === 'terminal'
   const [backgroundOpen, setBackgroundOpen] = useState(false)
   const [backgroundActive, setBackgroundActive] = useState(0)
+  const [switchingProject, setSwitchingProject] = useState<string | null>(null)
   const [workspaceGuard, setWorkspaceGuard] = useState<{
     prompt: string
     files: string[]
@@ -1773,36 +1774,56 @@ export function App(): React.JSX.Element {
   }
 
   const switchProject = async (nextPath: string): Promise<void> => {
-    const response = await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'workspace:switch',
-      params: { path: nextPath },
-    })
-    if (!response.ok) {
-      append({ role: 'error', text: t('切换项目失败：{{message}}', { message: response.error.message }) })
+    if (switchingProject) return
+    if (nextPath === (appState?.workspace ?? settings?.workspace)) return
+    if (busyRef.current) {
+      setNotice(t('当前回复仍在运行，请先停止或等待结束后再切换工作区。'))
       return
     }
-    const result = response.result as SettingsActionResult
-    setAppState(result.state)
-    setSettings(result.settings)
-    setEntries([])
-    setTodos([])
-    setUsage(null)
-    setReport(null)
-    setQueued(0)
-    queueRef.current = []
-    setQueuedItems([])
-    setAttachments([])
-    setActiveSessionId(null)
-    setTabs([])
-    emptyTabsRef.current.clear()
-    pendingSessionRef.current = null
-    setPendingSession(null)
-    setSessionQuery('')
-    setRenaming(null)
-    setDeletingSession(null)
-    closeInspector()
-    await Promise.all([refreshSessions(), refreshWorkspaces()])
+    setSwitchingProject(nextPath)
+    setNotice(t('正在切换工作区…'))
+    try {
+      const response = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'workspace:switch',
+        params: { path: nextPath },
+      })
+      if (!response.ok) {
+        append({ role: 'error', text: t('切换项目失败：{{message}}', { message: response.error.message }) })
+        setNotice(null)
+        return
+      }
+      const result = response.result as SettingsActionResult
+      setAppState(result.state)
+      setSettings(result.settings)
+      setEntries([])
+      setTodos([])
+      setUsage(null)
+      setReport(null)
+      setQueued(0)
+      queueRef.current = []
+      setQueuedItems([])
+      setAttachments([])
+      setActiveSessionId(null)
+      setTabs([])
+      setSessions([])
+      emptyTabsRef.current.clear()
+      pendingSessionRef.current = null
+      setPendingSession(null)
+      setSessionQuery('')
+      setRenaming(null)
+      setDeletingSession(null)
+      closeInspector()
+      setNotice(t('工作区已切换'))
+      setTimeout(() => setNotice(null), 1_600)
+      // 会话列表和最近工作区可以稍后刷新；切换本身已经完成，先把界面交还用户。
+      void Promise.all([refreshSessions(), refreshWorkspaces()])
+    } catch (error) {
+      append({ role: 'error', text: t('切换项目失败：{{message}}', { message: String(error) }) })
+      setNotice(null)
+    } finally {
+      setSwitchingProject(null)
+    }
   }
 
   const pickProject = async (): Promise<void> => {
@@ -3635,7 +3656,12 @@ export function App(): React.JSX.Element {
               >
                 <BranchIcon />
               </button>
-              <button className="sidebar-add" title={t('选择项目文件夹')} onClick={() => void pickProject()}>
+              <button
+                className="sidebar-add"
+                title={t('选择项目文件夹')}
+                disabled={switchingProject !== null}
+                onClick={() => void pickProject()}
+              >
                 ＋
               </button>
             </div>
@@ -3643,11 +3669,18 @@ export function App(): React.JSX.Element {
               {workspaces.map((project) => (
                 <button
                   key={project.path}
-                  className={`sidebar-project ${project.current ? 'active' : ''}`}
+                  className={`sidebar-project ${project.current ? 'active' : ''} ${
+                    switchingProject === project.path ? 'switching' : ''
+                  }`}
                   title={project.path}
+                  disabled={switchingProject !== null}
+                  aria-busy={switchingProject === project.path}
                   onClick={() => void switchProject(project.path)}
                 >
-                  <span className="sidebar-project-name">{project.name}</span>
+                  <span className="sidebar-project-name">
+                    {switchingProject === project.path ? <span className="project-spinner" aria-hidden="true" /> : null}
+                    {project.name}
+                  </span>
                   <span className="sidebar-project-path">{project.path}</span>
                 </button>
               ))}
