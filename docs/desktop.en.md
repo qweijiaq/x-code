@@ -140,7 +140,7 @@ terminal while continuing the conversation.
   runs detected checks and offers fixes.
 - Built-in terminal, file tree and a light editor; diff cards open VS Code or
   Cursor at the changed line.
-- Background shell sessions, system notifications, zoom, tray and global shortcut.
+- Background shells and background sub-agents (`task` with `background: true`), queued prompts that continue in a new window, system notifications, zoom, tray and global shortcut. The background task panel lists shell and sub-agent status, duration, result and a stop action.
 - **Settings → Tools** enables the browser sub-agent (a managed Chrome launched
   through `npx @playwright/mcp`) and the independent automatic visual checks.
 - Files the agent creates for you to keep default to the current workspace; the

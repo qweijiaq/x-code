@@ -34,6 +34,7 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **Regenerate**: regenerate the last answer; turns with attachments must be edited to text first.
 - **Rewind**: `/rewind` or the palette; choose code only, conversation only, or both.
 - **Fork**: `/fork` copies the current session into an independent conversation.
+- **Keep working while busy**: pressing Enter during a reply queues the prompt. A text-only queued item offers **Continue in new window**, which forks the last saved session, opens the copy in a new window and submits that prompt there while the original reply keeps running. Prompts with attachments do not offer this action yet.
 - **Recover a damaged session**: when transcript integrity fails, the app offers to salvage parseable messages into a new session without modifying the original file.
 
 ## Conversation outline
@@ -134,7 +135,9 @@ The **Outline** tab in the right-hand inspector (also the top-bar outline button
 - **Task modes**: coding / writing / research / office adjust what answers emphasize, not the available tools. Empty-state suggestions come from the current workspace.
 - **Plan mode**: `/plan` enters read-only exploration; the agent proposes a plan and writes after approval.
 - **Goal loops**: `/goal` runs execute → verify → repair until passing or a stop condition is reached.
-- **Background tasks**: long shell commands can be inspected and stopped in the background task panel. A command that outlives its initial wait moves to the background; if the model makes one passive status check and it is still running, the current reply ends automatically so you can keep asking. The composer shows the running count and a **View** entry. The panel shows elapsed time, output size and a progress bar (a real percentage when the command prints one, an activity animation otherwise); the Tools menu also shows the running count. Press Enter while a turn is running to queue a prompt. If the reply is still waiting on a background task, a banner offers **Stop waiting** (or **Stop waiting and run queued**); it ends only the current reply and leaves the background task running. For long independent investigation or review, the agent can use a background sub-agent: `task` with `background: true` returns a task id immediately, the sub-agent keeps running in its own context, and the panel shows status, tool-call count, duration and the result, with a system notification on completion and a stop action. A queued text-only prompt can also use **Continue in new window**: it forks the last saved session, opens a new window and submits that prompt there, leaving the current reply untouched (prompts with attachments are not supported for this yet).
+- **Background shells**: a command that outlives its initial wait moves to the background task panel. If the model makes one default passive status check and it is still running, the current reply ends automatically and the composer becomes usable. The composer shows the running count and a **View** entry; the panel shows elapsed time, output size, a progress bar and a stop action (a real percentage when the command prints one, an activity animation otherwise).
+- **Background sub-agents**: for long independent investigation, review or organizing, the agent can dispatch `task` with `background: true`; the call returns a task id immediately. The sub-agent runs in its own context, and the panel shows status, duration, tool-call count, result and a stop action, with a system notification on completion. The result is not merged into the main conversation's model context automatically; open the panel or reference the result in your next prompt.
+- **Continue in the background**: pressing Enter while a reply is running queues the prompt. A text-only queued item offers **Continue in new window**, which forks the last saved session and submits that prompt in a new window while the original reply keeps running. If the reply is still waiting on a background task, a banner offers **Stop waiting** (or **Stop waiting and run queued**); it ends only the current reply and leaves the background task running.
 - **Browser sub-agent**: enable in Settings → Tools; `task` can then delegate clicking, typing and sign-in. First use launches a managed Chrome through `npx @playwright/mcp`.
 - **Automatic visual checks**: the root agent can take one localhost screenshot after a significant visual change; independent from the browser sub-agent.
 - **Memory**: manage user memory in Settings → Memory; project knowledge comes from layered `AGENTS.md` / `AGENTS.local.md` files.
@@ -180,6 +183,7 @@ Typing `/` lists every command; `/help` shows the full list. Common commands inc
 - **Restore**: adds missing files only and never overwrites; skills/commands/sub-agents reload immediately and the session list refreshes.
 - **Diagnostics**: Settings → Tools → Diagnostics and support, or the palette. The JSON snapshot excludes keys, MCP env/headers and command contents.
 - **Error log**: renderer errors append to `~/.x-code/logs/desktop-errors.log`; a render crash shows a recovery screen with reload and diagnostics export.
+- **Background task state**: background shell/sub-agent progress is process-local and not included in backups; output already written to the session transcript is saved with the session.
 - **Updates**: Settings → Desktop updates. Checks the official GitHub Release `RELEASE.json` by default (using the system proxy); you can also paste the HTTPS URL of your own release directory. Downloads show bytes, speed, percentage and a progress bar, and can be cancelled. The installer goes to the system Downloads folder by default; **Choose location** opens a save dialog, and the final path plus **Show in Finder** appear after the SHA-256 check. Automatic installation still requires a signed app.
 
 ## Troubleshooting
@@ -190,6 +194,8 @@ Typing `/` lists every command; `/help` shows the full list. Common commands inc
 - **Skill install failure**: check network/proxy; SkillsMP needs GitHub access. macOS reuses the system proxy; elsewhere set `HTTPS_PROXY`.
 - **Constant permission prompts**: add a rule in Settings → Permissions or enable always-allow for that tool; destructive commands still prompt.
 - **Blank document or no text**: scanned PDFs need OCR; click OCR in the document panel or ask the agent to use `readDocument`.
+- **A background task seems to have no result**: open the Background tasks panel to see the sub-agent result and tool calls; background sub-agent results do not enter the main conversation context automatically. Unfinished background tasks are lost when the app quits, while output already written to the transcript remains.
+- **Continue in new window is missing or fails**: the action only appears for text-only queued prompts. It needs a saved session, and a failed transcript-integrity check blocks the fork. For a prompt with attachments, remove it from the queue and send it normally.
 - **Terminal shows garbled Chinese**: the built-in terminal forces a UTF-8 locale; if your environment sets `LANG`/`LC_CTYPE` to `C` or empty, the app switches it to `en_US.UTF-8`. If it still looks wrong, confirm the command itself emits UTF-8 (`file`, `locale`) and reopen the terminal tab.
 - **Terminal will not start**: confirm the runtime is connected; the terminal uses a PTY and reports failures at the top.
 - **Blank window**: use the crash recovery screen to reload and export diagnostics; the log is `~/.x-code/logs/desktop-errors.log`.
@@ -204,7 +210,11 @@ Typing `/` lists every command; `/help` shows the full list. Common commands inc
 
 - Windows/Linux installers are configured in CI but have not been accepted on real devices.
 - macOS signing, notarization and automatic install updates require Apple credentials.
-- The real-LLM E2E suite needs provider credentials and is not in the default release gate.
+- The real-LLM E2E suite needs provider credentials; its 26 scenarios now pass on `deepseek-flash`, but it is still not part of the default CI/release gate.
+- Background sub-agent results appear in the panel and tool card; they are not merged into the main conversation's model context automatically.
+- **Continue in new window** forks the last saved session snapshot, so it excludes output still being generated; queued prompts with attachments are not supported yet.
+- The new and original windows share the same workspace. This is not two parallel turns in one session; editing the same files in both can still conflict, so use a worktree when coding work overlaps.
+- Background shell/sub-agent state lives in the current app process. It is not restored after quitting; output already written to the transcript remains.
 - Desktop peer messaging is not enabled.
 - Task modes only affect answer emphasis; they do not change the tool set.
 - Closing a window does not automatically delete its worktree, to avoid losing uncommitted work.
