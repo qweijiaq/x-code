@@ -7,8 +7,9 @@
 Bring your own model and key. Sessions, memory, skills, MCP servers, plugins and
 hooks are shared between the desktop app and the CLI.
 
-[![license](https://img.shields.io/github/license/qweijiaq/x-code)](./LICENSE)
+[![PR Check](https://github.com/qweijiaq/x-code/actions/workflows/pr-check.yml/badge.svg?branch=main)](https://github.com/qweijiaq/x-code/actions/workflows/pr-check.yml)
 [![release](https://img.shields.io/github/v/release/qweijiaq/x-code)](https://github.com/qweijiaq/x-code/releases)
+[![license](https://img.shields.io/github/license/qweijiaq/x-code)](./LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 
 [Download for macOS](https://github.com/qweijiaq/x-code/releases/latest) ·
@@ -16,7 +17,40 @@ hooks are shared between the desktop app and the CLI.
 [User manual](./docs/desktop-manual.en.md) ·
 [简体中文](./README.zh-CN.md)
 
+<img src="./docs/assets/desktop-chat.png" alt="X-Code Desktop: a conversation with tool calls, Markdown, code and a workspace sidebar" width="100%" />
+
 </div>
+
+## Quick start
+
+**Desktop (macOS arm64):** download `X-Code-<version>-arm64.dmg` from
+[Releases](https://github.com/qweijiaq/x-code/releases/latest), verify it against
+`SHA256SUMS`, and drag **X-Code** into Applications. The community build is
+ad-hoc signed, not notarized, so macOS asks for approval once — see the
+[unsigned install guide](./docs/desktop-install-unsigned.en.md).
+
+**CLI from source** (Node 22+, pnpm 10):
+
+```bash
+git clone https://github.com/qweijiaq/x-code.git && cd x-code && pnpm install && pnpm build && pnpm dev
+```
+
+**Pick a model:** open **Settings → Models & keys**, choose a provider and test
+the connection. No key? The app starts in demo mode so you can inspect the UI.
+You can also use a local Ollama / LM Studio model or any OpenAI-compatible
+endpoint.
+
+**Platform status:** macOS arm64 is the supported desktop build. Windows and
+Linux installers are configured in CI but have not been accepted on real devices
+yet; automatic updates are not enabled.
+
+## Five-minute tour
+
+1. Open a project folder from the sidebar and ask a question about the code.
+2. When the agent edits a file, review the diff card and approve or reject it.
+3. Run a project check from the Inspector and send failures back to the agent.
+4. Attach a PDF, Word or Excel file to test the document workspace.
+5. Type `/` or press `Cmd/Ctrl+K` to discover the rest of the capabilities.
 
 ## Why X-Code
 
@@ -33,22 +67,18 @@ hooks are shared between the desktop app and the CLI.
   with a diff or an approval card. A three-level permission model and a macOS
   shell sandbox keep the agent inside the boundaries you set.
 
-## Download and install
+## How it compares
 
-The desktop app is available for **macOS arm64**:
+This is a shape comparison, not a quality ranking; check each product's current
+documentation before choosing.
 
-1. Open [GitHub Releases](https://github.com/qweijiaq/x-code/releases/latest) and
-   download `X-Code-<version>-arm64.dmg`.
-2. Verify it against `SHA256SUMS`, drag **X-Code** into Applications, and approve
-   the first launch.
-
-The community build is ad-hoc signed, not notarized, so macOS asks for approval
-once. Full steps — including the `xattr` fallback for "app is damaged" — are in
-the [unsigned install guide](./docs/desktop-install-unsigned.en.md).
-
-The CLI is built from this repository — see [Terminal companion](#terminal-companion).
-
-Windows and Linux desktop builds are not part of the 1.0 support statement yet.
+|                                         | X-Code                                  | Claude Code                 | Cursor                 | Cline                |
+| --------------------------------------- | --------------------------------------- | --------------------------- | ---------------------- | -------------------- |
+| Primary surface                         | Desktop + CLI                           | Terminal / IDE integrations | IDE                    | VS Code extension    |
+| Bring your own provider                 | Yes: cloud, local and OpenAI-compatible | Anthropic models            | Multiple hosted models | Yes: cloud and local |
+| Local models (Ollama / LM Studio)       | Yes                                     | No                          | No                     | Yes                  |
+| Desktop and CLI share one session store | Yes (`~/.x-code`)                       | Product-dependent           | No                     | No                   |
+| Open source                             | Yes, MIT                                | No                          | No                     | Yes                  |
 
 ## What the desktop app gives you
 
@@ -213,10 +243,20 @@ Packaging and signing notes live in
 | [Shell sessions](./docs/shell-sessions.en.md)                             | Background terminals                            |
 | [Desktop release](./docs/development/desktop-release.md)                  | Build, sign, verify, update feed                |
 
+## Roadmap
+
+- Windows and Linux desktop acceptance on real devices.
+- Signed/notarized builds and automatic updates.
+- More provider and document-workflow coverage.
+- Persisting background task state across app restarts.
+
+Dates are not promised; track progress in [Issues](https://github.com/qweijiaq/x-code/issues).
+
 ## Feedback
 
 Issues and pull requests are welcome:
-<https://github.com/qweijiaq/x-code/issues>
+<https://github.com/qweijiaq/x-code/issues>. Read
+[CONTRIBUTING.md](./CONTRIBUTING.md) before sending a PR.
 
 ## License
 

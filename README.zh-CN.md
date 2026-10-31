@@ -6,8 +6,9 @@
 
 自带模型和 Key。桌面端与 CLI 共用同一套会话、记忆、技能、MCP、插件和 Hooks。
 
-[![license](https://img.shields.io/github/license/qweijiaq/x-code)](./LICENSE)
+[![PR Check](https://github.com/qweijiaq/x-code/actions/workflows/pr-check.yml/badge.svg?branch=main)](https://github.com/qweijiaq/x-code/actions/workflows/pr-check.yml)
 [![release](https://img.shields.io/github/v/release/qweijiaq/x-code)](https://github.com/qweijiaq/x-code/releases)
+[![license](https://img.shields.io/github/license/qweijiaq/x-code)](./LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 
 [下载 macOS 版](https://github.com/qweijiaq/x-code/releases/latest) ·
@@ -15,7 +16,36 @@
 [用户手册](./docs/desktop-manual.md) ·
 [English](./README.md)
 
+<img src="./docs/assets/desktop-chat.png" alt="X-Code 桌面端：会话、工具调用、Markdown 代码块和工作区侧栏" width="100%" />
+
 </div>
+
+## 快速开始
+
+**桌面端（macOS arm64）：** 从 [Releases](https://github.com/qweijiaq/x-code/releases/latest)
+下载 `X-Code-<version>-arm64.dmg`，用 `SHA256SUMS` 校验后拖进 Applications。
+社区版是 ad-hoc 签名、未公证，首次打开需要按提示放行；完整步骤见
+[未签名版安装指南](./docs/desktop-install-unsigned.md)。
+
+**从源码构建 CLI**（Node 22+，pnpm 10）：
+
+```bash
+git clone https://github.com/qweijiaq/x-code.git && cd x-code && pnpm install && pnpm build && pnpm dev
+```
+
+**选择模型：** 打开 **设置 → 模型与密钥**，选择提供商并测试连接。没有 Key 也可以用
+演示模型查看界面；也支持本地 Ollama / LM Studio 和任意 OpenAI 兼容端点。
+
+**平台状态：** 桌面端目前支持 macOS arm64。Windows / Linux 安装包已经配置 CI，
+但还没有在真实设备上验收；自动更新尚未启用。
+
+## 五分钟上手
+
+1. 从侧栏打开一个项目文件夹，直接问代码相关问题。
+2. Agent 修改文件时，在 diff 卡片上逐条批准或拒绝。
+3. 在 Inspector 里运行项目检查，失败输出可以直接交回给 Agent。
+4. 附加一份 PDF、Word 或 Excel，体验文档工作区。
+5. 输入 `/` 或按 `Cmd/Ctrl+K` 查看其余能力。
 
 ## 为什么选 X-Code
 
@@ -28,21 +58,17 @@
 - **每一步可审查。** 文件修改有 diff，shell 命令和下载有确认卡片；三级权限模型和
   macOS shell 沙箱把 Agent 限制在你设定的边界内。
 
-## 下载与安装
+## 和同类产品的形态对比
 
-桌面端当前提供 **macOS arm64** 版本：
+这里比较的是产品形态，不是质量排名；选择前请核对各产品的最新文档。
 
-1. 打开 [GitHub Releases](https://github.com/qweijiaq/x-code/releases/latest)，下载
-   `X-Code-<version>-arm64.dmg`。
-2. 用 `SHA256SUMS` 校验后，把 **X-Code** 拖进 Applications，首次打开时按提示放行。
-
-社区版是 ad-hoc 签名、未公证，所以 macOS 首次会要求手动批准。完整步骤、以及
-遇到“应用已损坏”时的 `xattr` 处理方式见
-[未签名版安装指南](./docs/desktop-install-unsigned.md)。
-
-CLI 从本仓库构建，见[终端形态](#终端形态)。
-
-Windows / Linux 桌面版暂不在 1.0 的支持范围内。
+|                                | X-Code                       | Claude Code     | Cursor       | Cline          |
+| ------------------------------ | ---------------------------- | --------------- | ------------ | -------------- |
+| 主要形态                       | 桌面端 + CLI                 | 终端 / IDE 集成 | IDE          | VS Code 扩展   |
+| 自带 Provider                  | 支持云端、本地和 OpenAI 兼容 | Anthropic 模型  | 多个托管模型 | 支持云端和本地 |
+| 本地模型（Ollama / LM Studio） | 支持                         | 不支持          | 不支持       | 支持           |
+| 桌面端和 CLI 共享同一会话      | 支持（`~/.x-code`）          | 视产品形态而定  | 不支持       | 不支持         |
+| 开源                           | 是，MIT                      | 否              | 否           | 是             |
 
 ## 桌面端能做什么
 
@@ -188,10 +214,20 @@ pnpm dev             # 从源码构建并运行 CLI
 | [后台 Shell](./docs/shell-sessions.md)                    | 后台终端                         |
 | [桌面端发布](./docs/development/desktop-release.md)       | 构建、签名、验证、更新源         |
 
+## 路线图
+
+- Windows / Linux 桌面端真实设备验收。
+- 签名/公证构建和自动更新。
+- 更多 provider 与文档工作流覆盖。
+- 后台任务状态跨应用重启保留。
+
+不承诺具体日期，进展见 [Issues](https://github.com/qweijiaq/x-code/issues)。
+
 ## 反馈
 
 欢迎通过 Issue 和 Pull Request 反馈：
-<https://github.com/qweijiaq/x-code/issues>
+<https://github.com/qweijiaq/x-code/issues>。提交 PR 前请先阅读
+[CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ## License
 
