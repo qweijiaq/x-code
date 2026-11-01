@@ -26,7 +26,7 @@ Fallback: keep the PR Draft and have the maintainer manually account for every j
 
 ## Real-model E2E and live-provider verification
 
-Status: `SETUP REQUIRED`. The suite is repository-local, but provider selection, credentials, data exposure, cost, cadence, and the lifecycle boundary it blocks are human decisions.
+Status: `SETUP REQUIRED`. The suite is repository-local, but provider selection, credentials, data exposure, cost, cadence, and the lifecycle boundary it blocks are human decisions. `.github/workflows/e2e.yml` already schedules the `--smoke` subset weekly and on dispatch; it skips while the secret is absent.
 
 Before first use, a maintainer should:
 

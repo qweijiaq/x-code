@@ -135,12 +135,13 @@ describe('compressImage', () => {
       expect(result.data.length).toBeLessThanOrEqual(8192)
     })
 
+    // 质量阶梯会对同一张图反复编码；CI 负载高时 5s 默认超时不够。
     it('compresses JPEG to fit a small budget via quality ladder', async () => {
       const buf = await makeJpeg(1000, 1000)
       const result = await compressImage(buf, 'image/jpeg', { byteBudget: 8192 })
       expect(result.changed).toBe(true)
       expect(result.data.length).toBeLessThanOrEqual(8192)
-    })
+    }, 20_000)
   })
 
   describe('format handling', () => {

@@ -180,11 +180,21 @@ cd your-project
 xc                                      # interactive session
 xc "Explain the overall architecture"   # run one prompt
 xc -p "summarize the failing test"      # non-interactive output
+xc -p --output-format json "..."        # one JSON result (text, usage, cost, tool calls)
 xc --plan "migrate the build to ESM"    # read-only planning first
 ```
 
 Sessions, memory, skills, plugins, MCP and permission rules are shared with the
 desktop app. Run `xc --help` for all flags.
+
+Budget a long or unattended run with `--max-tokens` or `--max-cost`. Cost is an
+estimate from list prices; `/usage` shows it and names any model without a price.
+Add your own prices under `pricing` in `~/.x-code/config.json`.
+
+If the active provider is rate-limited, overloaded or unreachable before any
+output, `--fallback-model` (repeatable, or `fallbackModels` in config) retries the
+same prompt on the next model. Authentication and content-filter errors never
+trigger a switch.
 
 ## Supported models
 

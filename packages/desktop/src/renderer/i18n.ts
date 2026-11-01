@@ -69,6 +69,7 @@ export const EN: Record<string, string> = {
   '附件：{{names}}': 'Attachments: {{names}}',
   '附件已读取：{{files}} 个文件，{{chars}} 字符': 'Attachments loaded: {{files}} file(s), {{chars}} chars',
   '上下文已压缩：{{summary}}': 'Context compacted: {{summary}}',
+  '主模型不可用，已切换到 {{model}}': 'Primary model unavailable — switched to {{model}}',
   '连接波动，重试 {{attempt}}/{{max}}…': 'Connection unstable, retrying {{attempt}}/{{max}}…',
   待办: 'Todos',
   结果: 'Result',
@@ -805,6 +806,8 @@ export const EN: Record<string, string> = {
   '（无描述）': '(no description)',
   '（没有输出）': '(no output)',
   '上下文 {{used}} / {{total}} tokens': 'Context {{used}} / {{total}} tokens',
+  '累计 token 与估算成本（列表价，缓存输入未打折；未定价模型不计入）':
+    'Cumulative tokens and estimated cost (list prices, cached input not discounted; unpriced models excluded)',
   项目设置: 'Project settings',
   '这些设置只对当前工作区生效，切换项目时自动应用。没有覆盖的项沿用全局设置。':
     'These settings apply only to the current workspace and are applied automatically when you switch projects. Items without an override follow the global setting.',

@@ -2,6 +2,12 @@
 import type { ModelMessage } from 'ai'
 
 import { getOpenAIAuthContext } from '../auth/openai-chatgpt/auth-resolver.js'
+import {
+  DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  MODEL_LIMITS,
+  PROVIDER_CONTEXT_WINDOWS,
+} from '../providers/model-limits.js'
 import { getOpenAIChatGPTRuntimeModel } from '../providers/openai-chatgpt-models.js'
 
 /**
@@ -22,9 +28,6 @@ export const COMPRESSION_TRIGGER_RATIO = 0.8
  * CJK 下都保持保守。
  */
 const BYTES_PER_TOKEN_ESTIMATE = 3.0
-
-/** 模型级和提供商级查找都未命中时的默认上下文窗口。 */
-const DEFAULT_CONTEXT_WINDOW = 128000
 
 /** 仍与压缩器 20k recent-message 预算兼容的最小覆盖值。 */
 export const MIN_CONTEXT_WINDOW_OVERRIDE = 32768
@@ -63,74 +66,8 @@ export function getModelContextWindowOverride(modelId: string): number | undefin
   return modelContextWindowOverrides[modelId]
 }
 
-/** 每个模型的上下文窗口大小（token）。 */
-const MODEL_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
-  // Anthropic
-  ['anthropic:claude-fable-5-1', 1000000],
-  ['anthropic:claude-opus-5', 1000000],
-  ['anthropic:claude-fable-5', 1000000],
-  ['anthropic:claude-opus-4-8', 1000000],
-  ['anthropic:claude-sonnet-5', 1000000],
-  ['anthropic:claude-haiku-4-5', 200000],
-  // OpenAI
-  ['openai:gpt-6-astra', 1050000],
-  ['openai:gpt-5.6-sol', 1047576],
-  ['openai:gpt-5.6-terra', 1047576],
-  ['openai:gpt-5.6-luna', 1047576],
-  ['openai:gpt-5.4-mini', 1047576],
-  ['openai:gpt-5.4-nano', 1047576],
-  // Google
-  ['google:gemini-3.8-flash', 1048576],
-  ['google:gemini-3.7-flash', 1048576],
-  ['google:gemini-3.6-flash', 1048576],
-  ['google:gemini-3.5-flash', 1000000],
-  ['google:gemini-2.5-pro', 1000000],
-  ['google:gemini-2.5-flash', 1000000],
-  // DeepSeek
-  ['deepseek:deepseek-flash', 1000000],
-  ['deepseek:deepseek-v4-flash', 1000000],
-  ['deepseek:deepseek-v4-pro', 1000000],
-  // Alibaba —— 当前的 Qwen3.8 系列、qwen3.7-max/plus 以及 qwen3-coder-plus 可扩展到 1M；
-  // qwen-max 仍封顶在 32k。数值经
-  // https://help.aliyun.com/zh/model-studio/models 核实。
-  ['alibaba:qwen3.8-max', 1000000],
-  ['alibaba:qwen3.8-flash', 1000000],
-  ['alibaba:qwen3.7-max', 1000000],
-  ['alibaba:qwen3.7-plus', 1000000],
-  ['alibaba:qwen3.7-flash', 1000000],
-  ['alibaba:qwen3-coder-plus', 1000000],
-  ['alibaba:qwq-plus', 131072],
-  ['alibaba:qwen-max', 32768],
-  // xAI —— Grok 4.6/4.5 有 500k 窗口；Grok 4.20/4.3 有 1M。
-  ['xai:grok-4.6', 500000],
-  ['xai:grok-4.20', 1000000],
-  ['xai:grok-4.20-non-reasoning', 1000000],
-  ['xai:grok-4.5', 500000],
-  ['xai:grok-4.3', 1000000],
-  // Zhipu
-  ['zhipu:glm-5.3', 1000000],
-  ['zhipu:glm-5.3-flash', 1000000],
-  ['zhipu:glm-5.2', 1000000],
-  ['zhipu:glm-5', 200000],
-  ['zhipu:glm-4.7', 128000],
-  // Moonshot
-  ['moonshotai:kimi-k3', 1000000],
-  ['moonshotai:kimi-k2.7-code', 262144],
-  ['moonshotai:kimi-k2.7-code-highspeed', 262144],
-  ['moonshotai:kimi-k2.6', 262144],
-])
-
-/** 提供商级回退上下文窗口。 */
-const PROVIDER_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
-  ['anthropic', 1000000],
-  ['openai', 128000],
-  ['google', 1000000],
-  ['deepseek', 1000000],
-  ['alibaba', 128000],
-  ['xai', 128000],
-  ['zhipu', 128000],
-  ['moonshotai', 128000],
-])
+// 模型级窗口与输出上限集中在 `providers/model-limits.ts`：新增模型只改一处，
+// 这里保留解析顺序（用户覆盖 → ChatGPT 运行时模型 → 模型表 → provider 回退）。
 
 /** 解析 `provider:model` 这类模型 id 的原始/已配置上下文上限。
  *  安全余量由 getCompressionThreshold() 恰好应用一次。 */
@@ -141,7 +78,7 @@ export function getContextWindow(modelId: string): number {
   const runtimeModel = getOpenAIChatGPTRuntimeModel(modelId)
   if (runtimeModel) return runtimeModel.contextWindow ?? DEFAULT_CONTEXT_WINDOW
   if (getOpenAIAuthContext().mode === 'chatgpt' && modelId.startsWith('openai:')) return DEFAULT_CONTEXT_WINDOW
-  const exact = MODEL_CONTEXT_WINDOWS.get(modelId)
+  const exact = MODEL_LIMITS.get(modelId)?.contextWindow
   if (exact !== undefined) return exact
   const provider = modelId.split(':')[0]
   return PROVIDER_CONTEXT_WINDOWS.get(provider) ?? DEFAULT_CONTEXT_WINDOW
@@ -152,49 +89,14 @@ export function getCompressionThreshold(modelId: string): number {
   return Math.floor(getContextWindow(modelId) * COMPRESSION_TRIGGER_RATIO)
 }
 
-/**
- * 每个模型的 max_tokens（回复大小）上限。有些提供商拒绝超过其上限的
- * 请求，而不是静默裁剪。
- * 对没有显式条目的模型，回退到一个较高的默认值，
- * AI SDK 会对已知提供商做裁剪。
- */
-const DEFAULT_MAX_OUTPUT_TOKENS = 16384
-const MODEL_MAX_OUTPUT_TOKENS: ReadonlyMap<string, number> = new Map([
-  // 具有提供商文档记载的扩展输出上限的当前旗舰型号。
-  ['anthropic:claude-fable-5-1', 128000],
-  ['anthropic:claude-opus-5', 128000],
-  ['anthropic:claude-fable-5', 128000],
-  ['anthropic:claude-opus-4-8', 128000],
-  ['anthropic:claude-sonnet-5', 128000],
-  ['anthropic:claude-haiku-4-5', 64000],
-  ['openai:gpt-6-astra', 128000],
-  ['google:gemini-3.8-flash', 65536],
-  ['google:gemini-3.7-flash', 65536],
-  ['google:gemini-3.6-flash', 65536],
-  // DeepSeek V4/V4.1：flash 和 pro 宣称最高 384K 输出 token。
-  // 我们封顶在慷慨但保守的 131072，以避免边界情况的 400。
-  ['deepseek:deepseek-flash', 131072],
-  ['deepseek:deepseek-v4-flash', 131072],
-  ['deepseek:deepseek-v4-pro', 131072],
-  // Alibaba —— Qwen3.8 和多模态 Qwen3.7 Plus 支持 64k 输出。
-  ['alibaba:qwen3.8-max', 65536],
-  ['alibaba:qwen3.8-flash', 65536],
-  ['alibaba:qwen3.7-plus', 65536],
-  ['alibaba:qwen3.7-flash', 65536],
-  // 较旧的 Qwen3.7 模型支持 32768（非思考）/ 81920（思考）。
-  // 我们封顶在非思考上限，好让请求总能成功。
-  ['alibaba:qwen-max', 8192],
-  ['alibaba:qwen3.7-max', 32000],
-  ['alibaba:qwen3-coder-plus', 32000],
-  ['alibaba:qwq-plus', 32000],
-])
-
-/** 解析我们发给提供商的 max_tokens 上限。 */
+/** 解析我们发给提供商的 max_tokens 上限。
+ *  模型专属上限同样来自 `providers/model-limits.ts`；没有条目时使用默认值，
+ *  AI SDK 会再按已知 provider 裁剪。 */
 export function getMaxOutputTokens(modelId: string): number {
   const runtimeModel = getOpenAIChatGPTRuntimeModel(modelId)
   if (runtimeModel) return runtimeModel.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
   if (getOpenAIAuthContext().mode === 'chatgpt' && modelId.startsWith('openai:')) return DEFAULT_MAX_OUTPUT_TOKENS
-  return MODEL_MAX_OUTPUT_TOKENS.get(modelId) ?? DEFAULT_MAX_OUTPUT_TOKENS
+  return MODEL_LIMITS.get(modelId)?.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
 }
 
 type ContentPartLike = {

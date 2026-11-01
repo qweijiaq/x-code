@@ -28,7 +28,7 @@ Prompt contract:
 - Set background: true for long independent work; the call returns a task id immediately, the user can keep chatting, and progress appears in the background task panel.
 - Ask for concrete snippets or file:line references when needed, and trust a complete result instead of repeating its exploration.
 
-Independent read-only agents may run concurrently in one assistant message. Never run concurrent agents that can write the same files or resources.`
+At most 3 independent read-only agents run concurrently in one assistant message; extra calls wait for the next batch. Never run concurrent agents that can write the same files or resources.`
 }
 
 /** 创建 task 工具定义。必须传入注册表，让描述里包含可用 agent 列表。 */

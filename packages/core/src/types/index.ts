@@ -2,6 +2,7 @@
 import type { LanguageModel, ModelMessage, UserContent } from 'ai'
 
 import type { BackgroundTaskEvent, BackgroundTaskRegistry } from '../agent/background-tasks.js'
+import type { BudgetLimits } from '../agent/budget.js'
 import type { EditDiffPayload } from '../agent/diff.js'
 import type { SubAgentRegistry } from '../agent/sub-agents/registry.js'
 import type { SubAgentEvent } from '../agent/sub-agents/types.js'
@@ -307,6 +308,8 @@ export interface AgentCallbacks {
   /** 瞬态的流重连状态。null 事件表示提供商数据已恢复
    *  或重试序列已结束。 */
   onStreamRetry?: (event: StreamRetryEvent | null) => void
+  /** 主模型因提供商侧故障切到备用模型时触发（仅在没有可见输出时发生）。 */
+  onModelFallback?: (event: { fromModelId: string; toModelId: string; reason: string }) => void
   onError: (error: Error) => void
   /** 由子代理运行器触发，用于流式传递子代理循环的进度。
    *  CLI UI 用这些事件构建折叠 / 展开的任务块。 */
@@ -354,6 +357,13 @@ export interface AgentOptions {
    *  是唯一的停止方式。子代理和 `--print` 模式是真正
    *  传值的两个调用方；交互式会话保持未设置。 */
   maxTurns?: number
+  /** 每次 `agentLoop` 调用的 token / 美元预算。省略 = 不限制。
+   *  与 `maxTurns` 一样按单次提交计算，跨 submit 不会累计。 */
+  budget?: BudgetLimits
+  /** 备用模型 id，按顺序尝试。仅在主模型因提供商侧故障（限流/5xx/欠费/
+   *  模型下线/网络）失败、且该次尝试没有产生可见文本或工具活动时切换；
+   *  认证、内容审核、上下文溢出不会触发。需要 `modelRegistry`。 */
+  fallbackModelIds?: string[]
   printMode: boolean
   /** 为 true 时，代理循环选择每个提供商支持的最大推理量
    *  （映射见 providers/thinking.ts）。

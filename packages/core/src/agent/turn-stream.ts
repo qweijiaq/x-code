@@ -25,7 +25,10 @@ export interface StreamAttemptTracker {
 
 export type TurnOutcome =
   | { kind: 'done'; finishReason: string; result: StreamResult }
-  | { kind: 'error' }
+  /** 错误只在这里携带，由 `agentLoop` 决定先尝试备用模型还是直接报告 ——
+   *  这样切换成功时 UI 不会留下一条假错误。`fallbackEligible` 只在该次尝试
+   *  没有产生任何可见文本/工具活动、且错误来自提供商侧可用性时才为 true。 */
+  | { kind: 'error'; error: Error; fallbackEligible?: boolean }
   | {
       kind: 'stream-error'
       error: unknown
@@ -197,7 +200,7 @@ export async function collectTurnResponse(
 export function classifyTurnFailure(
   error: unknown,
   options: AgentOptions,
-  callbacks: AgentCallbacks,
+  _callbacks: AgentCallbacks,
   tracker: StreamAttemptTracker,
   attemptControl: StreamAttemptControl,
 ): TurnOutcome {
@@ -215,6 +218,10 @@ export function classifyTurnFailure(
   }
 
   if (isAbortError(error, options.abortSignal)) return { kind: 'aborted' }
-  callbacks.onError(new Error(classifyApiError(error).message))
-  return { kind: 'error' }
+  const classified = classifyApiError(error)
+  return {
+    kind: 'error',
+    error: new Error(classified.message),
+    fallbackEligible: classified.fallbackEligible === true && !tracker.visibleText && !tracker.toolActivity,
+  }
 }

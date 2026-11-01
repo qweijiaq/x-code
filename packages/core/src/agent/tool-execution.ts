@@ -1394,6 +1394,9 @@ function collectFulfilledToolCallIds(state: LoopState): Set<string> {
   return ids
 }
 
+/** 一轮里同时运行的 `task` 子代理上限。见 `partitionToolCalls`。 */
+export const MAX_CONCURRENT_TASKS = 3
+
 /** 把连续的 `task` 工具调用归为一批，使它们能并行分发；其他一切都各自成批、
  *  逐个分发。由 `task` 工具启动的子 agent，是我们在 `processToolCalls` 中手工
  *  执行、且真正隔离的唯一手动工具：
@@ -1418,7 +1421,10 @@ export function partitionToolCalls(calls: ToolCall[]): ToolCall[][] {
   while (i < calls.length) {
     let end = i + 1
     if (calls[i]!.toolName === 'task') {
-      while (end < calls.length && calls[end]!.toolName === 'task') {
+      // 每个 task 都是一条完整的子模型循环：没有上限时，一条 assistant 消息
+      // 里的 10 个 task 会同时放大成 10 份并发成本，并撞上 provider 限流。
+      // 超过上限的调用按顺序进入下一批，而不是被丢弃。
+      while (end < calls.length && calls[end]!.toolName === 'task' && end - i < MAX_CONCURRENT_TASKS) {
         end++
       }
     }

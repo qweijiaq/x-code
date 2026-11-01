@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -12,7 +12,6 @@ import type {
   DocumentPageView,
   DocumentRecentItem,
   DocumentView,
-  FileEditView,
   GitStatusView,
   LoadedSessionView,
   ModelOption,
@@ -20,7 +19,6 @@ import type {
   ProjectCheckView,
   RewindResultView,
   RuntimeEvent,
-  SessionAttachmentView,
   SessionListItem,
   SessionSearchResult,
   SettingsActionResult,
@@ -39,39 +37,69 @@ import type {
 import { BackgroundPanel } from './BackgroundPanel.js'
 import { ChecksPanel } from './ChecksPanel.js'
 import { CommandPalette } from './CommandPalette.js'
+import { ComposerBox } from './ComposerBox.js'
+import {
+  AttachmentsStrip,
+  BackgroundIdle,
+  BackgroundWait,
+  EditBadge,
+  MarkdownBar,
+  MentionPalette,
+  QueuedList,
+  RecordingBar,
+  SlashPalette,
+} from './ComposerChrome.js'
 import { DocumentPanel } from './DocumentPanel.js'
 import { GitPanel } from './GitPanel.js'
 import { Inspector } from './Inspector.js'
 import type { InspectorTab } from './Inspector.js'
-import { CopyButton, MarkdownView } from './MarkdownView.js'
 import { OutlinePanel } from './OutlinePanel.js'
 import { RewindPanel } from './RewindPanel.js'
+import { TranscriptEntry, TranscriptEntryProvider } from './TranscriptEntry.js'
+import { UsageFooter } from './UsageFooter.js'
 import {
-  AttachIcon,
   BranchIcon,
-  CaptureIcon,
   ChevronIcon,
-  DocumentIcon,
   HelpIcon,
-  MicIcon,
   MoreIcon,
   OutlineIcon,
-  RegionIcon,
-  SendIcon,
   SettingsIcon,
   SidebarIcon,
-  StopIcon,
   TerminalIcon,
 } from './icons.js'
 import { isImeEnter, isImeEvent } from './ime.js'
-import { base64FromBuffer, isImageAttachment } from './media.js'
+import { base64FromBuffer } from './media.js'
 import { detectMention, insertMention } from './mention.js'
 import { createPaletteActions } from './palette-actions.js'
+import {
+  USAGE_DISMISSED_KEY,
+  draftStorageKey,
+  forgetLastDocument,
+  readLastDocument,
+  readUsage,
+  rememberLastDocument,
+  writeUsage,
+} from './preferences.js'
+import type { UsageKey } from './preferences.js'
 import { createSlashCommands } from './slash-commands.js'
 import type { SlashCommand } from './slash-commands.js'
 import { applyTheme, storedTheme, watchSystemTheme } from './theme.js'
 import type { ThemeSetting } from './theme.js'
+import {
+  STATUS_LABEL,
+  TASK_MODES,
+  TASK_MODE_DESCRIPTION,
+  TASK_MODE_LABEL,
+  TASK_MODE_TEMPLATE,
+  formatContextTokens,
+  normalizeTaskMode,
+  sessionTime,
+  sessionTitle,
+  taskBranchName,
+} from './transcript-model.js'
+import type { Entry, TaskMode, TurnRenderItem } from './transcript-model.js'
 import { forcedOnboarding, isUiSmoke, runUiSmoke } from './ui-smoke.js'
+import { useComposerKeyDown } from './use-composer-keydown.js'
 import { encodeWav } from './wav.js'
 import { detectExternalWorkspacePaths } from './workspace-guard.js'
 
@@ -93,445 +121,6 @@ if (isUiSmoke) {
 }
 const wantsSettings = new URLSearchParams(window.location.search).has('settings')
 const wantsSlashDemo = new URLSearchParams(window.location.search).has('slash')
-
-function formatContextTokens(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}m`
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`
-  return String(count)
-}
-
-const SANDBOX_NETWORK_DENIAL =
-  /(Could not resolve host|getaddrinfo (?:ENOTFOUND|EAI_AGAIN)|Network is unreachable|Failed to connect|Couldn't connect to server|ENOTFOUND|EAI_AGAIN|connect: operation not permitted)/i
-const SANDBOX_WRITE_DENIAL = /(sandbox-exec|Operation not permitted|Read-only file system)/i
-const COMMAND_NOT_FOUND =
-  /(command not found|not recognized as an internal or external command|(?:sh|bash|zsh): .*: not found)/i
-
-function toolEnvironmentHint(text: string, sandboxEnabled: boolean): 'network' | 'write' | 'command' | null {
-  if (sandboxEnabled && SANDBOX_NETWORK_DENIAL.test(text)) return 'network'
-  if (sandboxEnabled && SANDBOX_WRITE_DENIAL.test(text)) return 'write'
-  if (COMMAND_NOT_FOUND.test(text)) return 'command'
-  return null
-}
-
-const OUTPUT_LOCATION_PATTERN = /\[Output location\]\s+(.+?)\s+is in the system temporary directory/g
-
-function tempDeliverables(text: string | undefined): string[] {
-  if (!text) return []
-  const paths = new Set<string>()
-  for (const match of text.matchAll(OUTPUT_LOCATION_PATTERN)) {
-    const candidate = match[1]?.trim()
-    if (candidate) paths.add(candidate)
-  }
-  return [...paths]
-}
-
-const imagePreviewCache = new Map<string, string>()
-
-function attachmentName(filePath: string): string {
-  return filePath.split(/[\\/]/).pop() ?? filePath
-}
-
-const AttachmentImage = memo(
-  function AttachmentImage({
-    file,
-    variant,
-    onOpen,
-  }: {
-    file: string
-    variant: 'chip' | 'message'
-    onOpen: (src: string, name: string) => void
-  }): React.JSX.Element {
-    const [src, setSrc] = useState<string | null>(() => imagePreviewCache.get(file) ?? null)
-    const [failed, setFailed] = useState(false)
-    const name = attachmentName(file)
-    useEffect(() => {
-      if (src || failed) return
-      let cancelled = false
-      void window.xcode
-        .request({
-          id: crypto.randomUUID(),
-          method: 'app:image-preview',
-          params: { path: file },
-        })
-        .then((response) => {
-          if (cancelled) return
-          if (!response.ok) {
-            setFailed(true)
-            return
-          }
-          const dataUrl = (response.result as { dataUrl: string }).dataUrl
-          imagePreviewCache.set(file, dataUrl)
-          setSrc(dataUrl)
-        })
-        .catch(() => {
-          if (!cancelled) setFailed(true)
-        })
-      return () => {
-        cancelled = true
-      }
-    }, [file, src, failed])
-    if (failed) {
-      return <span className="attachment-image-fallback">{name}</span>
-    }
-    if (!src) {
-      return <span className={`attachment-image-loading ${variant}`} aria-label={name} />
-    }
-    if (variant === 'chip') {
-      return (
-        <button type="button" className="attachment-thumb-button" title={name} onClick={() => onOpen(src, name)}>
-          <img className="attachment-thumb" src={src} alt={name} loading="lazy" />
-        </button>
-      )
-    }
-    return (
-      <button type="button" className="message-attachment" title={name} onClick={() => onOpen(src, name)}>
-        <img src={src} alt={name} loading="lazy" />
-        <span>{name}</span>
-      </button>
-    )
-  },
-  (prev, next) => prev.file === next.file && prev.variant === next.variant,
-)
-
-type Role = 'user' | 'assistant' | 'tool' | 'system' | 'error'
-
-interface Entry {
-  id: string
-  role: Role
-  text: string
-  turnId?: string
-  toolCallId?: string
-  toolName?: string
-  toolInput?: Record<string, unknown>
-  toolStatus?: 'pending' | 'running' | 'completed' | 'denied' | 'error'
-  toolOutput?: string
-  toolProgress?: string
-  diff?: FileEditView
-  reverted?: boolean
-  subagent?: SubAgentView
-  attachments?: string[]
-  attachmentViews?: SessionAttachmentView[]
-  movedDeliverables?: string[]
-}
-
-type TurnRenderItem =
-  | { kind: 'entry'; entry: Entry }
-  | { kind: 'toggle'; key: string; count: number; failures: number; collapsed: boolean }
-
-const ROLE_LABEL: Record<Role, string> = {
-  user: '你',
-  assistant: 'X-CODE',
-  tool: '工具',
-  system: '系统',
-  error: '错误',
-}
-
-const TASK_MODES = ['coding', 'writing', 'research', 'office'] as const
-type TaskMode = (typeof TASK_MODES)[number]
-
-const TASK_MODE_LABEL: Record<TaskMode, string> = {
-  coding: '编程',
-  writing: '写作',
-  research: '科研',
-  office: '办公',
-}
-
-const TASK_MODE_DESCRIPTION: Record<TaskMode, string> = {
-  coding: '代码、测试与 diff 优先',
-  writing: '结构、语气与文稿优先',
-  research: '资料、引用与不确定性优先',
-  office: '文档、表格与导出优先',
-}
-
-const TASK_MODE_TEMPLATE: Record<TaskMode, { hint: string; suggestions: string[] }> = {
-  coding: {
-    hint: '描述要实现的功能、要修的 bug，或粘贴报错。',
-    suggestions: ['分析这个仓库并给出改进建议', '帮我修一个 bug', '写一个自动化脚本'],
-  },
-  writing: {
-    hint: '说说你想写什么，或粘贴需要润色的文字。',
-    suggestions: ['把要点扩写成文章', '润色这段文字', '生成一份文章大纲'],
-  },
-  research: {
-    hint: '提出研究问题，或给我论文与资料。',
-    suggestions: ['总结这篇论文', '对比几种方法的优缺点', '整理一份文献综述提纲'],
-  },
-  office: {
-    hint: '说说要处理的文档、表格或汇报任务。',
-    suggestions: ['总结这份 PPT', '按部门汇总这张表', '把 Markdown 导出为 PDF'],
-  },
-}
-
-function normalizeTaskMode(value: string | undefined): TaskMode {
-  return (TASK_MODES as readonly string[]).includes(value ?? '') ? (value as TaskMode) : 'coding'
-}
-
-/** A task-scoped branch name. ASCII slug when possible, plus a short time
- * suffix so two tasks with the same description never collide. */
-function taskBranchName(task: string): string {
-  const slug = task
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 28)
-  return `x-code/${slug || 'task'}-${Date.now().toString(36).slice(-5)}`
-}
-
-const STATUS_LABEL = {
-  starting: '初启',
-  ready: '运转中',
-  offline: '离线',
-} as const
-
-const TOOL_STATUS_LABEL: Record<NonNullable<Entry['toolStatus']>, string> = {
-  pending: '等待',
-  running: '执行中',
-  completed: '完成',
-  denied: '已拒绝',
-  error: '失败',
-}
-
-function summarizeInput(input: Record<string, unknown> | undefined): string {
-  if (!input) return ''
-  const value =
-    (input.filePath as string) ??
-    (input.command as string) ??
-    (input.pattern as string) ??
-    (input.query as string) ??
-    (input.path as string) ??
-    (input.url as string) ??
-    ''
-  return value.length > 90 ? `${value.slice(0, 87)}…` : value
-}
-
-function sessionTitle(item: SessionListItem): string {
-  return item.name || item.title || item.firstPrompt || item.sessionId
-}
-
-function sessionTime(item: SessionListItem): string {
-  try {
-    return new Date(item.mtime).toLocaleString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return ''
-  }
-}
-
-function DiffView({
-  diff,
-  reverted,
-  onRevert,
-  onOpenEditor,
-}: {
-  diff: FileEditView
-  reverted?: boolean
-  onRevert?: () => void
-  onOpenEditor?: (path: string, line?: number) => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const lines =
-    diff.isCreate && diff.content ? diff.content.split('\n').slice(0, 14) : diff.hunks.flatMap((hunk) => hunk.lines)
-  return (
-    <div className="diff">
-      <div className="diff-head">
-        <button
-          type="button"
-          className="diff-path diff-path-button"
-          title={t('在编辑器中打开')}
-          onClick={() => onOpenEditor?.(diff.filePath, diff.hunks[0]?.newStart ?? 1)}
-        >
-          {diff.filePath}
-        </button>
-        <span className="diff-counts">
-          +{diff.additions} −{diff.removals}
-        </span>
-        {reverted ? <span className="diff-reverted">{t('已回退')}</span> : null}
-        {onRevert && !reverted ? (
-          <button className="session-action" onClick={onRevert}>
-            {t('回退这次编辑')}
-          </button>
-        ) : null}
-      </div>
-      <div className="diff-body">
-        {lines.slice(0, 80).map((line, index) => {
-          const sigil = line[0] === '+' ? 'add' : line[0] === '-' ? 'del' : 'ctx'
-          return (
-            <div key={index} className={`diff-line ${sigil}`}>
-              {line}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function extractSourceUrls(text: string): string[] {
-  const matches = text.match(/https?:\/\/[^\s<>"'`)\]]+/g) ?? []
-  const cleaned = matches.map((url) => url.replace(/[.,;:!?]+$/, '')).filter((url) => url.startsWith('https://'))
-  return [...new Set(cleaned)].slice(0, 8)
-}
-
-const SourceList = memo(function SourceList({ text }: { text: string }): React.JSX.Element | null {
-  const { t } = useTranslation()
-  const urls = extractSourceUrls(text)
-  if (urls.length === 0) return null
-  return (
-    <div className="tool-sources" data-testid="tool-sources">
-      <span className="tool-sources-label">{t('来源')}</span>
-      {urls.map((url) => {
-        let label = url
-        try {
-          const parsed = new URL(url)
-          label = `${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`.slice(0, 48)
-        } catch {
-          // 保留原始 URL。
-        }
-        return (
-          <button
-            key={url}
-            className="source-chip"
-            title={url}
-            onClick={() =>
-              void window.xcode.request({
-                id: crypto.randomUUID(),
-                method: 'app:open-external',
-                params: { url },
-              })
-            }
-          >
-            {label}
-          </button>
-        )
-      })}
-    </div>
-  )
-})
-
-const SubAgentBlock = memo(function SubAgentBlock({ agent }: { agent: SubAgentView }): React.JSX.Element {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(true)
-  const statusLabel =
-    agent.status === 'running'
-      ? t('运行中')
-      : agent.status === 'completed'
-        ? t('已完成')
-        : agent.status === 'aborted'
-          ? t('已中止')
-          : t('失败')
-  return (
-    <div className="subagent" data-testid="subagent">
-      <button className="subagent-head" onClick={() => setOpen((value) => !value)}>
-        <span className="subagent-name">{agent.agentName}</span>
-        <span className={`subagent-status ${agent.status}`}>{statusLabel}</span>
-        <span className="subagent-meta">
-          {agent.turnCount !== undefined ? t('{{count}} 轮', { count: agent.turnCount }) : ''}
-          {agent.durationMs !== undefined ? ` · ${(agent.durationMs / 1000).toFixed(1)}s` : ''}
-        </span>
-        <span className="spacer" />
-        <span className="subagent-toggle">{open ? t('收起') : t('展开')}</span>
-      </button>
-      {agent.description ? <div className="subagent-desc">{agent.description}</div> : null}
-      {open ? (
-        <div className="subagent-log">
-          {agent.log.map((line, index) => (
-            <div key={index} className={`subagent-line ${line.kind}`}>
-              {line.text}
-            </div>
-          ))}
-          {agent.finalText ? <div className="subagent-final">{agent.finalText}</div> : null}
-          {agent.log.length === 0 && !agent.finalText ? (
-            <div className="subagent-line text">{t('等待子代理输出…')}</div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-})
-
-function draftStorageKey(sessionId: string | null): string {
-  return `xcode.draft.${sessionId ?? 'new'}`
-}
-
-const LAST_DOCUMENTS_KEY = 'xcode.lastDocuments'
-
-function readLastDocument(workspace: string): string | null {
-  if (!workspace) return null
-  try {
-    const raw = localStorage.getItem(LAST_DOCUMENTS_KEY)
-    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
-    const value = parsed[workspace]
-    return typeof value === 'string' && value.trim() ? value : null
-  } catch {
-    return null
-  }
-}
-
-function rememberLastDocument(workspace: string, filePath: string): void {
-  if (!workspace || !filePath) return
-  try {
-    const raw = localStorage.getItem(LAST_DOCUMENTS_KEY)
-    const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {}
-    parsed[workspace] = filePath
-    localStorage.setItem(LAST_DOCUMENTS_KEY, JSON.stringify(parsed))
-  } catch {
-    // 记住上次文档只是便利功能。
-  }
-}
-
-function forgetLastDocument(workspace: string, filePath: string): void {
-  if (!workspace) return
-  try {
-    const raw = localStorage.getItem(LAST_DOCUMENTS_KEY)
-    const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {}
-    if (parsed[workspace] !== filePath) return
-    delete parsed[workspace]
-    localStorage.setItem(LAST_DOCUMENTS_KEY, JSON.stringify(parsed))
-  } catch {
-    // 忽略。
-  }
-}
-
-type UsageKey = 'attach' | 'screenshot' | 'document' | 'palette' | 'skill'
-
-const USAGE_KEY = isUiSmoke ? 'xcode.smoke.usage.v1' : 'xcode.usage.v1'
-const USAGE_DISMISSED_KEY = isUiSmoke ? 'xcode.smoke.usage.dismissed' : 'xcode.usage.dismissed'
-
-function readUsage(): Record<UsageKey, boolean> {
-  const empty: Record<UsageKey, boolean> = {
-    attach: false,
-    screenshot: false,
-    document: false,
-    palette: false,
-    skill: false,
-  }
-  try {
-    const raw = localStorage.getItem(USAGE_KEY)
-    const parsed = raw ? (JSON.parse(raw) as Partial<Record<UsageKey, unknown>>) : {}
-    for (const key of Object.keys(empty) as UsageKey[]) empty[key] = parsed[key] === true
-  } catch {
-    // 损坏的使用记录不应阻塞清单。
-  }
-  return empty
-}
-
-function writeUsage(usage: Record<UsageKey, boolean>): void {
-  try {
-    localStorage.setItem(USAGE_KEY, JSON.stringify(usage))
-  } catch {
-    // 忽略配额错误。
-  }
-}
-
-function formatDuration(seconds: number): string {
-  const minutes = Math.floor(seconds / 60)
-  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
-}
 
 export function App(): React.JSX.Element {
   const { t, i18n } = useTranslation()
@@ -1386,6 +975,14 @@ export function App(): React.JSX.Element {
               max: event.maxAttempts,
             }),
           )
+          break
+        case 'agent:model-fallback':
+          append({
+            role: 'system',
+            text: i18n.t('主模型不可用，已切换到 {{model}}', { model: event.toModelId }),
+            turnId: activeTurn.current ?? undefined,
+          })
+          setNotice(null)
           break
         case 'agent:turn-end':
           activeTurn.current = null
@@ -3546,6 +3143,29 @@ export function App(): React.JSX.Element {
   const localModelOptions = filteredModels.filter(isLocalModel)
   const remoteModelOptions = filteredModels.filter((model) => !isLocalModel(model))
   const canSend = !busy && (input.trim().length > 0 || attachments.length > 0)
+  // composer 的键盘逻辑与输入框解耦，供 ComposerBox 复用。
+  const handleComposerKeyDown = useComposerKeyDown({
+    mention,
+    mentionItems,
+    mentionIndex,
+    setMention,
+    setMentionIndex,
+    dismissedMentionRef,
+    pickMention,
+    paletteCommands,
+    paletteIndex,
+    setPaletteIndex,
+    setInput,
+    runSlashCommand,
+    applyMarkdown,
+    input,
+    exportCurrentSession,
+    customCommands,
+    runCustomCommand,
+    append,
+    attachments,
+    submit,
+  })
   const contextWindow = appState?.contextWindow ?? usage?.contextWindow ?? null
   const usedContextTokens = usage?.currentContextTokens ?? 0
   const contextPercent =
@@ -4423,218 +4043,53 @@ export function App(): React.JSX.Element {
                   </div>
                 </div>
               ) : null}
-              {turnItems.map((item) => {
-                if (item.kind === 'toggle') {
-                  return (
-                    <div className="turn-tool-toggle" data-testid="turn-tool-toggle" key={`turn-toggle-${item.key}`}>
-                      <span>{t('工具调用 {{count}} 次', { count: item.count })}</span>
-                      {item.failures > 0 ? (
-                        <span className="tool-failure">{t('{{count}} 个失败', { count: item.failures })}</span>
-                      ) : null}
-                      <span className="spacer" />
-                      <button
-                        type="button"
-                        className="btn btn-quiet"
-                        data-testid="turn-tool-toggle-button"
-                        onClick={() => toggleTurnTools(item.key)}
-                      >
-                        {item.collapsed ? t('展开') : t('收起')}
-                      </button>
-                    </div>
-                  )
-                }
-                const entry = item.entry
-                const toolGuidance =
-                  entry.role === 'tool' && entry.toolOutput
-                    ? toolEnvironmentHint(entry.toolOutput, settings?.shellSandbox.enabled === true)
-                    : null
-                const tempOutputs =
-                  entry.role === 'tool' && !entry.reverted && !entry.movedDeliverables?.length
-                    ? tempDeliverables(entry.toolOutput)
-                    : []
-                return entry.role === 'tool' ? (
-                  <article key={entry.id} className={`tool-card ${entry.toolStatus ?? 'running'}`}>
-                    <div className="tool-head">
-                      <span className="tool-name">{entry.toolName ?? 'tool'}</span>
-                      <span className={`tool-state ${entry.toolStatus ?? 'running'}`}>
-                        {t(TOOL_STATUS_LABEL[entry.toolStatus ?? 'running'])}
-                      </span>
-                      <span className="spacer" />
-                      <span className="tool-target">{summarizeInput(entry.toolInput)}</span>
-                      {entry.toolName === 'readDocument' && typeof entry.toolInput?.filePath === 'string' ? (
-                        <button
-                          className="session-action"
-                          onClick={() => void openDocument(String(entry.toolInput?.filePath))}
-                        >
-                          {t('预览')}
-                        </button>
-                      ) : null}
-                    </div>
-                    {entry.toolProgress ? <div className="tool-progress">{entry.toolProgress}</div> : null}
-                    {entry.subagent ? <SubAgentBlock agent={entry.subagent} /> : null}
-                    {entry.diff ? (
-                      <DiffView
-                        diff={entry.diff}
-                        reverted={entry.reverted}
-                        onOpenEditor={(path, line) => openInEditor(path, line)}
-                        onRevert={
-                          entry.diff.revertible && entry.toolCallId
-                            ? () => void revertEdit(entry.toolCallId!, entry.id)
-                            : undefined
-                        }
-                      />
-                    ) : null}
-                    {entry.toolOutput ? (
-                      <details className="tool-output">
-                        <summary>{t('结果')}</summary>
-                        <pre>{entry.toolOutput}</pre>
-                      </details>
-                    ) : null}
-                    {toolGuidance ? (
-                      <div className="tool-guidance" data-testid="tool-environment-hint">
-                        <span>
-                          {toolGuidance === 'network'
-                            ? settings?.shellSandbox.allowNetwork
-                              ? t('命令没能联网；如果本机网络正常，请检查命令使用的代理或地址。')
-                              : t('命令没能联网。Shell 沙箱当前禁止网络访问；如果本机网络正常，允许网络后重试。')
-                            : toolGuidance === 'write'
-                              ? t('命令被 Shell 沙箱拦截：只能写入工作区和临时目录。')
-                              : t('命令找不到。如果刚在电脑终端安装了它，刷新登录 shell 环境后重试。')}
-                        </span>
-                        <span className="spacer" />
-                        {toolGuidance === 'network' && !settings?.shellSandbox.allowNetwork ? (
-                          <button className="btn btn-quiet" onClick={() => void allowSandboxNetwork()}>
-                            {t('允许网络')}
-                          </button>
+              <TranscriptEntryProvider
+                value={{
+                  busy,
+                  movingTempEntry,
+                  shellSandboxEnabled: settings?.shellSandbox.enabled === true,
+                  shellSandboxAllowNetwork: settings?.shellSandbox.allowNetwork === true,
+                  activeTextEntryId: activeTextEntryId.current,
+                  findMatchIds,
+                  findActiveId,
+                  lastAssistantId,
+                  lastUserId,
+                  onOpenDocument: (path) => void openDocument(path),
+                  onOpenEditor: (path, line) => openInEditor(path, line),
+                  onRevertEdit: (toolCallId, entryId) => void revertEdit(toolCallId, entryId),
+                  onAllowSandboxNetwork: () => void allowSandboxNetwork(),
+                  onRefreshEnvironment: () => void refreshAgentEnvironment(),
+                  onOpenToolsSettings: () => void openSettings('tools'),
+                  onMoveTempDeliverables: (entryId, files) => void moveTempDeliverables(entryId, files),
+                  onOpenImage: (src, name) => setImageLightbox({ src, name }),
+                  onRegenerate: () => void regenerateLast(),
+                  onEditLast: beginEditLast,
+                }}
+              >
+                {turnItems.map((item) => {
+                  if (item.kind === 'toggle') {
+                    return (
+                      <div className="turn-tool-toggle" data-testid="turn-tool-toggle" key={`turn-toggle-${item.key}`}>
+                        <span>{t('工具调用 {{count}} 次', { count: item.count })}</span>
+                        {item.failures > 0 ? (
+                          <span className="tool-failure">{t('{{count}} 个失败', { count: item.failures })}</span>
                         ) : null}
-                        {toolGuidance === 'command' ? (
-                          <button className="btn btn-quiet" onClick={() => void refreshAgentEnvironment()}>
-                            {t('刷新环境')}
-                          </button>
-                        ) : null}
-                        {toolGuidance !== 'command' ? (
-                          <button className="btn btn-quiet" onClick={() => void openSettings('tools')}>
-                            {t('沙箱设置')}
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {tempOutputs.length > 0 ? (
-                      <div className="tool-guidance" data-testid="temp-deliverable-hint">
-                        <span>
-                          {t('交付物写到了系统临时目录：{{files}}', {
-                            files: tempOutputs.map((item) => item.split(/[\\/]/).pop() || item).join('、'),
-                          })}
-                        </span>
                         <span className="spacer" />
                         <button
+                          type="button"
                           className="btn btn-quiet"
-                          disabled={busy || movingTempEntry === entry.id}
-                          title={busy ? t('当前回复结束后可以移动') : undefined}
-                          onClick={() => void moveTempDeliverables(entry.id, tempOutputs)}
+                          data-testid="turn-tool-toggle-button"
+                          onClick={() => toggleTurnTools(item.key)}
                         >
-                          {movingTempEntry === entry.id ? t('移动中…') : t('移动到工作区')}
+                          {item.collapsed ? t('展开') : t('收起')}
                         </button>
                       </div>
-                    ) : null}
-                    {entry.movedDeliverables?.length ? (
-                      <div className="tool-guidance success" data-testid="temp-deliverable-moved">
-                        <span>
-                          {t('已移动到工作区：{{files}}', {
-                            files: entry.movedDeliverables.map((item) => item.split(/[\\/]/).pop() || item).join('、'),
-                          })}
-                        </span>
-                      </div>
-                    ) : null}
-                    {entry.toolOutput && (entry.toolName === 'webSearch' || entry.toolName === 'webFetch') ? (
-                      <SourceList text={entry.toolOutput} />
-                    ) : null}
-                  </article>
-                ) : (
-                  <article
-                    key={entry.id}
-                    id={`entry-${entry.id}`}
-                    data-entry-id={entry.id}
-                    className={`message ${entry.role} ${findMatchIds.includes(entry.id) ? 'find-hit' : ''} ${
-                      entry.id === findActiveId ? 'find-current' : ''
-                    }`}
-                  >
-                    <span className="role">{t(ROLE_LABEL[entry.role])}</span>
-                    {entry.role === 'assistant' || entry.role === 'user' ? (
-                      <MarkdownView text={entry.text} streaming={busy && entry.id === activeTextEntryId.current} />
-                    ) : (
-                      <span className="message-text">{entry.text}</span>
-                    )}
-                    {entry.attachments?.length ? (
-                      <div className="message-attachments">
-                        {entry.attachments.map((file) =>
-                          isImageAttachment(file) ? (
-                            <AttachmentImage
-                              key={file}
-                              file={file}
-                              variant="message"
-                              onOpen={(src, name) => setImageLightbox({ src, name })}
-                            />
-                          ) : (
-                            <span className="message-attachment-file" key={file} title={file}>
-                              {attachmentName(file)}
-                            </span>
-                          ),
-                        )}
-                      </div>
-                    ) : null}
-                    {entry.attachmentViews?.length ? (
-                      <div className="message-attachments">
-                        {entry.attachmentViews.map((attachment, index) => {
-                          const dataUrl = attachment.dataUrl
-                          return dataUrl ? (
-                            <button
-                              key={`${attachment.name}-${index}`}
-                              type="button"
-                              className="message-attachment"
-                              title={attachment.name}
-                              onClick={() => setImageLightbox({ src: dataUrl, name: attachment.name })}
-                            >
-                              <img src={dataUrl} alt={attachment.name} loading="lazy" />
-                              <span>{attachment.name}</span>
-                            </button>
-                          ) : attachment.path && isImageAttachment(attachment.path) ? (
-                            <AttachmentImage
-                              key={`${attachment.name}-${index}`}
-                              file={attachment.path}
-                              variant="message"
-                              onOpen={(src, name) => setImageLightbox({ src, name })}
-                            />
-                          ) : (
-                            <span
-                              key={`${attachment.name}-${index}`}
-                              className="message-attachment-file"
-                              title={attachment.name}
-                            >
-                              {attachment.name}
-                            </span>
-                          )
-                        })}
-                      </div>
-                    ) : null}
-                    {entry.text ? (
-                      <span className="message-actions">
-                        {entry.role === 'assistant' || entry.role === 'user' ? <CopyButton text={entry.text} /> : null}
-                        {entry.role === 'assistant' && entry.id === lastAssistantId && !busy ? (
-                          <button type="button" className="copy-btn" onClick={() => void regenerateLast()}>
-                            {t('重新生成')}
-                          </button>
-                        ) : null}
-                        {entry.role === 'user' && entry.id === lastUserId && !busy ? (
-                          <button type="button" className="copy-btn" onClick={beginEditLast}>
-                            {t('编辑并重发')}
-                          </button>
-                        ) : null}
-                      </span>
-                    ) : null}
-                  </article>
-                )
-              })}
+                    )
+                  }
+                  const entry = item.entry
+                  return <TranscriptEntry key={entry.id} entry={entry} />
+                })}
+              </TranscriptEntryProvider>
             </main>
             {showScrollBottom ? (
               <button
@@ -4686,473 +4141,99 @@ export function App(): React.JSX.Element {
             ) : null}
 
             <footer className="composer">
-              {mention !== null && mentionItems.length > 0 ? (
-                <div className="slash-palette mention-palette" data-testid="mention-palette">
-                  {mentionItems.map((file, index) => (
-                    <button
-                      key={file.path}
-                      className={`slash-item ${index === mentionIndex ? 'active' : ''}`}
-                      onMouseDown={(event) => {
-                        event.preventDefault()
-                        pickMention(file)
-                      }}
-                    >
-                      <span className="slash-name">
-                        {file.relative}
-                        {file.isDirectory ? '/' : ''}
-                      </span>
-                      <span className="slash-desc">{file.isDirectory ? t('目录') : ''}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              {paletteCommands.length > 0 ? (
-                <div className="slash-palette" data-testid="slash-palette" ref={slashPaletteRef}>
-                  {paletteCommands.map((command, index) => (
-                    <button
-                      key={command.name}
-                      className={`slash-item ${index === paletteIndex ? 'active' : ''}`}
-                      onMouseDown={(event) => {
-                        event.preventDefault()
-                        runSlashCommand(command)
-                      }}
-                    >
-                      <span className="slash-name">{command.name}</span>
-                      <span className="slash-desc">{command.description}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              {editArmed ? (
-                <div className="edit-badge" data-testid="edit-badge">
-                  <span>{t('编辑模式：发送后将重写上一轮，文件改动会保留')}</span>
-                  <button
-                    className="attachment-remove"
-                    title={t('取消')}
-                    onClick={() => {
-                      setEditArmed(false)
-                      setInput('')
-                      setAttachments([])
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              ) : null}
-              {busy && backgroundActive > 0 ? (
-                <div className="background-wait" data-testid="background-wait">
-                  <span>{t('{{count}} 个后台任务运行中；当前回复仍在等待。', { count: backgroundActive })}</span>
-                  <button className="btn btn-quiet" onClick={() => void abort()}>
-                    {queued > 0 ? t('停止等待并执行排队') : t('停止等待')}
-                  </button>
-                </div>
-              ) : null}
-              {!busy && backgroundActive > 0 ? (
-                <div className="background-wait idle" data-testid="background-idle">
-                  <span>
-                    {t('{{count}} 个后台任务运行中，可以继续提问；完成后会通知。', { count: backgroundActive })}
-                  </span>
-                  <button className="btn btn-quiet" onClick={() => setBackgroundOpen(true)}>
-                    {t('查看')}
-                  </button>
-                </div>
-              ) : null}
-              {queuedItems.length > 0 ? (
-                <div className="queued-list" data-testid="queued-list">
-                  {queuedItems.map((item, index) => (
-                    <div className="queued-item" key={`${index}-${item.prompt.slice(0, 24)}`}>
-                      <span className="queued-text">{item.prompt}</span>
-                      {item.attachments.length === 0 ? (
-                        <button
-                          className="queued-background"
-                          title={t('在新窗口另开任务，使用 fork 时的状态快照，不共享实时进度')}
-                          onClick={() => void openQueuedInNewWindow(index)}
-                        >
-                          {t('在新窗口另开')}
-                        </button>
-                      ) : null}
-                      <button className="attachment-remove" title={t('移出队列')} onClick={() => removeQueued(index)}>
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              {recording || voiceBusy ? (
-                <div className={`recording-bar ${voiceBusy ? 'busy' : ''}`} data-testid="recording-bar">
-                  <span className="recording-dot" aria-hidden="true" />
-                  <span className="recording-time">{formatDuration(recordingSeconds)}</span>
-                  {recording ? (
-                    <span className="recording-level" aria-hidden="true">
-                      <span style={{ width: `${Math.round(audioLevel * 100)}%` }} />
-                    </span>
-                  ) : null}
-                  <span className="recording-hint">{voiceBusy ? t('正在转写…') : t('正在录音…')}</span>
-                  <span className="spacer" />
-                  {recording ? (
-                    <>
-                      <button className="btn btn-quiet" onClick={() => void stopRecording(false)}>
-                        {t('取消')}
-                      </button>
-                      <button className="btn" onClick={() => void stopRecording(true)}>
-                        {t('完成并转写')}
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-              ) : null}
-              <div className="composer-attachments" data-testid="attachments" hidden={attachments.length === 0}>
-                {attachments.map((file) => (
-                  <span className="attachment-chip" key={file} title={file}>
-                    {isImageAttachment(file) ? (
-                      <AttachmentImage
-                        file={file}
-                        variant="chip"
-                        onOpen={(src, name) => setImageLightbox({ src, name })}
-                      />
-                    ) : null}
-                    <span className="attachment-name">{file.split(/[\\/]/).pop() ?? file}</span>
-                    <button
-                      className="attachment-remove"
-                      title={t('移除附件')}
-                      onClick={() => setAttachments((current) => current.filter((entry) => entry !== file))}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <div className="markdown-bar">
-                <button
-                  type="button"
-                  className={`btn btn-quiet markdown-toggle ${markdownToolsOpen ? 'active' : ''}`}
-                  data-testid="markdown-toggle"
-                  title={t('Markdown 格式')}
-                  aria-label={t('Markdown 格式')}
-                  onClick={() => setMarkdownToolsOpen((open) => !open)}
-                >
-                  MD
-                </button>
-                {markdownToolsOpen ? (
-                  <div className="markdown-toolbar" data-testid="markdown-toolbar">
-                    <button
-                      type="button"
-                      data-testid="markdown-bold"
-                      title={`${t('粗体')} (⌘B)`}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => applyMarkdown('bold')}
-                    >
-                      <strong>B</strong>
-                    </button>
-                    <button
-                      type="button"
-                      title={`${t('斜体')} (⌘I)`}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => applyMarkdown('italic')}
-                    >
-                      <em>I</em>
-                    </button>
-                    <button
-                      type="button"
-                      title={`${t('行内代码')} (⌘E)`}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => applyMarkdown('code')}
-                    >
-                      {'</>'}
-                    </button>
-                    <button
-                      type="button"
-                      title={t('代码块')}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => applyMarkdown('codeBlock')}
-                    >
-                      {'{ }'}
-                    </button>
-                    <button
-                      type="button"
-                      title={t('链接')}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => applyMarkdown('link')}
-                    >
-                      {t('链接')}
-                    </button>
-                    <button
-                      type="button"
-                      title={t('列表')}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => applyMarkdown('list')}
-                    >
-                      {t('列表')}
-                    </button>
-                    <button
-                      type="button"
-                      title={t('引用')}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => applyMarkdown('quote')}
-                    >
-                      {t('引用')}
-                    </button>
-                  </div>
-                ) : null}
-                <span className="spacer" />
-                {markdownToolsOpen ? (
-                  <button
-                    type="button"
-                    className={`btn btn-quiet markdown-preview-toggle ${markdownPreview ? 'active' : ''}`}
-                    data-testid="markdown-preview-toggle"
-                    onClick={() => setMarkdownPreview((preview) => !preview)}
-                  >
-                    {t('预览')}
-                  </button>
-                ) : null}
-              </div>
-              {markdownToolsOpen && markdownPreview ? (
-                <div className="markdown-preview" data-testid="markdown-preview">
-                  {input.trim() ? <MarkdownView text={input} /> : <div className="menu-hint">{t('暂无内容')}</div>}
-                </div>
-              ) : null}
-              <div className="composer-box">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  rows={1}
-                  placeholder={busy ? t('落笔未竟…') : t('写下你的问题，或输入指令…')}
-                  onChange={(event) => {
-                    setInput(event.target.value)
-                    updateMention(event.target.value, event.target.selectionStart)
-                  }}
-                  onKeyUp={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
-                  onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
-                  onKeyDown={(event) => {
-                    // 组词期间的候选确认键（Enter / 方向键）不能被当作发送或菜单确认。
-                    if (isImeEvent(event)) return
-                    // 部分输入法会先结束组词再派发确认键，保留一个很短的宽限窗口。
-                    if (event.key === 'Enter' && !event.shiftKey && isImeEnter(event)) {
-                      event.preventDefault()
-                      return
-                    }
-                    if (mention !== null && mentionItems.length > 0) {
-                      if (event.key === 'ArrowDown') {
-                        event.preventDefault()
-                        setMentionIndex((index) => (index + 1) % mentionItems.length)
-                        return
-                      }
-                      if (event.key === 'ArrowUp') {
-                        event.preventDefault()
-                        setMentionIndex((index) => (index - 1 + mentionItems.length) % mentionItems.length)
-                        return
-                      }
-                      if (event.key === 'Tab' || event.key === 'Enter') {
-                        event.preventDefault()
-                        const picked = mentionItems[mentionIndex]
-                        if (picked) pickMention(picked)
-                        return
-                      }
-                      if (event.key === 'Escape') {
-                        event.preventDefault()
-                        dismissedMentionRef.current = { atIdx: mention.atIdx, query: mention.query }
-                        setMention(null)
-                        return
-                      }
-                    }
-                    if (paletteCommands.length > 0) {
-                      if (event.key === 'ArrowDown') {
-                        event.preventDefault()
-                        setPaletteIndex((index) => (index + 1) % paletteCommands.length)
-                        return
-                      }
-                      if (event.key === 'ArrowUp') {
-                        event.preventDefault()
-                        setPaletteIndex((index) => (index - 1 + paletteCommands.length) % paletteCommands.length)
-                        return
-                      }
-                      if (event.key === 'Tab') {
-                        event.preventDefault()
-                        const command = paletteCommands[paletteIndex]
-                        if (command) setInput(command.name)
-                        return
-                      }
-                      if (event.key === 'Escape') {
-                        event.preventDefault()
-                        setInput('')
-                        return
-                      }
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault()
-                        const command = paletteCommands[paletteIndex]
-                        if (command) runSlashCommand(command)
-                        return
-                      }
-                    }
-                    if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
-                      const key = event.key.toLowerCase()
-                      if (key === 'b') {
-                        event.preventDefault()
-                        applyMarkdown('bold')
-                        return
-                      }
-                      if (key === 'i') {
-                        event.preventDefault()
-                        applyMarkdown('italic')
-                        return
-                      }
-                      if (key === 'e') {
-                        event.preventDefault()
-                        applyMarkdown('code')
-                        return
-                      }
-                    }
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      if (input.startsWith('/')) {
-                        const match = input.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/)
-                        const name = match?.[1]
-                        if (name === 'export') {
-                          const format = (match?.[2] ?? '').trim().toLowerCase()
-                          setInput('')
-                          void exportCurrentSession(format === 'json' ? 'json' : format === 'pdf' ? 'pdf' : 'markdown')
-                          return
-                        }
-                        if (name && customCommands.some((command) => command.name === name)) {
-                          setInput('')
-                          void runCustomCommand(name, (match?.[2] ?? '').trim())
-                          return
-                        }
-                        append({
-                          role: 'system',
-                          text: t('未知命令：{{command}}（输入 /help 查看命令）', { command: input.trim() }),
-                        })
-                        setInput('')
-                        return
-                      }
-                      if (!input.trim() && attachments.length === 0) return
-                      const prompt = input
-                      setInput('')
-                      void submit(prompt)
-                    }
-                  }}
-                />
-                <button
-                  className="btn attach"
-                  data-testid="document-button"
-                  title={t('文档面板')}
-                  aria-label={t('文档面板')}
-                  onClick={() => void openDocumentPanel()}
-                >
-                  <DocumentIcon />
-                </button>
-                <button className="btn attach" title={t('选择文档或媒体文件')} onClick={() => void pickDocument()}>
-                  <AttachIcon />
-                </button>
-                <div className="menu-anchor capture-anchor">
-                  <button
-                    className={`btn attach ${captureMenuOpen ? 'active' : ''}`}
-                    title={t('截图')}
-                    data-testid="capture-button"
-                    onClick={() => setCaptureMenuOpen((open) => !open)}
-                  >
-                    <CaptureIcon />
-                  </button>
-                  {captureMenuOpen ? (
-                    <>
-                      <div className="capture-scrim" onClick={() => setCaptureMenuOpen(false)} aria-hidden="true" />
-                      <div className="capture-menu" role="menu" data-testid="capture-menu">
-                        <button
-                          className="capture-item"
-                          data-testid="capture-region"
-                          onClick={() => void captureRegion()}
-                        >
-                          <RegionIcon />
-                          <span>{t('框选区域')}</span>
-                        </button>
-                        <button
-                          className="capture-item"
-                          data-testid="capture-screen"
-                          onClick={() => void captureScreen()}
-                        >
-                          <CaptureIcon />
-                          <span>{t('整个屏幕')}</span>
-                        </button>
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-                <button
-                  className={`btn attach ${recording ? 'recording' : ''}`}
-                  data-testid="mic-button"
-                  title={recording ? t('停止录音并转写') : t('语音输入')}
-                  disabled={voiceBusy}
-                  onClick={toggleRecording}
-                >
-                  {recording ? <StopIcon /> : <MicIcon />}
-                </button>
-                {busy ? (
-                  <button
-                    className="send stop"
-                    title={backgroundActive > 0 ? t('停止当前回复；后台任务会继续运行') : t('停止当前回复')}
-                    onClick={() => void abort()}
-                  >
-                    {t('停止')}
-                  </button>
-                ) : (
-                  <button
-                    className="send"
-                    title={t('落笔')}
-                    aria-label={t('落笔')}
-                    disabled={!canSend}
-                    onClick={() => {
-                      const prompt = input
-                      setInput('')
-                      void submit(prompt)
-                    }}
-                  >
-                    <SendIcon />
-                  </button>
-                )}
-              </div>
+              <MentionPalette items={mentionItems} index={mentionIndex} onPick={pickMention} />
+              <SlashPalette
+                commands={paletteCommands}
+                index={paletteIndex}
+                paletteRef={slashPaletteRef}
+                onRun={runSlashCommand}
+              />
+              <EditBadge
+                onCancel={() => {
+                  setEditArmed(false)
+                  setInput('')
+                  setAttachments([])
+                }}
+              />
+              <BackgroundWait count={backgroundActive} queued={queued} onStop={() => void abort()} />
+              <BackgroundIdle count={backgroundActive} onOpen={() => setBackgroundOpen(true)} />
+              <QueuedList
+                items={queuedItems}
+                onOpenInNewWindow={(index) => void openQueuedInNewWindow(index)}
+                onRemove={removeQueued}
+              />
+              <RecordingBar
+                recording={recording}
+                voiceBusy={voiceBusy}
+                seconds={recordingSeconds}
+                level={audioLevel}
+                onCancel={() => void stopRecording(false)}
+                onFinish={() => void stopRecording(true)}
+              />
+              <AttachmentsStrip
+                files={attachments}
+                onRemove={(file) => setAttachments((current) => current.filter((entry) => entry !== file))}
+                onOpenImage={(src, name) => setImageLightbox({ src, name })}
+              />
+              <MarkdownBar
+                open={markdownToolsOpen}
+                preview={markdownPreview}
+                content={input}
+                onToggleOpen={() => setMarkdownToolsOpen((open) => !open)}
+                onTogglePreview={() => setMarkdownPreview((preview) => !preview)}
+                onFormat={applyMarkdown}
+              />
+              <MarkdownBar
+                open={markdownToolsOpen}
+                preview={markdownPreview}
+                content={input}
+                onToggleOpen={() => setMarkdownToolsOpen((open) => !open)}
+                onTogglePreview={() => setMarkdownPreview((preview) => !preview)}
+                onFormat={applyMarkdown}
+              />
+              <ComposerBox
+                value={input}
+                textareaRef={textareaRef}
+                busy={busy}
+                canSend={canSend}
+                recording={recording}
+                voiceBusy={voiceBusy}
+                backgroundActive={backgroundActive}
+                captureMenuOpen={captureMenuOpen}
+                onChange={(event) => {
+                  setInput(event.target.value)
+                  updateMention(event.target.value, event.target.selectionStart)
+                }}
+                onKeyUp={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+                onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
+                onKeyDown={handleComposerKeyDown}
+                onOpenDocumentPanel={() => void openDocumentPanel()}
+                onPickDocument={() => void pickDocument()}
+                onToggleCaptureMenu={() => setCaptureMenuOpen((open) => !open)}
+                onCaptureRegion={() => void captureRegion()}
+                onCaptureScreen={() => void captureScreen()}
+                onToggleRecording={toggleRecording}
+                onAbort={() => void abort()}
+                onSubmit={() => {
+                  const prompt = input
+                  setInput('')
+                  void submit(prompt)
+                }}
+              />
               <div className="composer-hint">
                 <span>{busy ? t('Enter 排队 · 停止按钮结束当前任务') : t('Enter 发送 · Shift+Enter 换行')}</span>
                 <button type="button" className="capability-hint" onClick={() => setPaletteOpen(true)}>
                   {window.xcode.platform === 'darwin' ? '⌘K' : 'Ctrl+K'} {t('全部能力')}
                 </button>
-                {settings?.shellSandbox.supported &&
-                settings.shellSandbox.enabled &&
-                !settings.shellSandbox.allowNetwork ? (
-                  <button
-                    type="button"
-                    className="sandbox-hint"
-                    data-testid="sandbox-network-hint"
-                    title={t(
-                      'Agent 的 Shell 正在沙箱中运行，网络访问已关闭：npm install、git clone、curl 等联网命令会失败。点击调整。',
-                    )}
-                    onClick={() => void openSettings('tools')}
-                  >
-                    {t('沙箱 · 网络关闭')}
-                  </button>
-                ) : null}
-                {contextPercent !== null ? (
-                  <span
-                    className={`context-meter ${contextPercent >= 85 ? 'danger' : contextPercent >= 65 ? 'warn' : ''}`}
-                    title={t('上下文 {{used}} / {{total}} tokens', {
-                      used: usedContextTokens,
-                      total: contextWindow ?? 0,
-                    })}
-                  >
-                    <span className="context-track">
-                      <span className="context-fill" style={{ width: `${contextPercent}%` }} />
-                    </span>
-                    <span className="context-numbers">
-                      {formatContextTokens(usedContextTokens)} / {formatContextTokens(contextWindow ?? 0)}
-                    </span>
-                    <span className="context-percent">{contextPercent}%</span>
-                  </span>
-                ) : null}
-                {usage ? (
-                  <span className="usage">
-                    ↑{usage.inputTokens} ↓{usage.outputTokens}
-                  </span>
-                ) : null}
-                {queued > 0 ? <span className="queued">{t('已排队 {{count}}', { count: queued })}</span> : null}
+                <UsageFooter
+                  shellSandbox={settings?.shellSandbox}
+                  contextPercent={contextPercent}
+                  usedContextTokens={usedContextTokens}
+                  contextWindow={contextWindow}
+                  usage={usage}
+                  queued={queued}
+                  onOpenToolsSettings={() => void openSettings('tools')}
+                />
               </div>
             </footer>
           </div>

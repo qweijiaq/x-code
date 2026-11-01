@@ -10,7 +10,7 @@ import type { ModelMessage } from 'ai'
 import { hashToolCall, recordToolCall } from '../src/agent/loop-guard.js'
 import { createLoopState } from '../src/agent/loop-state.js'
 import { createCheckpoint, restoreCheckpoint } from '../src/agent/snapshot.js'
-import { partitionToolCalls, processToolCalls } from '../src/agent/tool-execution.js'
+import { MAX_CONCURRENT_TASKS, partitionToolCalls, processToolCalls } from '../src/agent/tool-execution.js'
 import type { AgentCallbacks, AgentOptions, LanguageModel } from '../src/types/index.js'
 
 function makeCallbacks(overrides: Partial<AgentCallbacks> = {}): AgentCallbacks {
@@ -1172,6 +1172,16 @@ describe('partitionToolCalls', () => {
     const batches = partitionToolCalls(calls)
     expect(batches).toHaveLength(1)
     expect(batches[0]!.map((c) => c.toolCallId)).toEqual(['1', '2', '3'])
+  })
+
+  it('caps a parallel task batch and queues the overflow', () => {
+    const calls = ['1', '2', '3', '4', '5'].map((id) => tc('task', id))
+    const batches = partitionToolCalls(calls)
+    expect(batches.map((b) => b.length)).toEqual([MAX_CONCURRENT_TASKS, 2])
+    expect(batches.map((b) => b.map((c) => c.toolCallId))).toEqual([
+      ['1', '2', '3'],
+      ['4', '5'],
+    ])
   })
 
   it('breaks the parallel batch when a non-task slips between tasks', () => {

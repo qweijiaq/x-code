@@ -4,6 +4,7 @@
 // 模式（互斥；未提供任何模式时走交互流程）：
 //   --resume         重跑 last-run.json 中失败（或从未运行）的场景
 //   --all            全新重跑每个场景
+//   --smoke          只跑发布门禁子集（读/写/编辑/多轮/子代理/权限）
 //   --filter <glob>  对场景 id 做子串匹配（例如 --filter shell）
 //   --list           仅列出场景 + 跳过状态后退出
 //   --model <id>     跳过交互式模型选择，直接用该模型 id（或别名）
@@ -36,9 +37,20 @@ const CLI_BIN = path.resolve(__dirname, '..', '..', 'dist', 'cli.js')
 const SCENARIOS_DIR = path.resolve(__dirname, 'scenarios')
 const DEFAULT_TIMEOUT_MS = 180_000
 
+/** 发布门禁用的最小真实模型子集：读写编辑、多轮、子代理和权限拒绝。 */
+const SMOKE_SCENARIO_IDS = [
+  '01-read-file',
+  '06-write-file',
+  '07-edit-file',
+  '09-multi-turn',
+  '10-task-subagent',
+  '18-permission-deny',
+] as const
+
 function parseArgs(argv: string[]): {
   resume: boolean
   all: boolean
+  smoke: boolean
   filter: string | undefined
   list: boolean
   model: string | undefined
@@ -49,6 +61,7 @@ function parseArgs(argv: string[]): {
   const out: ReturnType<typeof parseArgs> = {
     resume: false,
     all: false,
+    smoke: false,
     filter: undefined,
     list: false,
     model: undefined,
@@ -60,6 +73,7 @@ function parseArgs(argv: string[]): {
     const a = argv[i]
     if (a === '--resume') out.resume = true
     else if (a === '--all') out.all = true
+    else if (a === '--smoke') out.smoke = true
     else if (a === '--list') out.list = true
     else if (a === '--keep-tmp') out.keepTmp = true
     else if (a === '--print-jsonl') out.printJsonl = true
@@ -86,6 +100,7 @@ Usage:
 Flags:
   --all                Run every scenario (skip resume logic)
   --resume             Run only scenarios that failed (or were skipped) last time
+  --smoke              Run the release-gate subset (read/write/edit/multi-turn/sub-agent/permission)
   --filter <substr>    Run only scenarios whose id matches substring
   --model <id|alias>   Skip prompt; use this model (default: ${DEFAULT_MODEL})
   --list               List scenarios + last-run status, then exit
@@ -378,15 +393,26 @@ async function main(): Promise<void> {
   let scope: 'all' | 'resume' | 'cancel'
   if (args.all) scope = 'all'
   else if (args.resume) scope = 'resume'
-  else if (args.filter)
-    scope = 'all' // 仅有 filter 意味着“匹配到的全部”
+  else if (args.filter || args.smoke)
+    scope = 'all' // filter / smoke 意味着“匹配到的全部”
   else scope = await interactiveSelectMode(prevState)
   if (scope === 'cancel') {
     console.log('Cancelled.')
     return
   }
 
-  const chosen = pickScenarios(scenarios, args.filter, scope === 'resume', prevState)
+  let chosen: Scenario[]
+  if (args.smoke) {
+    const byId = new Map(scenarios.map((scenario) => [scenario.id, scenario]))
+    const missing = SMOKE_SCENARIO_IDS.filter((id) => !byId.has(id))
+    if (missing.length > 0) {
+      console.error(`❌ Smoke subset references missing scenarios: ${missing.join(', ')}`)
+      process.exit(1)
+    }
+    chosen = SMOKE_SCENARIO_IDS.map((id) => byId.get(id)!)
+  } else {
+    chosen = pickScenarios(scenarios, args.filter, scope === 'resume', prevState)
+  }
   if (chosen.length === 0) {
     console.log('No scenarios matched.')
     return
@@ -394,7 +420,7 @@ async function main(): Promise<void> {
 
   console.log(`\n▶ Model: ${modelId}`)
   console.log(
-    `▶ Scope: ${scope === 'resume' ? `resume (${chosen.length} of ${scenarios.length})` : `all (${chosen.length})`}`,
+    `▶ Scope: ${args.smoke ? `smoke (${chosen.length})` : scope === 'resume' ? `resume (${chosen.length} of ${scenarios.length})` : `all (${chosen.length})`}`,
   )
   if (args.filter) console.log(`▶ Filter: ${args.filter}`)
   console.log()

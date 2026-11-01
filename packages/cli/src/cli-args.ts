@@ -29,6 +29,13 @@ export async function parseCliArgs(args: string[] = hideBin(process.argv)) {
       default: false,
       describe: 'Non-interactive mode: output result and exit',
     })
+    .option('output-format', {
+      type: 'string',
+      choices: ['text', 'json', 'jsonl'] as const,
+      default: 'text',
+      // 仅对 --print 有意义。json 在结束时给一个结果对象；jsonl 逐事件输出。
+      describe: 'Print-mode output: text (stream), json (one result), or jsonl (one event per line)',
+    })
     .option('name', {
       type: 'string',
       describe: 'Name this agent and enable cross-session discovery and messaging',
@@ -38,6 +45,22 @@ export async function parseCliArgs(args: string[] = hideBin(process.argv)) {
       // 无默认值——交互模式下运行时不设上限（用户按 Esc 停止）。
       // 传入值以强制上限；主要与 `--print` 配合使用，因为那没有人参与循环。
       describe: 'Cap on agent loop iterations per submission (default: unlimited)',
+    })
+    .option('max-tokens', {
+      type: 'number',
+      // 与 --max-turns 同为“每次提交”的增量；跨 submit 不累计。
+      describe: 'Cap on tokens consumed per prompt (default: unlimited)',
+    })
+    .option('max-cost', {
+      type: 'number',
+      // 只对内置/用户定价表里的模型有效；未定价模型的成本不计入，预算可能提前或滞后触发。
+      describe: 'Cap on estimated USD cost per prompt using list prices (default: unlimited)',
+    })
+    .option('fallback-model', {
+      type: 'array',
+      string: true,
+      // 仅在提供商侧故障（429/5xx/欠费/模型下线/网络）且该轮没有可见输出时切换。
+      describe: 'Fallback model id if the provider fails (repeatable, tried in order)',
     })
     .option('plan', {
       type: 'boolean',

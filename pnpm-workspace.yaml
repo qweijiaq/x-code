@@ -1,2 +1,23 @@
 packages:
   - 'packages/*'
+
+# pnpm 10.28 no longer reads the "pnpm" field in package.json. Keep these here so
+# the security pins, native build allowlist, and the eslint 10 peer rule stay in
+# effect on the next dependency re-resolution.
+overrides:
+  '@hono/node-server': 1.19.15
+  body-parser: 2.3.0
+  fast-uri: 3.1.5
+  hono: 4.13.3
+  ip-address: 10.5.0
+
+onlyBuiltDependencies:
+  - esbuild
+  - '@vscode/ripgrep'
+  - '@fugood/whisper.node'
+  - fs-ext-extra-prebuilt
+  - node-pty
+
+peerDependencyRules:
+  allowedVersions:
+    eslint: '10'

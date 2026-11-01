@@ -99,8 +99,83 @@ describe('agent loop', () => {
       onUsageUpdate: vi.fn(),
       onContextCompressed: vi.fn(),
       onStreamRetry: vi.fn(),
+      onModelFallback: vi.fn(),
       onError: vi.fn(),
     }
+  })
+
+  it('falls back to the next model when the provider fails before any output', async () => {
+    const fallbackModel = { fallback: true }
+    const registry = { languageModel: vi.fn(() => fallbackModel) }
+    vi.mocked(streamText)
+      .mockImplementationOnce(() => {
+        throw new Error('Rate limited (429)')
+      })
+      .mockReturnValueOnce({
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: 'text-delta', text: 'recovered' }
+          },
+        },
+        response: Promise.resolve({ messages: [{ role: 'assistant', content: 'recovered' }] }),
+        usage: Promise.resolve({ inputTokens: 10, outputTokens: 5 }),
+        finishReason: Promise.resolve('stop'),
+        toolCalls: Promise.resolve([]),
+      } as any)
+
+    const { state, modelId } = await agentLoop(
+      'fall back please',
+      {} as any,
+      {
+        modelId: 'test:model',
+        trustMode: false,
+        maxTurns: 3,
+        printMode: false,
+        streamMaxRetries: 0,
+        streamIdleTimeoutMs: 0,
+        modelRegistry: registry as any,
+        fallbackModelIds: ['backup:model'],
+      },
+      mockCallbacks,
+    )
+
+    expect(registry.languageModel).toHaveBeenCalledWith('backup:model')
+    expect(mockCallbacks.onModelFallback).toHaveBeenCalledWith({
+      fromModelId: 'test:model',
+      toModelId: 'backup:model',
+      reason: 'provider-unavailable',
+    })
+    // 切换成功时不应把主模型的错误留在 UI 上；通知由 onModelFallback 负责。
+    expect(mockCallbacks.onError).not.toHaveBeenCalled()
+    expect(vi.mocked(streamText).mock.calls[1]![0].model).toBe(fallbackModel)
+    expect(modelId).toBe('backup:model')
+    expect(state.messages.at(-1)).toEqual({ role: 'assistant', content: 'recovered' })
+  })
+
+  it('does not fall back on authentication failures', async () => {
+    vi.mocked(streamText).mockImplementationOnce(() => {
+      throw new Error('Unauthorized (401)')
+    })
+
+    await agentLoop(
+      'bad key',
+      {} as any,
+      {
+        modelId: 'test:model',
+        trustMode: false,
+        maxTurns: 3,
+        printMode: false,
+        streamMaxRetries: 0,
+        streamIdleTimeoutMs: 0,
+        modelRegistry: { languageModel: vi.fn() } as any,
+        fallbackModelIds: ['backup:model'],
+      },
+      mockCallbacks,
+    )
+
+    expect(mockCallbacks.onModelFallback).not.toHaveBeenCalled()
+    expect(mockCallbacks.onError).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(streamText)).toHaveBeenCalledTimes(1)
   })
 
   it('reconnects an interrupted text stream and persists one combined assistant response', async () => {

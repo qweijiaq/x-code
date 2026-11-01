@@ -4,10 +4,12 @@
 // reconciler 帧。Ink 路径无法在打印模式下可靠地自动退出，因为 `usePromptInput`
 // 在 raw 模式下引用了 stdin，让事件循环保持存活，直到用户按键或调整终端大小
 // ——那时排队的卸载才终于运行。把打印模式作为独立代码路径，避开了所有这些地雷。
-import { agentLoop, createLoopState, hydrateLoopState, saveSession, stripTerminalControls } from '@x-code-cli/core'
+import { agentLoop, createLoopState, estimateBreakdownCost, hydrateLoopState, saveSession } from '@x-code-cli/core'
 import type { AgentCallbacks, AgentOptions, LanguageModel, LoadedSession } from '@x-code-cli/core'
 
 import { registerCleanupController } from './cleanup-controller.js'
+import { PrintOutput } from './print-output.js'
+import type { PrintOutputFormat } from './print-output.js'
 import { SHELL_SHUTDOWN_BUDGET, runShutdownPhases } from './shutdown-coordinator.js'
 
 export async function runPrintMode(
@@ -15,6 +17,7 @@ export async function runPrintMode(
   options: AgentOptions,
   prompt: string,
   initialSession?: LoadedSession | null,
+  outputFormat: PrintOutputFormat = 'text',
 ): Promise<number> {
   // 在 Ctrl+C 时中止，让长时间运行的 -p 调用可以被中断。
   const controller = new AbortController()
@@ -24,6 +27,8 @@ export async function runPrintMode(
   let sawError = false
   let exitCode = 0
   let shouldSaveSession = false
+  let resultModelId = options.modelId
+  const output = new PrintOutput(outputFormat, (chunk) => process.stdout.write(chunk))
   const state = initialSession
     ? hydrateLoopState(initialSession, options.permissionMode ?? 'default', process.cwd())
     : createLoopState(options.permissionMode ?? 'default', { projectCwd: process.cwd() })
@@ -36,12 +41,10 @@ export async function runPrintMode(
   })
 
   const callbacks: AgentCallbacks = {
-    onTextDelta: (delta) => {
-      if (delta) process.stdout.write(stripTerminalControls(delta))
-    },
-    onToolCall: () => {},
+    onTextDelta: (delta) => output.textDelta(delta),
+    onToolCall: (toolCallId, toolName, input) => output.toolCall(toolCallId, toolName, input),
     onToolProgress: () => {},
-    onToolResult: () => {},
+    onToolResult: (toolCallId, result, isError) => output.toolResult(toolCallId, result, isError === true),
     onAskPermission: async (toolCall) => {
       // 非交互式——我们无法提示。拒绝并让模型适应；想在 -p 模式下写工具的用户
       // 应该传 -t / --trust。
@@ -67,15 +70,30 @@ export async function runPrintMode(
       // 来渲染它们。静默空操作。
     },
     onShellOutput: () => {},
-    onUsageUpdate: () => {},
+    onUsageUpdate: (usage) => output.setUsage(usage),
     onContextCompressed: () => {},
     onStreamRetry: (event) => {
       if (event) process.stderr.write(`\nReconnecting... ${event.attempt}/${event.maxAttempts}\n`)
     },
+    onModelFallback: (event) => {
+      process.stderr.write(`\n[model fallback] ${event.fromModelId} -> ${event.toModelId}\n`)
+    },
     onError: (err) => {
       sawError = true
+      output.setError(err.message)
       process.stderr.write(`\n[error] ${err.message}\n`)
     },
+  }
+
+  const finishOutput = (): void => {
+    if (outputFormat === 'text') return
+    const cost = estimateBreakdownCost(state.usageBreakdown)
+    output.finish({
+      modelId: resultModelId,
+      sessionId: state.sessionId,
+      costUsd: cost.usd,
+      unpricedModels: cost.unpricedModels,
+    })
   }
 
   try {
@@ -83,16 +101,22 @@ export async function runPrintMode(
     // 没有这一步，main() 会加载之前的 jsonl，但 agent 在这里开启全新对话，
     // 静默丢弃恢复请求。Ink 路径通过 useAgent → hydrateLoopState 贯通这一点；
     // 打印模式只需要同样的接线。
-    await agentLoop(prompt, model, { ...options, abortSignal: controller.signal }, callbacks, state)
+    const loopResult = await agentLoop(prompt, model, { ...options, abortSignal: controller.signal }, callbacks, state)
+    // 备用模型切换后，结果里的 modelId 才是真正完成这次调用的模型。
+    // `?.` 兼容测试/旧调用方返回的空结果。
+    resultModelId = loopResult?.modelId ?? options.modelId
 
-    // 当 stdout 是 TTY 时以换行结束，让 shell 提示符落在一个全新行上。
-    // 被管道时，则原样信任模型的输出。
-    if (process.stdout.isTTY) process.stdout.write('\n')
+    // 只有纯文本模式才需要补换行；结构化输出不能混入额外字节。
+    if (outputFormat === 'text' && process.stdout.isTTY) process.stdout.write('\n')
+    finishOutput()
 
     shouldSaveSession = true
     exitCode = sawError ? 1 : 0
   } catch (err) {
-    process.stderr.write(`\n[fatal] ${err instanceof Error ? err.message : String(err)}\n`)
+    const message = err instanceof Error ? err.message : String(err)
+    output.setError(message)
+    finishOutput()
+    process.stderr.write(`\n[fatal] ${message}\n`)
     exitCode = 1
   } finally {
     process.off('SIGINT', onSigint)

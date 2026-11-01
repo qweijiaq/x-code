@@ -40,9 +40,11 @@ import { createUpdateGoalTool } from '../tools/update-goal.js'
 import type { AgentCallbacks, AgentOptions, MessageProvenance, PeerOrigin, QueuedAgentInput } from '../types/index.js'
 import { debugLog, errorMessage, isAbortError } from '../utils.js'
 import { classifyApiError, isContextTooLongError, isImageDataError } from './api-errors.js'
+import { checkBudget } from './budget.js'
 import { markExpectedCacheMiss } from './cache-stats.js'
 import { checkAndCompressContext, handleContextTooLong } from './compression.js'
 import { getCompressionThreshold, getMaxOutputTokens } from './context-window.js'
+import { estimateBreakdownCost } from './cost.js'
 import { createLoopState } from './loop-state.js'
 import type { LoopState, StepStats } from './loop-state.js'
 import { generateTaskSlug, makePlanFilePath } from './plan-storage.js'
@@ -76,6 +78,7 @@ import { buildDeferredCatalog, composeTurnTools } from './tool-search/catalog.js
 import { appendTrackedMessage, recalculateContextSecurity } from './tracked-messages.js'
 import { classifyTurnFailure, collectTurnResponse, streamChunksToUI } from './turn-stream.js'
 import type { FinalTurnOutcome, StreamAttemptTracker, TurnOutcome } from './turn-stream.js'
+import { recordTurnTrace } from './turn-trace.js'
 
 /** 把注入的上下文块前置到 UserContent 负载。供 UserPromptSubmit hook
  *  决策使用：插件可以在模型看到用户实际提示词之前注入上下文（例如
@@ -259,6 +262,8 @@ export type { CompressionResult } from './compression.js'
 export interface AgentLoopResult {
   state: LoopState
   turnCount: number
+  /** 实际完成这次调用的模型；发生备用模型切换时与传入的 `options.modelId` 不同。 */
+  modelId: string
 }
 
 /** 为本循环构建【基础】工具集。「基础」= 每轮都直接加载的一切；
@@ -642,9 +647,9 @@ async function runTurnAttempt(
       return { kind: 'aborted' }
     }
     // 流本身已经完成，collectTurnResponse 可能已在 usage 元数据失败之前
-    // 提交了 assistant/tool 消息。在这里重放会重复可见输出和副作用。
-    callbacks.onError(new Error(classifyApiError(err).message))
-    return { kind: 'error' }
+    // 提交了 assistant/tool 消息。在这里重放会重复可见输出和副作用，
+    // 所以明确标记为不可切换 —— 错误由外层统一报告。
+    return { kind: 'error', error: new Error(classifyApiError(err).message) }
   }
 }
 
@@ -715,8 +720,13 @@ async function runTurn(
         'stream.reconnect-stop',
         outcome.toolActivity ? 'tool activity makes replay unsafe' : `retry budget exhausted (${maxRetries})`,
       )
-      callbacks.onError(new Error(classifyApiError(outcome.error).message))
-      return { kind: 'error' }
+      const classified = classifyApiError(outcome.error)
+      return {
+        kind: 'error',
+        error: new Error(classified.message),
+        fallbackEligible:
+          classified.fallbackEligible === true && !outcome.toolActivity && nextRecoveredText.length === 0,
+      }
     }
 
     retryCount++
@@ -805,14 +815,14 @@ export async function agentLoop(
         // 基础上继续。
         appendTrackedMessage(state, { role: 'user', content: userMessage })
         appendTrackedMessage(state, { role: 'assistant', content: notice })
-        return { state, turnCount: 0 }
+        return { state, turnCount: 0, modelId: options.modelId }
       }
       if (effect.context) {
         effectiveUserMessage = prependContext(userMessage, effect.context)
       }
     } catch (err) {
       if (options.abortSignal?.aborted) {
-        return { state, turnCount: 0 }
+        return { state, turnCount: 0, modelId: options.modelId }
       }
       debugLog('agent.hook-user-prompt-error', String(err))
     }
@@ -832,6 +842,12 @@ export async function agentLoop(
   const stepStartedAt = new Date().toISOString()
   const baselineInput = state.tokenUsage.inputTokens
   const baselineOutput = state.tokenUsage.outputTokens
+  // 预算按单次 submit 的增量算：LoopState 在会话内复用，累计值会让达到上限
+  // 的会话永久锁死。基线同时覆盖 token 与按模型拆分的估算成本。
+  const budgetBaseline = {
+    tokens: state.tokenUsage.totalTokens,
+    cost: estimateBreakdownCost(state.usageBreakdown).usd,
+  }
   let stepToolCallCount = 0
 
   // 本地推导任务 slug。它用于计划文件名，并保留在会话元数据里供旧式
@@ -882,7 +898,12 @@ export async function agentLoop(
   // （appendRawLines 吞掉 FS 错误），所以这不会抛出。
   await appendHeader(state, options.modelId, taskTextForMeta || taskText)
 
-  const compressionThreshold = getCompressionThreshold(options.modelId)
+  let compressionThreshold = getCompressionThreshold(options.modelId)
+
+  // 备用模型队列：去重、排除当前模型，按配置顺序尝试。切换只在“该轮没有
+  // 任何可见输出/工具活动”的错误上发生，重放是安全的。
+  const fallbackModelIds = [...new Set(options.fallbackModelIds ?? [])].filter((id) => id !== options.modelId)
+  let fallbackCursor = 0
 
   // 每个会话构建一次【基础】工具集（核心工具 + toolSearch，或 sub-agent /
   // 受限根轮次的完整过滤集）。deferred 目录——当 deferral 激活时——在这里
@@ -914,6 +935,22 @@ export async function agentLoop(
     // 压缩触发，它会就地重写数组并写自己的边界 + 重新 flush，而那假设
     // 压缩前的尾部已经在盘上。
     await flushPendingMessages(state)
+
+    // 预算在压缩之前判定：超限时不再发起摘要或下一轮模型请求，只把当前
+    // 尾部落盘后停止。判定放在 flush 之后，避免最后一条 assistant/tool
+    // 消息因为提前 break 而丢失。
+    if (options.budget) {
+      const cost = estimateBreakdownCost(state.usageBreakdown)
+      const verdict = checkBudget(options.budget, {
+        tokens: state.tokenUsage.totalTokens - budgetBaseline.tokens,
+        costUsd: Math.max(0, cost.usd - budgetBaseline.cost),
+        unpricedModels: cost.unpricedModels,
+      })
+      if (verdict.exceeded) {
+        callbacks.onError(new Error(verdict.message))
+        break
+      }
+    }
 
     await checkAndCompressContext(state, model, compressionThreshold, callbacks, {
       hookBus: options.hookBus,
@@ -1032,7 +1069,43 @@ export async function agentLoop(
       state.permissionMode,
     )
 
+    // 记录本轮的增量，供 turn trace 使用（trace 只落计数，不含内容）。
+    const turnStartedAtMs = Date.now()
+    const messagesBeforeTurn = state.messages.length
+    const usageBeforeTurn = {
+      input: state.tokenUsage.inputTokens,
+      output: state.tokenUsage.outputTokens,
+      cacheRead: state.tokenUsage.cacheReadTokens,
+      cacheCreation: state.tokenUsage.cacheCreationTokens,
+    }
+    const costBeforeTurn = estimateBreakdownCost(state.usageBreakdown).usd
+
     const outcome = await runTurn(state, model, options, systemPrompt, callbacks, effectiveTools, turnMessages, turn)
+
+    const turnCost = estimateBreakdownCost(state.usageBreakdown)
+    let turnToolCalls = 0
+    for (const message of state.messages.slice(messagesBeforeTurn)) {
+      if (message.role !== 'assistant' || !Array.isArray(message.content)) continue
+      for (const part of message.content) {
+        if ((part as { type?: string }).type === 'tool-call') turnToolCalls++
+      }
+    }
+    recordTurnTrace({
+      ts: new Date().toISOString(),
+      sessionId: state.sessionId,
+      turn,
+      modelId: options.modelId,
+      durationMs: Date.now() - turnStartedAtMs,
+      inputTokens: state.tokenUsage.inputTokens - usageBeforeTurn.input,
+      outputTokens: state.tokenUsage.outputTokens - usageBeforeTurn.output,
+      cacheReadTokens: state.tokenUsage.cacheReadTokens - usageBeforeTurn.cacheRead,
+      cacheCreationTokens: state.tokenUsage.cacheCreationTokens - usageBeforeTurn.cacheCreation,
+      contextTokens: state.tokenUsage.currentContextTokens,
+      toolCalls: turnToolCalls,
+      finishReason: outcome.kind === 'done' ? outcome.finishReason : outcome.kind,
+      costUsd: Math.max(0, turnCost.usd - costBeforeTurn),
+      unpricedModels: turnCost.unpricedModels,
+    })
 
     // ── 插件 hook：TurnComplete ──
     // 无论 finish 原因（包括错误 / 中止）都触发，好让通知/审计 hook 看到
@@ -1054,7 +1127,42 @@ export async function agentLoop(
         .catch((err) => debugLog('agent.hook-turn-complete-error', String(err)))
     }
 
-    if (outcome.kind === 'error') break
+    if (outcome.kind === 'error') {
+      const nextModelId = outcome.fallbackEligible ? fallbackModelIds[fallbackCursor] : undefined
+      // 只在该轮没有提交任何 assistant/tool 消息时重放；一旦有输出，
+      // 换模型重放会造成重复文本或重复工具副作用。
+      const transcriptClean = state.messages.length === messagesBeforeTurn
+      if (nextModelId && transcriptClean && options.modelRegistry && !options.abortSignal?.aborted) {
+        let nextModel: LanguageModel | null = null
+        try {
+          nextModel = options.modelRegistry.languageModel(nextModelId)
+        } catch (error) {
+          debugLog('model.fallback-resolve-error', `${nextModelId}: ${errorMessage(error)}`)
+        }
+        if (nextModel) {
+          fallbackCursor++
+          const fromModelId = options.modelId
+          options.modelId = nextModelId
+          model = nextModel
+          compressionThreshold = getCompressionThreshold(nextModelId)
+          // 系统提示词里嵌入了 modelId 和按模型裁剪的工具/能力块；置空让
+          // 下一轮按新模型重建。缓存前缀必然失效，标记为预期未命中。
+          state.systemPromptCache = null
+          state.systemPromptBlocks = undefined
+          markExpectedCacheMiss(state, 'model-change')
+          debugLog('model.fallback', `${fromModelId} -> ${nextModelId}`)
+          callbacks.onModelFallback?.({
+            fromModelId,
+            toModelId: nextModelId,
+            reason: 'provider-unavailable',
+          })
+          continue
+        }
+      }
+      // 没有可用备用模型（或重放不安全）时才把错误交给 UI。
+      callbacks.onError(outcome.error)
+      break
+    }
     if (outcome.kind === 'aborted') break
     if (outcome.kind === 'retry') {
       // 不计入经响应式压缩恢复的失败尝试。
@@ -1251,7 +1359,7 @@ export async function agentLoop(
   state.stepStats.push(stepEntry)
   void appendStepStats(state, stepEntry)
 
-  return { state, turnCount: turn }
+  return { state, turnCount: turn, modelId: options.modelId }
 }
 
 /** 把任何内存中的消息同步到会话 jsonl。在退出/清理路径上调用，好让

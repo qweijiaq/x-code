@@ -18,6 +18,8 @@ export default defineConfig({
           name: 'unit',
           include: ['packages/core/tests/**/*.test.ts', 'packages/cli/tests/*.test.{ts,tsx}'],
           sequence: { groupOrder: 0 },
+          // 图片压缩和 PDF 解析会在并行负载下超过 5s 默认值；20s 仍能兜住真正的 hang。
+          testTimeout: 20_000,
         },
       },
       {

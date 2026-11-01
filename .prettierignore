@@ -1,4 +1,5 @@
 node_modules
+.pnpm-store
 # Repository-local skills may carry non-project runtimes and are validated independently.
 .agents/skills
 dist

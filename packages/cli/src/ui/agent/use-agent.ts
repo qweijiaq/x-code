@@ -615,6 +615,15 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
           })
         },
         onStreamRetry: handleStreamRetry,
+        onModelFallback: (event) => {
+          appendMessage({
+            id: `model-fallback-${Date.now()}`,
+            role: 'assistant',
+            content: `Model fallback: ${event.fromModelId} → ${event.toModelId} (provider unavailable)`,
+            timestamp: Date.now(),
+            kind: 'command-result',
+          })
+        },
         onError: (error) => {
           setState((prev) => ({ ...prev, error: error.message }))
         },

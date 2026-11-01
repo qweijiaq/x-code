@@ -22,6 +22,7 @@ import {
   forceTerminateManagedShellsSync,
   getAvailableProviders,
   getEnvVarName,
+  getModelPricing,
   getTokenStorage,
   initializeOpenAIAuthContext,
   listSessions,
@@ -35,6 +36,7 @@ import {
   resolveWebSearchProvider,
   setContextWindowOverride,
   setPluginDebugMirror,
+  setPricingOverrides,
   shutdownBrowserMcp,
 } from '@x-code-cli/core'
 import type {
@@ -399,12 +401,36 @@ async function main() {
 
   const userConfig = loadUserConfig()
   setContextWindowOverride(userConfig.contextWindow)
+  setPricingOverrides(userConfig.pricing)
   const streamConfig = resolveStreamConfig(userConfig)
+  const maxTokens = argv['max-tokens'] ?? userConfig.budget?.maxTokens
+  const maxCostUsd = argv['max-cost'] ?? userConfig.budget?.maxCostUsd
+  const budget: AgentOptions['budget'] =
+    maxTokens === undefined && maxCostUsd === undefined
+      ? undefined
+      : { ...(maxTokens === undefined ? {} : { maxTokens }), ...(maxCostUsd === undefined ? {} : { maxCostUsd }) }
+  // 未定价模型的成本恒为 0，--max-cost 会静默失效；启动时明确告知，
+  // 而不是让用户以为预算已经生效。
+  if (maxCostUsd !== undefined && !getModelPricing(modelId)) {
+    console.error(
+      chalk.yellow(
+        `[budget] no list price for ${modelId}; --max-cost will not trigger. Add a "pricing" entry for this model in ~/.x-code/config.json.`,
+      ),
+    )
+  }
+  const fallbackModelIds = [
+    ...(argv['fallback-model'] ?? []).filter((value): value is string => typeof value === 'string' && !!value.trim()),
+    ...(userConfig.fallbackModels ?? []),
+  ]
+    .map((value) => value.trim())
+    .filter((value, index, all) => value.length > 0 && all.indexOf(value) === index)
   const options: AgentOptions = {
     modelId,
     trustMode: argv.trust,
     printMode,
     maxTurns: argv['max-turns'],
+    ...(budget ? { budget } : {}),
+    ...(fallbackModelIds.length > 0 ? { fallbackModelIds } : {}),
     streamMaxRetries: streamConfig.maxRetries,
     streamIdleTimeoutMs: streamConfig.idleTimeoutMs,
     // 从磁盘读取持久化的 /thinking 开关。默认 false，这样在无配置的机器上
@@ -502,7 +528,14 @@ async function main() {
     // 前可用。
     await mcpLoadResult.registry.connectAll()
     const { runPrintMode } = await import('./print.js')
-    const code = await runPrintMode(model, options, fullPrompt, initialSession)
+    const { parsePrintOutputFormat } = await import('./print-output.js')
+    const code = await runPrintMode(
+      model,
+      options,
+      fullPrompt,
+      initialSession,
+      parsePrintOutputFormat(argv['output-format']),
+    )
     resetTerminal()
     process.exit(code)
   }

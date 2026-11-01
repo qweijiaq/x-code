@@ -1,7 +1,14 @@
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 
-import { TOOL_SEARCH_TOOL_NAME, extractText, getContextWindow, listSessions, loadSession } from '@x-code-cli/core'
+import {
+  TOOL_SEARCH_TOOL_NAME,
+  estimateUsageCost,
+  extractText,
+  getContextWindow,
+  listSessions,
+  loadSession,
+} from '@x-code-cli/core'
 import type { LoadedSession, ModelMessage, TokenUsage } from '@x-code-cli/core'
 
 import type {
@@ -249,12 +256,14 @@ export function toSessionMessages(messages: ModelMessage[]): SessionMessage[] {
 }
 
 export function usageView(usage: TokenUsage, modelId?: string): UsageView {
+  const cost = modelId ? estimateUsageCost(usage, modelId) : null
   return {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     totalTokens: usage.totalTokens,
     currentContextTokens: usage.currentContextTokens,
     ...(modelId ? { contextWindow: getContextWindow(modelId) } : {}),
+    ...(cost?.priced ? { costUsd: cost.usd } : {}),
   }
 }
 

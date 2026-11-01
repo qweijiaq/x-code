@@ -1,0 +1,82 @@
+name: E2E (real model)
+
+# Real-model smoke gate. Not part of PR CI: it spends tokens and needs a provider
+# secret. It runs weekly once the secret exists, and can be dispatched manually
+# with a different model or a single scenario filter.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Model id to test with (provider:model or an alias)
+        required: false
+        default: deepseek:deepseek-flash
+      filter:
+        description: Optional scenario id substring; empty runs the smoke subset
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Real-model smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      OPENAI_COMPATIBLE_API_KEY: ${{ secrets.OPENAI_COMPATIBLE_API_KEY }}
+      OPENAI_COMPATIBLE_BASE_URL: ${{ secrets.OPENAI_COMPATIBLE_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # A missing secret must skip, not fail: forks and fresh mirrors have no
+      # credentials, and the workflow is also scheduled.
+      - name: Check E2E credentials
+        id: creds
+        run: |
+          if [ -n "$DEEPSEEK_API_KEY" ] || { [ -n "$OPENAI_COMPATIBLE_API_KEY" ] && [ -n "$OPENAI_COMPATIBLE_BASE_URL" ]; }; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No E2E provider secret configured; skipping the real-model run."
+          fi
+
+      - name: Run smoke subset
+        if: steps.creds.outputs.present == 'true'
+        env:
+          E2E_MODEL: ${{ github.event.inputs.model || 'deepseek:deepseek-flash' }}
+          E2E_FILTER: ${{ github.event.inputs.filter }}
+        run: |
+          if [ -n "$E2E_FILTER" ]; then
+            pnpm test:e2e --filter "$E2E_FILTER" --model "$E2E_MODEL"
+          else
+            pnpm test:e2e --smoke --model "$E2E_MODEL"
+          fi
+
+      # Failure artifacts: resumable state plus any stashed session transcripts.
+      - name: Upload E2E state
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-state-${{ github.run_id }}
+          path: packages/cli/tests/e2e/.state/
+          if-no-files-found: ignore
+          retention-days: 14

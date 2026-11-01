@@ -78,6 +78,9 @@ export function isImageDataError(err: unknown): boolean {
 export interface ClassifiedError {
   message: string
   retryable: boolean
+  /** 错误来自提供商侧不可用/限流/欠费/模型下线，切换到备用模型通常能继续。
+   *  认证、内容审核、上下文溢出等错误刻意保持 false —— 换模型只会掩盖问题。 */
+  fallbackEligible?: boolean
 }
 
 // ── 错误形态谓词 ─────────────────────────────────────────────────────────
@@ -399,6 +402,7 @@ export function classifyApiError(err: unknown): ClassifiedError {
       message:
         'API account balance insufficient (402). Top up your provider account, or switch to a different provider with /model.',
       retryable: false,
+      fallbackEligible: true,
     }
   }
   if (isForbiddenError(msg, status)) {
@@ -415,6 +419,7 @@ export function classifyApiError(err: unknown): ClassifiedError {
         ? 'ChatGPT model unavailable (404). The subscription model catalog was refreshed; switch with /model.'
         : 'Model not found (404). The id may be wrong, deprecated, or not enabled for your account. Switch with /model.',
       retryable: false,
+      fallbackEligible: true,
     }
   }
   if (isContentPolicyError(msg, status)) {
@@ -435,6 +440,16 @@ export function classifyApiError(err: unknown): ClassifiedError {
     return {
       message: 'Model service unavailable (503). Try switching to a different model with /model.',
       retryable: false,
+      fallbackEligible: true,
+    }
+  }
+  // 其余 5xx（500/502/504/529）通常也是提供商侧瞬时故障；AI SDK 已按
+  // maxRetries 重试过，走到这里仍失败才考虑备用模型。
+  if (status === 500 || status === 502 || status === 504 || status === 529) {
+    return {
+      message: `Model provider error (${status}). Try again, or switch to a different model with /model.`,
+      retryable: true,
+      fallbackEligible: true,
     }
   }
   if (isRateLimitedError(msg, status)) {
@@ -442,12 +457,14 @@ export function classifyApiError(err: unknown): ClassifiedError {
       message:
         'Rate limited (429). Waiting for retry... (AI SDK handles exponential backoff automatically with maxRetries: 3)',
       retryable: true,
+      fallbackEligible: true,
     }
   }
   if (isNetworkError(msg)) {
     return {
       message: 'Network connection failed or was interrupted. Check your connection and try again.',
       retryable: true,
+      fallbackEligible: true,
     }
   }
   // AI SDK 的 TypeValidationError——提供商返回了非标准响应

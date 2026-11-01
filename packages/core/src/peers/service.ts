@@ -39,6 +39,11 @@ export interface PreparedPeerSend {
   candidate: RegistrationCandidate
 }
 
+/** 关停时投递 final update 的预算。每个请求仍被单独限制在 100ms；这个总预算
+ *  只用于覆盖“多条 held 消息 + 多个 sender”的场景。旧值 500ms 在负载下会
+ *  漏掉队列尾部的更新，让 sender 永远停在 held。排队为空时立即返回。 */
+const FINAL_UPDATE_SHUTDOWN_BUDGET_MS = 2_000
+
 export type SendMessageResult =
   | { success: true; status: 'delivered' | 'held'; messageId: string; heldUntil?: string }
   | { success: false; code: string; reason: string; messageId?: string }
@@ -470,24 +475,29 @@ export function createPeerService(options: PeerServiceOptions = {}): PeerService
 
   const flushFinalUpdates = async (deadlineAt?: number): Promise<void> => {
     if ((!started && !shuttingDown) || !identity) return
-    const deferredFailures: Array<NonNullable<ReturnType<PeerInbox['claimFinalUpdates']>>> = []
-    try {
-      do {
-        const claims = Array.from({ length: 16 }, () => inbox.claimFinalUpdates(1)).filter(
-          (claim): claim is NonNullable<typeof claim> => claim !== null,
-        )
-        if (claims.length === 0) return
-        const results = await Promise.all(claims.map((claim) => sendFinalUpdate(claim, deadlineAt)))
-        for (let index = 0; index < claims.length; index++) {
-          const claim = claims[index]!
-          if (results[index]) inbox.commitFinalUpdateClaim(claim.claimId)
-          else if (deadlineAt === undefined) inbox.releaseFinalUpdateClaim(claim.claimId)
-          else deferredFailures.push(claim)
+    while (true) {
+      const claims = Array.from({ length: 16 }, () => inbox.claimFinalUpdates(1)).filter(
+        (claim): claim is NonNullable<typeof claim> => claim !== null,
+      )
+      if (claims.length === 0) return
+      const results = await Promise.all(claims.map((claim) => sendFinalUpdate(claim, deadlineAt)))
+      let committed = 0
+      for (let index = 0; index < claims.length; index++) {
+        const claim = claims[index]!
+        if (results[index]) {
+          inbox.commitFinalUpdateClaim(claim.claimId)
+          committed++
+        } else {
+          // 失败立即释放，让同一轮循环能重新认领并重试。旧实现把失败留到
+          // finally 才释放，等于在截止时间内永不重试；关停时偶尔一次 100ms
+          // 超时就会让 sender 永久停在 held。
+          inbox.releaseFinalUpdateClaim(claim.claimId)
         }
-        if (deadlineAt === undefined) return
-      } while (Date.now() < deadlineAt)
-    } finally {
-      for (const claim of deferredFailures) inbox.releaseFinalUpdateClaim(claim.claimId)
+      }
+      if (deadlineAt === undefined) return
+      if (Date.now() >= deadlineAt) return
+      // 整批全失败说明对端很可能已经不可达，继续空转会拖满整个预算。
+      if (committed === 0) return
     }
   }
 
@@ -634,7 +644,7 @@ export function createPeerService(options: PeerServiceOptions = {}): PeerService
         const lateServer = takeServer()
         if (lateServer && lateServer !== activeServer) await lateServer.close({ deadlineMs: 500 }).catch(() => {})
         inbox.expireAllHeld()
-        await flushFinalUpdates(Date.now() + 500).catch(() => {})
+        await flushFinalUpdates(Date.now() + FINAL_UPDATE_SHUTDOWN_BUDGET_MS).catch(() => {})
         await registrationWriteTail.catch(() => {})
         if (identity) await registry.removeOwn(identity.instanceId).catch(() => false)
         registration = undefined

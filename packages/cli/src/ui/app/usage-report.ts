@@ -1,4 +1,4 @@
-import { calibrateContextBreakdown, getContextWindow } from '@x-code-cli/core'
+import { calibrateContextBreakdown, estimateBreakdownCost, formatUsd, getContextWindow } from '@x-code-cli/core'
 import type { CacheMissSummary, ContextBreakdown, StepStats, TokenUsage, UsageBreakdown } from '@x-code-cli/core'
 
 import { GLYPH_RESULT_BRACKET } from '../render/terminal-glyphs.js'
@@ -65,6 +65,17 @@ export function formatUsageReport(
     `- Cache creation:  ${fmt(usage.cacheCreationTokens)}`,
     `- Total:           ${fmt(usage.totalTokens)}`,
   )
+
+  // 成本只在有价格来源时显示；未定价模型单独列出，避免把“未知”展示成 $0。
+  if (breakdown) {
+    const cost = estimateBreakdownCost(breakdown)
+    if (cost.unpricedModels.length > 0 && cost.usd === 0) {
+      lines.push(`- Est. cost:       n/a (no price for ${cost.unpricedModels.join(', ')})`)
+    } else {
+      const suffix = cost.unpricedModels.length > 0 ? `  (excludes unpriced: ${cost.unpricedModels.join(', ')})` : ''
+      lines.push(`- Est. cost:       ${formatUsd(cost.usd)}${suffix}  (list prices, cached input not discounted)`)
+    }
+  }
 
   const estimatedReusableTokens = cacheMissSummary?.estimatedReusableTokens ?? 0
   if (estimatedReusableTokens > 0) {

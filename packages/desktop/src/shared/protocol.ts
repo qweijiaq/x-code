@@ -830,6 +830,8 @@ export interface UsageView {
   totalTokens: number
   currentContextTokens: number
   contextWindow?: number
+  /** 累计估算成本（USD，列表价）。模型没有价格来源时省略，而不是显示 $0。 */
+  costUsd?: number
 }
 
 export interface TodoView {
@@ -1290,6 +1292,7 @@ export type RuntimeEvent =
   | { type: 'agent:ingest-progress'; description: string }
   | { type: 'agent:attachments'; files: string[]; mediaParts: number; textBytes: number }
   | { type: 'agent:stream-retry'; attempt: number; maxAttempts: number; delayMs?: number }
+  | { type: 'agent:model-fallback'; turnId: string; fromModelId: string; toModelId: string }
   | { type: 'agent:permission-mode'; mode: string }
   | { type: 'agent:turn-end'; turnId: string; sessionId: string; reason: string; text: string }
   | { type: 'agent:error'; turnId: string; message: string }

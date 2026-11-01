@@ -13,6 +13,36 @@
 - validate release tag/package versions before publishing and make npm publication idempotent
 - raise the CLI package gate to cover semantic navigation and plugin schema additions
 
+## v1.0.5 (2026-10-27)
+
+### Features
+
+- redesign the conversation surface around a single measured column, editorial prose and compact activity cards
+- rework Markdown typography, code blocks, attachments and composer states for both themes
+- unify the top bar, tab strip, sidebar, inspector, settings and approval surfaces under one rounded visual language
+- render PDF, Office, CSV and image files through the document panel preview instead of the source view
+
+### Bug Fixes
+
+- start the inspector below the top bar and tab strip so header actions stay clickable
+- make workspace switching report progress immediately, reject duplicate clicks and explain a blocked switch
+- flush the previous session in the background so a large transcript no longer delays a workspace switch
+- bound MCP shutdown at about 1.5 seconds and cache local model discovery for 30 seconds
+
+## v1.0.4 (2026-10-27)
+
+### Features
+
+- move a shell command that outlives its initial wait into the background panel and release the composer
+- add `task` with `background: true` so a sub-agent returns a task id immediately and reports progress in the panel
+- add `backgroundList`, `backgroundGet` and `backgroundOutput` tools plus a per-turn background summary
+- queue prompt continuation in a new window with a fork-time status snapshot of the parent turn
+
+### Bug Fixes
+
+- stop the current reply when a background shell is still running instead of making the model poll
+- keep background task output and completion notices in the transcript when a turn is detached
+
 ## v1.0.3 (2026-10-26)
 
 ### Features
@@ -164,16 +194,6 @@
 - reduce echo padding and stop dropping one-shot /clear screen bytes (3492291)
 - install rust target for cargo xwin cross build (dee7c64)
 - harden DeepSeek stream handling (eb45732)
-
-## Unreleased
-
-### Features
-
-- support secure same-account peer messaging on Windows x64 through a bundled Named Pipe broker, with an arm64 artifact packaged as a preview pending native-device acceptance
-- support ChatGPT subscription sign-in for OpenAI models with browser/device OAuth, automatic token refresh, and strict API-key mutual exclusion
-- unify foreground and background shell execution into managed sessions with automatic 10-second yielding, `/ps`, and `/stop`
-- use a bundled, hash-verified Windows Job Object supervisor for reliable process-tree cleanup on Windows x64 and arm64; normal Node.js builds do not require Rust
-- support interactive `tty: true` shell sessions through PTY/ConPTY with Unicode stdin, Ctrl+C, and terminal resize
 
 ### Breaking Behavior Changes
 

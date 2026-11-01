@@ -379,6 +379,12 @@ export interface UserConfig {
   stream?: Partial<StreamConfig>
   memory?: Partial<Omit<MemoryConfig, 'recall'>> & { recall?: Partial<MemoryRecallConfig> }
   peerMessaging?: Partial<PeerMessagingConfig>
+  /** 每次 prompt 的默认预算；`--max-tokens` / `--max-cost` 会覆盖它。 */
+  budget?: { maxTokens?: number; maxCostUsd?: number }
+  /** 自定义模型价格（USD / 百万 token）。内置表只覆盖 catalog 中已标价的模型。 */
+  pricing?: Record<string, { inputPerMTok?: number; outputPerMTok?: number }>
+  /** 主模型因提供商侧故障不可用时的备用模型，按顺序尝试。 */
+  fallbackModels?: string[]
 }
 
 /** 用户配置文件的路径。暴露出来是为了让其他想读取同一份 JSON 的模块

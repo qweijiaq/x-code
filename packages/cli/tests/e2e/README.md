@@ -24,6 +24,7 @@ and asks you to pick one. Default is `deepseek:deepseek-flash` (V4.1 Flash, chea
 pnpm test:e2e                      # interactive (pick model + resume/all)
 pnpm test:e2e --all                # all scenarios, no prompts
 pnpm test:e2e --resume             # only failed/skipped from last run
+pnpm test:e2e --smoke              # release-gate subset (read/write/edit/multi-turn/sub-agent/permission)
 pnpm test:e2e --filter shell       # substring match against scenario id
 pnpm test:e2e --model sonnet       # skip model picker (alias or full id)
 pnpm test:e2e --list               # show scenario list + last status

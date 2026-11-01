@@ -31,6 +31,7 @@ import {
   resolveStreamConfig,
   setContextWindowOverride,
   setModelContextWindowOverrides,
+  setPricingOverrides,
 } from '@x-code-cli/core'
 import type {
   AgentOptions,
@@ -177,6 +178,7 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   initializeOpenAIAuthContext()
   const config = loadUserConfig()
   setContextWindowOverride(config.contextWindow)
+  setPricingOverrides(config.pricing)
   setModelContextWindowOverrides(desktopSettings.contextWindowOverrides)
 
   const available = getAvailableProviders()
@@ -287,6 +289,8 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
     modelId,
     trustMode: false,
     printMode: false,
+    ...(config.budget ? { budget: config.budget } : {}),
+    ...(config.fallbackModels && config.fallbackModels.length > 0 ? { fallbackModelIds: config.fallbackModels } : {}),
     thinking: config.thinking ?? false,
     toolProfile: config.experimentalToolProfile === 'standard' ? 'standard' : 'full',
     browserVisualCheckEnabled: config.browser?.visualCheck !== false,

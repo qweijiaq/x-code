@@ -244,3 +244,22 @@ describe('classifyApiError', () => {
     expect(result.retryable).toBe(false)
   })
 })
+
+describe('fallback eligibility', () => {
+  it('marks provider-side availability failures', () => {
+    expect(classifyApiError(new Error('Rate limited (429)')).fallbackEligible).toBe(true)
+    expect(classifyApiError(new Error('Service Unavailable (503)')).fallbackEligible).toBe(true)
+    expect(classifyApiError(new Error('API account balance insufficient (402)')).fallbackEligible).toBe(true)
+    expect(classifyApiError(new Error('Model not found (404)')).fallbackEligible).toBe(true)
+    expect(classifyApiError(new Error('provider internal failure (500)')).fallbackEligible).toBe(true)
+    expect(classifyApiError(new Error('fetch failed')).fallbackEligible).toBe(true)
+  })
+
+  it('never marks auth, content, context or generic 400 failures', () => {
+    expect(classifyApiError(new Error('Unauthorized (401)')).fallbackEligible).toBeUndefined()
+    expect(classifyApiError(new Error('Forbidden (403)')).fallbackEligible).toBeUndefined()
+    expect(classifyApiError(new Error('Content blocked by safety filter (422)')).fallbackEligible).toBeUndefined()
+    expect(classifyApiError(new Error('maximum context length is 128000')).fallbackEligible).toBeUndefined()
+    expect(classifyApiError(new Error('bad request (400)')).fallbackEligible).toBeUndefined()
+  })
+})

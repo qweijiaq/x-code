@@ -155,6 +155,14 @@ export {
   calibrateContextBreakdown,
   estimateContextBreakdown,
 } from './agent/context-usage.js'
+
+export { checkBudget } from './agent/budget.js'
+export type { BudgetLimits, BudgetUsage, BudgetVerdict } from './agent/budget.js'
+export { estimateBreakdownCost, estimateUsageCost } from './agent/cost.js'
+export type { CostEstimate } from './agent/cost.js'
+export { MODEL_PRICING, estimateCostUsd, formatUsd, getModelPricing, setPricingOverrides } from './providers/pricing.js'
+export type { ModelPricing } from './providers/pricing.js'
+
 export type {
   CalibratedContextCategory,
   ContextBreakdown,
