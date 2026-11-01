@@ -9103,3 +9103,9 @@ iframe.file-preview {
   border-radius: 50%;
   line-height: 1;
 }
+
+.composer textarea {
+  height: auto;
+  max-height: 240px;
+  overflow-y: hidden;
+}

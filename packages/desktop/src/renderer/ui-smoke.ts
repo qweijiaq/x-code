@@ -2470,6 +2470,45 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     }
     checks.imeEnter = { ok: imeOk, detail: imeDetail }
 
+    const imeAfterComposition = imeComposer
+      ? (() => {
+          const setImeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+          setImeValue?.call(imeComposer, 'ime after composing test')
+          imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+          imeComposer.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+          imeComposer.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+          imeComposer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+          const kept = imeComposer.value === 'ime after composing test'
+          setImeValue?.call(imeComposer, '')
+          imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+          return kept
+        })()
+      : false
+    checks.imeAfterComposition = {
+      ok: imeAfterComposition,
+      detail: imeAfterComposition
+        ? 'Enter right after compositionend kept the draft'
+        : 'Enter right after compositionend sent',
+    }
+
+    let composerGrowth = false
+    let composerGrowthDetail = 'composer missing'
+    if (imeComposer) {
+      const setGrowthValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setGrowthValue?.call(imeComposer, Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join('\n'))
+      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      const height = imeComposer.getBoundingClientRect().height
+      composerGrowth = height > 80
+      composerGrowthDetail = `height=${Math.round(height)}px`
+      setGrowthValue?.call(imeComposer, '')
+      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    checks.composerGrowth = {
+      ok: composerGrowth,
+      detail: composerGrowthDetail,
+    }
+
     const userCopyButton = Array.from(
       document.querySelectorAll<HTMLButtonElement>('.message.user .message-actions .copy-btn'),
     )

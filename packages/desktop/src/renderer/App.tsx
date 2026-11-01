@@ -694,6 +694,8 @@ export function App(): React.JSX.Element {
     (prompt: string, alreadyShown?: boolean, attachments?: string[], displayText?: string) => void
   >(() => {})
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const composingRef = useRef(false)
+  const compositionEndedAtRef = useRef(0)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const audioProcessorRef = useRef<ScriptProcessorNode | null>(null)
@@ -1072,6 +1074,23 @@ export function App(): React.JSX.Element {
       // 草稿是尽力而为。
     }
   }, [draftKey, input, attachments])
+
+  // Textarea grows with the draft up to a readable ceiling; past that it scrolls
+  // instead of pushing the conversation off screen.
+  useEffect(() => {
+    const element = textareaRef.current
+    if (!element) return
+    const fit = (): void => {
+      element.style.height = 'auto'
+      const max = Math.min(240, Math.max(96, window.innerHeight * 0.35))
+      const next = Math.min(element.scrollHeight, max)
+      element.style.height = `${Math.max(40, next)}px`
+      element.style.overflowY = element.scrollHeight > max ? 'auto' : 'hidden'
+    }
+    fit()
+    window.addEventListener('resize', fit)
+    return () => window.removeEventListener('resize', fit)
+  }, [input])
 
   useEffect(() => {
     const query = sessionQuery.trim()
@@ -4855,12 +4874,30 @@ export function App(): React.JSX.Element {
                     setInput(event.target.value)
                     updateMention(event.target.value, event.target.selectionStart)
                   }}
+                  onCompositionStart={() => {
+                    composingRef.current = true
+                  }}
+                  onCompositionEnd={() => {
+                    composingRef.current = false
+                    compositionEndedAtRef.current = Date.now()
+                  }}
                   onKeyUp={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
                   onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
                   onKeyDown={(event) => {
                     // IME 候选选择会以 isComposing=true（且 keyCode 229）
                     // 发送 Enter。绝不把它当作提交/发送。
                     if (event.nativeEvent.isComposing || event.keyCode === 229) return
+                    // Some Chinese IMEs clear isComposing before the keydown that
+                    // commits the first candidate; keep a short post-composition
+                    // window where Enter cannot submit.
+                    if (
+                      event.key === 'Enter' &&
+                      !event.shiftKey &&
+                      (composingRef.current || Date.now() - compositionEndedAtRef.current < 120)
+                    ) {
+                      event.preventDefault()
+                      return
+                    }
                     if (mention !== null && mentionItems.length > 0) {
                       if (event.key === 'ArrowDown') {
                         event.preventDefault()
