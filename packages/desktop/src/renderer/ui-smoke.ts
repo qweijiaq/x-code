@@ -2262,6 +2262,34 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         3_000,
       )
     }
+
+    let paletteImeComposing = false
+    let paletteImeEscape = false
+    let paletteImeAfterComposition = false
+    if (paletteInput) {
+      setInputValue(paletteInput, '设置')
+      await waitFor(() => document.querySelectorAll('.palette-row').length > 0, 2_000)
+      // 组词中的 Enter 只应确认候选，不能执行当前行。
+      paletteInput.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      paletteInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      paletteImeComposing = document.querySelector('[data-testid="command-palette"]') !== null
+      // 组词中的 Esc 只应撤销候选，不能关闭面板。
+      paletteInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      paletteImeEscape = document.querySelector('[data-testid="command-palette"]') !== null
+      // 组词刚结束时派发的确认键同样不能执行。
+      paletteInput.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+      paletteInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      paletteImeAfterComposition = document.querySelector('[data-testid="command-palette"]') !== null
+      // 等过宽限窗口，避免影响后续依赖 Enter 的用例。
+      await new Promise((resolve) => setTimeout(resolve, 140))
+    }
+    checks.paletteIme = {
+      ok: paletteImeComposing && paletteImeEscape && paletteImeAfterComposition,
+      detail: `composing=${paletteImeComposing} esc=${paletteImeEscape} after=${paletteImeAfterComposition}`,
+    }
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     const paletteClosed = await waitFor(() => document.querySelector('[data-testid="command-palette"]') === null, 2_000)
 
@@ -2507,6 +2535,33 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     checks.composerGrowth = {
       ok: composerGrowth,
       detail: composerGrowthDetail,
+    }
+
+    let composerRefit = false
+    let composerRefitDetail = 'composer missing'
+    if (imeComposer) {
+      const setRefitValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      const longLine = 'x'.repeat(60)
+      setRefitValue?.call(imeComposer, Array.from({ length: 6 }, () => longLine).join('\n'))
+      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      const before = imeComposer.getBoundingClientRect().height
+      // 打开 Inspector 会收窄输入框，折行变多后高度需要跟着重算。
+      // 输入框是 flex 子项，必须同时取消 flex 才能让宽度真正变窄。
+      imeComposer.style.flex = 'none'
+      imeComposer.style.width = '45%'
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      const after = imeComposer.getBoundingClientRect().height
+      imeComposer.style.width = ''
+      imeComposer.style.flex = ''
+      setRefitValue?.call(imeComposer, '')
+      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      composerRefit = after > before
+      composerRefitDetail = `${Math.round(before)}px -> ${Math.round(after)}px`
+    }
+    checks.composerRefit = {
+      ok: composerRefit,
+      detail: composerRefitDetail,
     }
 
     const userCopyButton = Array.from(

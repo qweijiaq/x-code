@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { DocumentDiffView, DocumentRecentItem, DocumentView } from '../shared/protocol.js'
 import { MarkdownView } from './MarkdownView.js'
+import { isImeEnter } from './ime.js'
 
 interface DocumentPanelProps {
   view: DocumentView | null
@@ -518,6 +519,7 @@ export function DocumentPanel({
                 placeholder={t('针对这篇文档提问…')}
                 onChange={(event) => setQuestion(event.target.value)}
                 onKeyDown={(event) => {
+                  if (isImeEnter(event)) return
                   if (event.key === 'Enter' && question.trim()) {
                     event.preventDefault()
                     onAsk(question.trim(), view.path)

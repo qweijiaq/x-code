@@ -63,6 +63,7 @@ import {
   StopIcon,
   TerminalIcon,
 } from './icons.js'
+import { isImeEnter, isImeEvent } from './ime.js'
 import { base64FromBuffer, isImageAttachment } from './media.js'
 import { detectMention, insertMention } from './mention.js'
 import { createPaletteActions } from './palette-actions.js'
@@ -694,8 +695,6 @@ export function App(): React.JSX.Element {
     (prompt: string, alreadyShown?: boolean, attachments?: string[], displayText?: string) => void
   >(() => {})
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const composingRef = useRef(false)
-  const compositionEndedAtRef = useRef(0)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const audioProcessorRef = useRef<ScriptProcessorNode | null>(null)
@@ -1075,8 +1074,7 @@ export function App(): React.JSX.Element {
     }
   }, [draftKey, input, attachments])
 
-  // Textarea grows with the draft up to a readable ceiling; past that it scrolls
-  // instead of pushing the conversation off screen.
+  // 草稿随内容增高，到达可读上限后在框内滚动，避免把对话顶出屏幕。
   useEffect(() => {
     const element = textareaRef.current
     if (!element) return
@@ -1089,7 +1087,22 @@ export function App(): React.JSX.Element {
     }
     fit()
     window.addEventListener('resize', fit)
-    return () => window.removeEventListener('resize', fit)
+    // 打开或收起 Inspector 会改变输入框宽度、重新折行，但窗口尺寸不变；
+    // 只在宽度变化时重算，避免高度回写触发观察循环。
+    let lastWidth = element.clientWidth
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            if (Math.abs(element.clientWidth - lastWidth) < 1) return
+            lastWidth = element.clientWidth
+            fit()
+          })
+    observer?.observe(element)
+    return () => {
+      window.removeEventListener('resize', fit)
+      observer?.disconnect()
+    }
   }, [input])
 
   useEffect(() => {
@@ -1537,6 +1550,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     if (!terminalOpen && !settingsOpen) return
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (isImeEvent(event)) return
       if (event.key === 'Escape') {
         if (settingsOpen) setSettingsOpen(false)
         else if (terminalOpen) closeInspector()
@@ -1549,6 +1563,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     if (!approval) return
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (isImeEvent(event)) return
       if (event.key === 'Escape') {
         void respondApproval(approval, approval.kind === 'question' ? '' : 'no')
       }
@@ -2674,6 +2689,8 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      // 组词中的 Esc 是撤销候选，不应关闭面板或触发其它全局动作。
+      if (isImeEvent(event)) return
       const mod = event.metaKey || event.ctrlKey
       const target = event.target as HTMLElement | null
       const typing =
@@ -3804,7 +3821,9 @@ export function App(): React.JSX.Element {
                       value={renaming.value}
                       onChange={(event) => setRenaming({ filePath: item.filePath, value: event.target.value })}
                       onKeyDown={(event) => {
+                        if (isImeEvent(event)) return
                         if (event.key === 'Enter') {
+                          if (isImeEnter(event)) return
                           event.preventDefault()
                           void commitRename()
                         }
@@ -3946,7 +3965,9 @@ export function App(): React.JSX.Element {
                       value={modelQuery}
                       onChange={(event) => setModelQuery(event.target.value)}
                       onKeyDown={(event) => {
+                        if (isImeEvent(event)) return
                         if (event.key === 'Enter' && filteredModels.length > 0) {
+                          if (isImeEnter(event)) return
                           event.preventDefault()
                           void chooseModel(filteredModels[0])
                         } else if (event.key === 'Escape') {
@@ -4027,6 +4048,7 @@ export function App(): React.JSX.Element {
                       value={customModelInput}
                       onChange={(event) => setCustomModelInput(event.target.value)}
                       onKeyDown={(event) => {
+                        if (isImeEnter(event)) return
                         if (event.key === 'Enter') {
                           event.preventDefault()
                           void activateCustomModel()
@@ -4336,7 +4358,9 @@ export function App(): React.JSX.Element {
                     setFindIndex(0)
                   }}
                   onKeyDown={(event) => {
+                    if (isImeEvent(event)) return
                     if (event.key === 'Enter') {
+                      if (isImeEnter(event)) return
                       event.preventDefault()
                       goFind(event.shiftKey ? -1 : 1)
                     } else if (event.key === 'Escape') {
@@ -4874,27 +4898,13 @@ export function App(): React.JSX.Element {
                     setInput(event.target.value)
                     updateMention(event.target.value, event.target.selectionStart)
                   }}
-                  onCompositionStart={() => {
-                    composingRef.current = true
-                  }}
-                  onCompositionEnd={() => {
-                    composingRef.current = false
-                    compositionEndedAtRef.current = Date.now()
-                  }}
                   onKeyUp={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
                   onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
                   onKeyDown={(event) => {
-                    // IME 候选选择会以 isComposing=true（且 keyCode 229）
-                    // 发送 Enter。绝不把它当作提交/发送。
-                    if (event.nativeEvent.isComposing || event.keyCode === 229) return
-                    // Some Chinese IMEs clear isComposing before the keydown that
-                    // commits the first candidate; keep a short post-composition
-                    // window where Enter cannot submit.
-                    if (
-                      event.key === 'Enter' &&
-                      !event.shiftKey &&
-                      (composingRef.current || Date.now() - compositionEndedAtRef.current < 120)
-                    ) {
+                    // 组词期间的候选确认键（Enter / 方向键）不能被当作发送或菜单确认。
+                    if (isImeEvent(event)) return
+                    // 部分输入法会先结束组词再派发确认键，保留一个很短的宽限窗口。
+                    if (event.key === 'Enter' && !event.shiftKey && isImeEnter(event)) {
                       event.preventDefault()
                       return
                     }
@@ -5545,6 +5555,7 @@ export function App(): React.JSX.Element {
               value={branchQuery}
               onChange={(event) => setBranchQuery(event.target.value)}
               onKeyDown={(event) => {
+                if (isImeEnter(event)) return
                 if (event.key === 'Enter' && visibleBranches.length === 1) {
                   event.preventDefault()
                   void openBranchInWindow(visibleBranches[0])
@@ -5559,6 +5570,7 @@ export function App(): React.JSX.Element {
                 value={newBranchName}
                 onChange={(event) => setNewBranchName(event.target.value)}
                 onKeyDown={(event) => {
+                  if (isImeEnter(event)) return
                   if (event.key === 'Enter') {
                     event.preventDefault()
                     void createBranchInWindow()

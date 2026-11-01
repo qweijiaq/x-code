@@ -39,6 +39,7 @@ import { MemorySettings } from './MemorySettings.js'
 import { ProjectSettings } from './ProjectSettings.js'
 import { StorageSettings } from './StorageSettings.js'
 import i18n from './i18n.js'
+import { isImeEnter } from './ime.js'
 
 const MIN_CONTEXT_WINDOW = 32_768
 
@@ -1530,6 +1531,7 @@ export function SettingsPanel({
                   value={skillCommand}
                   onChange={(event) => setSkillCommand(event.target.value)}
                   onKeyDown={(event) => {
+                    if (isImeEnter(event)) return
                     if (event.key === 'Enter') {
                       event.preventDefault()
                       void runSkillCommand()
@@ -1708,6 +1710,7 @@ export function SettingsPanel({
                   value={skillMarketQuery}
                   onChange={(event) => setSkillMarketQuery(event.target.value)}
                   onKeyDown={(event) => {
+                    if (isImeEnter(event)) return
                     if (event.key === 'Enter') {
                       event.preventDefault()
                       void searchSkillMarket()
@@ -1973,6 +1976,7 @@ export function SettingsPanel({
                   value={marketQuery}
                   onChange={(event) => setMarketQuery(event.target.value)}
                   onKeyDown={(event) => {
+                    if (isImeEnter(event)) return
                     if (event.key === 'Enter') {
                       event.preventDefault()
                       void loadMarketplace(false)
@@ -2040,6 +2044,7 @@ export function SettingsPanel({
                     value={installCommand}
                     onChange={(event) => setInstallCommand(event.target.value)}
                     onKeyDown={(event) => {
+                      if (isImeEnter(event)) return
                       if (event.key === 'Enter') {
                         event.preventDefault()
                         void runInstallCommand()
@@ -2632,6 +2637,7 @@ export function SettingsPanel({
                       placeholder={t('搜索已索引的文档…')}
                       onChange={(event) => setLibraryQuery(event.target.value)}
                       onKeyDown={(event) => {
+                        if (isImeEnter(event)) return
                         if (event.key === 'Enter') void runLibrarySearch()
                       }}
                     />

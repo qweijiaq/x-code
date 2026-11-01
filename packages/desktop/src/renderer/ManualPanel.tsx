@@ -5,6 +5,7 @@ import enManual from '../../../../docs/desktop-manual.en.md?raw'
 import zhManual from '../../../../docs/desktop-manual.md?raw'
 import { MarkdownView } from './MarkdownView.js'
 import i18n from './i18n.js'
+import { isImeEvent } from './ime.js'
 
 interface Section {
   id: string
@@ -76,6 +77,7 @@ export function ManualPanel({ onClose }: ManualPanelProps): React.JSX.Element {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (isImeEvent(event)) return
       if (event.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKeyDown)

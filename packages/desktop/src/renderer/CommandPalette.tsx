@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { RuntimeRequest, RuntimeResponse, SessionListItem, WorkspaceFileItem } from '../shared/protocol.js'
+import { isImeEnter, isImeEvent } from './ime.js'
 
 export interface PaletteCommand {
   name: string
@@ -168,6 +169,8 @@ export function CommandPalette({
             setIndex(0)
           }}
           onKeyDown={(event) => {
+            // 组词中的方向键用于翻候选页，不能同时移动列表选中行。
+            if (isImeEvent(event)) return
             if (event.key === 'ArrowDown') {
               event.preventDefault()
               move(1)
@@ -175,6 +178,7 @@ export function CommandPalette({
               event.preventDefault()
               move(-1)
             } else if (event.key === 'Enter') {
+              if (isImeEnter(event)) return
               event.preventDefault()
               if (active) runRow(active)
             } else if (event.key === 'Escape') {

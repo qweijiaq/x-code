@@ -43,7 +43,7 @@ The **Outline** tab in the right-hand inspector (also the top-bar outline button
 
 ## Composer, Attachments and Voice
 
-- **Typing and sending**: `Enter` sends and `Shift+Enter` inserts a newline. While a Chinese IME is composing, Enter only selects a candidate and never sends; the moment just after composition ends is also protected. The textarea grows with the draft up to about 240 px, then scrolls internally.
+- **Typing and sending**: `Enter` sends and `Shift+Enter` inserts a newline. While a Chinese IME is composing, Enter only selects a candidate and never sends; the moment just after composition ends is also protected. The same applies to other inputs such as the command palette, session rename and document questions, and `Esc` during composition only cancels the candidate without closing the panel. The textarea grows with the draft up to about 240 px, then scrolls internally; it recalculates after a window resize or when the Inspector is opened or closed.
 - **Markdown**: bold, italic, code, headings, lists, quotes and preview; `Cmd/Ctrl+B/I/E` format shortcuts.
 - **@ references**: type `@` to search workspace files and insert a path reference.
 - **Attachments**: use the paperclip, drag files into the window, or paste images.

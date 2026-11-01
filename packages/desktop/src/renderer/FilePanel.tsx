@@ -13,6 +13,7 @@ import type {
   RuntimeResponse,
 } from '../shared/protocol.js'
 import { MarkdownView } from './MarkdownView.js'
+import { isImeEnter, isImeEvent } from './ime.js'
 
 hljs.registerLanguage('dockerfile', dockerfile)
 
@@ -406,6 +407,7 @@ export function FilePanel({
                   value={newPath}
                   onChange={(event) => setNewPath(event.target.value)}
                   onKeyDown={(event) => {
+                    if (isImeEnter(event)) return
                     if (event.key === 'Enter') void create()
                     if (event.key === 'Escape') setShowNew(false)
                   }}
@@ -509,6 +511,8 @@ export function FilePanel({
                         if (gutterRef.current) gutterRef.current.scrollTop = event.currentTarget.scrollTop
                       }}
                       onKeyDown={(event) => {
+                        // 组词中的 Tab / 快捷键交给输入法，避免把缩进插进候选词。
+                        if (isImeEvent(event)) return
                         if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'e') {
                           if (onOpenEditor) {
                             event.preventDefault()
