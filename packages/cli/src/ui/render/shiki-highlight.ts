@@ -10,8 +10,9 @@
 //    字节 / 每行 MAX_LINE_BYTES 的输入会被拒绝，返回 null 让调用方渲染
 //    纯文本/回退文本。渲染循环在 UI 线程上靠 setInterval 绘制，所以病理性的
 //    数千行粘贴绝不能同步分词。
-//  - 预加载集合之外的语言按需加载：罕见围栏（如 `ruby`）的首次渲染会触发
-//    异步加载并对该次渲染回退；之后的渲染使用 shiki。
+//  - 预加载集合之外的语言不进入 Shiki bundle：它们回退到内置正则高亮器。
+//    这是体积取舍——额外的 28 种 TextMate grammar 约占 1.9 MiB，而内置
+//    高亮器已经覆盖常见语言的单行着色。
 //
 // 引擎选型：通过 `shiki/wasm` 使用 Oniguruma WASM（base64 内联，esbuild
 // 无需再打包 .wasm 资源）。实测在我们这种输入规模下比纯 JS 正则引擎快约
@@ -54,40 +55,25 @@ export function setShikiTheme(name: SyntaxThemeName): void {
  *  其余语言在首次使用时加载。 */
 const EAGER_LANGS = ['typescript', 'javascript', 'json', 'bash', 'python', 'markdown', 'yaml'] as const
 
-async function loadShikiLanguage(name: string): Promise<LanguageInput> {
-  const { languages } = EAGER_LANGS.includes(name as (typeof EAGER_LANGS)[number])
-    ? await import('./shiki-assets-common.js')
-    : await import('./shiki-assets-extra.js')
-  return languages[name]!
+async function loadShikiLanguage(name: string): Promise<LanguageInput | null> {
+  const { languages } = await import('./shiki-assets-common.js')
+  return languages[name] ?? null
 }
 
 /** 围栏 id / 扩展名 → shiki 语言 id + 惰性加载器。键是小写。shiki 默认不认识
  *  的围栏别名（或拼写不同的，如 `shell`）在这里做归一化。 */
-const LANG_LOADERS: Record<string, () => Promise<LanguageInput>> = {
+const LANG_LOADERS: Record<string, () => Promise<LanguageInput | null>> = {
   ts: () => loadShikiLanguage('typescript'),
   typescript: () => loadShikiLanguage('typescript'),
-  tsx: () => loadShikiLanguage('tsx'),
   mts: () => loadShikiLanguage('typescript'),
   cts: () => loadShikiLanguage('typescript'),
   js: () => loadShikiLanguage('javascript'),
   javascript: () => loadShikiLanguage('javascript'),
-  jsx: () => loadShikiLanguage('jsx'),
   mjs: () => loadShikiLanguage('javascript'),
   cjs: () => loadShikiLanguage('javascript'),
   json: () => loadShikiLanguage('json'),
-  jsonc: () => loadShikiLanguage('jsonc'),
-  json5: () => loadShikiLanguage('json5'),
-  html: () => loadShikiLanguage('html'),
-  xml: () => loadShikiLanguage('xml'),
-  vue: () => loadShikiLanguage('vue'),
-  svelte: () => loadShikiLanguage('svelte'),
-  css: () => loadShikiLanguage('css'),
-  scss: () => loadShikiLanguage('scss'),
-  less: () => loadShikiLanguage('less'),
   yml: () => loadShikiLanguage('yaml'),
   yaml: () => loadShikiLanguage('yaml'),
-  toml: () => loadShikiLanguage('toml'),
-  ini: () => loadShikiLanguage('ini'),
   sh: () => loadShikiLanguage('bash'),
   bash: () => loadShikiLanguage('bash'),
   shell: () => loadShikiLanguage('bash'),
@@ -95,31 +81,8 @@ const LANG_LOADERS: Record<string, () => Promise<LanguageInput>> = {
   shellscript: () => loadShikiLanguage('bash'),
   py: () => loadShikiLanguage('python'),
   python: () => loadShikiLanguage('python'),
-  go: () => loadShikiLanguage('go'),
-  golang: () => loadShikiLanguage('go'),
-  rs: () => loadShikiLanguage('rust'),
-  rust: () => loadShikiLanguage('rust'),
   md: () => loadShikiLanguage('markdown'),
   markdown: () => loadShikiLanguage('markdown'),
-  sql: () => loadShikiLanguage('sql'),
-  c: () => loadShikiLanguage('c'),
-  h: () => loadShikiLanguage('c'),
-  cpp: () => loadShikiLanguage('cpp'),
-  cxx: () => loadShikiLanguage('cpp'),
-  java: () => loadShikiLanguage('java'),
-  kt: () => loadShikiLanguage('kotlin'),
-  kotlin: () => loadShikiLanguage('kotlin'),
-  swift: () => loadShikiLanguage('swift'),
-  rb: () => loadShikiLanguage('ruby'),
-  ruby: () => loadShikiLanguage('ruby'),
-  php: () => loadShikiLanguage('php'),
-  lua: () => loadShikiLanguage('lua'),
-  dockerfile: () => loadShikiLanguage('dockerfile'),
-  docker: () => loadShikiLanguage('dockerfile'),
-  graphql: () => loadShikiLanguage('graphql'),
-  diff: () => loadShikiLanguage('diff'),
-  make: () => loadShikiLanguage('makefile'),
-  makefile: () => loadShikiLanguage('makefile'),
 }
 
 // ─── 引擎单例 ───
@@ -211,6 +174,7 @@ function ensureLang(shikiId: string, fenceId: string): boolean {
     const h = highlighter
     pending = loader()
       .then(async (language) => {
+        if (!language) return
         await h.loadLanguage(language)
         loadedLangs.add(shikiId)
       })

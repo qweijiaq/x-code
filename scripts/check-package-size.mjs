@@ -5,13 +5,9 @@ import { resolve } from 'node:path'
 const MIB = 1024 * 1024
 const limits = {
   packed: 3.5 * MIB,
-  // Semantic navigation (tsserver client + four tool schemas) and the plugin
-  // manifest schema add roughly 0.9 MiB unpacked while the packed tarball stays
-  // below the download budget.
-  unpacked: 14.5 * MIB,
+  unpacked: 12.75 * MIB,
   // 发布暂存会给本地检查的包加上 LICENSE 和两个 README 文件。
-  // 44 build files + those three = 47; keep a one-file margin.
-  files: 48,
+  files: 45,
 }
 const cliPackage = JSON.parse(readFileSync(resolve('packages/cli/package.json'), 'utf8'))
 const requiredRuntimeDependencies = ['@vscode/ripgrep', 'fs-ext-extra-prebuilt', 'undici']
