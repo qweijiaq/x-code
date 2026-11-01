@@ -1,3 +1,18 @@
+## v1.0.6 (2026-11-02)
+
+### Features
+
+- add TypeScript semantic navigation tools (`lspDiagnostics`, `lspDefinition`, `lspReferences`, `lspRename`) using the workspace's own language service
+- create task-scoped Git worktrees from the branch window and start the task in the new window
+- add `xc plugin validate` and `xc plugin schema` for plugin-manifest validation before publishing
+- add an English/Chinese VitePress documentation site with a GitHub Pages workflow
+- document npm installation and add registry-install verification to the release workflow
+
+### Bug Fixes
+
+- validate release tag/package versions before publishing and make npm publication idempotent
+- raise the CLI package gate to cover semantic navigation and plugin schema additions
+
 ## v1.0.3 (2026-10-26)
 
 ### Features
