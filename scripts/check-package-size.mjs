@@ -10,7 +10,8 @@ const limits = {
   // below the download budget.
   unpacked: 14.5 * MIB,
   // 发布暂存会给本地检查的包加上 LICENSE 和两个 README 文件。
-  files: 45,
+  // 44 build files + those three = 47; keep a one-file margin.
+  files: 48,
 }
 const cliPackage = JSON.parse(readFileSync(resolve('packages/cli/package.json'), 'utf8'))
 const requiredRuntimeDependencies = ['@vscode/ripgrep', 'fs-ext-extra-prebuilt', 'undici']
