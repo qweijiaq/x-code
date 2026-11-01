@@ -33,6 +33,30 @@ xc plugin install ./my-plugin
 
 ---
 
+## 发布前校验
+
+用加载器同一份 manifest 契约检查字段和贡献路径：
+
+```bash
+xc plugin validate ./my-plugin
+xc plugin validate ./my-plugin --json   # 适合 CI
+```
+
+`validate` 会报告不存在的 `skills` / `agents` / `commands` / `mcpServers` /
+`hooks` 路径、重复的 `userConfig` key，以及未知顶层字段。它不会安装插件，
+也不会访问市场。
+
+编辑器或 CI 可以直接拿 JSON Schema：
+
+```bash
+xc plugin schema > plugin.schema.json
+```
+
+新插件建议写 `schemaVersion: "1"`。加载器为了兼容性会容忍未知字段，但
+`validate` 会提示出来，方便作者尽早发现拼写错误。
+
+---
+
 ## Manifest 路径探测顺序
 
 1. `.x-code-plugin/plugin.json` ← 新插件首选

@@ -13,6 +13,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { z } from 'zod'
+import { zodToJsonSchema } from 'zod-to-json-schema'
 
 import { errorMessage, fileExists } from '../utils.js'
 import { GEMINI_MANIFEST_REL, MANIFEST_CANDIDATES, isSafePluginPathComponent } from './paths.js'
@@ -79,6 +80,16 @@ const manifestSchema = z.object({
   userConfig: z.array(userConfigItemSchema).optional(),
   dependencies: z.array(z.string().min(1)).optional(),
   engines: z.object({ 'x-code': z.string().optional() }).optional(),
+})
+
+/** Public Zod schema for plugin authors and tooling. Kept as an alias so the
+ * internal parser and external validators cannot drift. */
+export const pluginManifestSchema = manifestSchema
+
+/** JSON Schema counterpart used by `xc plugin schema` and editor tooling. */
+export const pluginManifestJsonSchema = zodToJsonSchema(manifestSchema, {
+  name: 'XCodePluginManifest',
+  $refStrategy: 'none',
 })
 
 // ── 发现 ───────────────────────────────────────────────────────────

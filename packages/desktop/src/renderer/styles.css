@@ -6460,6 +6460,10 @@ body::before,
   white-space: nowrap;
 }
 
+.branch-task-create {
+  margin-top: 2px;
+}
+
 .branch-parent {
   display: flex;
   align-items: center;

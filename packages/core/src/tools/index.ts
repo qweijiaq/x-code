@@ -17,6 +17,7 @@ import { exitPlanMode } from './exit-plan-mode.js'
 import { glob } from './glob.js'
 import { grep } from './grep.js'
 import { listDir } from './list-dir.js'
+import { lspDefinition, lspDiagnostics, lspReferences, lspRename } from './lsp.js'
 import { readDocumentTool } from './read-document.js'
 import { readFile } from './read-file.js'
 import { shell } from './shell.js'
@@ -36,6 +37,10 @@ export const toolRegistry = {
   glob,
   grep,
   listDir,
+  lspDiagnostics,
+  lspDefinition,
+  lspReferences,
+  lspRename,
   webSearch,
   webFetch,
   askUser,

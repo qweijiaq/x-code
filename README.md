@@ -29,6 +29,17 @@ hooks are shared between the desktop app and the CLI.
 ad-hoc signed, not notarized, so macOS asks for approval once — see the
 [unsigned install guide](./docs/desktop-install-unsigned.en.md).
 
+**CLI from npm** (Node 22+):
+
+```bash
+npm install -g @x-code-cli/cli@latest
+xc --version
+```
+
+The npm package is published by the same release workflow as the desktop app.
+If npm is temporarily behind the latest GitHub release, use the source build
+below or the DMG until the package catches up.
+
 **CLI from source** (Node 22+, pnpm 10):
 
 ```bash
@@ -105,6 +116,8 @@ single resizable inspector, so the conversation stays visible while you work.
   management.
 - **Project checks** — detect test / lint / typecheck commands, run them and let
   the agent fix failures.
+- **Semantic navigation** — TypeScript definitions, references, diagnostics and
+  rename previews from the workspace's own language service.
 - **Terminal** — a full PTY that survives tab switches, separate from the
   sandboxed commands the agent runs.
 
@@ -229,6 +242,8 @@ Packaging and signing notes live in
 
 ## Documentation
 
+**Documentation site:** <https://qweijiaq.github.io/x-code/> (English and 简体中文)
+
 | Document                                                                  | Contents                                        |
 | ------------------------------------------------------------------------- | ----------------------------------------------- |
 | [Desktop guide](./docs/desktop.en.md)                                     | Windows, inspector, documents, Git, permissions |
@@ -237,6 +252,7 @@ Packaging and signing notes live in
 | [Skills](./docs/skills.en.md)                                             | Reusable workflow templates                     |
 | [Sub-agents](./docs/sub-agents.en.md)                                     | Built-in and custom agents                      |
 | [MCP](./docs/mcp.en.md)                                                   | Server configuration                            |
+| [Semantic navigation](./docs/lsp.en.md)                                   | TypeScript diagnostics, definitions, references |
 | [Knowledge and memory](./docs/knowledge.en.md)                            | `AGENTS.md` layers and auto-memory              |
 | [Plugins](./docs/plugins.en.md) / [marketplace](./docs/marketplace.en.md) | Extension packaging and sources                 |
 | [Hooks](./docs/hooks.en.md)                                               | Lifecycle automation                            |

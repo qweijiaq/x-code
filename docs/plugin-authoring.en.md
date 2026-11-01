@@ -36,6 +36,31 @@ Add contributions below to make it useful.
 
 ---
 
+## Validate before publishing
+
+Run the same manifest contract the loader uses, plus contribution-path checks:
+
+```bash
+xc plugin validate ./my-plugin
+xc plugin validate ./my-plugin --json   # for CI
+```
+
+`validate` reports missing `skills` / `agents` / `commands` / `mcpServers` /
+`hooks` paths, duplicate `userConfig` keys, and unknown top-level fields. It
+does not install the plugin or contact a marketplace.
+
+The published JSON Schema is available for editors and CI:
+
+```bash
+xc plugin schema > plugin.schema.json
+```
+
+Use `schemaVersion: "1"` for new plugins. Unknown fields are tolerated by the
+loader for compatibility, but `validate` reports them so authors can catch
+typos early.
+
+---
+
 ## Manifest paths the loader probes
 
 In order:

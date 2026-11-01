@@ -21,10 +21,10 @@ import { toolSearch } from '../../tools/tool-search.js'
 import type { AgentOptions, PermissionMode } from '../../types/index.js'
 import { estimateToolDefinitionTokens } from '../tool-schema.js'
 
-// 文档工具集落地后从 10k 上调：23 个内置工具加上视觉检查工具刚好超过 10k，会悄悄地把每个
-// 会话的 webSearch / webFetch / todoWrite 都延迟掉。一旦 MCP server 或更大的工具面把请求
-// 顶上去，这个预算仍会延迟工具。
-export const DIRECT_TOOL_TOKEN_BUDGET = 12_000
+// 文档工具集落地后从 10k 上调；语义导航工具（diagnostics/definition/
+// references/rename）再上调一档。四个工具的描述和 schema 合计约 1.5k
+// token，保持它们直接可用比每次多一轮 toolSearch 更划算。
+export const DIRECT_TOOL_TOKEN_BUDGET = 15_000
 
 /** 被延迟的非核心内置工具（在 toolSearch 加载它们之前只有名称）。核心的编辑 / 搜索 / 执行
  *  工具（readFile、writeFile、edit、shell、grep、glob、listDir）加上 task / askUser /
@@ -33,7 +33,15 @@ export const DIRECT_TOOL_TOKEN_BUDGET = 12_000
  *  它把 WebSearch / WebFetch / TodoWrite（以及后台 shell 类 helper）标记为 shouldDefer，
  *  同时让 file / grep / exec 保持直接。小巧的 browserVisualCheck 组合保持直接，是因为
  *  延迟它会给常见的前端编辑后验证路径额外增加一整轮模型往返。 */
-export const DEFERRED_BUILTIN_TOOLS = ['webSearch', 'webFetch', 'todoWrite'] as const
+export const DEFERRED_BUILTIN_TOOLS = [
+  'webSearch',
+  'webFetch',
+  'todoWrite',
+  'lspDiagnostics',
+  'lspDefinition',
+  'lspReferences',
+  'lspRename',
+] as const
 
 const STANDARD_DEFERRED_BUILTIN_TOOLS = ['task', 'webSearch', 'webFetch'] as const
 
@@ -42,6 +50,10 @@ const PLAN_MODE_TOOL_NAMES = new Set([
   'glob',
   'grep',
   'listDir',
+  'lspDiagnostics',
+  'lspDefinition',
+  'lspReferences',
+  'lspRename',
   'webSearch',
   'webFetch',
   'askUser',

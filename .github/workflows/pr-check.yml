@@ -154,6 +154,22 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:package
 
+  docs:
+    name: Docs Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm docs:build
+
   commitlint:
     name: Commit Message Check
     runs-on: ubuntu-latest

@@ -58,6 +58,8 @@ The Git branch menu can:
 - open an existing branch (including `origin/*` remote refs) in its own window,
   creating a local tracking branch and `git worktree` when needed;
 - create a new branch with a chosen parent directory;
+- start a task in a task-scoped worktree: describe the task, X-Code creates an
+  `x-code/<slug>` branch/worktree and opens a new window with that prompt ready;
 - remove a worktree (an extra confirmation when it has uncommitted changes) and
   prune stale worktrees.
 

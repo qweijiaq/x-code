@@ -2893,6 +2893,15 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       const prunePresent = document.querySelector('[data-testid="worktree-prune-button"]') !== null
       const remoteRow = document.querySelector('[data-testid="branch-row"][data-branch="origin/smoke-remote"]') !== null
       const createForm = document.querySelector('[data-testid="branch-create"]') !== null
+      const taskForm = document.querySelector('[data-testid="branch-task-create"]') !== null
+      const taskInput = document.querySelector<HTMLInputElement>('[data-testid="branch-task-input"]')
+      const setTaskValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setTaskValue?.call(taskInput, 'smoke task worktree')
+      taskInput?.dispatchEvent(new Event('input', { bubbles: true }))
+      const taskCreateEnabled = await waitFor(
+        () => document.querySelector<HTMLButtonElement>('[data-testid="branch-task-button"]')?.disabled === false,
+        2_000,
+      )
       const parentPicker = document.querySelector('[data-testid="branch-parent-button"]') !== null
       const newBranchInput = document.querySelector<HTMLInputElement>('[data-testid="branch-new-input"]')
       const setNewBranchValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
@@ -2914,8 +2923,17 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         detail: `input=${createEnabled} closed=${branchModalClosed} window=${branchCreateWindow}`,
       }
       document.querySelector<HTMLButtonElement>('.branch-card .shortcut-head .btn-quiet')?.click()
-      worktreeUiOk = removeReady && confirmReady && cancelled && prunePresent && remoteRow && createForm && parentPicker
-      worktreeUiDetail = `remove=${removeReady} confirm=${confirmReady} cancel=${cancelled} prune=${prunePresent} remote=${remoteRow} create=${createForm} parent=${parentPicker}`
+      worktreeUiOk =
+        removeReady &&
+        confirmReady &&
+        cancelled &&
+        prunePresent &&
+        remoteRow &&
+        createForm &&
+        taskForm &&
+        taskCreateEnabled &&
+        parentPicker
+      worktreeUiDetail = `remove=${removeReady} confirm=${confirmReady} cancel=${cancelled} prune=${prunePresent} remote=${remoteRow} create=${createForm} task=${taskForm && taskCreateEnabled} parent=${parentPicker}`
     } else {
       checks.branchCreateUi = { ok: false, detail: 'picker missing' }
     }

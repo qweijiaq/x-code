@@ -16,6 +16,7 @@ import {
   formatMcpCapabilities,
   formatSkillCapabilities,
 } from '../src/agent/system-prompt.js'
+import { DIRECT_TOOL_TOKEN_BUDGET } from '../src/agent/tool-search/catalog.js'
 
 function makeTool(description: string, schema: z.ZodType = z.object({ arg: z.string() })) {
   return {
@@ -146,7 +147,7 @@ describe('estimateContextBreakdown', () => {
   })
 
   it('does not count an activated task schema as part of the initial direct budget', () => {
-    const task = makeTool('x'.repeat(40_000))
+    const task = makeTool('x'.repeat(DIRECT_TOOL_TOKEN_BUDGET * 4))
     const activated = estimateContextBreakdown({
       systemPrompt: 'base',
       messages: [],

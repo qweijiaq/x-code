@@ -163,11 +163,51 @@ jobs:
           (cd "$smoke_dir" && node -e "require.resolve('undici')")
           (cd "$smoke_dir" && node -e "require.resolve('node-pty')")
 
+      - name: Validate release version
+        run: node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
+
       - name: Publish to npm
         run: |
-          for tgz in "$GITHUB_WORKSPACE"/release-packages/*.tgz; do
+          VERSION="$(node -p "require('./packages/cli/package.json').version")"
+          for package in core cli; do
+            name="@x-code-cli/${package}"
+            if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+              echo "${name}@${VERSION} is already published; skipping."
+              continue
+            fi
+            tgz="$(find "$GITHUB_WORKSPACE/release-packages" -name "x-code-cli-${package}-*.tgz" -print -quit)"
+            test -n "$tgz"
             npx --yes --package npm@11 npm publish "$tgz" --provenance --access public
           done
+
+      - name: Verify npm publication and registry install
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./packages/cli/package.json').version")"
+          for package in core cli; do
+            name="@x-code-cli/${package}"
+            published=""
+            for attempt in 1 2 3 4 5; do
+              published="$(npm view "${name}@${VERSION}" version 2>/dev/null || true)"
+              if [ "$published" = "$VERSION" ]; then break; fi
+              echo "Waiting for ${name}@${VERSION} to appear on npm (attempt ${attempt}/5)..."
+              sleep 10
+            done
+            if [ "$published" != "$VERSION" ]; then
+              echo "::error::${name}@${VERSION} was not found on npm after publish."
+              exit 1
+            fi
+          done
+
+          smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "$smoke_dir"' EXIT
+          npm install --prefix "$smoke_dir" "@x-code-cli/cli@${VERSION}"
+          installed="$("$smoke_dir/node_modules/.bin/xc" --version)"
+          echo "Registry install reports: $installed"
+          if [ "$installed" != "$VERSION" ]; then
+            echo "::error::Registry install reports ${installed}, expected ${VERSION}."
+            exit 1
+          fi
 
       - name: Extract latest changelog section
         run: awk '/^## v/{c++} c==1' CHANGELOG.md > RELEASE_NOTES.md

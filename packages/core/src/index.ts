@@ -452,7 +452,15 @@ export type {
   InstalledPluginRecord,
   InstalledPlugins,
 } from './plugins/types.js'
-export { discoverManifest, parseManifest, ManifestParseError } from './plugins/manifest.js'
+export {
+  discoverManifest,
+  parseManifest,
+  ManifestParseError,
+  pluginManifestJsonSchema,
+  pluginManifestSchema,
+} from './plugins/manifest.js'
+export { validatePlugin } from './plugins/validate.js'
+export type { PluginValidation } from './plugins/validate.js'
 
 // 技能
 export {

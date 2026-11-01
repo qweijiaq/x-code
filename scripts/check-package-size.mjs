@@ -5,7 +5,10 @@ import { resolve } from 'node:path'
 const MIB = 1024 * 1024
 const limits = {
   packed: 3.5 * MIB,
-  unpacked: 12.75 * MIB,
+  // Semantic navigation (tsserver client + four tool schemas) and the plugin
+  // manifest schema add roughly 0.9 MiB unpacked while the packed tarball stays
+  // below the download budget.
+  unpacked: 14.5 * MIB,
   // 发布暂存会给本地检查的包加上 LICENSE 和两个 README 文件。
   files: 45,
 }

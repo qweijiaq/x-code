@@ -266,6 +266,18 @@ function normalizeTaskMode(value: string | undefined): TaskMode {
   return (TASK_MODES as readonly string[]).includes(value ?? '') ? (value as TaskMode) : 'coding'
 }
 
+/** A task-scoped branch name. ASCII slug when possible, plus a short time
+ * suffix so two tasks with the same description never collide. */
+function taskBranchName(task: string): string {
+  const slug = task
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 28)
+  return `x-code/${slug || 'task'}-${Date.now().toString(36).slice(-5)}`
+}
+
 const STATUS_LABEL = {
   starting: '初启',
   ready: '运转中',
@@ -600,6 +612,7 @@ export function App(): React.JSX.Element {
   const [newBranchName, setNewBranchName] = useState('')
   const [newBranchBusy, setNewBranchBusy] = useState(false)
   const [newBranchParent, setNewBranchParent] = useState('')
+  const [newTaskPrompt, setNewTaskPrompt] = useState('')
   const [markdownToolsOpen, setMarkdownToolsOpen] = useState(false)
   const [markdownPreview, setMarkdownPreview] = useState(false)
   const [imageLightbox, setImageLightbox] = useState<{ src: string; name: string } | null>(null)
@@ -2500,6 +2513,7 @@ export function App(): React.JSX.Element {
     setBranchError(null)
     setNewBranchName('')
     setNewBranchParent('')
+    setNewTaskPrompt('')
     setRemoveWorktree(null)
     setRemoveWorktreeError(null)
     await loadBranches()
@@ -2563,8 +2577,9 @@ export function App(): React.JSX.Element {
     }
   }
 
-  const createBranchInWindow = async (): Promise<void> => {
-    const branch = newBranchName.trim()
+  const createBranchInWindow = async (taskPrompt?: string): Promise<void> => {
+    const task = taskPrompt?.trim() ?? ''
+    const branch = task ? taskBranchName(task) : newBranchName.trim()
     if (!branch || newBranchBusy || branchBusy) return
     setNewBranchBusy(true)
     setBranchError(null)
@@ -2589,7 +2604,10 @@ export function App(): React.JSX.Element {
       const windowResult = await window.xcode.request({
         id: crypto.randomUUID(),
         method: 'app:new-window',
-        params: { workspacePath },
+        params: {
+          workspacePath,
+          ...(task ? { prompt: task, displayPrompt: task } : {}),
+        },
       })
       if (!windowResult.ok) {
         setBranchError(t('打开新窗口失败：{{message}}', { message: windowResult.error.message }))
@@ -2598,7 +2616,12 @@ export function App(): React.JSX.Element {
       setBranchOpen(false)
       setNewBranchName('')
       setNewBranchParent('')
-      setNotice(t(createdBranch ? '已在新窗口打开新分支 {{branch}}' : '已在新窗口打开分支 {{branch}}', { branch }))
+      setNewTaskPrompt('')
+      setNotice(
+        task
+          ? t('已在新 worktree 中开始任务（{{branch}}）', { branch })
+          : t(createdBranch ? '已在新窗口打开新分支 {{branch}}' : '已在新窗口打开分支 {{branch}}', { branch }),
+      )
     } catch (error) {
       setBranchError(t('创建分支失败：{{message}}', { message: String(error) }))
     } finally {
@@ -5587,6 +5610,32 @@ export function App(): React.JSX.Element {
                 {newBranchBusy ? t('创建中…') : t('创建并打开')}
               </button>
             </div>
+            <div className="branch-create branch-task-create" data-testid="branch-task-create">
+              <input
+                className="settings-input"
+                data-testid="branch-task-input"
+                placeholder={t('按任务创建：描述要做什么')}
+                value={newTaskPrompt}
+                onChange={(event) => setNewTaskPrompt(event.target.value)}
+                onKeyDown={(event) => {
+                  if (isImeEnter(event)) return
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void createBranchInWindow(newTaskPrompt)
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn"
+                data-testid="branch-task-button"
+                disabled={!newTaskPrompt.trim() || newBranchBusy || branchBusy !== null}
+                onClick={() => void createBranchInWindow(newTaskPrompt)}
+              >
+                {newBranchBusy ? t('创建中…') : t('按任务创建')}
+              </button>
+            </div>
+            <p className="settings-note">{t('会创建独立 worktree，并在新窗口直接开始这个任务。')}</p>
             <div className="branch-parent">
               <button
                 type="button"

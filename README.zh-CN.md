@@ -27,6 +27,16 @@
 社区版是 ad-hoc 签名、未公证，首次打开需要按提示放行；完整步骤见
 [未签名版安装指南](./docs/desktop-install-unsigned.md)。
 
+**从 npm 安装 CLI**（Node 22+）：
+
+```bash
+npm install -g @x-code-cli/cli@latest
+xc --version
+```
+
+npm 包和桌面端由同一个 release workflow 发布。如果 npm 上的版本暂时落后于
+GitHub Release，可以先用下面的源码构建或 DMG，等包发布后再切换。
+
 **从源码构建 CLI**（Node 22+，pnpm 10）：
 
 ```bash
@@ -92,6 +102,7 @@ git clone https://github.com/qweijiaq/x-code.git && cd x-code && pnpm install &&
   文件不会被上传。
 - **Git** — 状态、diff、按检查点撤销、切换分支和 worktree 管理。
 - **项目检查** — 自动识别 test / lint / typecheck 命令，运行后让 Agent 修复失败项。
+- **语义代码导航** — 使用工作区自己的 TypeScript language service 提供定义、引用、诊断和重命名预览。
 - **终端** — 完整的 PTY 终端，切换标签不中断，和 Agent 的沙箱命令相互独立。
 
 ### 面向真实工作的输入方式
@@ -200,6 +211,8 @@ pnpm dev             # 从源码构建并运行 CLI
 
 ## 文档
 
+**文档站：** <https://qweijiaq.github.io/x-code/>（English / 简体中文）
+
 | 文档                                                      | 内容                             |
 | --------------------------------------------------------- | -------------------------------- |
 | [桌面端指南](./docs/desktop.md)                           | 窗口、Inspector、文档、Git、权限 |
@@ -208,6 +221,7 @@ pnpm dev             # 从源码构建并运行 CLI
 | [Skills](./docs/skills.md)                                | 可复用工作流模板                 |
 | [子 Agent](./docs/sub-agents.md)                          | 内置与自定义 Agent               |
 | [MCP](./docs/mcp.md)                                      | 服务器配置                       |
+| [语义代码导航](./docs/lsp.md)                             | TypeScript 诊断、定义、引用      |
 | [知识库与记忆](./docs/knowledge.md)                       | `AGENTS.md` 分层与自动记忆       |
 | [插件](./docs/plugins.md) / [市场](./docs/marketplace.md) | 扩展打包与来源                   |
 | [Hooks](./docs/hooks.md)                                  | 生命周期自动化                   |

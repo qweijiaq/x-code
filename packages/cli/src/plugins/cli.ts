@@ -17,11 +17,13 @@ import {
   installPlugin,
   listInstalledPlugins,
   loadAllPlugins,
+  pluginManifestJsonSchema,
   readAllCachedMarketplaces,
   readKnownMarketplaces,
   removeKnownMarketplace,
   setPluginEnabled,
   uninstallPlugin,
+  validatePlugin,
 } from '@x-code-cli/core'
 import type { ConsentPreview, PluginScope } from '@x-code-cli/core'
 
@@ -61,6 +63,10 @@ export async function runPluginCli(args: string[]): Promise<number> {
         return await cliSearch(rest)
       case 'update':
         return await cliUpdate(rest)
+      case 'validate':
+        return await cliValidate(rest)
+      case 'schema':
+        return cliSchema()
       case 'doctor':
         return await cliDoctor()
       case 'marketplace':
@@ -89,6 +95,8 @@ function printUsage(): void {
       '  disable <id>              Disable a plugin without uninstalling',
       '  search <keyword>          Search subscribed marketplaces',
       '  update [--yes] <id>|--all Reinstall from recorded source (consent required)',
+      '  validate [path] [--json]  Validate a plugin directory before publishing',
+      '  schema                    Print the plugin manifest JSON Schema',
       '  doctor                    Show plugin load errors',
       '  marketplace <add|remove|list|refresh|info> [args...]',
       '                            Manage marketplace subscriptions',
@@ -575,6 +583,42 @@ async function cliSearch(args: string[]): Promise<number> {
     console.log(`  ${m.name}@${m.marketplace}${tag}`)
     if (m.description) console.log(`    ${m.description}`)
   }
+  return 0
+}
+
+async function cliValidate(args: string[]): Promise<number> {
+  const json = args.includes('--json')
+  const target = args.find((arg) => arg !== '--json') ?? process.cwd()
+  try {
+    const result = await validatePlugin(target)
+    const ok = result.errors.length === 0
+    if (json) {
+      console.log(JSON.stringify({ ok, ...result, manifest: result.manifest }, null, 2))
+      return ok ? 0 : 1
+    }
+    console.log(`Plugin: ${result.manifest.name}${result.manifest.version ? ` v${result.manifest.version}` : ''}`)
+    console.log(`Manifest: ${result.manifestPath} (${result.format})`)
+    if (result.manifest.description) console.log(`Description: ${result.manifest.description}`)
+    for (const warning of result.warnings) console.log(chalk.yellow(`warning: ${warning}`))
+    for (const error of result.errors) console.error(chalk.red(`error: ${error}`))
+    if (ok) {
+      console.log(chalk.green('Plugin manifest is valid.'))
+      return 0
+    }
+    console.error(chalk.red(`Plugin manifest has ${result.errors.length} error(s).`))
+    return 1
+  } catch (err) {
+    if (json) {
+      console.log(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }, null, 2))
+    } else {
+      console.error(chalk.red(err instanceof Error ? err.message : String(err)))
+    }
+    return 1
+  }
+}
+
+function cliSchema(): number {
+  console.log(JSON.stringify(pluginManifestJsonSchema, null, 2))
   return 0
 }
 

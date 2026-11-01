@@ -65,6 +65,29 @@ The entitlements file is `packages/desktop/build/entitlements.mac.plist`
 (JIT + unsigned executable memory for V8, network client/server, user-selected
 files).
 
+## CLI npm publishing
+
+A `v*` tag runs `.github/workflows/release.yml`, which builds both npm tarballs
+and publishes `@x-code-cli/core` and `@x-code-cli/cli` with provenance. The job:
+
+- checks that both package versions match the tag (`pnpm check:release`);
+- skips a version that is already on npm, so re-running a tag is safe;
+- waits for both versions to appear in the registry; and
+- installs `@x-code-cli/cli@<version>` from npm in a clean prefix and verifies
+  `xc --version`.
+
+Before tagging, verify locally:
+
+```bash
+pnpm check:release v1.0.6
+pnpm check:package
+```
+
+If `npm view @x-code-cli/cli version` is older than the GitHub release, inspect
+the tag's **Release** workflow run. The publish step needs npm trusted
+publishing (or a valid `NODE_AUTH_TOKEN`) and the `id-token: write` permission
+already granted in the workflow.
+
 ## Verification
 
 ```bash

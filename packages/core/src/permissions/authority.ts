@@ -139,6 +139,10 @@ function pathInputs(toolName: string, input: Record<string, unknown>, cwd: strin
     glob: ['cwd'],
     grep: ['path'],
     listDir: ['dirPath'],
+    lspDiagnostics: ['filePath'],
+    lspDefinition: ['filePath'],
+    lspReferences: ['filePath'],
+    lspRename: ['filePath'],
   }
   return (keys[toolName] ?? [])
     .map((key) => input[key])
@@ -152,7 +156,11 @@ function classifyBuiltin(
   cwd: string,
 ): { capabilities: ToolCapability[]; destination?: string; paths?: string[]; runtimeOpaque?: boolean } {
   const paths = pathInputs(toolName, input, cwd)
-  if (['readFile', 'glob', 'grep', 'listDir'].includes(toolName)) {
+  if (
+    ['readFile', 'glob', 'grep', 'listDir', 'lspDiagnostics', 'lspDefinition', 'lspReferences', 'lspRename'].includes(
+      toolName,
+    )
+  ) {
     const capability = paths.some((candidate) => isSensitivePath(candidate, cwd)) ? 'sensitive-read' : 'content-read'
     return { capabilities: [capability], paths }
   }

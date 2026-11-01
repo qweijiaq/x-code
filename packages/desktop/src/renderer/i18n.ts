@@ -999,6 +999,11 @@ export const EN: Record<string, string> = {
   '已恢复 {{count}} 条消息到新会话': 'Recovered {{count}} message(s) into a new session',
   '新建分支（从当前 HEAD 创建）': 'New branch (from current HEAD)',
   创建并打开: 'Create and open',
+  '按任务创建：描述要做什么': 'Create from task: describe the work',
+  按任务创建: 'Create from task',
+  '会创建独立 worktree，并在新窗口直接开始这个任务。':
+    'Creates an isolated worktree and starts this task in a new window.',
+  '已在新 worktree 中开始任务（{{branch}}）': 'Started the task in a new worktree ({{branch}})',
   '创建中…': 'Creating…',
   '创建分支失败：{{message}}': 'Could not create the branch: {{message}}',
   '已在新窗口打开新分支 {{branch}}': 'Opened new branch {{branch}} in a new window',

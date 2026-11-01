@@ -21,6 +21,10 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc -b && tsc -p packages/core/tests/tsconfig.json && tsc -p packages/cli/tests/tsconfig.json && tsc -p packages/cli/tests/e2e/tsconfig.json && tsc -p packages/desktop/tsconfig.node.json && tsc -p packages/desktop/tsconfig.renderer.json",
     "check:package": "pnpm build && node scripts/check-package-size.mjs",
+    "check:release": "node scripts/check-release-version.mjs",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
     "ci": "pnpm typecheck && pnpm lint:check && pnpm format:check && pnpm test",
     "release": "node scripts/release.mjs",
     "prepare": "husky",
@@ -48,6 +52,7 @@
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.0.0",
+    "vitepress": "1.6.4",
     "vitest": "^4.0.0"
   },
   "lint-staged": {

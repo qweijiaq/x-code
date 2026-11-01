@@ -50,6 +50,7 @@ Git 分支菜单可以：
 - 为已有分支（含 `origin/*` 远程分支）打开独立窗口，必要时创建本地跟踪分支
   和 `git worktree`；
 - 新建分支并选择父目录；
+- 按任务创建：描述任务后，X-Code 创建 `x-code/<slug>` 分支和 worktree，并在新窗口里用这段任务直接开始；
 - 删除 worktree（有未提交改动时需要二次确认）、清理失效 worktree。
 
 worktree 窗口有独立的工作区路径和 `.x-code/sessions`，不会覆盖全局最近项目。
