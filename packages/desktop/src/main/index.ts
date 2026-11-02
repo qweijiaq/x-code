@@ -489,6 +489,7 @@ function spawnRuntime(context: RuntimeContext): void {
     env: {
       ...process.env,
       X_CODE_DESKTOP: '1',
+      X_CODE_WINDOW_ID: String(context.window.id),
       ...(context.workspacePath ? { X_CODE_WINDOW_WORKSPACE: context.workspacePath } : {}),
       ...(whisperDir ? { X_CODE_WHISPER_BUNDLED_DIR: whisperDir } : {}),
     },

@@ -445,6 +445,9 @@ export class AgentHost {
 
   async switchWorkspace(nextPath: string): Promise<SettingsActionResult> {
     this.assertIdle()
+    if (this.backgroundTaskList().some((task) => task.status === 'running')) {
+      throw new Error('有后台任务正在运行，请先在后台任务面板停止后再切换项目。')
+    }
     const resolved = path.resolve(nextPath)
     let stat: fs.Stats | null = null
     try {
@@ -481,6 +484,7 @@ export class AgentHost {
   private createBackgroundRegistry(): BackgroundTaskRegistry {
     return new BackgroundTaskRegistry({
       storePath: path.join(this.requireBootstrap().workspace, '.x-code', 'background-tasks.json'),
+      ownerId: process.env.X_CODE_WINDOW_ID ?? 'default',
     })
   }
 
@@ -2441,6 +2445,12 @@ export class AgentHost {
   }
 
   async setBudget(budget: { maxTokens?: number | null; maxCostUsd?: number | null }): Promise<SettingsActionResult> {
+    if (budget.maxTokens !== undefined && budget.maxTokens !== null && !Number.isFinite(budget.maxTokens)) {
+      throw new Error('token 预算无效')
+    }
+    if (budget.maxCostUsd !== undefined && budget.maxCostUsd !== null && !Number.isFinite(budget.maxCostUsd)) {
+      throw new Error('美元预算无效')
+    }
     const current = loadUserConfig().budget ?? {}
     const next = {
       ...(budget.maxTokens === null

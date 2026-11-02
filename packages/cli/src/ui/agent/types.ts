@@ -40,6 +40,8 @@ export interface PendingPermission {
   input: Record<string, unknown>
   /** 权限对话框使用的、已解析的 MCP 身份，而不是被混淆的工具名。 */
   mcp?: { serverName: string; rawName: string }
+  /** 外部内容 taint 触发的重新批准；普通询问不带此字段。 */
+  taint?: { sources: string[] }
 }
 
 export interface PendingAuthority {

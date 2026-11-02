@@ -77,6 +77,7 @@ interface PermissionRequest {
   /** 当工具解析为 MCP 注册表条目时由 use-agent 设置。驱动对话框里 MCP 风格的标题
    *  / 预览 / always-allow 标签。内置工具（shell/edit/writeFile/…）没有此字段。 */
   mcp?: { serverName: string; rawName: string }
+  taint?: { sources: string[] }
 }
 
 interface AuthorityRequest {

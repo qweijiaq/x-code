@@ -107,3 +107,31 @@ describe('background task persistence', () => {
     }
   })
 })
+
+describe('background task multi-window store', () => {
+  it('merges snapshots from different windows without clobbering and keeps mode 0600', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-bg-tasks-'))
+    const storePath = path.join(dir, 'background-tasks.json')
+    try {
+      const first = new BackgroundTaskRegistry({ storePath, ownerId: 'window-1' })
+      const second = new BackgroundTaskRegistry({ storePath, ownerId: 'window-2' })
+      const a = first.start({ toolCallId: 'call-a', agentName: 'explore', description: 'A' }).task
+      const b = second.start({ toolCallId: 'call-b', agentName: 'plan', description: 'B' }).task
+
+      first.complete(a.id, { status: 'completed', resultText: 'a' })
+      second.complete(b.id, { status: 'completed', resultText: 'b' })
+
+      const stored = JSON.parse(await fs.readFile(storePath, 'utf-8')) as Array<{ id: string; ownerId?: string }>
+      expect(stored.map((task) => task.id).sort()).toEqual([a.id, b.id].sort())
+
+      const restoredFirst = new BackgroundTaskRegistry({ storePath, ownerId: 'window-1' })
+      expect(restoredFirst.list().map((task) => task.id)).toEqual([a.id])
+      const restoredSecond = new BackgroundTaskRegistry({ storePath, ownerId: 'window-2' })
+      expect(restoredSecond.list().map((task) => task.id)).toEqual([b.id])
+
+      expect((await fs.stat(storePath)).mode & 0o777).toBe(0o600)
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+})

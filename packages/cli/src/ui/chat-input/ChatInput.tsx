@@ -1523,6 +1523,17 @@ export function ChatInput({
       titleCells.push(...textToCells(titleText, S_TEXT_STRONG_BOLD))
       frame.push(boxedRow(titleCells, S_TEXT_STRONG))
 
+      if (permission.taint) {
+        const sources = permission.taint.sources.length > 0 ? permission.taint.sources.join(', ') : 'external'
+        frame.push(
+          boxedRow(
+            textToCells(`  外部内容已读入（${sources}），本次操作需要重新确认。`, S_WARNING_BOLD),
+            S_TEXT_STRONG,
+          ),
+        )
+        frame.push(boxedRow([], S_TEXT_STRONG))
+      }
+
       const contentCells = permissionContentCells(permission.toolName, permission.input, termWidth, permission.mcp)
       if (contentCells) {
         frame.push(boxedRow([], S_TEXT_STRONG))

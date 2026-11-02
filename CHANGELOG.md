@@ -5,7 +5,9 @@
 - add a desktop budget and per-model pricing editor backed by `~/.x-code/config.json`
 - persist background sub-agent snapshots per workspace and restore unfinished tasks as interrupted
 - add an opt-in external-content taint policy that re-approves writes after web/document/MCP reads
-- propagate external-content taint from sub-agents (including browser) to the parent turn
+- propagate external-content taint from sub-agents (including browser) to the parent turn and gate `task` dispatch
+- merge multi-window background task snapshots, keep mode 0600, and block workspace switches while tasks run
+- show the taint reason in the CLI approval dialog and mark partial cost estimates
 - add `xc trace` for reading local turn traces, and flush traces on exit
 - add v8 coverage thresholds and a critical-only dependency audit gate in CI
 - claim unknown external tool output as untrusted and report shell sandbox support in `/doctor`

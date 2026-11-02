@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 
 import type { TokenUsage } from '../types/index.js'
@@ -20,6 +21,8 @@ export interface BackgroundTaskSnapshot {
   /** 子代理读入过外部内容；供父级在读取结果时传播 taint。 */
   externalContentTainted?: boolean
   externalContentSources?: string[]
+  /** 写入该快照的窗口/运行时；多窗口共用一个文件时用于合并。 */
+  ownerId?: string
 }
 
 export interface BackgroundTaskStartInput {
@@ -43,9 +46,11 @@ export class BackgroundTaskRegistry {
   private entries = new Map<string, Entry>()
   private seq = 0
   private readonly storePath: string | undefined
+  private readonly ownerId: string
 
-  constructor(options: { storePath?: string } = {}) {
+  constructor(options: { storePath?: string; ownerId?: string } = {}) {
     this.storePath = options.storePath
+    this.ownerId = options.ownerId ?? 'default'
     this.restore()
   }
 
@@ -63,6 +68,9 @@ export class BackgroundTaskRegistry {
       if (!raw || typeof raw !== 'object') continue
       const task = raw as BackgroundTaskSnapshot
       if (typeof task.id !== 'string' || typeof task.startedAt !== 'number') continue
+      // 别的窗口（ownerId 不同）的快照保留在磁盘上，但不进入本窗口的内存列表；
+      // 共享视图负责跨窗口展示。
+      if (task.ownerId !== undefined && task.ownerId !== this.ownerId) continue
       const restored: BackgroundTaskSnapshot =
         task.status === 'running'
           ? {
@@ -72,21 +80,40 @@ export class BackgroundTaskRegistry {
               error: task.error ?? 'Interrupted when the app exited',
             }
           : task
+      restored.ownerId = this.ownerId
       this.entries.set(restored.id, { task: restored, controller: new AbortController(), waiters: new Set() })
       const match = /-(\d+)$/.exec(restored.id)
       if (match) this.seq = Math.max(this.seq, Number(match[1]))
     }
   }
 
+  private readStored(): BackgroundTaskSnapshot[] {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.storePath!, 'utf-8'))
+      return Array.isArray(parsed) ? (parsed as BackgroundTaskSnapshot[]) : []
+    } catch {
+      return []
+    }
+  }
+
   private persist(): void {
     if (!this.storePath) return
     try {
-      const tasks = [...this.entries.values()].slice(-100).map((entry) => ({
+      // 先读回其他窗口的快照再合并，避免后写的窗口整体覆盖另一个窗口。
+      const own = [...this.entries.values()].map((entry) => ({
         ...entry.task,
         ...(entry.task.resultText ? { resultText: entry.task.resultText.slice(0, 2000) } : {}),
       }))
-      fs.mkdirSync(this.storePath.replace(/[\\/][^\\/]+$/, ''), { recursive: true })
-      fs.writeFileSync(this.storePath, `${JSON.stringify(tasks, null, 2)}\n`, 'utf-8')
+      const ownIds = new Set(own.map((task) => task.id))
+      const foreign = this.readStored().filter(
+        (task) => task.ownerId !== undefined && task.ownerId !== this.ownerId && !ownIds.has(task.id),
+      )
+      const tasks = [...foreign, ...own].slice(-200)
+      const dir = this.storePath.replace(/[\\/][^\\/]+$/, '')
+      fs.mkdirSync(dir, { recursive: true })
+      // 直接写目标文件：Windows 上 rename 覆盖已存在文件可能返回 EPERM。
+      fs.writeFileSync(this.storePath, `${JSON.stringify(tasks, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 })
+      fs.chmodSync(this.storePath, 0o600)
     } catch {
       // 持久化只是便利功能；写入失败不影响正在运行的任务。
     }
@@ -94,7 +121,7 @@ export class BackgroundTaskRegistry {
 
   start(input: BackgroundTaskStartInput): { task: BackgroundTaskSnapshot; signal: AbortSignal } {
     const controller = new AbortController()
-    const id = `bg-${Date.now().toString(36)}-${++this.seq}`
+    const id = `bg-${Date.now().toString(36)}-${++this.seq}-${randomUUID().slice(0, 6)}`
     const task: BackgroundTaskSnapshot = {
       id,
       toolCallId: input.toolCallId,
@@ -102,6 +129,7 @@ export class BackgroundTaskRegistry {
       description: input.description,
       status: 'running',
       startedAt: Date.now(),
+      ownerId: this.ownerId,
     }
     this.entries.set(id, { task, controller, waiters: new Set() })
     const signal = input.parentSignal ? AbortSignal.any([input.parentSignal, controller.signal]) : controller.signal

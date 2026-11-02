@@ -60,10 +60,19 @@ export function UsageFooter({
         </span>
       ) : null}
       {usage ? (
-        <span className="usage" title={t('累计 token 与估算成本（列表价，缓存输入未打折；未定价模型不计入）')}>
+        <span
+          className="usage"
+          title={
+            usage.costComplete === false
+              ? t('累计 token 与部分估算成本（列表价；含未定价模型，金额只是下界）')
+              : t('累计 token 与估算成本（列表价，缓存输入未打折；未定价模型不计入）')
+          }
+        >
           ↑{usage.inputTokens} ↓{usage.outputTokens}
           {usage.costUsd !== undefined
-            ? ` · $${usage.costUsd < 0.01 ? usage.costUsd.toFixed(4) : usage.costUsd.toFixed(2)}`
+            ? ` · $${usage.costUsd < 0.01 ? usage.costUsd.toFixed(4) : usage.costUsd.toFixed(2)}${
+                usage.costComplete === false ? '*' : ''
+              }`
             : ''}
         </span>
       ) : null}

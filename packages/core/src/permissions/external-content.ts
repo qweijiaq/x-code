@@ -15,6 +15,7 @@ export const EXTERNAL_CONTENT_TOOLS = new Set(['webFetch', 'webSearch', 'readDoc
 /** taint 后需要重新批准的破坏性工具。 */
 export const TAINT_SENSITIVE_TOOLS = new Set([
   'shell',
+  'task',
   'writeFile',
   'edit',
   'batchRename',

@@ -23,6 +23,7 @@ describe('external content taint', () => {
   it('only requires approval for destructive tools under the approve policy', () => {
     expect(shouldRequireExternalContentApproval('approve', true, 'writeFile')).toBe(true)
     expect(shouldRequireExternalContentApproval('approve', true, 'shell')).toBe(true)
+    expect(shouldRequireExternalContentApproval('approve', true, 'task')).toBe(true)
     expect(shouldRequireExternalContentApproval('approve', true, 'readFile')).toBe(false)
     expect(shouldRequireExternalContentApproval('off', true, 'writeFile')).toBe(false)
     expect(shouldRequireExternalContentApproval('approve', false, 'writeFile')).toBe(false)

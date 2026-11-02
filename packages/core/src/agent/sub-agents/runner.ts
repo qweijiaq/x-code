@@ -346,6 +346,9 @@ async function runSubAgentUnlocked(
     projectCwd: parentState.projectCwd,
     agentRole: 'sub-agent',
   })
+  // 父级读过外部内容时，子代理不能借“干净状态”绕过写审批。
+  subState.externalContentTainted = parentState.externalContentTainted === true
+  subState.externalContentSources = [...(parentState.externalContentSources ?? [])]
   subState.executionAuthority = structuredClone(authority)
   subState.systemPromptCache = subSystemPrompt
 

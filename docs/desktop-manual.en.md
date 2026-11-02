@@ -155,7 +155,7 @@ You do not need to memorize task ids or open the panel to ask about progress:
 4. While a reply is running, pressing Enter queues the prompt; a text-only prompt can use **Open in new window**. The new window gets the fork-time snapshot and sees background shells/sub-agents from other windows through the shared main-process view (about 2 seconds refresh), so you can ask about their current progress. The parent window's in-flight model reasoning is not shared.
 5. The Background tasks panel lists shells and sub-agents from all windows: local tasks can be stopped there; tasks from other windows appear as dashed cards with status/output snapshots and must be stopped in their original window.
 
-Background sub-agent snapshots are persisted per workspace; after a restart, tasks that were still running appear as **interrupted** with their last status. Background shells remain process-local. The shared view covers background shells/sub-agents, not two writers in one model turn.
+Background sub-agent snapshots are persisted per workspace; after a restart, tasks that were still running appear as **interrupted** with their last status. Background shells remain process-local. Switching to another project is blocked while a background sub-agent is running; stop it in the panel first. The shared view covers background shells/sub-agents, not two writers in one model turn.
 
 ## Settings Reference
 

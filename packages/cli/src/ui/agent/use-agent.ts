@@ -492,6 +492,7 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
               toolName: toolCall.toolName,
               input: toolCall.input,
               mcp: mcpEntry ? { serverName: mcpEntry.serverName, rawName: mcpEntry.rawName } : undefined,
+              ...(toolCall.taint ? { taint: toolCall.taint } : {}),
             }
             setState((prev) => ({ ...prev, permissionQueue: [...prev.permissionQueue, entry] }))
           })

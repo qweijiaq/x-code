@@ -1991,6 +1991,7 @@ export function App({
               toolName: permissionRequest.toolName,
               input: permissionRequest.input,
               mcp: permissionRequest.mcp,
+              ...(permissionRequest.taint ? { taint: permissionRequest.taint } : {}),
               onResolve: resolvePermission,
             }
           : null
