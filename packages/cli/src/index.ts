@@ -19,6 +19,7 @@ import {
   debugLogIntegrationDiagnostics,
   emptyHookBus,
   ensureDefaultMarketplaces,
+  flushTurnTrace,
   forceTerminateManagedShellsSync,
   getAvailableProviders,
   getEnvVarName,
@@ -180,6 +181,7 @@ async function gracefulShutdown(exitCode: number, reason: TerminationReason = 'c
     reason,
     ordinaryFinalizers: finalizers,
   })
+  await flushTurnTrace().catch(() => undefined)
   if (exitCode === 0 && shutdown.emergency.requested > 0) exitCode = 1
 
   resetTerminal()
@@ -204,6 +206,10 @@ async function main() {
   // `xc plugin install ./foo` 会被当作 agent 应当响应的提示词。这一路径
   // 不挂载 Ink，执行完就退出。
   const rawArgs = hideBin(process.argv)
+  if (rawArgs[0] === 'trace') {
+    const { runTraceCommand } = await import('./trace-command.js')
+    process.exit(await runTraceCommand(rawArgs.slice(1)))
+  }
   if (rawArgs[0] === 'plugin') {
     const exitCode = await runPluginCli(rawArgs.slice(1))
     process.exit(exitCode)
@@ -424,9 +430,14 @@ async function main() {
   ]
     .map((value) => value.trim())
     .filter((value, index, all) => value.length > 0 && all.indexOf(value) === index)
+  const externalContentPolicy =
+    (argv['external-content-policy'] as 'off' | 'approve' | undefined) ??
+    userConfig.security?.externalContentPolicy ??
+    'off'
   const options: AgentOptions = {
     modelId,
     trustMode: argv.trust,
+    ...(externalContentPolicy === 'approve' ? { externalContentPolicy } : {}),
     printMode,
     maxTurns: argv['max-turns'],
     ...(budget ? { budget } : {}),

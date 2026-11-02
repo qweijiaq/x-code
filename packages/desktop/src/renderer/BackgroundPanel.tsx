@@ -31,6 +31,7 @@ const TASK_STATUS_LABEL: Record<BackgroundTaskView['status'], string> = {
   completed: '已完成',
   failed: '失败',
   aborted: '已停止',
+  interrupted: '已中断',
 }
 
 function isActive(status: BackgroundShellView['status']): boolean {

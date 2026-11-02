@@ -759,6 +759,9 @@ export async function agentLoop(
 ): Promise<AgentLoopResult> {
   const state = existingState ?? createLoopState(options.permissionMode ?? 'default')
   state.executionAuthority = effectiveExecutionAuthority(options.executionAuthority, state.contextSecurity)
+  // 每次用户 submit 都是新的信任边界；上一轮读入的外部内容不再自动降权本轮写操作。
+  state.externalContentTainted = false
+  state.externalContentSources = []
   let invocationPeerTainted = state.executionAuthority.peerTainted
   const turnStartMessageIndex = state.messages.length
   const turnMessages: ModelMessage[] = []

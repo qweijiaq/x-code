@@ -1,3 +1,4 @@
+import { propagateExternalContent } from '../permissions/external-content.js'
 import { truncateToolResult } from '../tools/index.js'
 import { reportProgress } from '../tools/progress.js'
 import type { BackgroundInfoItem } from '../types/index.js'
@@ -49,6 +50,8 @@ async function collectBackgroundInfo(context: ToolHandlerContext): Promise<Backg
       ...(task.toolCallCount !== undefined ? { toolCallCount: task.toolCallCount } : {}),
       ...(task.resultText ? { resultText: task.resultText } : {}),
       ...(task.error ? { resultText: task.error } : {}),
+      ...(task.externalContentTainted ? { externalContentTainted: true } : {}),
+      ...(task.externalContentSources ? { externalContentSources: task.externalContentSources } : {}),
     })
   }
   try {
@@ -200,6 +203,8 @@ export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Recor
             tokenUsage: result.tokenUsage,
             turnCount: result.turnCount,
             toolCallCount: result.toolCallCount,
+            externalContentTainted: result.externalContentTainted,
+            externalContentSources: result.externalContentSources,
           })
           if (finished) callbacks.onBackgroundTaskEvent?.({ kind: 'end', task: finished })
         })
@@ -259,6 +264,7 @@ export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Recor
     const taskId = typeof input.taskId === 'string' ? input.taskId.trim() : ''
     const items = await collectBackgroundInfo(context)
     const item = items.find((entry) => entry.id === taskId)
+    if (item?.externalContentTainted) propagateExternalContent(state, item, 'background')
     pushToolResult(
       state,
       callbacks,
@@ -299,6 +305,7 @@ export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Recor
         )
       }
     }
+    if (item.externalContentTainted) propagateExternalContent(state, item, 'background')
     const statusLine = `${item.id} [${item.kind}] ${item.status} · ${item.description}${
       item.elapsedMs !== undefined ? ` · ${backgroundElapsed(item.elapsedMs)}` : ''
     }`

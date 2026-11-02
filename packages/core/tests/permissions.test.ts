@@ -5,7 +5,12 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { checkPermission, getPermissionLevel, isPathWithinProject } from '../src/permissions/index.js'
+import {
+  checkPermission,
+  checkPermissionDetailed,
+  getPermissionLevel,
+  isPathWithinProject,
+} from '../src/permissions/index.js'
 import {
   addSessionAllowRule,
   buildAllowRule,
@@ -676,5 +681,65 @@ describe('suggestRuleLabel + buildAllowRule fallback for unrecognised shell comm
     // 绕过 shell / write 回退，返回 MCP 风格的标签。
     expect(suggestRuleLabel('filesystem__read_file', { path: '/tmp' }, true)).toBe('this MCP tool')
     expect(suggestRuleLabel('any_name_at_all', {}, true)).toBe('this MCP tool')
+  })
+})
+
+describe('external content taint', () => {
+  it('asks again even under trust mode when the policy is approve', async () => {
+    const ask = vi.fn(async (_request: { taint?: { sources: string[] } }) => 'yes' as const)
+    const result = await checkPermissionDetailed(
+      { toolCallId: 'call-1', toolName: 'writeFile', input: { filePath: '/tmp/x' } },
+      true,
+      ask,
+      'default',
+      '/tmp',
+      undefined,
+      { policy: 'approve', tainted: true, sources: ['webFetch'] },
+    )
+    expect(result.approved).toBe(true)
+    expect(ask).toHaveBeenCalledTimes(1)
+    expect(ask.mock.calls[0]?.[0]).toMatchObject({ taint: { sources: ['webFetch'] } })
+  })
+
+  it('denies a tainted write when the user says no', async () => {
+    const ask = vi.fn(async () => 'no' as const)
+    const result = await checkPermissionDetailed(
+      { toolCallId: 'call-2', toolName: 'shell', input: { command: 'ls' } },
+      true,
+      ask,
+      'default',
+      '/tmp',
+      undefined,
+      { policy: 'approve', tainted: true, sources: ['webSearch'] },
+    )
+    expect(result.approved).toBe(false)
+    expect(ask).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps reading tools and policy-off behavior unchanged', async () => {
+    const ask = vi.fn(async () => 'no' as const)
+    const read = await checkPermissionDetailed(
+      { toolCallId: 'call-3', toolName: 'readFile', input: { filePath: '/tmp/x' } },
+      true,
+      ask,
+      'default',
+      '/tmp',
+      undefined,
+      { policy: 'approve', tainted: true, sources: ['webFetch'] },
+    )
+    expect(read.approved).toBe(true)
+    expect(ask).not.toHaveBeenCalled()
+
+    const off = await checkPermissionDetailed(
+      { toolCallId: 'call-4', toolName: 'writeFile', input: { filePath: '/tmp/x' } },
+      true,
+      ask,
+      'default',
+      '/tmp',
+      undefined,
+      { policy: 'off', tainted: true, sources: ['webFetch'] },
+    )
+    expect(off.approved).toBe(true)
+    expect(ask).not.toHaveBeenCalled()
   })
 })

@@ -29,7 +29,7 @@
     "node-pty": "^1.1.0",
     "pdf-parse": "2.4.5",
     "tesseract.js": "7.0.0",
-    "undici": "^7.28.0"
+    "undici": "^7.30.1"
   },
   "optionalDependencies": {
     "@fugood/whisper.node": "1.1.1",

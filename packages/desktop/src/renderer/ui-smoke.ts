@@ -726,6 +726,72 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       ok: contextInputMounted && contextSaved && contextReset,
       detail: `input=${contextInputMounted} saved=${contextSaved} reset=${contextReset}`,
     }
+    const budgetTokensInput = document.querySelector<HTMLInputElement>('[data-testid="budget-tokens-input"]')
+    const budgetCostInput = document.querySelector<HTMLInputElement>('[data-testid="budget-cost-input"]')
+    const budgetSave = document.querySelector<HTMLButtonElement>('[data-testid="budget-save"]')
+    const priceInput = document.querySelector<HTMLInputElement>('[data-testid="price-input"]')
+    const priceOutput = document.querySelector<HTMLInputElement>('[data-testid="price-output"]')
+    const priceSave = document.querySelector<HTMLButtonElement>('[data-testid="price-save"]')
+    let budgetSaved = false
+    let priceSaved = false
+    let priceReset = false
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    const readSettings = async (): Promise<SettingsSnapshot | null> => {
+      const response = await window.xcode.request({ id: crypto.randomUUID(), method: 'settings:get', params: {} })
+      return response.ok ? (response.result as SettingsSnapshot) : null
+    }
+    if (budgetTokensInput && budgetCostInput && budgetSave) {
+      setValue?.call(budgetTokensInput, '5000')
+      budgetTokensInput.dispatchEvent(new Event('input', { bubbles: true }))
+      setValue?.call(budgetCostInput, '0.25')
+      budgetCostInput.dispatchEvent(new Event('input', { bubbles: true }))
+      // 让 React 先提交受控输入的 state，再点击；否则点击仍会命中旧闭包。
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const enabled = await waitFor(() => budgetSave.disabled === false, 8000)
+      budgetSave.click()
+      const started = Date.now()
+      while (Date.now() - started < 5000 && !budgetSaved) {
+        const current = await readSettings()
+        budgetSaved = current?.budget?.maxTokens === 5000 && current?.budget?.maxCostUsd === 0.25
+        if (!budgetSaved) await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    }
+    if (priceInput && priceOutput && priceSave) {
+      setValue?.call(priceInput, '1.5')
+      priceInput.dispatchEvent(new Event('input', { bubbles: true }))
+      setValue?.call(priceOutput, '6')
+      priceOutput.dispatchEvent(new Event('input', { bubbles: true }))
+      await waitFor(() => priceSave.disabled === false, 8000)
+      priceSave.click()
+      const started = Date.now()
+      while (Date.now() - started < 5000 && !priceSaved) {
+        const current = await readSettings()
+        const modelId = current?.activeModelId
+        priceSaved = Boolean(
+          modelId &&
+          current?.pricingOverrides[modelId]?.inputPerMTok === 1.5 &&
+          current.pricingOverrides[modelId]?.outputPerMTok === 6,
+        )
+        if (!priceSaved) await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      const resetVisible = await waitFor(
+        () => document.querySelector<HTMLButtonElement>('[data-testid="price-reset"]') !== null,
+        4000,
+      )
+      if (resetVisible) document.querySelector<HTMLButtonElement>('[data-testid="price-reset"]')?.click()
+      const resetStarted = Date.now()
+      while (Date.now() - resetStarted < 5000 && !priceReset) {
+        const current = await readSettings()
+        const modelId = current?.activeModelId
+        priceReset = Boolean(modelId && current?.pricingOverrides[modelId] === undefined)
+        if (!priceReset) await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+    }
+    checks.budgetSettings = {
+      ok:
+        Boolean(budgetTokensInput && budgetSave && priceInput && priceSave) && budgetSaved && priceSaved && priceReset,
+      detail: `mounted=${Boolean(budgetTokensInput && priceSave)} saved=${budgetSaved} priceSaved=${priceSaved} priceReset=${priceReset}`,
+    }
     clickSettingsTab('权限')
     const permissionTabMounted = await waitFor(
       () => document.querySelector('[data-testid="permission-tool"]') !== null,
@@ -761,6 +827,15 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     checks.permissionRules = {
       ok: permissionTabMounted && permissionAdded && permissionRemoved,
       detail: `tab=${permissionTabMounted} add=${permissionAdded} remove=${permissionRemoved}`,
+    }
+    const externalPolicyToggle = document.querySelector<HTMLButtonElement>(
+      '[data-testid="external-content-policy"] button',
+    )
+    checks.externalContentPolicy = {
+      ok: externalPolicyToggle !== null,
+      detail: externalPolicyToggle
+        ? 'external content approval toggle mounted'
+        : 'external content approval toggle missing',
     }
     document.querySelector<HTMLButtonElement>('.settings-drawer .btn-quiet')?.click()
     await waitFor(() => document.querySelector('.settings-drawer') === null, 2000)

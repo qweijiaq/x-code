@@ -383,6 +383,8 @@ export interface UserConfig {
   budget?: { maxTokens?: number; maxCostUsd?: number }
   /** 自定义模型价格（USD / 百万 token）。内置表只覆盖 catalog 中已标价的模型。 */
   pricing?: Record<string, { inputPerMTok?: number; outputPerMTok?: number }>
+  /** 外部内容 taint 策略：读入 web/文档/MCP 后是否重新批准写操作。 */
+  security?: { externalContentPolicy?: 'off' | 'approve' }
   /** 主模型因提供商侧故障不可用时的备用模型，按顺序尝试。 */
   fallbackModels?: string[]
 }

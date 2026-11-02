@@ -334,11 +334,24 @@ export interface PermissionRulesResult {
   rules: PermissionRuleView[]
 }
 
+export interface ModelPricingView {
+  inputPerMTok: number
+  outputPerMTok: number
+}
+
 export interface SettingsSnapshot {
   workspace: string
   activeModelId: string
   contextWindow: number
   contextWindowOverride?: number
+  /** 每次 prompt 的默认预算；`undefined` 表示不限制。 */
+  budget?: { maxTokens?: number; maxCostUsd?: number }
+  /** 读入外部内容后是否重新批准写操作。 */
+  externalContentPolicy: 'off' | 'approve'
+  /** 用户覆盖的模型价格（仅覆盖项）。 */
+  pricingOverrides: Record<string, ModelPricingView>
+  /** 当前模型的生效价格（内置或覆盖）；未定价时省略。 */
+  activePricing?: ModelPricingView
   providers: ProviderSettingsView[]
   skills: SkillSettingsView[]
   mcpServers: McpServerView[]
@@ -791,7 +804,7 @@ export interface BackgroundTaskView {
   toolCallId: string
   agentName: string
   description: string
-  status: 'running' | 'completed' | 'failed' | 'aborted'
+  status: 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
   startedAt: number
   endedAt?: number
   durationMs?: number
@@ -832,6 +845,8 @@ export interface UsageView {
   contextWindow?: number
   /** 累计估算成本（USD，列表价）。模型没有价格来源时省略，而不是显示 $0。 */
   costUsd?: number
+  /** false 表示有未定价模型，costUsd 只是下界。 */
+  costComplete?: boolean
 }
 
 export interface TodoView {
@@ -870,6 +885,8 @@ export interface ApprovalRequestEvent {
   question?: string
   options?: Array<{ label: string; description: string }>
   planText?: string
+  /** 外部内容 taint 触发的重新批准。 */
+  taint?: { sources: string[] }
   preview?: {
     summary: string
     paths?: string[]
@@ -1059,6 +1076,18 @@ export interface RequestMap {
   'settings:set-always-allow-all': { params: { enabled: boolean }; result: SettingsActionResult }
   'settings:set-context-window': {
     params: { modelId: string; tokens: number | null }
+    result: SettingsActionResult
+  }
+  'settings:set-budget': {
+    params: { maxTokens?: number | null; maxCostUsd?: number | null }
+    result: SettingsActionResult
+  }
+  'settings:set-external-content-policy': {
+    params: { policy: 'off' | 'approve' }
+    result: SettingsActionResult
+  }
+  'settings:set-model-pricing': {
+    params: { modelId: string; inputPerMTok: number | null; outputPerMTok: number | null }
     result: SettingsActionResult
   }
   'settings:set-browser-enabled': { params: { enabled: boolean }; result: SettingsActionResult }

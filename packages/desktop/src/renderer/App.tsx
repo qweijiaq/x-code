@@ -4371,7 +4371,16 @@ export function App(): React.JSX.Element {
             </div>
 
             {approval.kind === 'permission' ? (
-              <pre className="approval-body">{JSON.stringify(approval.input ?? {}, null, 2)}</pre>
+              <>
+                {approval.taint ? (
+                  <div className="approval-reason">
+                    {t('本轮读取过外部内容（{{sources}}），写操作需要重新确认。', {
+                      sources: approval.taint.sources.join(', '),
+                    })}
+                  </div>
+                ) : null}
+                <pre className="approval-body">{JSON.stringify(approval.input ?? {}, null, 2)}</pre>
+              </>
             ) : null}
             {approval.kind === 'authority' ? (
               <div className="approval-body text">

@@ -17,6 +17,7 @@ import { DEFAULT_UPDATE_FEED } from '../shared/constants.js'
 import type {
   AppState,
   McpServerView,
+  ModelPricingView,
   PluginSettingsView,
   ProviderSettingsView,
   SearchProviderView,
@@ -43,6 +44,10 @@ export interface SettingsSnapshotInput {
   baseOptions: AgentOptions
   mcpServers: McpServerView[]
   mcpProjectSkipped: boolean
+  budget?: { maxTokens?: number; maxCostUsd?: number }
+  externalContentPolicy: 'off' | 'approve'
+  pricingOverrides: Record<string, { inputPerMTok?: number; outputPerMTok?: number }>
+  activePricing?: ModelPricingView
 }
 
 export function buildSettingsSnapshot(input: SettingsSnapshotInput): SettingsSnapshot {
@@ -133,6 +138,16 @@ export function buildSettingsSnapshot(input: SettingsSnapshotInput): SettingsSna
     pluginErrors: input.pluginErrors,
     mcpServers: input.mcpServers,
     mcpProjectSkipped: input.mcpProjectSkipped,
+    ...(input.budget ? { budget: input.budget } : {}),
+    externalContentPolicy: input.externalContentPolicy,
+    pricingOverrides: Object.fromEntries(
+      Object.entries(input.pricingOverrides).flatMap(([modelId, pricing]) =>
+        typeof pricing.inputPerMTok === 'number' && typeof pricing.outputPerMTok === 'number'
+          ? [[modelId, { inputPerMTok: pricing.inputPerMTok, outputPerMTok: pricing.outputPerMTok }]]
+          : [],
+      ),
+    ),
+    ...(input.activePricing ? { activePricing: input.activePricing } : {}),
     toolProfile: (input.baseOptions.toolProfile ?? 'full') as 'full' | 'standard',
     thinking: input.baseOptions.thinking ?? false,
     alwaysAllowAll: input.alwaysAllowAll,

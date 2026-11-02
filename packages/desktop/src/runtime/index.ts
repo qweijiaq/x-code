@@ -551,6 +551,21 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.setContextWindow(request.params.modelId, request.params.tokens))
       }
+      case 'settings:set-budget': {
+        await ensureInitialized()
+        return ok(request.id, await host.setBudget(request.params))
+      }
+      case 'settings:set-external-content-policy': {
+        await ensureInitialized()
+        return ok(request.id, await host.setExternalContentPolicy(request.params.policy))
+      }
+      case 'settings:set-model-pricing': {
+        await ensureInitialized()
+        return ok(
+          request.id,
+          await host.setModelPricing(request.params.modelId, request.params.inputPerMTok, request.params.outputPerMTok),
+        )
+      }
       case 'settings:set-browser-enabled': {
         await ensureInitialized()
         return ok(request.id, await host.setBrowserEnabled(request.params.enabled))

@@ -5452,6 +5452,7 @@ body::before,
 }
 
 .background-status.failed,
+.background-status.interrupted,
 .background-status.termination-failed {
   color: var(--cinnabar);
 }

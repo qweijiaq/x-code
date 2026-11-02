@@ -5,7 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import type { EditDiffPayload, TodoItem, TokenUsage, UserConfigItem } from '@x-code-cli/core'
+import type { EditDiffPayload, TodoItem, TokenUsage, UsageBreakdown, UserConfigItem } from '@x-code-cli/core'
 
 import type {
   ApprovalKind,
@@ -114,8 +114,8 @@ export function toUserConfigFields(items: UserConfigItem[] | undefined): UserCon
   }))
 }
 
-export function toUsageView(usage: TokenUsage, modelId: string): UsageView {
-  return usageView(usage, modelId)
+export function toUsageView(usage: TokenUsage, modelId: string, breakdown?: UsageBreakdown): UsageView {
+  return usageView(usage, modelId, breakdown)
 }
 
 export function formatTokens(count: number): string {

@@ -181,6 +181,18 @@ export function SettingsPanel({
   const [contextWindowDraft, setContextWindowDraft] = useState(
     settings.contextWindowOverride ? String(settings.contextWindowOverride) : '',
   )
+  const [budgetTokensDraft, setBudgetTokensDraft] = useState(
+    settings.budget?.maxTokens !== undefined ? String(settings.budget.maxTokens) : '',
+  )
+  const [budgetCostDraft, setBudgetCostDraft] = useState(
+    settings.budget?.maxCostUsd !== undefined ? String(settings.budget.maxCostUsd) : '',
+  )
+  const [priceInputDraft, setPriceInputDraft] = useState(
+    settings.activePricing ? String(settings.activePricing.inputPerMTok) : '',
+  )
+  const [priceOutputDraft, setPriceOutputDraft] = useState(
+    settings.activePricing ? String(settings.activePricing.outputPerMTok) : '',
+  )
   const [permissionRules, setPermissionRules] = useState<PermissionRuleView[] | null>(null)
   const [permissionTool, setPermissionTool] = useState('shell')
   const [permissionType, setPermissionType] = useState<PermissionRuleType>('prefix')
@@ -253,6 +265,16 @@ export function SettingsPanel({
     setContextWindowDraft(settings.contextWindowOverride ? String(settings.contextWindowOverride) : '')
   }, [settings.contextWindowOverride, settings.activeModelId])
 
+  useEffect(() => {
+    setBudgetTokensDraft(settings.budget?.maxTokens !== undefined ? String(settings.budget.maxTokens) : '')
+    setBudgetCostDraft(settings.budget?.maxCostUsd !== undefined ? String(settings.budget.maxCostUsd) : '')
+  }, [settings.budget?.maxTokens, settings.budget?.maxCostUsd])
+
+  useEffect(() => {
+    setPriceInputDraft(settings.activePricing ? String(settings.activePricing.inputPerMTok) : '')
+    setPriceOutputDraft(settings.activePricing ? String(settings.activePricing.outputPerMTok) : '')
+  }, [settings.activeModelId, settings.activePricing?.inputPerMTok, settings.activePricing?.outputPerMTok])
+
   const apply = async (
     method: string,
     params: Record<string, unknown>,
@@ -292,6 +314,45 @@ export function SettingsPanel({
       'context-window',
     )
     if (result) setNotice(t('上下文上限已更新'))
+  }
+
+  const saveBudget = async (): Promise<void> => {
+    const maxTokens = budgetTokensDraft.trim() ? Number(budgetTokensDraft) : null
+    const maxCostUsd = budgetCostDraft.trim() ? Number(budgetCostDraft) : null
+    if (maxTokens !== null && (!Number.isSafeInteger(maxTokens) || maxTokens < 1)) {
+      setError(t('token 预算必须是大于 0 的整数'))
+      return
+    }
+    if (maxCostUsd !== null && (!Number.isFinite(maxCostUsd) || maxCostUsd <= 0)) {
+      setError(t('美元预算必须大于 0'))
+      return
+    }
+    const result = await apply('settings:set-budget', { maxTokens, maxCostUsd }, 'budget')
+    if (result) setNotice(t('预算已更新'))
+  }
+
+  const saveModelPricing = async (reset = false): Promise<void> => {
+    if (reset) {
+      const result = await apply(
+        'settings:set-model-pricing',
+        { modelId: settings.activeModelId, inputPerMTok: null, outputPerMTok: null },
+        'model-pricing',
+      )
+      if (result) setNotice(t('已恢复内置价格'))
+      return
+    }
+    const input = Number(priceInputDraft)
+    const output = Number(priceOutputDraft)
+    if (!Number.isFinite(input) || input < 0 || !Number.isFinite(output) || output < 0) {
+      setError(t('价格必须是非负数'))
+      return
+    }
+    const result = await apply(
+      'settings:set-model-pricing',
+      { modelId: settings.activeModelId, inputPerMTok: input, outputPerMTok: output },
+      'model-pricing',
+    )
+    if (result) setNotice(t('模型价格已更新'))
   }
 
   const exportDiagnostics = async (): Promise<void> => {
@@ -1493,6 +1554,89 @@ export function SettingsPanel({
                   ? t('已为当前模型覆盖上下文上限；切换模型后可为其他模型单独设置。')
                   : t('留空使用模型表或 provider 兜底值；覆盖只影响当前模型。')}
               </p>
+
+              <div className="settings-section-title">{t('每次 prompt 预算')}</div>
+              <div className="settings-actions">
+                <input
+                  className="settings-input"
+                  data-testid="budget-tokens-input"
+                  type="number"
+                  min={1}
+                  placeholder={t('最大 tokens')}
+                  value={budgetTokensDraft}
+                  onChange={(event) => setBudgetTokensDraft(event.target.value)}
+                />
+                <input
+                  className="settings-input"
+                  data-testid="budget-cost-input"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder={t('最大美元')}
+                  value={budgetCostDraft}
+                  onChange={(event) => setBudgetCostDraft(event.target.value)}
+                />
+                <button
+                  className="btn solid"
+                  data-testid="budget-save"
+                  disabled={busy !== null}
+                  onClick={() => void saveBudget()}
+                >
+                  {busy === 'budget' ? t('保存中…') : t('保存预算')}
+                </button>
+              </div>
+              <p className="settings-hint">{t('留空表示不限制；预算按每次提交的增量计算，跨提交不累计。')}</p>
+
+              <div className="settings-section-title">{t('当前模型价格（USD / 1M tokens）')}</div>
+              <p className="settings-note">
+                {settings.activePricing
+                  ? t('生效价格：输入 ${{input}} · 输出 ${{output}}（{{source}}）', {
+                      input: settings.activePricing.inputPerMTok,
+                      output: settings.activePricing.outputPerMTok,
+                      source: settings.pricingOverrides[settings.activeModelId] ? t('自定义') : t('内置'),
+                    })
+                  : t('该模型暂无价格；填写后成本估算与 --max-cost 才会生效。')}
+              </p>
+              <div className="settings-actions">
+                <input
+                  className="settings-input"
+                  data-testid="price-input"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder={t('输入 $/1M')}
+                  value={priceInputDraft}
+                  onChange={(event) => setPriceInputDraft(event.target.value)}
+                />
+                <input
+                  className="settings-input"
+                  data-testid="price-output"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder={t('输出 $/1M')}
+                  value={priceOutputDraft}
+                  onChange={(event) => setPriceOutputDraft(event.target.value)}
+                />
+                <button
+                  className="btn solid"
+                  data-testid="price-save"
+                  disabled={busy !== null || !priceInputDraft.trim() || !priceOutputDraft.trim()}
+                  onClick={() => void saveModelPricing()}
+                >
+                  {busy === 'model-pricing' ? t('保存中…') : t('保存价格')}
+                </button>
+                {settings.pricingOverrides[settings.activeModelId] ? (
+                  <button
+                    className="btn"
+                    data-testid="price-reset"
+                    disabled={busy !== null}
+                    onClick={() => void saveModelPricing(true)}
+                  >
+                    {t('恢复内置')}
+                  </button>
+                ) : null}
+              </div>
             </>
           ) : null}
 
@@ -2460,6 +2604,29 @@ export function SettingsPanel({
           ) : null}
           {tab === 'permissions' ? (
             <div data-testid="permissions-tab">
+              <div className="setting-row" data-testid="external-content-policy">
+                <div className="setting-main">
+                  <div className="setting-name">{t('外部内容审批')}</div>
+                  <div className="setting-desc">
+                    {t(
+                      '开启后，只要本轮读取过网页、文档或 MCP 输出，后续的写文件、shell 等操作会重新请求批准，而不是沿用会话里的自动允许。',
+                    )}
+                  </div>
+                </div>
+                <button
+                  className={`settings-toggle ${settings.externalContentPolicy === 'approve' ? 'on' : ''}`}
+                  disabled={busy !== null}
+                  onClick={() =>
+                    void apply(
+                      'settings:set-external-content-policy',
+                      { policy: settings.externalContentPolicy === 'approve' ? 'off' : 'approve' },
+                      'external-content',
+                    )
+                  }
+                >
+                  {settings.externalContentPolicy === 'approve' ? t('已开启（点击关闭）') : t('开启')}
+                </button>
+              </div>
               <div className="settings-section-title">{t('权限规则')}</div>
               <p className="settings-note">
                 {t(

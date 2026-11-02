@@ -3,13 +3,14 @@ import fs from 'node:fs/promises'
 
 import {
   TOOL_SEARCH_TOOL_NAME,
+  estimateBreakdownCost,
   estimateUsageCost,
   extractText,
   getContextWindow,
   listSessions,
   loadSession,
 } from '@x-code-cli/core'
-import type { LoadedSession, ModelMessage, TokenUsage } from '@x-code-cli/core'
+import type { LoadedSession, ModelMessage, TokenUsage, UsageBreakdown } from '@x-code-cli/core'
 
 import type {
   LoadedSessionView,
@@ -255,7 +256,21 @@ export function toSessionMessages(messages: ModelMessage[]): SessionMessage[] {
   return out
 }
 
-export function usageView(usage: TokenUsage, modelId?: string): UsageView {
+export function usageView(usage: TokenUsage, modelId?: string, breakdown?: UsageBreakdown): UsageView {
+  // 有 breakdown 时按模型分开计价（fallback / sub-agent / 压缩可能用不同模型）；
+  // 没有时才退回“当前模型单价 × 累计 token”的近似。
+  if (breakdown) {
+    const cost = estimateBreakdownCost(breakdown)
+    return {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      totalTokens: usage.totalTokens,
+      currentContextTokens: usage.currentContextTokens,
+      ...(modelId ? { contextWindow: getContextWindow(modelId) } : {}),
+      ...(cost.usd > 0 || cost.unpricedModels.length === 0 ? { costUsd: cost.usd } : {}),
+      ...(cost.unpricedModels.length > 0 ? { costComplete: false } : { costComplete: true }),
+    }
+  }
   const cost = modelId ? estimateUsageCost(usage, modelId) : null
   return {
     inputTokens: usage.inputTokens,
@@ -292,7 +307,7 @@ export async function loadSessionView(
       filePath: loaded.filePath,
       modelId: loaded.modelId,
       messages: toSessionMessages(loaded.messages),
-      usage: usageView(loaded.tokenUsage, loaded.modelId),
+      usage: usageView(loaded.tokenUsage, loaded.modelId, loaded.usageBreakdown),
     },
   }
 }

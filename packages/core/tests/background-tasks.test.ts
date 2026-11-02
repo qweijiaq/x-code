@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
 import { BackgroundTaskRegistry } from '../src/agent/background-tasks.js'
 import type { SubAgentRegistry } from '../src/agent/sub-agents/registry.js'
 import { createTaskTool } from '../src/tools/task.js'
@@ -24,8 +28,17 @@ describe('background task registry', () => {
       resultText: 'done',
       turnCount: 3,
       toolCallCount: 4,
+      externalContentTainted: true,
+      externalContentSources: ['webFetch'],
     })
-    expect(finished).toMatchObject({ status: 'completed', resultText: 'done', turnCount: 3, toolCallCount: 4 })
+    expect(finished).toMatchObject({
+      status: 'completed',
+      resultText: 'done',
+      turnCount: 3,
+      toolCallCount: 4,
+      externalContentTainted: true,
+      externalContentSources: ['webFetch'],
+    })
     expect(finished?.endedAt).toBeTypeOf('number')
     expect(registry.abort(task.id)).toBe(false)
   })
@@ -45,5 +58,52 @@ describe('background task registry', () => {
     const parsed = schema.safeParse({ description: 'Scan', subagent_type: 'explore', prompt: 'go', background: true })
     expect(parsed.success).toBe(true)
     expect(parsed.data?.background).toBe(true)
+  })
+})
+
+describe('background task persistence', () => {
+  it('restores completed tasks after a restart', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-bg-tasks-'))
+    const storePath = path.join(dir, 'background-tasks.json')
+    try {
+      const registry = new BackgroundTaskRegistry({ storePath })
+      const { task } = registry.start({ toolCallId: 'call-1', agentName: 'explore', description: 'Scan' })
+      registry.complete(task.id, { status: 'completed', resultText: 'done' })
+
+      const restored = new BackgroundTaskRegistry({ storePath })
+      expect(restored.list()).toHaveLength(1)
+      expect(restored.list()[0]).toMatchObject({
+        id: task.id,
+        status: 'completed',
+        resultText: 'done',
+        agentName: 'explore',
+      })
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('marks tasks that were running at exit as interrupted', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-bg-tasks-'))
+    const storePath = path.join(dir, 'background-tasks.json')
+    try {
+      const registry = new BackgroundTaskRegistry({ storePath })
+      const { task, signal } = registry.start({
+        toolCallId: 'call-2',
+        agentName: 'general-purpose',
+        description: 'Long job',
+      })
+      registry.disposeAll()
+      expect(signal.aborted).toBe(true)
+
+      const restored = new BackgroundTaskRegistry({ storePath })
+      expect(restored.get(task.id)).toMatchObject({
+        status: 'interrupted',
+        error: 'Interrupted when the app exited',
+      })
+      expect(restored.get(task.id)?.endedAt).toBeTypeOf('number')
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
+    }
   })
 })

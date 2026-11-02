@@ -56,6 +56,11 @@ export async function parseCliArgs(args: string[] = hideBin(process.argv)) {
       // 只对内置/用户定价表里的模型有效；未定价模型的成本不计入，预算可能提前或滞后触发。
       describe: 'Cap on estimated USD cost per prompt using list prices (default: unlimited)',
     })
+    .option('external-content-policy', {
+      type: 'string',
+      choices: ['off', 'approve'] as const,
+      describe: 'Re-approve write/shell tools after web/document/MCP content (default: off)',
+    })
     .option('fallback-model', {
       type: 'array',
       string: true,
@@ -115,5 +120,6 @@ export async function parseCliArgs(args: string[] = hideBin(process.argv)) {
     .alias('v', 'version')
     .help()
     .alias('h', 'help')
+    .epilogue('  xc trace [--last N] [--json]   Show recent local turn traces')
     .parse()
 }

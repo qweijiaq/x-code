@@ -157,6 +157,7 @@ xc "解释项目的整体架构"                  # 单次提示
 xc -p "总结失败的测试"                   # 非交互输出
 xc -p --output-format json "..."         # 单个 JSON 结果（文本/用量/成本/工具调用）
 xc --plan "把构建迁移到 ESM"             # 先只读规划
+xc trace --last 20                       # 最近的本地轮次 trace
 ```
 
 会话、记忆、技能、插件、MCP 和权限规则与桌面端共享。完整参数见 `xc --help`。
@@ -168,6 +169,10 @@ xc --plan "把构建迁移到 ESM"             # 先只读规划
 主模型在产生任何输出前被限流、过载或无法连接时，`--fallback-model`（可重复，
 或配置里的 `fallbackModels`）会用下一个模型重试同一提示。认证失败和内容审核
 错误不会触发切换。
+
+如果本轮读入过网页、文档或 MCP 输出，`--external-content-policy approve`（或配置
+里的 `security.externalContentPolicy`）会让后续写文件 / shell 重新请求批准，而不是
+沿用会话里的自动允许。`-p` 模式没有审批对话框，tainted 写操作会被拒绝；需要交互式会话确认。
 
 ## 支持的模型
 

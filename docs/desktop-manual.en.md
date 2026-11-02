@@ -123,6 +123,7 @@ The **Outline** tab in the right-hand inspector (also the top-bar outline button
 ## Permissions and Security
 
 - **Three levels**: always allow / ask / deny. Destructive shell commands, path checks and plan mode are evaluated before allow rules.
+- **External content approval**: Settings → Permissions can require a fresh approval for writes and shell commands after the turn read a web page, document or MCP output. Off by default; approvals are not persisted as session rules, and sub-agent reads propagate to the parent turn.
 - **Permission rules**: Settings → Permissions lists persisted "don't ask again" rules; add or remove them. Shell supports prefix, exact and whole-tool rules; other tools are whole-tool only.
 - **Always allow**: Settings → Tools enables it per tool or globally. Global always-allow is equivalent to trust mode; use only when fully trusted.
 - **Shell sandbox (macOS)**: agent shell commands run in a workspace-write sandbox; writes are limited to the workspace, temp dirs and `~/.x-code/skill-runtime`, sensitive paths are unreadable, and the network is off by default. Secret-looking environment variables are stripped. The built-in terminal is not sandboxed; Hooks and stdio MCP can opt in. Terminal tabs start as login shells with a forced UTF-8 locale (`LANG`/`LC_CTYPE` are set to `en_US.UTF-8` when missing or `C`), so Chinese input and filenames render correctly. The agent refreshes PATH from your login shell before each turn (cached for 30s), so tools installed in another terminal usually need no app restart. A non-zero exit (no `grep` match, `command -v` miss) is shown as a normal result; only spawn failures, timeouts, signals or sandbox denials are tool failures.
@@ -154,7 +155,7 @@ You do not need to memorize task ids or open the panel to ask about progress:
 4. While a reply is running, pressing Enter queues the prompt; a text-only prompt can use **Open in new window**. The new window gets the fork-time snapshot and sees background shells/sub-agents from other windows through the shared main-process view (about 2 seconds refresh), so you can ask about their current progress. The parent window's in-flight model reasoning is not shared.
 5. The Background tasks panel lists shells and sub-agents from all windows: local tasks can be stopped there; tasks from other windows appear as dashed cards with status/output snapshots and must be stopped in their original window.
 
-Background task state lives in the app process; unfinished tasks are lost when the app quits, while output already written to the transcript remains. The shared view covers background shells/sub-agents, not two writers in one model turn.
+Background sub-agent snapshots are persisted per workspace; after a restart, tasks that were still running appear as **interrupted** with their last status. Background shells remain process-local. The shared view covers background shells/sub-agents, not two writers in one model turn.
 
 ## Settings Reference
 
@@ -195,7 +196,7 @@ Typing `/` lists every command; `/help` shows the full list. Common commands inc
 - **Storage panel**: usage for sessions, attachments, library and voice models; cleanup keeps the current and pinned sessions.
 - **Backup**: Settings → Storage → Export backup. Sessions, skills, commands, memory and sub-agents; secrets, plugins, attachments and logs are excluded.
 - **Restore**: adds missing files only and never overwrites; skills/commands/sub-agents reload immediately and the session list refreshes.
-- **Diagnostics**: Settings → Tools → Diagnostics and support, or the palette. The JSON snapshot excludes keys, MCP env/headers and command contents.
+- **Diagnostics**: Settings → Tools → Diagnostics and support, or the palette. The JSON snapshot excludes keys, MCP env/headers and command contents, and includes the last 20 turn traces (counts/durations only).
 - **Error log**: renderer errors append to `~/.x-code/logs/desktop-errors.log`; a render crash shows a recovery screen with reload and diagnostics export.
 - **Background task state**: background shell/sub-agent progress is process-local, and the cross-window shared view exists only while the app runs; neither is included in backups. Output already written to the session transcript is saved with the session.
 - **Updates**: Settings → Desktop updates. Checks the official GitHub Release `RELEASE.json` by default (using the system proxy); you can also paste the HTTPS URL of your own release directory. Downloads show bytes, speed, percentage and a progress bar, and can be cancelled. The installer goes to the system Downloads folder by default; **Choose location** opens a save dialog, and the final path plus **Show in Finder** appear after the SHA-256 check. Automatic installation still requires a signed app.
@@ -209,7 +210,7 @@ Typing `/` lists every command; `/help` shows the full list. Common commands inc
 - **Constant permission prompts**: add a rule in Settings → Permissions or enable always-allow for that tool; destructive commands still prompt.
 - **Blank document or no text**: scanned PDFs need OCR; click OCR in the document panel or ask the agent to use `readDocument`.
 - **Switching workspaces is slow or seems unresponsive**: the sidebar now shows progress immediately and disables duplicate clicks; if a reply is running, it asks you to stop or wait. MCP shutdown is bounded to about 1.5 seconds and the session list refreshes in the background. If it still hangs, check for a very large plugin/skill set in that workspace or export diagnostics.
-- **A background task seems to have no result**: ask the agent "where are the background tasks now"; it can call `backgroundList` / `backgroundGet` / `backgroundOutput`, or open the Background tasks panel directly. Cross-window status refreshes about every 2 seconds, but the parent's in-flight model reasoning is not shared. Unfinished background tasks are lost when the app quits, while output already written to the transcript remains.
+- **A background task seems to have no result**: ask the agent "where are the background tasks now"; it can call `backgroundList` / `backgroundGet` / `backgroundOutput`, or open the Background tasks panel directly. Cross-window status refreshes about every 2 seconds, but the parent's in-flight model reasoning is not shared. Unfinished background sub-agents are marked interrupted on restart; background shells are not restored.
 - **Open in new window is missing or fails**: the action only appears for text-only queued prompts. It needs a saved session, and a failed transcript-integrity check blocks the fork. For a prompt with attachments, remove it from the queue and send it normally.
 - **Terminal shows garbled Chinese**: the built-in terminal forces a UTF-8 locale; if your environment sets `LANG`/`LC_CTYPE` to `C` or empty, the app switches it to `en_US.UTF-8`. If it still looks wrong, confirm the command itself emits UTF-8 (`file`, `locale`) and reopen the terminal tab.
 - **Terminal will not start**: confirm the runtime is connected; the terminal uses a PTY and reports failures at the top.
@@ -229,7 +230,7 @@ Typing `/` lists every command; `/help` shows the full list. Common commands inc
 - Background sub-agent results appear in the panel and tool card; they are not merged into the main conversation's model context automatically.
 - **Open in new window** includes a fork-time status snapshot and a shared view of background shells/sub-agents from every window (about 2 seconds refresh); it still cannot see the parent's in-flight model reasoning. Queued prompts with attachments are not supported yet.
 - The new and original windows share the same workspace. This is not two parallel turns in one session; editing the same files in both can still conflict, so use a worktree when coding work overlaps.
-- Background shell/sub-agent state lives in the current app process. It is not restored after quitting; output already written to the transcript remains.
+- Background sub-agent snapshots are restored per workspace and unfinished tasks are marked interrupted; background shells and their live output are not restored.
 - Desktop peer messaging is not enabled.
 - Task modes only affect answer emphasis; they do not change the tool set.
 - Closing a window does not automatically delete its worktree, to avoid losing uncommitted work.

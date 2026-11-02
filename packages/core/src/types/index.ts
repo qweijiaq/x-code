@@ -13,6 +13,7 @@ import type { MemoryWriteNotice } from '../knowledge/memory/types.js'
 import type { McpPermissionStore } from '../mcp/permissions.js'
 import type { McpRegistry } from '../mcp/registry.js'
 import type { PeerService } from '../peers/service.js'
+import type { ExternalContentPolicy } from '../permissions/external-content.js'
 import type { PluginRegistry } from '../plugins/registry.js'
 import type { SkillRegistry } from '../skills/registry.js'
 
@@ -277,6 +278,8 @@ export interface AgentCallbacks {
     toolCallId: string
     toolName: string
     input: Record<string, unknown>
+    /** 外部内容 taint 触发的重新批准；普通询问不带此字段。 */
+    taint?: { sources: string[] }
   }) => Promise<PermissionDecision>
   /** 受 peer 影响的调用使用独立的、仅允许一次的表面。该
    *  回调把本地决策绑定到完整的规范预览及其哈希；
@@ -341,6 +344,8 @@ export interface BackgroundInfoItem {
   exitCode?: number
   turnCount?: number
   toolCallCount?: number
+  externalContentTainted?: boolean
+  externalContentSources?: string[]
   /** 来自另一个窗口的共享快照。 */
   shared?: boolean
 }
@@ -364,6 +369,8 @@ export interface AgentOptions {
    *  模型下线/网络）失败、且该次尝试没有产生可见文本或工具活动时切换；
    *  认证、内容审核、上下文溢出不会触发。需要 `modelRegistry`。 */
   fallbackModelIds?: string[]
+  /** 外部内容 taint 策略：读入 web/文档/MCP 后是否重新批准写操作。默认 off。 */
+  externalContentPolicy?: ExternalContentPolicy
   printMode: boolean
   /** 为 true 时，代理循环选择每个提供商支持的最大推理量
    *  （映射见 providers/thinking.ts）。

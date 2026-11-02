@@ -1,4 +1,4 @@
-import { zodToJsonSchema } from 'zod-to-json-schema'
+import { z } from 'zod'
 
 import { estimateTextTokenCount } from './context-window.js'
 
@@ -16,7 +16,7 @@ export function estimateToolDefinitionTokens(name: string, def: any): number {
       if (rawJsonSchema && typeof rawJsonSchema === 'object') {
         payload.parameters = rawJsonSchema
       } else {
-        payload.parameters = zodToJsonSchema(schema)
+        payload.parameters = z.toJSONSchema(schema)
       }
     } catch {
       try {

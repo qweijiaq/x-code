@@ -1,3 +1,21 @@
+## Unreleased
+
+### Features
+
+- add a desktop budget and per-model pricing editor backed by `~/.x-code/config.json`
+- persist background sub-agent snapshots per workspace and restore unfinished tasks as interrupted
+- add an opt-in external-content taint policy that re-approves writes after web/document/MCP reads
+- propagate external-content taint from sub-agents (including browser) to the parent turn
+- add `xc trace` for reading local turn traces, and flush traces on exit
+- add v8 coverage thresholds and a critical-only dependency audit gate in CI
+- claim unknown external tool output as untrusted and report shell sandbox support in `/doctor`
+- cut production advisories from 26 high to 0, migrate zod to v4, and gate CI at high (2 moderate minimatch advisories remain in dev tooling)
+
+### Refactors
+
+- split Composer, transcript entry and AgentHost controllers into focused modules
+- move the desktop support/view helpers out of `App.tsx` and `agent-host.ts`
+
 ## v1.0.6 (2026-11-02)
 
 ### Features

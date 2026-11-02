@@ -4,7 +4,14 @@
 // reconciler 帧。Ink 路径无法在打印模式下可靠地自动退出，因为 `usePromptInput`
 // 在 raw 模式下引用了 stdin，让事件循环保持存活，直到用户按键或调整终端大小
 // ——那时排队的卸载才终于运行。把打印模式作为独立代码路径，避开了所有这些地雷。
-import { agentLoop, createLoopState, estimateBreakdownCost, hydrateLoopState, saveSession } from '@x-code-cli/core'
+import {
+  agentLoop,
+  createLoopState,
+  estimateBreakdownCost,
+  flushTurnTrace,
+  hydrateLoopState,
+  saveSession,
+} from '@x-code-cli/core'
 import type { AgentCallbacks, AgentOptions, LanguageModel, LoadedSession } from '@x-code-cli/core'
 
 import { registerCleanupController } from './cleanup-controller.js'
@@ -132,6 +139,8 @@ export async function runPrintMode(
     })
     if (shutdown.emergency.requested > 0 && exitCode === 0) exitCode = 1
     registerCleanupController(null)
+    // trace 是异步追加的；退出前排空，避免 --print 丢掉最后一轮。
+    await flushTurnTrace().catch(() => undefined)
     // 返回前冲刷 stdout/stderr，这样调用方的 process.exit() 不会与管道排水
     // 竞争。在 Windows 上，管道写是非阻塞的——没有这一步，进程紧接着退出时，
     // 通过 process.stderr.write() 写的错误消息可能被静默丢失。

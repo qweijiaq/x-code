@@ -56,6 +56,10 @@ export interface LoopState {
   messages: ModelMessage[]
   contextSecurity: ContextSecurityState
   executionAuthority: ExecutionAuthority
+  /** 本轮是否已读入外部内容（web / 文档 / MCP）；每次用户 submit 重置。 */
+  externalContentTainted?: boolean
+  /** 触发 taint 的工具名，去重后用于审批提示。 */
+  externalContentSources?: string[]
   /** 最后完整提交的转录 epoch。undefined 表示一条新的或旧式转录，
    *  其首次变更必须是一个根快照。 */
   committedTranscriptEpochId?: string

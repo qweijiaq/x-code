@@ -9,6 +9,7 @@ import type { HookBus } from '../../hooks/bus.js'
 import type { HookEvent } from '../../hooks/types.js'
 import { activeMemoryRecallAttachments } from '../../knowledge/memory/recall-state.js'
 import { tokenizeMemoryText } from '../../knowledge/memory/search-index.js'
+import { propagateExternalContent } from '../../permissions/external-content.js'
 import { capabilitiesOf, modelSupportsVision } from '../../providers/capabilities.js'
 import type { ShellSessionController } from '../../tools/shell-session/types.js'
 import type { AgentCallbacks, AgentOptions, ExecutionAuthority, TokenUsage } from '../../types/index.js'
@@ -57,6 +58,8 @@ export interface RunSubAgentResult {
   durationMs: number
   aborted: boolean
   cleanupFailed?: boolean
+  externalContentTainted?: boolean
+  externalContentSources?: string[]
 }
 
 export type SubAgentLoopRunner = (
@@ -505,6 +508,12 @@ async function runSubAgentUnlocked(
       aborted: false,
     })
   } finally {
+    // 子代理（尤其是 browser）可能读入网页/文档；父级后续写操作必须重新批准。
+    propagateExternalContent(parentState, subState, agentName)
+    if (completedResult && subState.externalContentTainted) {
+      completedResult.externalContentTainted = true
+      completedResult.externalContentSources = subState.externalContentSources ?? []
+    }
     const cleanupFailure = await cleanupSubAgentShellSessions(
       parentState.shellSessions,
       subState.shellSessions,

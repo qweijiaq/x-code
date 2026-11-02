@@ -182,6 +182,7 @@ xc "Explain the overall architecture"   # run one prompt
 xc -p "summarize the failing test"      # non-interactive output
 xc -p --output-format json "..."        # one JSON result (text, usage, cost, tool calls)
 xc --plan "migrate the build to ESM"    # read-only planning first
+xc trace --last 20                      # recent turn traces (local)
 ```
 
 Sessions, memory, skills, plugins, MCP and permission rules are shared with the
@@ -195,6 +196,11 @@ If the active provider is rate-limited, overloaded or unreachable before any
 output, `--fallback-model` (repeatable, or `fallbackModels` in config) retries the
 same prompt on the next model. Authentication and content-filter errors never
 trigger a switch.
+
+If the agent reads a web page, document or MCP output, `--external-content-policy approve`
+(or `security.externalContentPolicy` in config) makes later write and shell calls ask
+again instead of reusing session auto-allow. `-p` has no approval dialog, so tainted writes are
+denied there; use an interactive session to approve them.
 
 ## Supported models
 

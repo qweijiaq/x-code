@@ -11,6 +11,15 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text-summary', 'json-summary'],
+      include: ['packages/*/src/**/*.{ts,tsx}'],
+      exclude: ['**/*.d.ts', '**/manual-assets/**', '**/dist/**'],
+      // 基线略低于当前全量测量值（lines 48.3 / stmts 46.7 / funcs 45.9 / branches 41.8），
+      // 防止覆盖率静默下滑；新增代码应配套测试。
+      thresholds: { statements: 45, branches: 40, functions: 44, lines: 46 },
+    },
     projects: [
       {
         extends: true,

@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { writeTurnTrace } from '../src/agent/turn-trace.js'
+import { readTurnTraces, writeTurnTrace } from '../src/agent/turn-trace.js'
 import type { TurnTraceEntry } from '../src/agent/turn-trace.js'
 
 const directories: string[] = []
@@ -51,6 +51,16 @@ describe('turn trace', () => {
     expect(JSON.parse(lines[1]!)).toMatchObject({ turn: 2, finishReason: 'stop', toolCalls: 2 })
     expect(raw).not.toContain('prompt')
     expect(raw).not.toContain('content')
+  })
+
+  it('reads the most recent traces across the rotated file', async () => {
+    const dir = await temporaryDirectory()
+    await writeTurnTrace(entry(), { dir, maxBytes: 16 })
+    await writeTurnTrace(entry({ turn: 2 }), { dir, maxBytes: 16 })
+
+    const recent = await readTurnTraces(5, dir)
+    expect(recent.map((item) => item.turn)).toEqual([1, 2])
+    expect((await readTurnTraces(1, dir)).map((item) => item.turn)).toEqual([2])
   })
 
   it('rotates to a single backup once the file reaches the cap', async () => {

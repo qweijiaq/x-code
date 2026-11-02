@@ -150,7 +150,6 @@ export const EN: Record<string, string> = {
   'Base URL，例如 https://api.example.com/v1': 'Base URL, e.g. https://api.example.com/v1',
   已启用: 'Enabled',
   已禁用: 'Disabled',
-  '已开启（点击关闭）': 'On (click to turn off)',
   开启: 'Enable',
   关闭: 'Disable',
   需要认证: 'Needs auth',
@@ -1018,6 +1017,34 @@ export const EN: Record<string, string> = {
   '覆盖 tokens（≥ {{min}}）': 'Override tokens (≥ {{min}})',
   保存覆盖: 'Save override',
   恢复默认: 'Reset to default',
+  '每次 prompt 预算': 'Per-prompt budget',
+  '最大 tokens': 'Max tokens',
+  最大美元: 'Max USD',
+  保存预算: 'Save budget',
+  '留空表示不限制；预算按每次提交的增量计算，跨提交不累计。':
+    'Leave blank for unlimited; the budget applies per prompt, not across prompts.',
+  '当前模型价格（USD / 1M tokens）': 'Current model price (USD / 1M tokens)',
+  '生效价格：输入 ${{input}} · 输出 ${{output}}（{{source}}）':
+    'Effective price: input ${{input}} · output ${{output}} ({{source}})',
+  自定义: 'custom',
+  内置: 'built-in',
+  '该模型暂无价格；填写后成本估算与 --max-cost 才会生效。':
+    'No price for this model yet; fill it in to enable cost estimates and --max-cost.',
+  '输入 $/1M': 'Input $/1M',
+  '输出 $/1M': 'Output $/1M',
+  保存价格: 'Save price',
+  恢复内置: 'Reset to built-in',
+  外部内容审批: 'External content approval',
+  '本轮读取过外部内容（{{sources}}），写操作需要重新确认。':
+    'This turn read external content ({{sources}}); writes need a fresh confirmation.',
+  '开启后，只要本轮读取过网页、文档或 MCP 输出，后续的写文件、shell 等操作会重新请求批准，而不是沿用会话里的自动允许。':
+    'When enabled, after any web page, document, or MCP output is read in this turn, later writes and shell commands ask again instead of reusing session auto-allow.',
+  'token 预算必须是大于 0 的整数': 'Token budget must be a positive integer',
+  '美元预算必须大于 0': 'USD budget must be greater than 0',
+  预算已更新: 'Budget updated',
+  已恢复内置价格: 'Built-in price restored',
+  价格必须是非负数: 'Prices must be non-negative',
+  模型价格已更新: 'Model price updated',
   '已为当前模型覆盖上下文上限；切换模型后可为其他模型单独设置。':
     'This model uses a context override. Switch models to configure others separately.',
   '留空使用模型表或 provider 兜底值；覆盖只影响当前模型。':

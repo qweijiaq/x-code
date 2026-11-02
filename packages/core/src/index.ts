@@ -157,6 +157,8 @@ export {
 } from './agent/context-usage.js'
 
 export { checkBudget } from './agent/budget.js'
+export { flushTurnTrace, readTurnTraces } from './agent/turn-trace.js'
+export type { TurnTraceEntry } from './agent/turn-trace.js'
 export type { BudgetLimits, BudgetUsage, BudgetVerdict } from './agent/budget.js'
 export { estimateBreakdownCost, estimateUsageCost } from './agent/cost.js'
 export type { CostEstimate } from './agent/cost.js'

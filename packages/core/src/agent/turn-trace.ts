@@ -34,6 +34,10 @@ export interface TurnTraceEntry {
 
 export const MAX_TURN_TRACE_BYTES = 5 * 1024 * 1024
 
+// 所有 trace 写入串行化，退出前可以等待整条链排空；否则 --print 的
+// process.exit 可能丢掉最后一轮。
+let writeChain: Promise<void> = Promise.resolve()
+
 function traceDirectory(): string {
   return path.join(userXcodeDir(), 'logs')
 }
@@ -45,7 +49,13 @@ export interface WriteTurnTraceOptions {
 }
 
 /** 追加一条 trace；超过上限时把当前文件滚动为 `.1`。 */
-export async function writeTurnTrace(entry: TurnTraceEntry, options: WriteTurnTraceOptions = {}): Promise<void> {
+export function writeTurnTrace(entry: TurnTraceEntry, options: WriteTurnTraceOptions = {}): Promise<void> {
+  const run = writeChain.then(() => appendTurnTrace(entry, options))
+  writeChain = run.catch(() => undefined)
+  return run
+}
+
+async function appendTurnTrace(entry: TurnTraceEntry, options: WriteTurnTraceOptions = {}): Promise<void> {
   const dir = options.dir ?? traceDirectory()
   const maxBytes = options.maxBytes ?? MAX_TURN_TRACE_BYTES
   const file = path.join(dir, 'turns.jsonl')
@@ -57,7 +67,42 @@ export async function writeTurnTrace(entry: TurnTraceEntry, options: WriteTurnTr
   await fs.appendFile(file, `${JSON.stringify(entry)}\n`, { encoding: 'utf-8', mode: 0o600 })
 }
 
+/** 等待所有已排队的 trace 写入落盘。进程退出前调用。 */
+export async function flushTurnTrace(): Promise<void> {
+  await writeChain.catch(() => undefined)
+}
+
 /** 即发即忘的 trace 写入；永远不向调用方抛错。 */
 export function recordTurnTrace(entry: TurnTraceEntry): void {
   void writeTurnTrace(entry).catch((error) => debugLog('turn-trace.write-error', errorMessage(error)))
+}
+
+async function readTraceFile(file: string): Promise<TurnTraceEntry[]> {
+  let raw: string
+  try {
+    raw = await fs.readFile(file, 'utf-8')
+  } catch {
+    return []
+  }
+  const entries: TurnTraceEntry[] = []
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const parsed = JSON.parse(line) as TurnTraceEntry
+      if (parsed && typeof parsed.ts === 'string' && typeof parsed.modelId === 'string') entries.push(parsed)
+    } catch {
+      // 跳过损坏的行。
+    }
+  }
+  return entries
+}
+
+/** 读取最近的 turn trace（`.1` 在前、当前文件在后），供 `xc trace` 和诊断包使用。 */
+export async function readTurnTraces(limit = 20, dir?: string): Promise<TurnTraceEntry[]> {
+  const base = dir ?? traceDirectory()
+  const entries = [
+    ...(await readTraceFile(path.join(base, 'turns.jsonl.1'))),
+    ...(await readTraceFile(path.join(base, 'turns.jsonl'))),
+  ]
+  return entries.slice(-Math.max(1, Math.min(1000, Math.round(limit))))
 }

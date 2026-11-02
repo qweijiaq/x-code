@@ -3,7 +3,7 @@
 // 一次性环境诊断：检查 API 密钥、Node 版本、shell 可用性、MCP 服务器健康、
 // 插件加载错误、自定义代理解析状态，以及知识文件大小。以 Claude Code 的
 // /doctor 为模板，但范围限定在 x-code-cli 实际需要的内容。
-import { getAvailableProviders, getEnvVarName, getOpenAIAuthStatus } from '@x-code-cli/core'
+import { getAvailableProviders, getEnvVarName, getOpenAIAuthStatus, getShellSandbox } from '@x-code-cli/core'
 import type { AgentOptions } from '@x-code-cli/core'
 
 import { VERSION } from '../../../version.js'
@@ -36,6 +36,22 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       const nodeVersion = parseInt(process.version.slice(1), 10)
       if (nodeVersion < 20) {
         lines.push('', '⚠ Node ≥ 20.19 is required. Current version may cause issues.')
+      }
+      sections.push(lines.join('\n'))
+    }
+
+    // ── Shell 沙箱 ────────────────────────────────────────────────
+    {
+      const sandbox = getShellSandbox()
+      const lines = ['**Shell sandbox**', '']
+      if (process.platform !== 'darwin') {
+        lines.push('- Not available on this platform: agent shell commands run with your user privileges.')
+        lines.push("- Use the desktop app's approval flow and workspace rules as the boundary on Linux/Windows.")
+      } else {
+        lines.push(`- ${sandbox.enabled ? 'Enabled' : 'Available but off'} (desktop setting).`)
+        lines.push(
+          `- Network: ${sandbox.allowNetwork ? 'allowed' : 'blocked'} · hooks/MCP wrapping: ${sandbox.includeExtensions ? 'on' : 'off'}`,
+        )
       }
       sections.push(lines.join('\n'))
     }

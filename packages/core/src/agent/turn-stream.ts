@@ -1,5 +1,6 @@
 import type { ModelMessage } from 'ai'
 
+import { markExternalContentFromMessages } from '../permissions/external-content.js'
 import { truncateToolResult } from '../tools/index.js'
 import { clearProgressReporter, setProgressReporter } from '../tools/progress.js'
 import type { AgentCallbacks, AgentOptions } from '../types/index.js'
@@ -154,6 +155,9 @@ export async function collectTurnResponse(
   const response = await result.response
   if (!suppressedReplay) prependRecoveredText(response.messages, recoveredText)
   truncateToolResultsInMessages(response.messages)
+  // SDK 自动执行的 webFetch / webSearch / readDocument 不经过 pushToolResult，
+  // 这里按 tool-result 的 toolName 补记 taint。
+  markExternalContentFromMessages(state, response.messages)
   state.messages.push(...response.messages)
   turnMessages.push(...response.messages)
 

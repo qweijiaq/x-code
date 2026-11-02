@@ -7,6 +7,7 @@ import type { ModelMessage } from 'ai'
 import { aggregatePostToolUse, aggregatePreToolUse } from '../hooks/bus.js'
 import type { ToolHookSnapshot } from '../hooks/bus.js'
 import { classifyDecision } from '../mcp/permissions.js'
+import { markExternalContent } from '../permissions/external-content.js'
 import {
   evaluateToolAuthority,
   isPathWithinProject,
@@ -176,6 +177,7 @@ function pushToolResult(
   images?: readonly ToolImage[],
   notifyUi = true,
 ): void {
+  markExternalContent(state, toolName)
   appendTrackedMessage(state, toolResultMessage(toolCallId, toolName, output, images, isError))
   // 为手动分发的工具（shell、writeFile、edit、askUser）清除进度上报器。
   // 自动执行的工具走 SDK 流的 `tool-result` 事件并在那里清除——那种情况下
@@ -430,6 +432,7 @@ async function pushSuccessfulToolResult(
   isError: boolean,
   images?: readonly ToolImage[],
 ): Promise<void> {
+  markExternalContent(ctx.state, ctx.toolName)
   if (ctx.toolName === 'shell' && ctx.preparedShell && ctx.shellHookSnapshot && ctx.shellPreToolUse) {
     const origin = createShellHookOrigin(ctx)
     const baseOutput = truncateShellResult(ctx, output)
@@ -842,6 +845,11 @@ async function checkWriteOrShellPermission(ctx: HandlerCtx): Promise<boolean> {
     state.permissionMode,
     state.projectCwd,
     toolName === 'shell' ? ctx.preparedShell?.effectiveCwd : undefined,
+    {
+      policy: options.externalContentPolicy ?? 'off',
+      tainted: state.externalContentTainted === true,
+      ...(state.externalContentSources ? { sources: state.externalContentSources } : {}),
+    },
   )
   if (options.abortSignal?.aborted) {
     pushToolResult(state, callbacks, toolCallId, toolName, '[Tool execution interrupted by user]', true)
@@ -1115,6 +1123,11 @@ async function handleToolCall(
     //（没有特殊前缀），所以“这是不是 MCP？”的唯一权威答案是“它是否注册在
     // MCP 注册表里？”。
     if (ctx.options.mcpRegistry?.get(ctx.toolName)) {
+      // MCP 返回同样是外部内容；执行前先标记，后续写操作会重新征求批准。
+      ctx.state.externalContentTainted = true
+      const sources = new Set(ctx.state.externalContentSources ?? [])
+      sources.add(ctx.toolName)
+      ctx.state.externalContentSources = [...sources]
       await handleMcpToolCall(ctx, deferred)
       return
     }

@@ -31,6 +31,7 @@ import {
   getContextWindow,
   getDiffStatsForCheckpoint,
   getModelContextWindowOverride,
+  getModelPricing,
   getPluginUserConfig,
   getSessionFilePath,
   hydrateLoopState,
@@ -45,6 +46,7 @@ import {
   parseHookConfig,
   persistRule,
   readPersistedRules,
+  readTurnTraces,
   reloadSkillRegistry,
   removePersistedRule,
   removeSessionAllowRule,
@@ -57,6 +59,7 @@ import {
   setModelContextWindowOverrides,
   setPluginEnabled,
   setPluginUserConfig,
+  setPricingOverrides,
   setShellSandbox,
   setSkillDisabled,
   shutdownBrowserMcp,
@@ -240,7 +243,7 @@ export class AgentHost {
   private demo = true
   private activeTurn: ActiveTurn | null = null
   private controller: AbortController | null = null
-  private readonly backgroundTasks = new BackgroundTaskRegistry()
+  private backgroundTasks = new BackgroundTaskRegistry()
   private backgroundPublishTimer: ReturnType<typeof setInterval> | null = null
   private approvals = new Map<string, PendingApproval>()
   private mcp: McpService | null = null
@@ -287,6 +290,7 @@ export class AgentHost {
       this.workspaceOverride = savedWorkspace
     }
     this.bootstrap = await bootstrapRuntime(this.workspaceOverride)
+    this.backgroundTasks = this.createBackgroundRegistry()
     this.taskMode = isTaskMode(savedSettings.taskMode) ? savedSettings.taskMode : DEFAULT_TASK_MODE
     // 显式在 worktree 上打开的窗口绝不能成为下一次全新启动
     // 使用的工作区，即使用户在其中切换项目也不行。
@@ -301,6 +305,8 @@ export class AgentHost {
     this.autoAllowedTools = new Set(desktopSettings.autoAllowedTools ?? [])
     this.alwaysAllowAll = desktopSettings.alwaysAllowAll === true
     this.bootstrap.baseOptions.trustMode = this.alwaysAllowAll
+    this.bootstrap.baseOptions.externalContentPolicy =
+      loadUserConfig().security?.externalContentPolicy === 'approve' ? 'approve' : 'off'
     this.applyToolFilter()
     this.mcp = new McpService(
       this.bootstrap.workspace,
@@ -464,10 +470,18 @@ export class AgentHost {
     this.fileIndex = null
     this.clearGitCheckpoints()
     await this.reloadExtensions(this.modelId)
+    this.backgroundTasks = this.createBackgroundRegistry()
     this.rememberWorkspace(resolved, !this.fixedWorkspace)
     this.send({ type: 'app:state', state: this.getState() })
     void this.emitSettings()
     return this.settingsResult()
+  }
+
+  /** 后台任务按工作区落盘，避免切项目后看到别的项目的任务。 */
+  private createBackgroundRegistry(): BackgroundTaskRegistry {
+    return new BackgroundTaskRegistry({
+      storePath: path.join(this.requireBootstrap().workspace, '.x-code', 'background-tasks.json'),
+    })
   }
 
   private rememberWorkspace(workspace: string, persistLast = true): void {
@@ -641,7 +655,7 @@ export class AgentHost {
         filePath: state.sessionFilePath ?? '',
         modelId: this.modelId,
         messages: toSessionMessages(state.messages),
-        usage: usageView(state.tokenUsage, this.modelId),
+        usage: usageView(state.tokenUsage, this.modelId, state.usageBreakdown),
       },
     }
   }
@@ -1970,8 +1984,10 @@ export class AgentHost {
         return ''
       }
     })()
+    const turns = await readTurnTraces(20)
     const snapshot = {
       generatedAt: new Date().toISOString(),
+      turns,
       app: { version, demo: this.demo },
       system: {
         platform: process.platform,
@@ -2132,6 +2148,8 @@ export class AgentHost {
 
   async getSettings(): Promise<SettingsSnapshot> {
     const bootstrap = this.requireBootstrap()
+    const config = loadUserConfig()
+    const activePricing = getModelPricing(this.modelId)
     return buildSettingsSnapshot({
       workspace: bootstrap.workspace,
       providers: bootstrap.appState.providers,
@@ -2146,6 +2164,10 @@ export class AgentHost {
       baseOptions: bootstrap.baseOptions,
       mcpServers: this.mcp ? await this.mcp.list() : [],
       mcpProjectSkipped: this.mcp?.getProjectSkipped() ?? false,
+      ...(config.budget ? { budget: config.budget } : {}),
+      externalContentPolicy: config.security?.externalContentPolicy === 'approve' ? 'approve' : 'off',
+      pricingOverrides: config.pricing ?? {},
+      ...(activePricing ? { activePricing } : {}),
     })
   }
 
@@ -2414,6 +2436,62 @@ export class AgentHost {
     saveDesktopSettings({ contextWindowOverrides: overrides })
     setModelContextWindowOverrides(overrides)
     this.send({ type: 'app:state', state: this.getState() })
+    void this.emitSettings()
+    return this.settingsResult()
+  }
+
+  async setBudget(budget: { maxTokens?: number | null; maxCostUsd?: number | null }): Promise<SettingsActionResult> {
+    const current = loadUserConfig().budget ?? {}
+    const next = {
+      ...(budget.maxTokens === null
+        ? {}
+        : budget.maxTokens !== undefined
+          ? { maxTokens: Math.max(1, Math.round(budget.maxTokens)) }
+          : current.maxTokens !== undefined
+            ? { maxTokens: current.maxTokens }
+            : {}),
+      ...(budget.maxCostUsd === null
+        ? {}
+        : budget.maxCostUsd !== undefined
+          ? { maxCostUsd: Math.max(0.0001, budget.maxCostUsd) }
+          : current.maxCostUsd !== undefined
+            ? { maxCostUsd: current.maxCostUsd }
+            : {}),
+    }
+    const value = Object.keys(next).length > 0 ? next : undefined
+    saveUserConfig({ budget: value })
+    this.requireBootstrap().baseOptions.budget = value
+    void this.emitSettings()
+    return this.settingsResult()
+  }
+
+  async setExternalContentPolicy(policy: 'off' | 'approve'): Promise<SettingsActionResult> {
+    const security = loadUserConfig().security ?? {}
+    saveUserConfig({ security: { ...security, externalContentPolicy: policy } })
+    this.requireBootstrap().baseOptions.externalContentPolicy = policy
+    void this.emitSettings()
+    return this.settingsResult()
+  }
+
+  async setModelPricing(
+    modelId: string,
+    inputPerMTok: number | null,
+    outputPerMTok: number | null,
+  ): Promise<SettingsActionResult> {
+    const id = modelId.trim()
+    if (!id) throw new Error('模型 ID 不能为空')
+    const current = loadUserConfig().pricing ?? {}
+    const pricing = { ...current }
+    if (inputPerMTok === null || outputPerMTok === null) {
+      delete pricing[id]
+    } else {
+      if (!Number.isFinite(inputPerMTok) || inputPerMTok < 0) throw new Error('输入单价无效')
+      if (!Number.isFinite(outputPerMTok) || outputPerMTok < 0) throw new Error('输出单价无效')
+      pricing[id] = { inputPerMTok, outputPerMTok }
+    }
+    const value = Object.keys(pricing).length > 0 ? pricing : undefined
+    saveUserConfig({ pricing: value })
+    setPricingOverrides(pricing)
     void this.emitSettings()
     return this.settingsResult()
   }
@@ -2829,6 +2907,8 @@ export class AgentHost {
     this.autoAllowedTools = new Set(desktopSettings.autoAllowedTools ?? [])
     this.alwaysAllowAll = desktopSettings.alwaysAllowAll === true
     next.baseOptions.trustMode = this.alwaysAllowAll
+    next.baseOptions.externalContentPolicy =
+      loadUserConfig().security?.externalContentPolicy === 'approve' ? 'approve' : 'off'
     this.applyToolFilter()
 
     const previous = preserveModelId ?? this.modelId
@@ -2956,12 +3036,14 @@ export class AgentHost {
         send({ type: 'agent:file-edit', turnId, toolCallId, payload: toFileEditView(payload) })
       },
       onAskPermission: async (toolCall) => {
-        if (this.alwaysAllowAll || this.autoAllowedTools.has(toolCall.toolName)) return 'yes'
+        // taint 批准必须真正弹窗；否则桌面端的自动允许会绕过外部内容策略。
+        if (!toolCall.taint && (this.alwaysAllowAll || this.autoAllowedTools.has(toolCall.toolName))) return 'yes'
         const decision = await this.requestApproval({
           kind: 'permission',
           toolCallId: toolCall.toolCallId,
           toolName: toolCall.toolName,
           input: toolCall.input,
+          ...(toolCall.taint ? { taint: toolCall.taint } : {}),
         })
         return decision as PermissionDecision
       },
@@ -3002,7 +3084,10 @@ export class AgentHost {
       },
       onShellOutput: () => {},
       onUsageUpdate: (usage) => {
-        send({ type: 'agent:usage', usage: toUsageView(usage, this.modelId) })
+        send({
+          type: 'agent:usage',
+          usage: toUsageView(usage, this.modelId, this.loopState?.usageBreakdown),
+        })
       },
       onContextCompressed: (summary) => {
         send({ type: 'agent:context-compressed', summary })

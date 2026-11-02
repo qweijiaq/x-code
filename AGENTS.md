@@ -29,6 +29,7 @@ pnpm typecheck          # tsc -b — strict, run before any PR
 pnpm lint               # eslint --fix; ignores **/tests/** and *.js
 pnpm test               # build + Unit/Fault/Package/PTY tests
 pnpm test <pattern>     # single file: pnpm test packages/core/tests/agent-loop.test.ts
+pnpm test:coverage      # unit + desktop with the v8 coverage gate
 pnpm run ci             # typecheck + lint/format checks + pnpm test
 pnpm smoke:desktop      # desktop runtime + renderer smokes (needs a display)
 pnpm package:desktop    # electron-builder --dir; native binaries require the host OS

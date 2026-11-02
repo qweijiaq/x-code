@@ -4,6 +4,8 @@ import path from 'node:path'
 
 import { isDestructive, isReadOnly, splitShellCommands } from '../tools/shell-utils.js'
 import type { PermissionDecision, PermissionLevel, PermissionMode } from '../types/index.js'
+import { shouldRequireExternalContentApproval } from './external-content.js'
+import type { ExternalContentState } from './external-content.js'
 import { persistRule } from './persistence.js'
 import { addSessionAllowRule, buildAllowRule, sessionRulesMatch } from './session-store.js'
 
@@ -152,14 +154,25 @@ export async function checkPermissionDetailed(
     toolCallId: string
     toolName: string
     input: PermissionInput
+    taint?: { sources: string[] }
   }) => Promise<PermissionDecision>,
   permissionMode: PermissionMode = 'default',
   projectCwd?: string,
   executionCwd?: string,
+  externalContent?: ExternalContentState,
 ): Promise<PermissionGateResult> {
   const level = getPermissionLevel(toolCall.toolName, toolCall.input)
-  if (level === 'always-allow' || trustMode) return { approved: true }
-  if (permissionMode === 'acceptEdits' && (toolCall.toolName === 'writeFile' || toolCall.toolName === 'edit')) {
+  const taintApproval = shouldRequireExternalContentApproval(
+    externalContent?.policy,
+    externalContent?.tainted,
+    toolCall.toolName,
+  )
+  if (!taintApproval && (level === 'always-allow' || trustMode)) return { approved: true }
+  if (
+    !taintApproval &&
+    permissionMode === 'acceptEdits' &&
+    (toolCall.toolName === 'writeFile' || toolCall.toolName === 'edit')
+  ) {
     const filePath = (toolCall.input.filePath as string) ?? ''
     const projectDir = projectCwd ?? process.cwd()
     const physicalPath = filePath ? resolvePhysicalPath(filePath, projectDir) : ''
@@ -173,11 +186,14 @@ export async function checkPermissionDetailed(
     }
     // 路径在项目之外或指向敏感文件——落入询问分支
   }
-  if (sessionRulesMatch(toolCall.toolName, toolCall.input, executionCwd)) return { approved: true }
+  if (!taintApproval && sessionRulesMatch(toolCall.toolName, toolCall.input, executionCwd)) return { approved: true }
 
-  const decision = await onAskPermission(toolCall)
+  const decision = await onAskPermission({
+    ...toolCall,
+    ...(taintApproval ? { taint: { sources: externalContent?.sources ?? [] } } : {}),
+  })
   if (typeof decision === 'object') return { approved: false, feedback: decision.feedback }
-  if (decision === 'always') {
+  if (decision === 'always' && !taintApproval) {
     const result = buildAllowRule(toolCall.toolName, toolCall.input, executionCwd)
     if (result) {
       // 对于 `git commit && git push` 这类复合 shell，buildAllowRule 可能返回
@@ -200,13 +216,24 @@ export async function checkPermission(
     toolCallId: string
     toolName: string
     input: PermissionInput
+    taint?: { sources: string[] }
   }) => Promise<PermissionDecision>,
   permissionMode: PermissionMode = 'default',
   projectCwd?: string,
   executionCwd?: string,
+  externalContent?: ExternalContentState,
 ): Promise<boolean> {
-  return (await checkPermissionDetailed(toolCall, trustMode, onAskPermission, permissionMode, projectCwd, executionCwd))
-    .approved
+  return (
+    await checkPermissionDetailed(
+      toolCall,
+      trustMode,
+      onAskPermission,
+      permissionMode,
+      projectCwd,
+      executionCwd,
+      externalContent,
+    )
+  ).approved
 }
 
 export { addSessionAllowRule, clearSessionRules, buildAllowRule, removeSessionAllowRule } from './session-store.js'
