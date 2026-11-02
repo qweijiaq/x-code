@@ -1,4 +1,4 @@
-## Unreleased
+## v1.0.7 (2026-11-02)
 
 ### Features
 
@@ -12,6 +12,13 @@
 - add v8 coverage thresholds and a critical-only dependency audit gate in CI
 - claim unknown external tool output as untrusted and report shell sandbox support in `/doctor`
 - cut production advisories from 26 high to 0, migrate zod to v4, and gate CI at high (2 moderate minimatch advisories remain in dev tooling)
+
+### Bug Fixes
+
+- close taint bypasses in sub-agent dispatch, multi-window background snapshots, and CLI approvals
+- inherit external-content taint into sub-agents and gate `task` dispatch
+- keep background task snapshots at 0600 and block workspace switches while tasks run
+- show the taint reason in the CLI approval dialog and mark partial cost estimates
 
 ### Refactors
 
