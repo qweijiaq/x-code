@@ -163,6 +163,27 @@ export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Recor
     const description = input.description as string
     const taskPrompt = input.prompt as string
 
+    // taint 策略下，派发子代理本身也是一次可能被注入内容驱动的动作；先重新确认，
+    // 再让子代理继承 taint（其内部写操作还会再被拦一次）。
+    if (state.externalContentTainted === true && options.externalContentPolicy === 'approve') {
+      const decision = await callbacks.onAskPermission({
+        toolCallId,
+        toolName,
+        input,
+        taint: { sources: state.externalContentSources ?? [] },
+      })
+      if (decision !== 'yes' && decision !== 'always') {
+        pushToolResult(
+          state,
+          callbacks,
+          toolCallId,
+          toolName,
+          'Sub-agent dispatch denied: this turn read external content and the user did not approve delegation.',
+          true,
+        )
+        return
+      }
+    }
     reportProgress(toolCallId, `Task: ${description} (${agentName})`)
     const registry = options.backgroundTaskRegistry
     if (input.background === true && registry) {
