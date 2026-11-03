@@ -470,6 +470,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.workspaceInsights())
       }
+      case 'workspace:use-default': {
+        await ensureInitialized()
+        return ok(request.id, await host.useDefaultWorkspace())
+      }
       case 'workspace:switch': {
         await ensureInitialized()
         return ok(request.id, await host.switchWorkspace(request.params.path))

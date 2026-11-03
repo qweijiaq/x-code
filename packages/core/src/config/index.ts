@@ -385,6 +385,8 @@ export interface UserConfig {
   pricing?: Record<string, { inputPerMTok?: number; outputPerMTok?: number }>
   /** 外部内容 taint 策略：读入 web/文档/MCP 后是否重新批准写操作。 */
   security?: { externalContentPolicy?: 'off' | 'approve' }
+  /** 临时提问使用的默认工作区；默认为 `~/.x-code/workspace`。 */
+  defaultWorkspace?: string
   /** 主模型因提供商侧故障不可用时的备用模型，按顺序尝试。 */
   fallbackModels?: string[]
 }
@@ -415,6 +417,19 @@ export function loadUserConfig(): UserConfig {
 
 /** 把一次部分更新写入用户配置，保留其他键。返回
  *  新配置是否已落盘，以便交互式命令能报告失败。 */
+/** 临时提问的默认工作区：配置优先，否则 `~/.x-code/workspace`。 */
+export function defaultWorkspacePath(): string {
+  const configured = loadUserConfig().defaultWorkspace?.trim()
+  return configured ? path.resolve(configured) : path.join(userXcodeDir(), 'workspace')
+}
+
+/** 返回默认工作区并确保目录存在。 */
+export function ensureDefaultWorkspace(): string {
+  const dir = defaultWorkspacePath()
+  fsSync.mkdirSync(dir, { recursive: true })
+  return dir
+}
+
 export function saveUserConfig(update: Partial<UserConfig>): boolean {
   const merged: UserConfig = { ...loadUserConfig(), ...update }
   try {

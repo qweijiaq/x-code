@@ -19,6 +19,7 @@ import {
   debugLogIntegrationDiagnostics,
   emptyHookBus,
   ensureDefaultMarketplaces,
+  ensureDefaultWorkspace,
   flushTurnTrace,
   forceTerminateManagedShellsSync,
   getAvailableProviders,
@@ -229,6 +230,18 @@ async function main() {
   // `xc login` 是一个引导入口点：成功完成交互式认证后，消费它的认证专用
   // 参数并继续进入产品，而不是让用户再运行一次 `xc` 命令。
   const argv = await parseCliArgs(enteredAfterLogin ? [] : rawArgs)
+  if (argv.scratch) {
+    try {
+      process.chdir(ensureDefaultWorkspace())
+    } catch (error) {
+      console.error(
+        chalk.red(
+          `[scratch] cannot use the default workspace: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      )
+      process.exit(1)
+    }
+  }
 
   const prompt = (argv._ as string[]).join(' ') || undefined
 

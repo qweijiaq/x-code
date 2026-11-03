@@ -78,6 +78,25 @@ export function Onboarding({
     }
   }
 
+  const applyDefaultWorkspace = async (): Promise<void> => {
+    setBusy('workspace')
+    setError(null)
+    try {
+      const response = await request('workspace:use-default', {})
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      const result = response.result as { settings: SettingsSnapshot }
+      setWorkspace(result.settings.workspace)
+      onSettings(result.settings)
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const saveProvider = async (): Promise<void> => {
     if (busy !== null) return
     if (provider.name === 'custom') {
@@ -214,6 +233,14 @@ export function Onboarding({
             <div className="onboarding-actions">
               <button className="btn btn-quiet" onClick={() => void pickWorkspace()} disabled={busy !== null}>
                 {busy === 'workspace' ? t('切换中…') : t('选择文件夹')}
+              </button>
+              <button
+                className="btn btn-quiet"
+                data-testid="onboarding-scratch"
+                onClick={() => void applyDefaultWorkspace()}
+                disabled={busy !== null}
+              >
+                {t('快速提问（默认工作区）')}
               </button>
               <button className="btn" onClick={() => setStep(1)} disabled={busy !== null}>
                 {t('下一步')}

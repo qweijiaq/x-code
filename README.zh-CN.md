@@ -158,6 +158,7 @@ xc -p "总结失败的测试"                   # 非交互输出
 xc -p --output-format json "..."         # 单个 JSON 结果（文本/用量/成本/工具调用）
 xc --plan "把构建迁移到 ESM"             # 先只读规划
 xc trace --last 20                       # 最近的本地轮次 trace
+xc --scratch "临时问题"                    # 使用 ~/.x-code/workspace 快速提问
 ```
 
 会话、记忆、技能、插件、MCP 和权限规则与桌面端共享。完整参数见 `xc --help`。

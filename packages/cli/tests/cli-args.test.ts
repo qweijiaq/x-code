@@ -20,4 +20,9 @@ describe.sequential('peer CLI arguments', () => {
   it('parses the advertised peer name', async () => {
     expect((await parse('--name', 'frontend')).name).toBe('frontend')
   })
+
+  it('enables the default workspace with --scratch', async () => {
+    expect((await parse()).scratch).toBe(false)
+    expect((await parse('--scratch')).scratch).toBe(true)
+  })
 })

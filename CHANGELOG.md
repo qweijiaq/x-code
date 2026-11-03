@@ -1,3 +1,9 @@
+## Unreleased
+
+### Features
+
+- add a default quick-question workspace (`~/.x-code/workspace`), a sidebar/onboarding entry, and `xc --scratch`
+
 ## v1.0.7 (2026-11-02)
 
 ### Features

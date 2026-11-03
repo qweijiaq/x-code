@@ -162,6 +162,7 @@ export type { TurnTraceEntry } from './agent/turn-trace.js'
 export type { BudgetLimits, BudgetUsage, BudgetVerdict } from './agent/budget.js'
 export { estimateBreakdownCost, estimateUsageCost } from './agent/cost.js'
 export type { CostEstimate } from './agent/cost.js'
+export { ensureDefaultWorkspace, defaultWorkspacePath } from './config/index.js'
 export { MODEL_PRICING, estimateCostUsd, formatUsd, getModelPricing, setPricingOverrides } from './providers/pricing.js'
 export type { ModelPricing } from './providers/pricing.js'
 

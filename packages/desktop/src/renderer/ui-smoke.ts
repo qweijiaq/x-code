@@ -1263,6 +1263,11 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       ok: sidebarMounted,
       detail: sidebarMounted ? 'sidebar mounted with projects' : 'sidebar missing',
     }
+    const scratchButton = document.querySelector('[data-testid="scratch-workspace"]')
+    checks.scratchWorkspace = {
+      ok: scratchButton !== null,
+      detail: scratchButton ? 'quick-question workspace button mounted' : 'quick-question workspace button missing',
+    }
     const usageChecklist = document.querySelector('[data-testid="usage-checklist"]') !== null
     const usageItems = document.querySelectorAll('[data-testid^="usage-item-"]').length
     checks.usageChecklist = {

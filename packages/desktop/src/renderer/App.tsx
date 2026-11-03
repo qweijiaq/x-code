@@ -3337,6 +3337,19 @@ export function App(): React.JSX.Element {
               </button>
               <button
                 className="sidebar-add"
+                data-testid="scratch-workspace"
+                title={t('快速提问（默认工作区）')}
+                aria-label={t('快速提问（默认工作区）')}
+                disabled={switchingProject !== null || !settings?.defaultWorkspace}
+                onClick={() => {
+                  const target = settings?.defaultWorkspace
+                  if (target) void switchProject(target)
+                }}
+              >
+                ⚡
+              </button>
+              <button
+                className="sidebar-add"
                 title={t('选择项目文件夹')}
                 disabled={switchingProject !== null}
                 onClick={() => void pickProject()}

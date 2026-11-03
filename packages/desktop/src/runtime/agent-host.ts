@@ -23,6 +23,7 @@ import {
   compressTrackedMessagesWithUsage,
   createLoopState,
   createModelRegistry,
+  ensureDefaultWorkspace,
   estimateContextBreakdown,
   expandCommandBody,
   extractFileReferences,
@@ -288,6 +289,12 @@ export class AgentHost {
       this.workspaceOverride = pinnedWorkspace
     } else if (savedWorkspace && fs.existsSync(savedWorkspace) && fs.statSync(savedWorkspace).isDirectory()) {
       this.workspaceOverride = savedWorkspace
+    } else {
+      // 从 Finder / 非项目目录启动时不再把 cwd 当工作区，使用快速提问的默认目录。
+      const cwd = process.cwd()
+      const projectMarkers = ['pnpm-workspace.yaml', 'AGENTS.md', '.git']
+      const cwdIsProject = projectMarkers.some((marker) => fs.existsSync(path.join(cwd, marker)))
+      this.workspaceOverride = cwdIsProject ? cwd : ensureDefaultWorkspace()
     }
     this.bootstrap = await bootstrapRuntime(this.workspaceOverride)
     this.backgroundTasks = this.createBackgroundRegistry()
@@ -2170,6 +2177,7 @@ export class AgentHost {
       mcpProjectSkipped: this.mcp?.getProjectSkipped() ?? false,
       ...(config.budget ? { budget: config.budget } : {}),
       externalContentPolicy: config.security?.externalContentPolicy === 'approve' ? 'approve' : 'off',
+      defaultWorkspace: ensureDefaultWorkspace(),
       pricingOverrides: config.pricing ?? {},
       ...(activePricing ? { activePricing } : {}),
     })
@@ -2473,6 +2481,10 @@ export class AgentHost {
     this.requireBootstrap().baseOptions.budget = value
     void this.emitSettings()
     return this.settingsResult()
+  }
+
+  async useDefaultWorkspace(): Promise<SettingsActionResult> {
+    return this.switchWorkspace(ensureDefaultWorkspace())
   }
 
   async setExternalContentPolicy(policy: 'off' | 'approve'): Promise<SettingsActionResult> {

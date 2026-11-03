@@ -123,6 +123,7 @@ The **Outline** tab in the right-hand inspector (also the top-bar outline button
 ## Permissions and Security
 
 - **Three levels**: always allow / ask / deny. Destructive shell commands, path checks and plan mode are evaluated before allow rules.
+- **Quick question**: the ⚡ button in the sidebar switches this window to the default workspace (`~/.x-code/workspace`) for ad-hoc asks, without selecting a project first.
 - **External content approval**: Settings → Permissions can require a fresh approval for writes and shell commands after the turn read a web page, document or MCP output. Off by default; approvals are not persisted as session rules, and sub-agent reads propagate to the parent turn.
 - **Permission rules**: Settings → Permissions lists persisted "don't ask again" rules; add or remove them. Shell supports prefix, exact and whole-tool rules; other tools are whole-tool only.
 - **Always allow**: Settings → Tools enables it per tool or globally. Global always-allow is equivalent to trust mode; use only when fully trusted.

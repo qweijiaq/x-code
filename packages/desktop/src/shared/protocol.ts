@@ -348,6 +348,8 @@ export interface SettingsSnapshot {
   budget?: { maxTokens?: number; maxCostUsd?: number }
   /** 读入外部内容后是否重新批准写操作。 */
   externalContentPolicy: 'off' | 'approve'
+  /** 临时提问的默认工作区。 */
+  defaultWorkspace: string
   /** 用户覆盖的模型价格（仅覆盖项）。 */
   pricingOverrides: Record<string, ModelPricingView>
   /** 当前模型的生效价格（内置或覆盖）；未定价时省略。 */
@@ -1082,6 +1084,7 @@ export interface RequestMap {
     params: { maxTokens?: number | null; maxCostUsd?: number | null }
     result: SettingsActionResult
   }
+  'workspace:use-default': { params: Record<string, never>; result: SettingsActionResult }
   'settings:set-external-content-policy': {
     params: { policy: 'off' | 'approve' }
     result: SettingsActionResult

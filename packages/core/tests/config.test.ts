@@ -11,6 +11,8 @@ import {
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_PEER_MESSAGING_CONFIG,
   DEFAULT_STREAM_CONFIG,
+  defaultWorkspacePath,
+  ensureDefaultWorkspace,
   getAvailableProviders,
   getProviderOptions,
   getUserConfigPath,
@@ -292,5 +294,37 @@ describe('browser config', () => {
         enabled: 'yes',
       }),
     ).toEqual({})
+  })
+})
+
+describe('default workspace', () => {
+  afterEach(() => {
+    delete process.env.X_CODE_HOME
+  })
+
+  it('uses ~/.x-code/workspace and creates it on demand', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'x-code-scratch-test-'))
+    process.env.X_CODE_HOME = home
+    try {
+      expect(defaultWorkspacePath()).toBe(path.join(home, 'workspace'))
+      const created = ensureDefaultWorkspace()
+      expect(created).toBe(path.join(home, 'workspace'))
+      expect(fs.statSync(created).isDirectory()).toBe(true)
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('honours a configured defaultWorkspace', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'x-code-scratch-test-'))
+    const custom = path.join(home, 'quick-notes')
+    process.env.X_CODE_HOME = home
+    try {
+      saveUserConfig({ defaultWorkspace: custom })
+      expect(defaultWorkspacePath()).toBe(custom)
+      expect(ensureDefaultWorkspace()).toBe(custom)
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true })
+    }
   })
 })

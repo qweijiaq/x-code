@@ -107,6 +107,11 @@ export async function parseCliArgs(args: string[] = hideBin(process.argv)) {
       default: false,
       describe: 'Resume the most recent session in this project (no picker)',
     })
+    .option('scratch', {
+      type: 'boolean',
+      default: false,
+      describe: 'Use the default quick-question workspace (~/.x-code/workspace)',
+    })
     .option('resume', {
       alias: 'r',
       type: 'string',

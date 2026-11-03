@@ -46,6 +46,7 @@ export interface SettingsSnapshotInput {
   mcpProjectSkipped: boolean
   budget?: { maxTokens?: number; maxCostUsd?: number }
   externalContentPolicy: 'off' | 'approve'
+  defaultWorkspace: string
   pricingOverrides: Record<string, { inputPerMTok?: number; outputPerMTok?: number }>
   activePricing?: ModelPricingView
 }
@@ -140,6 +141,7 @@ export function buildSettingsSnapshot(input: SettingsSnapshotInput): SettingsSna
     mcpProjectSkipped: input.mcpProjectSkipped,
     ...(input.budget ? { budget: input.budget } : {}),
     externalContentPolicy: input.externalContentPolicy,
+    defaultWorkspace: input.defaultWorkspace,
     pricingOverrides: Object.fromEntries(
       Object.entries(input.pricingOverrides).flatMap(([modelId, pricing]) =>
         typeof pricing.inputPerMTok === 'number' && typeof pricing.outputPerMTok === 'number'

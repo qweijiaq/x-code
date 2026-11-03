@@ -1035,6 +1035,7 @@ export const EN: Record<string, string> = {
   保存价格: 'Save price',
   恢复内置: 'Reset to built-in',
   外部内容审批: 'External content approval',
+  '快速提问（默认工作区）': 'Quick question (default workspace)',
   '累计 token 与部分估算成本（列表价；含未定价模型，金额只是下界）':
     'Cumulative tokens and partial cost estimate (list price; includes unpriced models, so the amount is a lower bound)',
   '本轮读取过外部内容（{{sources}}），写操作需要重新确认。':
