@@ -279,7 +279,9 @@ export class AgentHost {
 
   async init(): Promise<AppState> {
     const savedSettings = loadDesktopSettings()
-    const requestedWorkspace = this.options.workspace?.trim()
+    // 窗口显式工作区优先；其次是进程级覆盖——无头冒烟和脚本靠它把工作区
+    // 固定在临时目录，不能因为启动目录恰好是个项目就改用 cwd。
+    const requestedWorkspace = this.options.workspace?.trim() || process.env.X_CODE_WORKSPACE?.trim()
     const pinnedWorkspace =
       requestedWorkspace && fs.existsSync(requestedWorkspace) && fs.statSync(requestedWorkspace).isDirectory()
         ? path.resolve(requestedWorkspace)

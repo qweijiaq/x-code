@@ -13,6 +13,7 @@
 
 - stop rendering the composer Markdown toolbar twice and hide empty background-task bars
 - keep running tool cards and the turn status strip from looking frozen during long steps
+- honor `X_CODE_WORKSPACE` when a window opens, so headless smoke and scripted launches keep their isolated workspace instead of falling back to the current project
 
 ## v1.0.7 (2026-11-02)
 
