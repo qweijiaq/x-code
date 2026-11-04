@@ -14,6 +14,7 @@ import {
   ROLE_LABEL,
   TOOL_STATUS_LABEL,
   attachmentName,
+  formatDuration,
   summarizeInput,
   tempDeliverables,
   toolEnvironmentHint,
@@ -21,6 +22,7 @@ import {
 
 export interface TranscriptEntryContextValue {
   busy: boolean
+  now: number
   movingTempEntry: string | null
   shellSandboxEnabled: boolean
   shellSandboxAllowNetwork: boolean
@@ -58,6 +60,7 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
   if (!context) throw new Error('TranscriptEntry must be rendered inside TranscriptEntryProvider')
   const {
     busy,
+    now,
     movingTempEntry,
     shellSandboxEnabled,
     shellSandboxAllowNetwork,
@@ -85,12 +88,17 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
     entry.role === 'tool' && !entry.reverted && !entry.movedDeliverables?.length
       ? tempDeliverables(entry.toolOutput)
       : []
+  const runningSeconds =
+    entry.toolStatus === 'running' && entry.toolStartedAt && now > 0
+      ? Math.max(0, Math.floor((now - entry.toolStartedAt) / 1000))
+      : null
   return entry.role === 'tool' ? (
     <article key={entry.id} className={`tool-card ${entry.toolStatus ?? 'running'}`}>
       <div className="tool-head">
         <span className="tool-name">{entry.toolName ?? 'tool'}</span>
         <span className={`tool-state ${entry.toolStatus ?? 'running'}`}>
           {t(TOOL_STATUS_LABEL[entry.toolStatus ?? 'running'])}
+          {runningSeconds !== null ? ` · ${formatDuration(runningSeconds)}` : ''}
         </span>
         <span className="spacer" />
         <span className="tool-target">{summarizeInput(entry.toolInput)}</span>

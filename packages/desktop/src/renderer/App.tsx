@@ -48,6 +48,7 @@ import {
   QueuedList,
   RecordingBar,
   SlashPalette,
+  TurnActivityBar,
 } from './ComposerChrome.js'
 import { DocumentPanel } from './DocumentPanel.js'
 import { GitPanel } from './GitPanel.js'
@@ -122,6 +123,14 @@ if (isUiSmoke) {
 const wantsSettings = new URLSearchParams(window.location.search).has('settings')
 const wantsSlashDemo = new URLSearchParams(window.location.search).has('slash')
 
+type TurnActivityKind = 'model' | 'streaming' | 'tool' | 'approval' | 'retry'
+
+interface TurnActivity {
+  kind: TurnActivityKind
+  detail?: string
+  startedAt: number
+}
+
 export function App(): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const [themeSetting, setThemeSetting] = useState<ThemeSetting>(() => storedTheme())
@@ -161,6 +170,11 @@ export function App(): React.JSX.Element {
   const [mentionIndex, setMentionIndex] = useState(0)
   const [dragActive, setDragActive] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [turnActivity, setTurnActivity] = useState<TurnActivity | null>(null)
+  const turnActivityRef = useRef<TurnActivity | null>(null)
+  const lastAgentEventAtRef = useRef(0)
+  // 每秒更新一次，驱动“已等待”计时；渲染时只读这个值，避免在渲染中读时钟。
+  const [turnNow, setTurnNow] = useState(0)
   const [status, setStatus] = useState<'starting' | 'ready' | 'offline'>('starting')
   const [report, setReport] = useState<string | null>(null)
   const [inspectorTab, setInspectorTab] = useState<InspectorTab | null>(() =>
@@ -316,6 +330,24 @@ export function App(): React.JSX.Element {
 
   const append = (entry: Omit<Entry, 'id'> & { id?: string }): void => {
     setEntries((prev) => [...prev, { id: entry.id ?? crypto.randomUUID(), ...entry }])
+  }
+
+  /** 记录当前轮次正在做什么；相同阶段不重置起始时间，只刷新最后活动时间。 */
+  const markTurnActivity = (kind: TurnActivityKind, detail?: string): void => {
+    const now = Date.now()
+    lastAgentEventAtRef.current = now
+    setTurnNow(now)
+    const current = turnActivityRef.current
+    if (current?.kind === kind && current.detail === detail) return
+    const next: TurnActivity = { kind, detail, startedAt: now }
+    turnActivityRef.current = next
+    setTurnActivity(next)
+  }
+
+  const clearTurnActivity = (): void => {
+    turnActivityRef.current = null
+    lastAgentEventAtRef.current = 0
+    setTurnActivity(null)
   }
 
   const addTab = (sessionId: string): void => {
@@ -769,6 +801,7 @@ export function App(): React.JSX.Element {
     }
 
     const off = window.xcode.onEvent((event: RuntimeEvent) => {
+      lastAgentEventAtRef.current = Date.now()
       if (event.type !== 'agent:text-delta' && event.type !== 'agent:usage' && event.type !== 'agent:tool-progress') {
         flushPendingText()
       }
@@ -791,11 +824,13 @@ export function App(): React.JSX.Element {
           activeTextEntryId.current = null
           busyRef.current = true
           setBusy(true)
+          markTurnActivity('model')
           setNotice(null)
           setActiveSessionId(event.sessionId)
           addTab(event.sessionId)
           break
         case 'agent:text-delta': {
+          markTurnActivity('streaming')
           const textEntryId = activeTextEntryId.current
           if (!textEntryId) {
             const id = crypto.randomUUID()
@@ -815,6 +850,7 @@ export function App(): React.JSX.Element {
           // toolSearch 是内部的延迟工具加载器；CLI 会隐藏它，
           // 桌面记录也应该隐藏。
           if (event.toolName === 'toolSearch') break
+          markTurnActivity('tool', event.toolName)
           // 工具之后的文本属于这张卡片之后，而不是工具运行前
           // 创建的那个更早的助手气泡。
           activeTextEntryId.current = null
@@ -827,6 +863,7 @@ export function App(): React.JSX.Element {
             toolName: event.toolName,
             toolInput: event.input,
             toolStatus: 'running',
+            toolStartedAt: Date.now(),
           })
           break
         case 'agent:tool-progress':
@@ -837,6 +874,7 @@ export function App(): React.JSX.Element {
           )
           break
         case 'agent:tool-result':
+          markTurnActivity('model')
           setEntries((prev) =>
             prev.map((entry) =>
               entry.toolCallId === event.toolCallId
@@ -969,6 +1007,7 @@ export function App(): React.JSX.Element {
           )
           break
         case 'agent:stream-retry':
+          markTurnActivity('retry', `${event.attempt}/${event.maxAttempts}`)
           setNotice(
             i18n.t('连接波动，重试 {{attempt}}/{{max}}…', {
               attempt: event.attempt,
@@ -989,6 +1028,7 @@ export function App(): React.JSX.Element {
           activeTextEntryId.current = null
           busyRef.current = false
           setBusy(false)
+          clearTurnActivity()
           setNotice(null)
           setEntries((prev) =>
             prev.map((entry) =>
@@ -1014,8 +1054,10 @@ export function App(): React.JSX.Element {
           append({ role: 'error', text: event.message, turnId: activeTurn.current ?? undefined })
           busyRef.current = false
           setBusy(false)
+          clearTurnActivity()
           break
         case 'approval:request':
+          markTurnActivity('approval', event.toolName)
           setApproval(event)
           break
         case 'session:saved':
@@ -1181,6 +1223,13 @@ export function App(): React.JSX.Element {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [approval])
+
+  // 回复运行期间每秒刷新一次，让耗时和“无新输出”提示持续走动。
+  useEffect(() => {
+    if (!busy) return
+    const timer = setInterval(() => setTurnNow(Date.now()), 1_000)
+    return () => clearInterval(timer)
+  }, [busy])
 
   useEffect(() => {
     if (!isUiSmoke || uiSmokeRan.current) return
@@ -2892,6 +2941,7 @@ export function App(): React.JSX.Element {
     decision: 'yes' | 'always' | 'no' | boolean | string,
   ): Promise<void> => {
     setApproval(null)
+    markTurnActivity(request.toolName ? 'tool' : 'model', request.toolName)
     const payload: {
       requestId: string
       kind: ApprovalRequestEvent['kind']
@@ -4059,6 +4109,7 @@ export function App(): React.JSX.Element {
               <TranscriptEntryProvider
                 value={{
                   busy,
+                  now: turnNow,
                   movingTempEntry,
                   shellSandboxEnabled: settings?.shellSandbox.enabled === true,
                   shellSandboxAllowNetwork: settings?.shellSandbox.allowNetwork === true,
@@ -4168,8 +4219,17 @@ export function App(): React.JSX.Element {
                   setAttachments([])
                 }}
               />
-              <BackgroundWait count={backgroundActive} queued={queued} onStop={() => void abort()} />
-              <BackgroundIdle count={backgroundActive} onOpen={() => setBackgroundOpen(true)} />
+              <TurnActivityBar
+                activity={busy ? turnActivity : null}
+                elapsedMs={busy && turnActivity ? Math.max(0, turnNow - turnActivity.startedAt) : 0}
+                idleMs={busy && lastAgentEventAtRef.current ? Math.max(0, turnNow - lastAgentEventAtRef.current) : 0}
+              />
+              {busy && backgroundActive > 0 ? (
+                <BackgroundWait count={backgroundActive} queued={queued} onStop={() => void abort()} />
+              ) : null}
+              {!busy && backgroundActive > 0 ? (
+                <BackgroundIdle count={backgroundActive} onOpen={() => setBackgroundOpen(true)} />
+              ) : null}
               <QueuedList
                 items={queuedItems}
                 onOpenInNewWindow={(index) => void openQueuedInNewWindow(index)}
@@ -4187,14 +4247,6 @@ export function App(): React.JSX.Element {
                 files={attachments}
                 onRemove={(file) => setAttachments((current) => current.filter((entry) => entry !== file))}
                 onOpenImage={(src, name) => setImageLightbox({ src, name })}
-              />
-              <MarkdownBar
-                open={markdownToolsOpen}
-                preview={markdownPreview}
-                content={input}
-                onToggleOpen={() => setMarkdownToolsOpen((open) => !open)}
-                onTogglePreview={() => setMarkdownPreview((preview) => !preview)}
-                onFormat={applyMarkdown}
               />
               <MarkdownBar
                 open={markdownToolsOpen}

@@ -85,8 +85,12 @@ export function DiffView({
   onOpenEditor?: (path: string, line?: number) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const lines =
-    diff.isCreate && diff.content ? diff.content.split('\n').slice(0, 14) : diff.hunks.flatMap((hunk) => hunk.lines)
+  // 默认只给几行预览：一次编辑可能长达几十行，整段铺开会把对话挤出屏幕。
+  const [open, setOpen] = useState(false)
+  const allLines = diff.isCreate && diff.content ? diff.content.split('\n') : diff.hunks.flatMap((hunk) => hunk.lines)
+  const lines = allLines.slice(0, 80)
+  const preview = lines.slice(0, 4)
+  const hidden = lines.length - preview.length
   return (
     <div className="diff">
       <div className="diff-head">
@@ -102,14 +106,17 @@ export function DiffView({
           +{diff.additions} −{diff.removals}
         </span>
         {reverted ? <span className="diff-reverted">{t('已回退')}</span> : null}
+        <button type="button" className="diff-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          {open ? t('收起') : t('展开')}
+        </button>
         {onRevert && !reverted ? (
           <button className="session-action" onClick={onRevert}>
             {t('回退这次编辑')}
           </button>
         ) : null}
       </div>
-      <div className="diff-body">
-        {lines.slice(0, 80).map((line, index) => {
+      <div className={`diff-body ${open ? 'open' : 'collapsed'}`}>
+        {(open ? lines : preview).map((line, index) => {
           const sigil = line[0] === '+' ? 'add' : line[0] === '-' ? 'del' : 'ctx'
           return (
             <div key={index} className={`diff-line ${sigil}`}>
@@ -118,6 +125,11 @@ export function DiffView({
           )
         })}
       </div>
+      {!open && hidden > 0 ? (
+        <button type="button" className="diff-more" onClick={() => setOpen(true)}>
+          {t('展开剩余 {{count}} 行', { count: hidden })}
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -160,7 +172,7 @@ export const SourceList = memo(function SourceList({ text }: { text: string }): 
 
 export const SubAgentBlock = memo(function SubAgentBlock({ agent }: { agent: SubAgentView }): React.JSX.Element {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
   const statusLabel =
     agent.status === 'running'
       ? t('运行中')

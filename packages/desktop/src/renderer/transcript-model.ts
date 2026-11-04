@@ -52,6 +52,7 @@ export interface Entry {
   toolStatus?: 'pending' | 'running' | 'completed' | 'denied' | 'error'
   toolOutput?: string
   toolProgress?: string
+  toolStartedAt?: number
   diff?: FileEditView
   reverted?: boolean
   subagent?: SubAgentView

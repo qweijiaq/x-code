@@ -9114,3 +9114,94 @@ iframe.file-preview {
   max-height: 240px;
   overflow-y: hidden;
 }
+
+/* ── 运行中活动条 ────────────────────────────────────────────────────── */
+
+/* 回复还在跑时给一个持续走动的信号，避免长工具/慢模型看起来像卡死。 */
+.turn-activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  color: var(--ink-55);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.turn-activity-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cinnabar);
+  animation: turn-activity-pulse 1.4s ease-in-out infinite;
+}
+
+.turn-activity-label {
+  color: var(--ink-70);
+}
+
+.turn-activity-clock {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-45);
+  white-space: nowrap;
+}
+
+@keyframes turn-activity-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-activity-dot {
+    animation: none;
+    opacity: 0.85;
+  }
+}
+
+/* ── 折叠 diff ──────────────────────────────────────────────────────── */
+
+.diff-toggle {
+  padding: 0 2px;
+  border: none;
+  background: none;
+  color: var(--ink-45);
+  font: inherit;
+  cursor: pointer;
+}
+
+.diff-toggle:hover {
+  color: var(--cinnabar-deep);
+}
+
+.diff-body.collapsed {
+  max-height: none;
+  padding: 4px 0;
+  overflow: hidden;
+}
+
+.diff-more {
+  display: block;
+  width: 100%;
+  padding: 4px 10px;
+  border: none;
+  border-top: 1px dashed var(--ink-08);
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--ink-45);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.diff-more:hover {
+  color: var(--cinnabar-deep);
+}

@@ -119,6 +119,52 @@ export function BackgroundIdle({ count, onOpen }: { count: number; onOpen: () =>
   )
 }
 
+/** 回复运行中的活动条：说明当前在等什么、已经等了多久，避免看起来像卡死。 */
+export function TurnActivityBar({
+  activity,
+  elapsedMs,
+  idleMs,
+}: {
+  activity: { kind: string; detail?: string } | null
+  elapsedMs: number
+  idleMs: number
+}): React.JSX.Element | null {
+  const { t } = useTranslation()
+  if (!activity) return null
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000))
+  const idleSeconds = Math.max(0, Math.floor(idleMs / 1000))
+  const label =
+    activity.kind === 'model'
+      ? t('正在等待模型响应…')
+      : activity.kind === 'streaming'
+        ? t('正在生成回复…')
+        : activity.kind === 'tool'
+          ? activity.detail
+            ? t('正在运行 {{tool}}…', { tool: activity.detail })
+            : t('正在执行工具…')
+          : activity.kind === 'approval'
+            ? activity.detail
+              ? t('等待你的批准：{{tool}}', { tool: activity.detail })
+              : t('等待你的批准…')
+            : activity.kind === 'retry'
+              ? t('连接波动，正在重试…')
+              : t('运行中…')
+  // 阶段开始之后又有过进度事件，才额外提示“多久没有新输出”；
+  // 单纯等模型时两个数字相同，再提示一遍只会显得吵。
+  const showIdle = idleSeconds >= 10 && idleSeconds < seconds - 2
+  return (
+    <div className="turn-activity" data-testid="turn-activity" role="status" aria-live="polite">
+      <span className="turn-activity-dot" aria-hidden="true" />
+      <span className="turn-activity-label">{label}</span>
+      <span className="spacer" />
+      <span className="turn-activity-clock">
+        {t('已等待 {{duration}}', { duration: formatDuration(seconds) })}
+        {showIdle ? ` · ${t('{{count}} 秒无新输出', { count: idleSeconds })}` : ''}
+      </span>
+    </div>
+  )
+}
+
 export function QueuedList({
   items,
   onOpenInNewWindow,

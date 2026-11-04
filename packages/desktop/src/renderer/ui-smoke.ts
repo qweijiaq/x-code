@@ -342,6 +342,69 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       checks.editRevert = { ok: false, detail: 'no file-edit event captured' }
     }
 
+    // 审批挂起时活动条必须说明“在等批准”；多行 diff 默认只给预览。
+    let diffApproved = false
+    let activityDuringApproval = false
+    let activityTextDuringApproval = ''
+    const offDiffDemo = window.xcode.onEvent((event) => {
+      if (event.type === 'approval:request' && event.kind === 'permission') {
+        diffApproved = true
+        setTimeout(() => {
+          const bar = document.querySelector('[data-testid="turn-activity"]')
+          activityDuringApproval = bar !== null
+          activityTextDuringApproval = bar?.textContent?.trim() ?? ''
+          void window.xcode.request({
+            id: crypto.randomUUID(),
+            method: 'approval:respond',
+            params: { requestId: event.requestId, kind: 'permission', decision: 'yes' },
+          })
+        }, 50)
+      }
+    })
+    const diffTurn = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'agent:submit',
+      params: { prompt: '[diff-demo]' },
+    })
+    offDiffDemo()
+    const activityGone = await waitFor(() => document.querySelector('[data-testid="turn-activity"]') === null, 2_000)
+    checks.turnActivity = {
+      ok: diffTurn.ok && diffApproved && activityDuringApproval && activityGone,
+      detail: `approval=${diffApproved} bar=${activityDuringApproval} gone=${activityGone} text=${activityTextDuringApproval.slice(0, 40)}`,
+    }
+
+    await waitFor(() => document.querySelectorAll('.tool-card .diff').length > 0, 2_000)
+    const diffCard = Array.from(document.querySelectorAll<HTMLElement>('.tool-card .diff')).pop()
+    let diffCollapsed = false
+    let diffExpanded = false
+    let diffRecollapsed = false
+    let diffPreviewLines = 0
+    let diffExpandedLines = 0
+    if (diffCard) {
+      diffCollapsed = diffCard.querySelector('.diff-body')?.classList.contains('collapsed') === true
+      diffPreviewLines = diffCard.querySelectorAll('.diff-body .diff-line').length
+      diffCard.querySelector<HTMLButtonElement>('.diff-more')?.click()
+      diffExpanded = await waitFor(
+        () => diffCard.querySelector('.diff-body')?.classList.contains('open') === true,
+        1_000,
+      )
+      diffExpandedLines = diffCard.querySelectorAll('.diff-body .diff-line').length
+      diffCard.querySelector<HTMLButtonElement>('.diff-toggle')?.click()
+      diffRecollapsed = await waitFor(
+        () => diffCard.querySelector('.diff-body')?.classList.contains('collapsed') === true,
+        1_000,
+      )
+    }
+    checks.diffCollapsed = {
+      ok:
+        diffCollapsed &&
+        diffPreviewLines <= 4 &&
+        diffExpanded &&
+        diffExpandedLines > diffPreviewLines &&
+        diffRecollapsed,
+      detail: `collapsed=${diffCollapsed} preview=${diffPreviewLines} expanded=${diffExpanded}/${diffExpandedLines} recollapsed=${diffRecollapsed}`,
+    }
+
     let tempHint = false
     let tempMoved = false
     const offTemp = window.xcode.onEvent((event) => {

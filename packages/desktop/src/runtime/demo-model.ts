@@ -211,6 +211,30 @@ export function createDemoModel(): MockLanguageModelV3 {
         return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
       }
 
+      if (lastUserText.includes('[diff-demo]') && !pendingCallId) {
+        pendingCallId = `demo-diff-${Date.now()}`
+        const target = path.join(os.tmpdir(), `x-code-desktop-diff-${Date.now()}.txt`)
+        const content = Array.from({ length: 20 }, (_, index) => `line ${index + 1} of the demo diff`).join('\n')
+        const parts: LanguageModelV3StreamPart[] = [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 'demo-text' },
+          { type: 'text-delta', id: 'demo-text', delta: '演示模式：写入一个多行文件，用于检查 diff 折叠。\n' },
+          { type: 'text-end', id: 'demo-text' },
+          {
+            type: 'tool-call',
+            toolCallId: pendingCallId,
+            toolName: 'writeFile',
+            input: JSON.stringify({ filePath: target, content }),
+          },
+          {
+            type: 'finish',
+            finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' },
+            usage: usage(),
+          },
+        ]
+        return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
+      }
+
       if (lastUserText.includes('[background-task-demo]') && !pendingCallId) {
         pendingCallId = `demo-bg-task-${Date.now()}`
         const parts: LanguageModelV3StreamPart[] = [
