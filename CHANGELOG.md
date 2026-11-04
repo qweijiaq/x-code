@@ -1,8 +1,18 @@
 ## Unreleased
 
+## v1.0.8 (2026-11-04)
+
 ### Features
 
 - add a default quick-question workspace (`~/.x-code/workspace`), a sidebar/onboarding entry, and `xc --scratch`
+- show a live turn status strip with the current stage (model, tools, approval, retry), elapsed time, and a no-output hint
+- collapse tool diffs to a four-line preview with in-place expand, and start sub-agent logs collapsed
+- explain sandbox failures separately for nested GUI sandboxes and package-manager cache writes, and add a Run in terminal action that executes the original command in the unsandboxed terminal
+
+### Bug Fixes
+
+- stop rendering the composer Markdown toolbar twice and hide empty background-task bars
+- keep running tool cards and the turn status strip from looking frozen during long steps
 
 ## v1.0.7 (2026-11-02)
 
