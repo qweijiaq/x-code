@@ -56,8 +56,46 @@ function terminalTheme(): typeof LIGHT_TERMINAL_THEME {
   return document.documentElement.dataset.theme === 'dark' ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME
 }
 
-export function TerminalPanel(): React.JSX.Element {
+export interface TerminalPanelProps {
+  /** 终端的工作目录；为空时由 runtime 决定。 */
+  cwd?: string
+  /** 由工具卡片触发的命令，token 变化表示要执行一条新命令。 */
+  command?: { text: string; token: number } | null
+  onCommandConsumed?: () => void
+}
+
+export function TerminalPanel({ cwd, command, onCommandConsumed }: TerminalPanelProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const shellIdRef = useRef<string | null>(null)
+  const pendingCommandRef = useRef<{ text: string; token: number } | null>(null)
+  const consumedTokenRef = useRef(0)
+  const onConsumedRef = useRef(onCommandConsumed)
+  const cwdRef = useRef(cwd)
+
+  useEffect(() => {
+    onConsumedRef.current = onCommandConsumed
+  }, [onCommandConsumed])
+
+  useEffect(() => {
+    cwdRef.current = cwd
+  }, [cwd])
+
+  // 终端已打开时直接写入；尚未就绪则记下来，等 shell 创建后再执行。
+  useEffect(() => {
+    if (!command || command.token === consumedTokenRef.current) return
+    if (!shellIdRef.current) {
+      pendingCommandRef.current = command
+      return
+    }
+    consumedTokenRef.current = command.token
+    pendingCommandRef.current = null
+    void window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'shell:write',
+      params: { id: shellIdRef.current, data: `${command.text}\r` },
+    })
+    onConsumedRef.current?.()
+  }, [command])
 
   useEffect(() => {
     const container = containerRef.current
@@ -93,7 +131,7 @@ export function TerminalPanel(): React.JSX.Element {
       .request({
         id: crypto.randomUUID(),
         method: 'shell:create',
-        params: { cols: term.cols, rows: term.rows },
+        params: { cols: term.cols, rows: term.rows, ...(cwdRef.current ? { cwd: cwdRef.current } : {}) },
       })
       .then((response) => {
         if (!response.ok) {
@@ -107,7 +145,19 @@ export function TerminalPanel(): React.JSX.Element {
           return
         }
         shellId = id
+        shellIdRef.current = id
         for (const chunk of bufferedOutput.splice(0)) term.write(chunk)
+        const pending = pendingCommandRef.current
+        if (pending) {
+          pendingCommandRef.current = null
+          consumedTokenRef.current = pending.token
+          void window.xcode.request({
+            id: crypto.randomUUID(),
+            method: 'shell:write',
+            params: { id, data: `${pending.text}\r` },
+          })
+          onConsumedRef.current?.()
+        }
       })
 
     const dataSub = term.onData((data) => {
@@ -143,6 +193,7 @@ export function TerminalPanel(): React.JSX.Element {
       dataSub.dispose()
       observer.disconnect()
       themeObserver.disconnect()
+      shellIdRef.current = null
       if (shellId) {
         void window.xcode.request({
           id: crypto.randomUUID(),

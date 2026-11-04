@@ -12,11 +12,23 @@ export function formatContextTokens(count: number): string {
 
 const SANDBOX_NETWORK_DENIAL =
   /(Could not resolve host|getaddrinfo (?:ENOTFOUND|EAI_AGAIN)|Network is unreachable|Failed to connect|Couldn't connect to server|ENOTFOUND|EAI_AGAIN|connect: operation not permitted)/i
+// GUI 程序（Electron / Chromium）在沙箱里会先被系统拒绝嵌套沙箱，随后
+// 报 GPU / 缓存目录错误；这些输出和普通的写入拒绝要分开解释。
+const SANDBOX_GUI_DENIAL =
+  /(sandbox initialization failed|Failed to initialize sandbox|GPU process isn't usable|persistent_cache_sandboxed_file_factory)/i
+// npm / pip 会把缓存和日志写进用户目录；被沙箱拦截时 npm 会误报
+// “sudo chown ~/.npm”。
+const SANDBOX_PACKAGE_WRITE =
+  /(Log files were not written due to an error writing|npm error code (?:EACCES|EPERM)|EACCES: permission denied.*(?:\.npm|\.cache)|Cache (?:directory|folder).*permission denied)/i
 const SANDBOX_WRITE_DENIAL = /(sandbox-exec|Operation not permitted|Read-only file system)/i
 const COMMAND_NOT_FOUND =
   /(command not found|not recognized as an internal or external command|(?:sh|bash|zsh): .*: not found)/i
 
-export function toolEnvironmentHint(text: string, sandboxEnabled: boolean): 'network' | 'write' | 'command' | null {
+export type ToolEnvironmentHint = 'network' | 'write' | 'gui' | 'package' | 'command'
+
+export function toolEnvironmentHint(text: string, sandboxEnabled: boolean): ToolEnvironmentHint | null {
+  if (sandboxEnabled && SANDBOX_GUI_DENIAL.test(text)) return 'gui'
+  if (sandboxEnabled && SANDBOX_PACKAGE_WRITE.test(text)) return 'package'
   if (sandboxEnabled && SANDBOX_NETWORK_DENIAL.test(text)) return 'network'
   if (sandboxEnabled && SANDBOX_WRITE_DENIAL.test(text)) return 'write'
   if (COMMAND_NOT_FOUND.test(text)) return 'command'

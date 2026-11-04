@@ -305,8 +305,15 @@ export const EN: Record<string, string> = {
     'The command could not reach the network. The shell sandbox currently blocks network access; if this machine is online, allow network and retry.',
   '命令没能联网；如果本机网络正常，请检查命令使用的代理或地址。':
     'The command could not reach the network; if this machine is online, check the proxy or address used by the command.',
-  '命令被 Shell 沙箱拦截：只能写入工作区和临时目录。':
-    'The shell sandbox blocked this command: writes are only allowed in the workspace and temp directories.',
+  '命令被 Shell 沙箱拦截：只能写入工作区和临时目录。可以在终端里运行，终端不受沙箱限制。':
+    'The shell sandbox blocked this command: writes are only allowed in the workspace and temp directories. You can run it in the terminal, which is not sandboxed.',
+  'Electron / Chromium 这类 GUI 程序无法在 X-Code 的 Shell 沙箱里启动（嵌套沙箱被系统拒绝），也写不了 ~/Library。请在终端里运行，或临时关闭 Shell 沙箱。':
+    'GUI apps such as Electron and Chromium cannot start inside the X-Code shell sandbox (the system rejects a nested sandbox), and they cannot write to ~/Library. Run the command in the terminal, or turn the shell sandbox off temporarily.',
+  'npm / pip 需要写入用户缓存目录（如 ~/.npm），沙箱只允许写工作区和临时目录。请在终端里运行，或临时关闭 Shell 沙箱。':
+    'npm and pip need to write their user cache (for example ~/.npm), but the sandbox only allows writes to the workspace and temp directories. Run the command in the terminal, or turn the shell sandbox off temporarily.',
+  在终端执行: 'Run in terminal',
+  '在右侧终端里执行这条命令（终端不受 Shell 沙箱限制）':
+    'Run this command in the terminal (the terminal is not sandboxed)',
   '设置中…': 'Applying…',
   '交付物写到了系统临时目录：{{files}}': 'Deliverables were written to the system temp directory: {{files}}',
   移动到工作区: 'Move to workspace',

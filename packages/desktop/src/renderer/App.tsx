@@ -184,6 +184,13 @@ export function App(): React.JSX.Element {
   const closeInspector = (): void => setInspectorTab(null)
   const toggleInspector = (tab: InspectorTab): void => setInspectorTab((current) => (current === tab ? null : tab))
   const terminalOpen = inspectorTab === 'terminal'
+  // 由工具卡片触发的“在终端执行”：TerminalPanel 消费后回调清空，避免下次
+  // 打开终端时重复执行旧命令。
+  const [terminalCommand, setTerminalCommand] = useState<{ text: string; token: number } | null>(null)
+  const runInTerminal = (command: string): void => {
+    setTerminalCommand({ text: command, token: Date.now() })
+    openInspector('terminal')
+  }
   const [backgroundOpen, setBackgroundOpen] = useState(false)
   const [backgroundActive, setBackgroundActive] = useState(0)
   const [switchingProject, setSwitchingProject] = useState<string | null>(null)
@@ -4126,6 +4133,7 @@ export function App(): React.JSX.Element {
                   onOpenToolsSettings: () => void openSettings('tools'),
                   onMoveTempDeliverables: (entryId, files) => void moveTempDeliverables(entryId, files),
                   onOpenImage: (src, name) => setImageLightbox({ src, name }),
+                  onRunInTerminal: runInTerminal,
                   onRegenerate: () => void regenerateLast(),
                   onEditLast: beginEditLast,
                 }}
@@ -4405,7 +4413,11 @@ export function App(): React.JSX.Element {
                     </button>
                   </header>
                   <Suspense fallback={null}>
-                    <TerminalPanel />
+                    <TerminalPanel
+                      cwd={appState?.workspace ?? settings?.workspace ?? ''}
+                      command={terminalCommand}
+                      onCommandConsumed={() => setTerminalCommand(null)}
+                    />
                   </Suspense>
                 </aside>
               ) : null}

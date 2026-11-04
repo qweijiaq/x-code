@@ -21,6 +21,7 @@ import type {
 import i18n from './i18n.js'
 import { base64FromBuffer, isImageAttachment } from './media.js'
 import { applyTheme, storedTheme } from './theme.js'
+import { toolEnvironmentHint } from './transcript-model.js'
 import { encodeWav } from './wav.js'
 
 export const isUiSmoke = new URLSearchParams(window.location.search).has('ui-smoke')
@@ -403,6 +404,71 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         diffExpandedLines > diffPreviewLines &&
         diffRecollapsed,
       detail: `collapsed=${diffCollapsed} preview=${diffPreviewLines} expanded=${diffExpanded}/${diffExpandedLines} recollapsed=${diffRecollapsed}`,
+    }
+
+    const hintKinds = {
+      gui: toolEnvironmentHint('sandbox initialization failed: Operation not permitted', true),
+      package: toolEnvironmentHint(
+        'npm error Log files were not written due to an error writing to the directory: /Users/x/.npm/_logs',
+        true,
+      ),
+      network: toolEnvironmentHint('getaddrinfo ENOTFOUND registry.npmjs.org', true),
+      write: toolEnvironmentHint('sandbox-exec: Operation not permitted', true),
+      command: toolEnvironmentHint('zsh: notacommand: command not found', true),
+      quiet: toolEnvironmentHint('all tests passed', true),
+    }
+    checks.sandboxHintKinds = {
+      ok:
+        hintKinds.gui === 'gui' &&
+        hintKinds.package === 'package' &&
+        hintKinds.network === 'network' &&
+        hintKinds.write === 'write' &&
+        hintKinds.command === 'command' &&
+        hintKinds.quiet === null,
+      detail: JSON.stringify(hintKinds),
+    }
+
+    // 沙箱拦截提示必须能一键把原命令送进内置终端。
+    let sandboxHintShown = false
+    let sandboxTerminalOpened = false
+    let sandboxCommandRan = false
+    const offSandbox = window.xcode.onEvent((event) => {
+      if (event.type === 'approval:request' && event.kind === 'permission') {
+        void window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'approval:respond',
+          params: { requestId: event.requestId, kind: 'permission', decision: 'yes' },
+        })
+      }
+    })
+    const sandboxTurn = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'agent:submit',
+      params: { prompt: '[sandbox-demo]' },
+    })
+    offSandbox()
+    const sandboxHint = Array.from(document.querySelectorAll('[data-testid="tool-environment-hint"]')).pop()
+    sandboxHintShown = sandboxHint !== undefined
+    const runInTerminalButton = sandboxHint?.querySelector<HTMLButtonElement>('[data-testid="tool-run-in-terminal"]')
+    if (runInTerminalButton) {
+      runInTerminalButton.click()
+      sandboxTerminalOpened = await waitFor(
+        () => document.querySelector('[data-testid="terminal-shell"] .xterm') !== null,
+        3_000,
+      )
+      sandboxCommandRan = await waitFor(
+        () =>
+          (document.querySelector('.terminal .xterm-screen')?.textContent ?? '').includes(
+            'sandbox initialization failed',
+          ),
+        6_000,
+      )
+      document.querySelector<HTMLButtonElement>('[data-testid="terminal-shell"] .drawer-head .btn-quiet')?.click()
+      await waitFor(() => document.querySelector('[data-testid="terminal-shell"]') === null, 2_000)
+    }
+    checks.sandboxTerminal = {
+      ok: sandboxTurn.ok && sandboxHintShown && sandboxTerminalOpened && sandboxCommandRan,
+      detail: `turn=${sandboxTurn.ok} hint=${sandboxHintShown} open=${sandboxTerminalOpened} ran=${sandboxCommandRan}`,
     }
 
     let tempHint = false

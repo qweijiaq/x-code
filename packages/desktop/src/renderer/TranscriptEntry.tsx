@@ -39,6 +39,7 @@ export interface TranscriptEntryContextValue {
   onOpenToolsSettings: () => void | Promise<void>
   onMoveTempDeliverables: (entryId: string, files: string[]) => void | Promise<void>
   onOpenImage: (src: string, name: string) => void
+  onRunInTerminal: (command: string) => void
   onRegenerate: () => void | Promise<void>
   onEditLast: () => void
 }
@@ -77,6 +78,7 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
     onOpenToolsSettings,
     onMoveTempDeliverables,
     onOpenImage,
+    onRunInTerminal,
     onRegenerate,
     onEditLast,
   } = context
@@ -84,6 +86,8 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
   const { t } = useTranslation()
   const toolGuidance =
     entry.role === 'tool' && entry.toolOutput ? toolEnvironmentHint(entry.toolOutput, shellSandboxEnabled) : null
+  const toolCommand =
+    entry.role === 'tool' && typeof entry.toolInput?.command === 'string' ? entry.toolInput.command : null
   const tempOutputs =
     entry.role === 'tool' && !entry.reverted && !entry.movedDeliverables?.length
       ? tempDeliverables(entry.toolOutput)
@@ -129,15 +133,33 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
       {toolGuidance ? (
         <div className="tool-guidance" data-testid="tool-environment-hint">
           <span>
-            {toolGuidance === 'network'
-              ? shellSandboxAllowNetwork
-                ? t('命令没能联网；如果本机网络正常，请检查命令使用的代理或地址。')
-                : t('命令没能联网。Shell 沙箱当前禁止网络访问；如果本机网络正常，允许网络后重试。')
-              : toolGuidance === 'write'
-                ? t('命令被 Shell 沙箱拦截：只能写入工作区和临时目录。')
-                : t('命令找不到。如果刚在电脑终端安装了它，刷新登录 shell 环境后重试。')}
+            {toolGuidance === 'gui'
+              ? t(
+                  'Electron / Chromium 这类 GUI 程序无法在 X-Code 的 Shell 沙箱里启动（嵌套沙箱被系统拒绝），也写不了 ~/Library。请在终端里运行，或临时关闭 Shell 沙箱。',
+                )
+              : toolGuidance === 'package'
+                ? t(
+                    'npm / pip 需要写入用户缓存目录（如 ~/.npm），沙箱只允许写工作区和临时目录。请在终端里运行，或临时关闭 Shell 沙箱。',
+                  )
+                : toolGuidance === 'network'
+                  ? shellSandboxAllowNetwork
+                    ? t('命令没能联网；如果本机网络正常，请检查命令使用的代理或地址。')
+                    : t('命令没能联网。Shell 沙箱当前禁止网络访问；如果本机网络正常，允许网络后重试。')
+                  : toolGuidance === 'write'
+                    ? t('命令被 Shell 沙箱拦截：只能写入工作区和临时目录。可以在终端里运行，终端不受沙箱限制。')
+                    : t('命令找不到。如果刚在电脑终端安装了它，刷新登录 shell 环境后重试。')}
           </span>
           <span className="spacer" />
+          {toolCommand ? (
+            <button
+              className="btn btn-quiet"
+              data-testid="tool-run-in-terminal"
+              title={t('在右侧终端里执行这条命令（终端不受 Shell 沙箱限制）')}
+              onClick={() => onRunInTerminal(toolCommand)}
+            >
+              {t('在终端执行')}
+            </button>
+          ) : null}
           {toolGuidance === 'network' && !shellSandboxAllowNetwork ? (
             <button className="btn btn-quiet" onClick={() => void onAllowSandboxNetwork()}>
               {t('允许网络')}

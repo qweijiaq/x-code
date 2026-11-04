@@ -161,6 +161,25 @@ export function createDemoModel(): MockLanguageModelV3 {
         return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
       }
 
+      if (lastUserText.includes('[sandbox-demo]') && !pendingCallId) {
+        pendingCallId = `demo-sandbox-${Date.now()}`
+        // 输出一段典型的嵌套沙箱失败文本，用来演示“在终端执行”提示。
+        const command = "printf 'sandbox initialization failed: Operation not permitted\\n'"
+        const parts: LanguageModelV3StreamPart[] = [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 'demo-text' },
+          { type: 'text-delta', id: 'demo-text', delta: '演示模式：模拟一条被沙箱拦住的 GUI 命令。\n' },
+          { type: 'text-end', id: 'demo-text' },
+          { type: 'tool-call', toolCallId: pendingCallId, toolName: 'shell', input: JSON.stringify({ command }) },
+          {
+            type: 'finish',
+            finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' },
+            usage: usage(),
+          },
+        ]
+        return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
+      }
+
       if (lastUserText.includes('[tool-demo]') && !pendingCallId) {
         pendingCallId = `demo-write-${Date.now()}`
         const target = path.join(os.tmpdir(), `x-code-desktop-demo-${Date.now()}.txt`)
