@@ -1,5 +1,27 @@
 ## Unreleased
 
+### Features
+
+- add `xc watch [paths...] --on-change "<prompt>"` to re-run the agent after debounced file changes, with opt-in `--trust` and per-run sessions
+- add a Project trust settings page that shows and controls project-level hooks and MCP trust in one place, including MCP server previews and revoke
+- add `xc completion bash|zsh|fish` for shell completion of subcommands and global flags
+- allow browsing other sessions while a turn runs: the running tab keeps streaming in the background with a banner to switch back or stop, and memory topics, custom commands, task mode and auto-check settings can be edited during a turn
+- refresh the provider catalog for the current model lineups: Anthropic 5.5 (Fable/Opus/Sonnet/Haiku), OpenAI GPT-6.1 and GPT-6 tiers, Gemini 4 Argon and 3.5 Flash-Lite, Grok 4.7 and the official Grok 4.20 variants; add Alibaba and Zhipu regional base URLs plus the international Kimi Code endpoint
+- replace the composer textarea with a rich-text editor: Markdown formats as you type (bold, italic, inline code, headings, lists, quotes, code blocks), the message is converted back to Markdown when sent, and @ mentions, slash commands, attachments and IME handling are preserved; Shift+Enter starts a new paragraph
+- add minimal / balanced / full tool display modes: minimal collapses each turn's tool calls, balanced collapses each tool card, full expands everything
+- let the askUser dialog accept a free-form answer when none of the options fit
+- group the conversation outline by question and collapse answers by default, with expand/collapse all
+- explain when a model stops right after a tool without writing anything, instead of ending the turn silently
+
+### Bug Fixes
+
+- isolate update downloads per window so one window no longer cancels another window's download, and allow choosing which display the screenshot menu captures
+- wire the Storage panel's diagnostics cleanup through the runtime and add a cleanup entry for document OCR/comparison baselines
+- hide the edit-mode badge and recording bar unless editing or recording is actually active
+- keep short todo lists on screen briefly with a fade instead of flashing as they are cleared
+- compact the composer: remove the separate Markdown toolbar (native Markdown input and shortcuts replace it), center the action icons, align the input with the 840px chat column, show turn activity and idle background tasks in the hint row, and reduce the footer padding
+- load Git status when the Inspector Git tab is opened and leave the error state instead of staying on 加载中 after a failed request
+
 ## v1.0.8 (2026-11-04)
 
 ### Features

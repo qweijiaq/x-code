@@ -183,6 +183,8 @@ xc -p "summarize the failing test"      # non-interactive output
 xc -p --output-format json "..."        # one JSON result (text, usage, cost, tool calls)
 xc --plan "migrate the build to ESM"    # read-only planning first
 xc trace --last 20                      # recent turn traces (local)
+xc completion zsh > ~/.zfunc/_xc        # shell completion (bash/zsh/fish)
+xc watch src --on-change "run the tests and fix failures"   # re-run on file changes
 xc --scratch "quick question"            # use ~/.x-code/workspace for ad-hoc asks
 ```
 

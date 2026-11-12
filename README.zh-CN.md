@@ -158,6 +158,8 @@ xc -p "总结失败的测试"                   # 非交互输出
 xc -p --output-format json "..."         # 单个 JSON 结果（文本/用量/成本/工具调用）
 xc --plan "把构建迁移到 ESM"             # 先只读规划
 xc trace --last 20                       # 最近的本地轮次 trace
+xc completion zsh > ~/.zfunc/_xc         # shell 补全（bash/zsh/fish）
+xc watch src --on-change "跑测试并修复失败"   # 文件变化时重新运行
 xc --scratch "临时问题"                    # 使用 ~/.x-code/workspace 快速提问
 ```
 
