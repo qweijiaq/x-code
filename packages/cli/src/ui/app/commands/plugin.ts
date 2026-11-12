@@ -22,11 +22,12 @@ import {
   setPluginEnabled,
   uninstallPlugin,
 } from '@x-code-cli/core'
-import type { AgentOptions, PluginScope } from '@x-code-cli/core'
+import type { AgentOptions, ConsentPreview, PluginScope } from '@x-code-cli/core'
 
 import { formatPluginSource } from '../../../plugins/format.js'
 import { resolvePluginInstallSource } from '../../../plugins/install-source.js'
 import { searchMarketplacePlugins } from '../../../plugins/search.js'
+import { updateInstalledPlugin } from '../../../plugins/update.js'
 import { parseScopeFlag } from './scope-flag.js'
 
 export interface PluginCommandDeps {
@@ -39,6 +40,8 @@ export interface PluginCommandDeps {
   ) => Promise<string>
   invalidateSystemPromptCache: () => void
   bumpSkillRegistryVersion: () => void
+  /** /plugin doctor 合并到统一 /doctor，避免两套诊断信息漂移。 */
+  doctor: (text: string) => void
 }
 
 /** 解析 `/plugin enable|disable` 参数字符串，识别共享的
@@ -50,7 +53,29 @@ function parsePluginScopeFlag(arg: string): { id: string; scope: PluginScope } {
 }
 
 export function createPluginCommandHandler(deps: PluginCommandDeps) {
-  const { options, addCommandMessage, askQuestion, invalidateSystemPromptCache, bumpSkillRegistryVersion } = deps
+  const { options, addCommandMessage, askQuestion, invalidateSystemPromptCache, bumpSkillRegistryVersion, doctor } =
+    deps
+
+  async function confirmPlugin(preview: ConsentPreview): Promise<boolean> {
+    const surfaces = [
+      preview.hookEvents.length > 0 ? `hooks: ${preview.hookEvents.join(', ')}` : '',
+      preview.inlineMcpServerNames.length > 0 ? `MCP: ${preview.inlineMcpServerNames.join(', ')}` : '',
+      preview.hasPathHooks ? 'hooks: declared via file' : '',
+      preview.hasPathMcpServers ? 'MCP: declared via file' : '',
+    ].filter(Boolean)
+    const answer = await askQuestion(
+      `Install ${preview.pluginId} v${preview.version}?`,
+      [
+        {
+          label: 'Install',
+          description: surfaces.length > 0 ? surfaces.join(' · ') : 'No hooks or MCP servers declared.',
+        },
+        { label: 'Cancel', description: 'Abort installation.' },
+      ],
+      { noOther: true },
+    )
+    return answer === 'Install'
+  }
 
   function pluginList(text: string, raw: string): void {
     const reg = options.pluginRegistry
@@ -165,6 +190,7 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
 
     const tokens = raw.trim().split(/\s+/)
     const source_str = tokens[0]!
+    const yes = tokens.includes('--yes') || tokens.includes('-y')
     const extras = tokens.slice(1).filter((t) => t !== '--yes' && t !== '-y')
     if (extras.length > 0) {
       addCommandMessage(
@@ -198,7 +224,13 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
 
     addCommandMessage(text, `Installing from ${formatPluginSource(source)} …`)
     try {
-      const result = await installPlugin({ source, marketplace, expectedName })
+      const result = await installPlugin({
+        source,
+        marketplace,
+        expectedName,
+        // 斜杠安装默认展示 hooks/MCP 摘要并要求确认；`--yes` 保留给脚本化调用。
+        ...(yes ? {} : { consent: confirmPlugin }),
+      })
       addCommandMessage(
         text,
         `Installed **${result.pluginId}** v${result.manifest.version}\n` +
@@ -302,7 +334,9 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
   async function pluginUpdate(text: string, raw: string): Promise<void> {
     const tokens = raw.trim().split(/\s+/).filter(Boolean)
     const all = tokens.includes('--all') || tokens.includes('-a')
-    const positional = tokens.filter((t) => t !== '--all' && t !== '-a')
+    const yes = tokens.includes('--yes') || tokens.includes('-y')
+    // `--yes` 与 CLI 对齐：斜杠路径同样接受，不再把它当成插件 id。
+    const positional = tokens.filter((t) => t !== '--all' && t !== '-a' && t !== '--yes' && t !== '-y')
 
     if (all && positional.length > 0) {
       addCommandMessage(text, '`/plugin update`: pass either `--all` or a plugin id, not both.')
@@ -330,22 +364,16 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
       let unchanged = 0
       let failed = 0
       for (const rec of records) {
-        try {
-          const result = await installPlugin({
-            source: rec.source,
-            marketplace: rec.marketplace,
-            expectedName: rec.name,
-          })
-          if (result.manifest.version === rec.version) {
-            lines.push(`  ${rec.id}: reinstalled at ${rec.version}`)
-            unchanged++
-          } else {
-            lines.push(`  ${rec.id}: ${rec.version} → ${result.manifest.version}`)
-            updated++
-          }
-        } catch (err) {
-          lines.push(`  ${rec.id}: failed — ${err instanceof Error ? err.message : String(err)}`)
+        const result = await updateInstalledPlugin(rec, yes ? {} : { consent: confirmPlugin })
+        if (result.status === 'failed') {
+          lines.push(`  ${rec.id}: failed — ${result.error}`)
           failed++
+        } else if (result.status === 'unchanged') {
+          lines.push(`  ${rec.id}: reinstalled at ${result.version}`)
+          unchanged++
+        } else {
+          lines.push(`  ${rec.id}: ${rec.version} → ${result.version}`)
+          updated++
         }
       }
       lines.push('', `Summary: ${updated} updated, ${unchanged} unchanged, ${failed} failed.`)
@@ -362,20 +390,16 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
       return
     }
     addCommandMessage(text, `Reinstalling **${id}** from ${formatPluginSource(rec.source)} …`)
-    try {
-      const result = await installPlugin({
-        source: rec.source,
-        marketplace: rec.marketplace,
-        expectedName: rec.name,
-      })
-      const versionMsg =
-        result.manifest.version === rec.version
-          ? `Reinstalled at the same version (${rec.version}).`
-          : `Updated ${rec.version} → ${result.manifest.version}.`
-      addCommandMessage(text, `${versionMsg} Run \`/plugin refresh\` to load the new version.`)
-    } catch (err) {
-      addCommandMessage(text, `Update failed: ${err instanceof Error ? err.message : String(err)}`)
+    const result = await updateInstalledPlugin(rec, yes ? {} : { consent: confirmPlugin })
+    if (result.status === 'failed') {
+      addCommandMessage(text, `Update failed: ${result.error}`)
+      return
     }
+    const versionMsg =
+      result.status === 'unchanged'
+        ? `Reinstalled at the same version (${result.version}).`
+        : `Updated ${result.record.version} → ${result.version}.`
+    addCommandMessage(text, `${versionMsg} Run \`/plugin refresh\` to load the new version.`)
   }
 
   async function pluginRefresh(text: string): Promise<void> {
@@ -433,33 +457,6 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
       lines.push(`MCP config error: ${e.name}: ${e.message}`)
     }
     lines.push('Note: next message rebuilds the system prompt, so prompt-cache will miss once.')
-    addCommandMessage(text, lines.join('\n'))
-  }
-
-  function pluginDoctor(text: string): void {
-    const reg = options.pluginRegistry
-    if (!reg) {
-      addCommandMessage(text, 'Plugin system is disabled for this session (`--no-plugins`).')
-      return
-    }
-    const errors = reg.loadErrors()
-    const all = reg.listAll()
-    const lines: string[] = ['**Plugin doctor**']
-    lines.push(`- Total loaded: ${all.length}`)
-    lines.push(`- Enabled:      ${all.filter((p) => p.enabled).length}`)
-    lines.push(`- Disabled:     ${all.filter((p) => !p.enabled).length}`)
-    lines.push(`- Load errors:  ${errors.length}`)
-    if (errors.length > 0) {
-      lines.push('', '**Errors:**')
-      for (const e of errors) {
-        lines.push(`- ${e.id ?? '(unknown)'} at \`${e.path}\``)
-        lines.push(`  ${e.message}`)
-      }
-    }
-    lines.push(
-      '',
-      '_For deeper diagnostics (mcp collisions, hook errors, unsupported `commands` contributions), set `DEBUG_STDOUT=1` and check `~/.x-code/logs/debug.log`._',
-    )
     addCommandMessage(text, lines.join('\n'))
   }
 
@@ -586,7 +583,7 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
     if (sub === 'search') return pluginSearch(text, rest)
     if (sub === 'update') return pluginUpdate(text, rest)
     if (sub === 'refresh') return void pluginRefresh(text)
-    if (sub === 'doctor') return pluginDoctor(text)
+    if (sub === 'doctor') return doctor(text)
 
     addCommandMessage(
       text,

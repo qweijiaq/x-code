@@ -245,7 +245,9 @@ export function useSessionController({
         todos: [],
         queuedMessages: [],
         restoredDraft: null,
-        messages: [...previousState.messages, ...converted],
+        // 恢复会话是“切换”而不是“追加”：旧 transcript 继续留在滚动区会
+        // 让用户误以为没有切换。ChatInput 已能处理 messages 变短的情况。
+        messages: converted,
         usage: { ...loaded.tokenUsage },
         usageBreakdown: loaded.usageBreakdown ? cloneUsageBreakdown(loaded.usageBreakdown) : createUsageBreakdown(),
         cacheMissSummary: cloneCacheMissSummary(loaded.cacheMissSummary ?? scanCacheMisses(loaded.providerTurns ?? [])),

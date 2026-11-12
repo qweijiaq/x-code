@@ -15,7 +15,13 @@ function parseLast(args: string[]): number {
   return 20
 }
 
+const USAGE = 'Usage: xc trace [--last N] [--json]'
+
 export async function runTraceCommand(args: string[]): Promise<number> {
+  if (args.includes('--help') || args.includes('-h')) {
+    process.stdout.write(`${USAGE}\n`)
+    return 0
+  }
   const last = parseLast(args)
   const json = args.includes('--json')
   const dir = path.join(userXcodeDir(), 'logs')

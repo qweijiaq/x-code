@@ -1,9 +1,10 @@
 import { errorMessage, expandCommandBody, wrapActivatedSkill } from '@x-code-cli/core'
 import type { AgentOptions, SkillDefinition } from '@x-code-cli/core'
 
+import { getLastPeerStartupError } from '../../../peer-lifecycle.js'
 import type { useAgent } from '../../agent/use-agent.js'
 import { INIT_PROMPT, REVIEW_PROMPT, buildHelpText } from '../command-content.js'
-import { formatBackgroundTerminals, formatStopResult } from './background-terminal.js'
+import { formatBackgroundTerminalDetail, formatBackgroundTerminals, formatStopResult } from './background-terminal.js'
 
 type AgentController = ReturnType<typeof useAgent>
 type AsyncHandler = (commandText: string, argument: string) => Promise<void>
@@ -18,16 +19,22 @@ interface SlashCommandHandlers {
   plan: (commandText: string, argument: string) => void
   compact: () => Promise<void>
   goal: (argument: string) => Promise<void>
-  resume: () => Promise<void>
+  resume: (argument: string) => Promise<void>
   rewind: (argument: string) => Promise<void>
   usage: () => Promise<void>
-  usageHistory: () => Promise<void>
+  usageHistory: (argument: string) => Promise<void>
+  exportSession: (argument: string) => Promise<void>
+  search: (argument: string) => Promise<void>
+  indexCode: (argument: string) => Promise<void>
+  impact: (argument: string) => Promise<void>
+  reload: (argument: string) => Promise<void>
   memory: (argument: string) => Promise<void>
   skill: AsyncHandler
   mcp: AsyncHandler
   plugin: AsyncHandler
   browser: AsyncHandler
   doctor: (commandText: string) => void
+  policy: (argument: string) => void
 }
 
 interface SlashCommandRouterOptions {
@@ -107,7 +114,17 @@ export async function routeSlashCommand(text: string, router: SlashCommandRouter
 
     case 'ps':
       agent.echoCommand(text)
-      agent.addCommandResult(formatBackgroundTerminals(agent.listShellSessions()))
+      {
+        const selector = argument.trim()
+        const sessions = agent.listShellSessions()
+        if (/^\d+$/.test(selector)) {
+          agent.addCommandResult(formatBackgroundTerminals(sessions, Date.now(), Number(selector)))
+        } else if (selector) {
+          agent.addCommandResult(formatBackgroundTerminalDetail(sessions, selector))
+        } else {
+          agent.addCommandResult(formatBackgroundTerminals(sessions))
+        }
+      }
       return
 
     case 'stop':
@@ -136,7 +153,12 @@ export async function routeSlashCommand(text: string, router: SlashCommandRouter
       agent.echoCommand(text)
       const service = router.options.peerService
       if (!service?.enabled) {
-        agent.addCommandResult('This session is not a named agent. Restart with --name <name> to enable communication.')
+        const startupError = getLastPeerStartupError()
+        agent.addCommandResult(
+          startupError
+            ? `Peer messaging failed to start: ${startupError}\nRetry with \`xc --name <name>\`; run with DEBUG_STDOUT=1 for details.`
+            : 'This session is not a named agent. Restart with --name <name> to enable communication.',
+        )
         return
       }
       if (!service.isAvailable()) {
@@ -176,7 +198,7 @@ export async function routeSlashCommand(text: string, router: SlashCommandRouter
 
     case 'resume':
       agent.echoCommand(text)
-      await handlers.resume()
+      await handlers.resume(argument)
       return
 
     case 'fork': {
@@ -218,9 +240,39 @@ export async function routeSlashCommand(text: string, router: SlashCommandRouter
       await handlers.usage()
       return
 
+    case 'export':
+      agent.echoCommand(text)
+      await handlers.exportSession(argument)
+      return
+
+    case 'policy':
+      agent.echoCommand(text)
+      handlers.policy(argument)
+      return
+
+    case 'search':
+      agent.echoCommand(text)
+      await handlers.search(argument)
+      return
+
+    case 'index-code':
+      agent.echoCommand(text)
+      await handlers.indexCode(argument)
+      return
+
+    case 'impact':
+      agent.echoCommand(text)
+      await handlers.impact(argument)
+      return
+
+    case 'reload':
+      agent.echoCommand(text)
+      await handlers.reload(argument)
+      return
+
     case 'usage-history':
       agent.echoCommand(text)
-      await handlers.usageHistory()
+      await handlers.usageHistory(argument)
       return
 
     case 'memory':

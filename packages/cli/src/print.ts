@@ -17,6 +17,7 @@ import type { AgentCallbacks, AgentOptions, LanguageModel, LoadedSession } from 
 import { registerCleanupController } from './cleanup-controller.js'
 import { PrintOutput } from './print-output.js'
 import type { PrintOutputFormat } from './print-output.js'
+import { setPrintAbortHandler } from './print-signals.js'
 import { SHELL_SHUTDOWN_BUDGET, runShutdownPhases } from './shutdown-coordinator.js'
 
 export async function runPrintMode(
@@ -26,10 +27,12 @@ export async function runPrintMode(
   initialSession?: LoadedSession | null,
   outputFormat: PrintOutputFormat = 'text',
 ): Promise<number> {
-  // 在 Ctrl+C 时中止，让长时间运行的 -p 调用可以被中断。
+  // 在 Ctrl+C 时中止，让长时间运行的 -p 调用可以被中断。注册到
+  // print-signals，让全局 SIGINT 处理器把第一次 Ctrl+C 让给这里，
+  // 等 finally 保存会话后再退出。
   const controller = new AbortController()
   const onSigint = () => controller.abort()
-  process.on('SIGINT', onSigint)
+  setPrintAbortHandler(onSigint)
 
   let sawError = false
   let exitCode = 0
@@ -126,7 +129,7 @@ export async function runPrintMode(
     process.stderr.write(`\n[fatal] ${message}\n`)
     exitCode = 1
   } finally {
-    process.off('SIGINT', onSigint)
+    setPrintAbortHandler(null)
     const shutdown = await runShutdownPhases({
       controller: {
         terminateShells: (reason, budget = SHELL_SHUTDOWN_BUDGET) => state.shellSessions.dispose(reason, budget),

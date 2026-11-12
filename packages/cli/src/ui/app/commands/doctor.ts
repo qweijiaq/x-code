@@ -34,8 +34,8 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       lines.push(`- OS:      ${process.platform} ${process.arch}`)
 
       const nodeVersion = parseInt(process.version.slice(1), 10)
-      if (nodeVersion < 20) {
-        lines.push('', '⚠ Node ≥ 20.19 is required. Current version may cause issues.')
+      if (nodeVersion < 22) {
+        lines.push('', '⚠ Node ≥ 22.0.0 is required. Current version may cause issues.')
       }
       sections.push(lines.join('\n'))
     }

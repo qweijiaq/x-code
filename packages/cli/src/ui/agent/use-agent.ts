@@ -14,6 +14,7 @@ import {
   classifyApiError,
   clearPeerContext as clearCorePeerContext,
   cloneUsageBreakdown,
+  collectContextResults,
   compressTrackedMessagesWithUsage,
   createLoopState,
   createUsageBreakdown,
@@ -38,6 +39,8 @@ import type {
   AgentOptions,
   AuthorityApproval,
   ContextBreakdown,
+  ContextSearchResult,
+  ContextSearchSource,
   DisplayMessage,
   ExecutionAuthority,
   LanguageModel,
@@ -1419,6 +1422,28 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     return input ? estimateContextBreakdown(input) : null
   }, [options])
 
+  const searchContext = useCallback(
+    async (
+      query: string,
+      scopes?: ContextSearchSource[],
+      limit?: number,
+    ): Promise<{ query: string; results: ContextSearchResult[]; notes: string[] }> => {
+      const state = loopStateRef.current
+      if (!state) return { query, results: [], notes: ['No active session.'] }
+      return collectContextResults(
+        {
+          projectCwd: state.projectCwd,
+          state,
+          ...(options.memoryService ? { memoryService: options.memoryService } : {}),
+        },
+        query,
+        scopes,
+        limit,
+      )
+    },
+    [loopStateRef, options],
+  )
+
   const addPeerStatus = useCallback(
     (content: string, peer?: PublicPeer) => {
       appendMessage({
@@ -1487,6 +1512,7 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     getCheckpoints,
     getDiffStats,
     getContextBreakdown,
+    searchContext,
     getSessionInfo,
     switchModel,
     setThinking,

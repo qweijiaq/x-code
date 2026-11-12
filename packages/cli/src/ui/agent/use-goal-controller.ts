@@ -363,22 +363,18 @@ export function useGoalController({
   const clearGoal = useCallback(async (): Promise<void> => {
     const state = loopStateRef.current
     if (!state) return
-    const lease = turnCoordinatorRef.current.tryAcquire('clear', currentAuthority())
-    if (!lease) return
+    // clear 是“中断并清除”，必须能在 goal 占用 turn 时执行；不抢 turn lease，
+    // 否则 /goal clear 会在忙碌时静默 no-op（与文档承诺相反）。
     const goalId = state.goal?.id
-    try {
-      if (goalId) {
-        abortControllerRef.current?.abort()
-        drainPendingInteractions()
-        await goalCoordinatorRef.current.interrupt(goalId)
-      }
-      clearCoreGoal(state)
-      await appendGoalState(state)
-      setState((previous) => ({ ...previous, goalStatus: null, goalRunnerActive: false }))
-    } finally {
-      lease.release()
+    if (goalId) {
+      abortControllerRef.current?.abort()
+      drainPendingInteractions()
+      await goalCoordinatorRef.current.interrupt(goalId)
     }
-  }, [abortControllerRef, currentAuthority, drainPendingInteractions, loopStateRef, setState, turnCoordinatorRef])
+    clearCoreGoal(state)
+    await appendGoalState(state)
+    setState((previous) => ({ ...previous, goalStatus: null, goalRunnerActive: false }))
+  }, [abortControllerRef, drainPendingInteractions, loopStateRef, setState])
 
   const steerGoal = useCallback(
     async (text: string): Promise<GoalState | null> => {

@@ -1,4 +1,5 @@
 // @x-code-cli/cli — 根 App 组件
+import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -7,9 +8,12 @@ import { useApp } from 'ink'
 
 import {
   PROVIDER_BASE_URLS,
+  analyzeChangeImpact,
   createModelRegistry,
   errorMessage,
   estimateTokenCount,
+  explainPermission,
+  formatImpactReport,
   getAvailableProviders,
   getContextWindow,
   getOpenAIAuthSnapshot,
@@ -17,6 +21,7 @@ import {
   getOpenAIChatGPTModelCatalogState,
   getProviderModels,
   getReasoningTierOptions,
+  indexCode,
   listSessions,
   loadSession,
   loadUserConfig,
@@ -24,6 +29,7 @@ import {
   providerOf,
   refreshOpenAIAuthSnapshot,
   refreshOpenAIChatGPTModels,
+  renderSessionHtml,
   resetVisionModelProviders,
   resolveModelId,
   saveUserConfig,
@@ -31,7 +37,7 @@ import {
   wrapActivatedSkill,
 } from '@x-code-cli/core'
 import type { AgentOptions, CacheMissSummary, DiffStats, LanguageModel, LoadedSession } from '@x-code-cli/core'
-import type { SkillDefinition, StepStats, TokenUsage, UsageBreakdown } from '@x-code-cli/core'
+import type { SessionHtmlEntry, SkillDefinition, StepStats, TokenUsage, UsageBreakdown } from '@x-code-cli/core'
 
 import { formatOpenAIAuthStatus, loginChatGPT, logoutChatGPT } from '../../auth-cli.js'
 import type { CliCleanupController } from '../../cleanup-controller.js'
@@ -155,6 +161,7 @@ export function App({
     getCheckpoints,
     getDiffStats,
     getContextBreakdown,
+    searchContext,
     getSessionInfo,
     switchModel,
     setThinking,
@@ -343,62 +350,108 @@ export function App({
    *  增强扫描）并把它传给 `useAgent.resume`，由其热切换 agent 状态。包在 useCallback
    *  里，这样挂载时的 effect 就能引用它而不会触发 react-hooks linter（即便 JS
    *  会提升，定义在组件体靠后位置的函数声明仍会被标记闭包新鲜度问题）。 */
-  const handleResume = useCallback(async () => {
-    const sessions = await listSessions()
-    if (sessions.length === 0) {
-      addInfoMessage(
-        '**No past sessions found in this project.** Sessions are saved automatically — start working and one will appear here next time.',
-      )
-      return
-    }
-    const byId = new Map(sessions.map((s) => [s.sessionId, s]))
-    const choices = dedupeChoiceLabels(
-      sessions.slice(0, 30).map((s) => {
-        const preview = (s.firstPrompt || '(empty)').slice(0, 60).replace(/\s+/g, ' ').trim()
-        const ago = formatRelativeTime(s.mtime)
-        const totalTokens = s.tokenUsage ? s.tokenUsage.totalTokens.toLocaleString('en-US') : '—'
-        const lineage = forkLineageHint(s, byId)
-        return {
-          label: `${s.name ? `${s.name}  ·  ` : ''}${preview}  ·  ${ago}`,
-          description: `${s.modelId}  ·  ${totalTokens} tokens  ·  ${s.sessionId}${lineage ? `  ·  ${lineage}` : ''}`,
-          sessionId: s.sessionId,
-          filePath: s.filePath,
+  const handleResume = useCallback(
+    async (key?: string) => {
+      const sessions = await listSessions()
+      if (sessions.length === 0) {
+        addInfoMessage(
+          '**No past sessions found in this project.** Sessions are saved automatically — start working and one will appear here next time.',
+        )
+        return
+      }
+
+      // `/resume <id|name|slug|prefix>` 直接跳转；只有无参数时才打开选择器。
+      // 与 `xc --resume` 保持同一套匹配优先级，避免两个入口行为不一致。
+      let filePath: string | null = null
+      const needle = key?.trim()
+      if (needle) {
+        const exact = sessions.filter(
+          (s) =>
+            s.sessionId === needle ||
+            s.name === needle ||
+            s.taskSlug === needle ||
+            (s.taskSlug !== undefined && `${s.taskSlug}-${s.sessionId}` === needle),
+        )
+        if (exact.length > 0) {
+          filePath = exact[0]!.filePath
+        } else if (needle.length >= 8) {
+          const prefix = sessions.filter((s) => s.sessionId.startsWith(needle))
+          if (prefix.length === 1) {
+            filePath = prefix[0]!.filePath
+          } else if (prefix.length > 1) {
+            addInfoMessage(
+              `Multiple sessions match \`${needle}\`. Use a longer session id prefix.\n\n${prefix
+                .slice(0, 5)
+                .map((s) => `  ${s.sessionId}  ${s.firstPrompt.slice(0, 60)}`)
+                .join('\n')}`,
+            )
+            return
+          } else {
+            addInfoMessage(`No session matches \`${needle}\` in this project.`)
+            return
+          }
+        } else {
+          addInfoMessage(
+            `No session matches \`${needle}\`. Use the full session id, name, slug, or at least 8 characters of the id.`,
+          )
+          return
         }
-      }),
-    )
-    const answer = await askQuestion(
-      `Pick a session to resume (${sessions.length} total in this project):`,
-      choices.map((c) => ({ label: c.label, description: c.description })),
-    )
-    const picked = choices.find((c) => c.label === answer)
-    if (!picked) {
-      // 用户在 "Other" 里输入了自由格式的值。按取消处理——我们不尝试对 session
-      // id 做模糊匹配；选择器才是受支持的挑选方式。
-      addInfoMessage('Resume cancelled.')
-      return
-    }
-    const loaded = await loadSession(picked.filePath)
-    if (!loaded) {
-      addInfoMessage(`Failed to load session at ${picked.filePath}. The file may be corrupted.`)
-      return
-    }
-    const resumed = await resume(loaded)
-    if (!resumed.ok) {
+      }
+
+      if (!filePath) {
+        const byId = new Map(sessions.map((s) => [s.sessionId, s]))
+        const choices = dedupeChoiceLabels(
+          sessions.slice(0, 30).map((s) => {
+            const preview = (s.firstPrompt || '(empty)').slice(0, 60).replace(/\s+/g, ' ').trim()
+            const ago = formatRelativeTime(s.mtime)
+            const totalTokens = s.tokenUsage ? s.tokenUsage.totalTokens.toLocaleString('en-US') : '—'
+            const lineage = forkLineageHint(s, byId)
+            return {
+              label: `${s.name ? `${s.name}  ·  ` : ''}${preview}  ·  ${ago}`,
+              description: `${s.modelId}  ·  ${totalTokens} tokens  ·  ${s.sessionId}${lineage ? `  ·  ${lineage}` : ''}`,
+              sessionId: s.sessionId,
+              filePath: s.filePath,
+            }
+          }),
+        )
+        const answer = await askQuestion(
+          `Pick a session to resume (${sessions.length} total in this project):`,
+          choices.map((c) => ({ label: c.label, description: c.description })),
+        )
+        const picked = choices.find((c) => c.label === answer)
+        if (!picked) {
+          // 用户在 "Other" 里输入了自由格式的值。按取消处理——直接跳转请用
+          // `/resume <id>`，选择器只负责交互式挑选。
+          addInfoMessage('Resume cancelled.')
+          return
+        }
+        filePath = picked.filePath
+      }
+
+      const loaded = await loadSession(filePath)
+      if (!loaded) {
+        addInfoMessage(`Failed to load session at ${filePath}. The file may be corrupted.`)
+        return
+      }
+      const resumed = await resume(loaded)
+      if (!resumed.ok) {
+        addInfoMessage(
+          `Resume was not completed: ${resumed.reason}.${resumed.result ? `\n\n${formatStopResult(resumed.result)}` : ''}`,
+        )
+        return
+      }
+      const hint =
+        compactionHintForResume(
+          loaded.tokenUsage.inputTokens || null,
+          estimateTokenCount(loaded.messages),
+          loaded.modelId,
+        ) ?? ''
       addInfoMessage(
-        `Resume was not completed: ${resumed.reason}.${resumed.result ? `\n\n${formatStopResult(resumed.result)}` : ''}`,
+        `**Resumed session:** ${loaded.name ? `${loaded.name} — ` : ''}${loaded.firstPrompt.slice(0, 80) || '(no first prompt)'}\n\nContinuing from ${loaded.messages.length} message${loaded.messages.length === 1 ? '' : 's'}.${hint}`,
       )
-      return
-    }
-    const hint =
-      compactionHintForResume(
-        loaded.tokenUsage.inputTokens || null,
-        estimateTokenCount(loaded.messages),
-        loaded.modelId,
-      ) ?? ''
-    addInfoMessage(
-      `**Resumed session:** ${loaded.name ? `${loaded.name} — ` : ''}${loaded.firstPrompt.slice(0, 80) || '(no first prompt)'}\n\nContinuing from ${loaded.messages.length} message${loaded.messages.length === 1 ? '' : 's'}.${hint}`,
-    )
-  }, [addInfoMessage, askQuestion, resume])
+    },
+    [addInfoMessage, askQuestion, resume],
+  )
 
   /** 把 DiffStats 对象格式化成 "+42 -18 in main.ts" 这样的紧凑字符串。 */
   function formatDiffStats(stats: DiffStats | null): string {
@@ -712,12 +765,18 @@ export function App({
           rewind: handleRewind,
           usage: handleUsage,
           usageHistory: handleUsageHistory,
+          exportSession: handleExport,
+          search: handleSearch,
+          indexCode: handleIndexCode,
+          impact: handleImpact,
+          reload: handleReload,
           memory: handleMemory,
           skill: handleSkill,
           mcp: handleMcp,
           plugin: handlePlugin,
           browser: handleBrowser,
           doctor: handleDoctor,
+          policy: handlePolicy,
         },
         exit,
       })
@@ -1639,6 +1698,233 @@ export function App({
     addCommandResult(formatCompactionResult(result.estimatedTokensBefore, result.estimatedTokensAfter))
   }
 
+  /** `/export`：把当前会话导出为可读 Markdown。JSONL 仍然是事实源，但用户
+   *  通常想要一个能直接发给同事的文件。默认写到当前工作区，重名时追加时间戳。 */
+  async function handleExport(argument: string) {
+    const format = argument.trim().toLowerCase() || 'markdown'
+    if (format !== 'markdown' && format !== 'html') {
+      addCommandResult('Usage: `/export [markdown|html]`')
+      return
+    }
+    if (state.messages.length === 0) {
+      addInfoMessage('**Nothing to export** — this session has no messages yet.')
+      return
+    }
+    const info = getSessionInfo()
+    const sessionId = info?.sessionId ?? 'session'
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    if (format === 'html') {
+      const title =
+        state.messages.find((message) => message.role === 'user')?.content.slice(0, 60) || `Session ${sessionId}`
+      const entries: SessionHtmlEntry[] = []
+      for (const message of state.messages) {
+        if (message.role === 'tool') {
+          entries.push({ role: 'tool', text: message.content, toolName: 'tool', toolOutput: message.content })
+        } else {
+          entries.push({ role: message.role, text: message.content })
+        }
+        for (const call of message.toolCalls ?? []) {
+          entries.push({
+            role: 'tool',
+            text: '',
+            toolName: call.toolName,
+            toolInput: call.input,
+            ...(call.output ? { toolOutput: call.output.slice(0, 20_000) } : {}),
+            toolStatus: call.status,
+          })
+        }
+      }
+      const target = path.join(process.cwd(), `x-code-session-${sessionId}-${stamp}.html`)
+      const html = renderSessionHtml(
+        {
+          title,
+          sessionId,
+          modelId: state.modelId,
+          usage: { inputTokens: state.usage.inputTokens, outputTokens: state.usage.outputTokens },
+          generatedAt: new Date().toISOString(),
+        },
+        entries,
+      )
+      try {
+        await fs.writeFile(target, html, 'utf-8')
+        addCommandResult(`Exported ${state.messages.length} messages to \`${target}\`.`)
+      } catch (error) {
+        addCommandResult(`Export failed: ${errorMessage(error)}`)
+      }
+      return
+    }
+    const target = path.join(process.cwd(), `x-code-session-${sessionId}-${stamp}.md`)
+    const lines: string[] = [
+      `# X-Code session ${sessionId}`,
+      '',
+      `- Exported: ${new Date().toISOString()}`,
+      `- Model: ${state.modelId}`,
+      `- Messages: ${state.messages.length}`,
+      '',
+      '---',
+      '',
+    ]
+    for (const message of state.messages) {
+      const role = message.role === 'user' ? 'User' : message.role === 'assistant' ? 'Assistant' : 'Tool'
+      lines.push(`## ${role}`, '', message.content.trim() || '_(empty)_', '')
+      for (const call of message.toolCalls ?? []) {
+        lines.push(`### Tool: ${call.toolName} (${call.status})`, '')
+        lines.push('```json', JSON.stringify(call.input, null, 2).slice(0, 20_000), '```', '')
+        if (call.output) {
+          lines.push('```text', call.output.slice(0, 20_000), '```', '')
+        }
+      }
+      lines.push('---', '')
+    }
+    try {
+      await fs.writeFile(target, lines.join('\n'), 'utf-8')
+      addCommandResult(`Exported ${state.messages.length} messages to \`${target}\`.`)
+    } catch (error) {
+      addCommandResult(`Export failed: ${errorMessage(error)}`)
+    }
+  }
+
+  /** `/reload`：把三条 refresh 路径收敛成一个入口，保留旧命令作为别名。 */
+  async function handleReload(argument: string) {
+    const scope = (argument.trim().toLowerCase() || 'all') as 'all' | 'mcp' | 'skill' | 'plugin'
+    if (!['all', 'mcp', 'skill', 'plugin'].includes(scope)) {
+      addCommandResult('Usage: `/reload [all|mcp|skill|plugin]`')
+      return
+    }
+    if (scope === 'all' || scope === 'mcp') await handleMcp('/mcp refresh', 'refresh')
+    if (scope === 'all' || scope === 'skill') await handleSkill('/skill refresh', 'refresh')
+    if (scope === 'all' || scope === 'plugin') await handlePlugin('/plugin refresh', 'refresh')
+  }
+
+  async function handleSearch(argument: string) {
+    const tokens = argument.trim().split(/\s+/).filter(Boolean)
+    const scope = tokens[0] as 'memory' | 'docs' | 'sessions' | 'code' | undefined
+    const scoped = scope && ['memory', 'docs', 'sessions', 'code'].includes(scope)
+    const query = (scoped ? tokens.slice(1) : tokens).join(' ').trim()
+    if (!query) {
+      addCommandResult('Usage: `/search [memory|docs|sessions|code] <query>`')
+      return
+    }
+    const result = await searchContext(query, scoped ? [scope!] : undefined, 6)
+    if (result.results.length === 0) {
+      addInfoMessage(result.notes.length > 0 ? result.notes.join('\n') : 'No local context matched.')
+      return
+    }
+    const lines = result.results.map((item, index) => {
+      const ref = [
+        item.path ? `${item.path}${item.line ? `:${item.line}` : ''}` : '',
+        item.page ? `page ${item.page}` : '',
+        item.sessionId ? `session ${item.sessionId}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · ')
+      return `${index + 1}. [${item.source}] ${item.title}${ref ? ` — ${ref}` : ''}\n   ${item.snippet}`
+    })
+    addInfoMessage(`**本地检索：${query}**\n\n${lines.join('\n\n')}`)
+  }
+
+  async function handleIndexCode(argument: string) {
+    const target = argument.trim() || process.cwd()
+    addInfoMessage(`**Indexing code** — scanning \`${target}\` …`)
+    try {
+      const result = await indexCode(target, { semantic: true })
+      const lines = [
+        `**Code index updated** — ${result.files} files, ${result.chunks} chunks, ${result.vectors} vectors.`,
+        `Indexed ${result.indexed}, skipped ${result.skipped}, removed ${result.removed}.`,
+        result.semantic ? 'Semantic retrieval enabled.' : 'Keyword-only retrieval (embedding backend unavailable).',
+      ]
+      if (result.note) lines.push(result.note)
+      for (const error of result.errors.slice(0, 5)) lines.push(`- ${error}`)
+      addCommandResult(lines.join('\n'))
+    } catch (error) {
+      addCommandResult(`Code index failed: ${errorMessage(error)}`)
+    }
+  }
+
+  /** `/policy explain ...`：解释一次工具调用会走允许还是询问，不触发审批。 */
+  function handlePolicy(argument: string) {
+    const trimmed = argument.trim()
+    const [subcommand = ''] = trimmed.split(/\s+/, 1)
+    if (subcommand !== 'explain') {
+      addCommandResult('Usage: `/policy explain <tool> [json]` or `/policy explain --shell <command>`')
+      return
+    }
+    const rest = trimmed.slice('explain'.length).trim()
+    if (!rest) {
+      addCommandResult('Usage: `/policy explain <tool> [json]` or `/policy explain --shell <command>`')
+      return
+    }
+
+    let toolName: string
+    let input: Record<string, unknown>
+    if (rest === '--shell' || rest.startsWith('--shell ')) {
+      const command = rest.slice('--shell'.length).trim()
+      if (!command) {
+        addCommandResult('Usage: `/policy explain --shell <command>`')
+        return
+      }
+      toolName = 'shell'
+      input = { command }
+    } else {
+      const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(rest)
+      toolName = match?.[1] ?? ''
+      const rawJson = match?.[2]?.trim()
+      if (!rawJson) {
+        input = {}
+      } else {
+        try {
+          const parsed: unknown = JSON.parse(rawJson)
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('expected a JSON object')
+          }
+          input = parsed as Record<string, unknown>
+        } catch (error) {
+          addCommandResult(`Invalid JSON input: ${errorMessage(error)}`)
+          return
+        }
+      }
+    }
+
+    const explanation = explainPermission({
+      toolName,
+      input,
+      trustMode: options.trustMode === true,
+      permissionMode: state.permissionMode,
+      projectCwd: process.cwd(),
+    })
+    const lines = [
+      `**Policy explain · ${toolName}**`,
+      '',
+      `- Rule level: ${explanation.level}`,
+      `- Effective decision: ${explanation.decision}`,
+      `- Reason: ${explanation.reason}`,
+      '- Factors:',
+      ...explanation.factors.map((factor) => `  - ${factor}`),
+      '',
+      '_`ask` opens the approval prompt; `allow` runs without asking._',
+    ]
+    if (toolName === 'shell' && explanation.level === 'deny') {
+      lines.push('_This command is classified as destructive; trust mode is the only automatic allow._')
+    }
+    addCommandResult(lines.join('\n'))
+  }
+
+  async function handleImpact(argument: string) {
+    const tokens = argument.trim() ? argument.trim().split(/\s+/) : []
+    const lsp = tokens.includes('--lsp')
+    const files = tokens.filter((token) => token !== '--lsp')
+    try {
+      const report = await analyzeChangeImpact({
+        cwd: process.cwd(),
+        ...(files.length > 0 ? { files } : {}),
+        ...(lsp ? { lsp: true } : {}),
+      })
+      addInfoMessage(formatImpactReport(report))
+    } catch (error) {
+      addCommandResult(`Impact analysis failed: ${errorMessage(error)}`)
+    }
+  }
+
   async function handleUsage() {
     let usage: TokenUsage = state.usage
     let modelId = state.modelId
@@ -1669,17 +1955,20 @@ export function App({
     )
   }
 
-  async function handleUsageHistory() {
+  async function handleUsageHistory(argument = '') {
     const sessions = await listSessions()
     if (sessions.length === 0) {
       addInfoMessage('**Usage history** — no past sessions found in this project.')
       return
     }
+    const requested = Number(argument.trim())
+    const limit = Number.isFinite(requested) && requested > 0 ? Math.min(200, Math.floor(requested)) : 30
+    const visible = sessions.slice(0, limit)
 
     const byId = new Map(sessions.map((s) => [s.sessionId, s]))
     const fmt = (n: number) => n.toLocaleString('en-US')
     const choices = dedupeChoiceLabels(
-      sessions.map((s) => {
+      visible.map((s) => {
         const preview = (s.firstPrompt || '(empty)').slice(0, 50).replace(/\s+/g, ' ').trim()
         const ago = formatRelativeTime(s.mtime)
         const total = s.tokenUsage ? fmt(s.tokenUsage.totalTokens) : '—'
@@ -1698,7 +1987,7 @@ export function App({
 
     while (true) {
       const answer = await askQuestion(
-        `**Usage history** — ${sessions.length} session${sessions.length === 1 ? '' : 's'}. Pick one to view details:`,
+        `**Usage history** — showing ${visible.length}/${sessions.length} session${sessions.length === 1 ? '' : 's'}. Pick one to view details:`,
         choices.map((c) => ({ label: c.label, description: c.description })),
         { noOther: true },
       )
@@ -1863,6 +2152,7 @@ export function App({
     askQuestion,
     invalidateSystemPromptCache,
     bumpSkillRegistryVersion: () => setSkillRegistryVersion((v) => v + 1),
+    doctor: (text) => handleDoctor(text),
   })
 
   const { handleMcp } = createMcpCommandHandler({
@@ -1955,8 +2245,6 @@ export function App({
             }
           : null
       }
-      activeTurnOwner={activeTurnOwner()}
-      hasStableForkBoundary={hasActiveForkBoundary()}
       contextUsage={
         // Footer 指示器（`6.6k / 200k · 3%`）——使用最近一次 API 响应的快照，而非
         // 累积的会话计数器。累积计数每个回合都把消息历史重复计算一次（cache 命中

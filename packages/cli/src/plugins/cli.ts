@@ -30,6 +30,7 @@ import type { ConsentPreview, PluginScope } from '@x-code-cli/core'
 import { formatPluginSource } from './format.js'
 import { resolvePluginInstallSource } from './install-source.js'
 import { searchMarketplacePlugins } from './search.js'
+import { updateInstalledPlugin } from './update.js'
 
 const chalk = new Chalk()
 
@@ -46,6 +47,10 @@ export async function runPluginCli(args: string[]): Promise<number> {
 
   try {
     switch (sub) {
+      case '--help':
+      case '-h':
+        printUsage()
+        return 0
       case '':
       case 'list':
         return await cliList(rest)
@@ -530,23 +535,17 @@ async function updateOnePlugin(
   rec: Awaited<ReturnType<typeof listInstalledPlugins>>[number],
   skipConsent: boolean,
 ): Promise<UpdateOutcome> {
-  try {
-    const result = await installPlugin({
-      source: rec.source,
-      marketplace: rec.marketplace,
-      expectedName: rec.name,
-      consent: skipConsent ? undefined : promptConsent,
-    })
-    if (result.manifest.version === rec.version) {
-      console.log(`  ${rec.id}: reinstalled at ${rec.version}`)
-      return 'unchanged'
-    }
-    console.log(chalk.green(`  ${rec.id}: ${rec.version} → ${result.manifest.version}`))
-    return 'updated'
-  } catch (err) {
-    console.error(chalk.red(`  ${rec.id}: failed — ${err instanceof Error ? err.message : String(err)}`))
+  const result = await updateInstalledPlugin(rec, skipConsent ? {} : { consent: promptConsent })
+  if (result.status === 'failed') {
+    console.error(chalk.red(`  ${rec.id}: failed — ${result.error}`))
     return 'failed'
   }
+  if (result.status === 'unchanged') {
+    console.log(`  ${rec.id}: reinstalled at ${result.version}`)
+    return 'unchanged'
+  }
+  console.log(chalk.green(`  ${rec.id}: ${rec.version} → ${result.version}`))
+  return 'updated'
 }
 
 // ── search / doctor ────────────────────────────────────────────────────

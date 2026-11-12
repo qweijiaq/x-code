@@ -19,6 +19,7 @@ import {
   readServerConfig,
   removeServerFromConfig,
   serverExists,
+  setServerEnabled,
   trustProject,
   writeServerToConfig,
 } from '@x-code-cli/core'
@@ -261,6 +262,11 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
               break
           }
           lines.push(`  ${s.name.padEnd(namePad)} ${badge}`)
+          if (s.stderrTail) {
+            lines.push(
+              `  ${' '.repeat(namePad)} stderr: ${s.stderrTail.split('\n').slice(-3).join(' | ').slice(0, 400)}`,
+            )
+          }
         }
         addCommandMessage(text, lines.join('\n'))
         return
@@ -353,6 +359,44 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
         } catch (err) {
           addCommandMessage(text, `Failed to clear tokens: ${err instanceof Error ? err.message : String(err)}`)
         }
+        return
+      }
+      case 'enable':
+      case 'disable': {
+        const enable = sub === 'enable'
+        const tokens = subArg.trim().split(/\s+/).filter(Boolean)
+        const name = tokens.find((t) => !t.startsWith('--scope=') && t !== '-s')
+        const scopeFlag = tokens.find((t) => t.startsWith('--scope='))?.slice('--scope='.length)
+        if (!name) {
+          addCommandMessage(text, `Usage: \`/mcp ${sub} <server> [--scope=user|project]\``)
+          return
+        }
+        const detected = await detectScope(name, process.cwd())
+        let scope: ConfigScope
+        if (scopeFlag === 'user' || scopeFlag === 'project') {
+          scope = scopeFlag
+        } else if (detected.kind === 'both') {
+          addCommandMessage(
+            text,
+            `MCP server \`${name}\` exists in both user and project config. Add \`--scope=user\` or \`--scope=project\`.`,
+          )
+          return
+        } else if (detected.kind === 'not-found') {
+          addCommandMessage(text, `No MCP server named \`${name}\`.`)
+          return
+        } else {
+          scope = detected.kind
+        }
+        const result = await setServerEnabled(name, enable, scope, process.cwd())
+        if (!result.changed) {
+          addCommandMessage(text, `No MCP server named \`${name}\` in ${scope} config.`)
+          return
+        }
+        invalidateSystemPromptCache()
+        addCommandResult(
+          `${enable ? 'Enabled' : 'Disabled'} MCP server **${name}** in ${scope} config.\n` +
+            `Run \`/mcp refresh\` to apply now (or restart xc).`,
+        )
         return
       }
       case 'refresh': {

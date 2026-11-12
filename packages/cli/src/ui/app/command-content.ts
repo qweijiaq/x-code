@@ -33,11 +33,11 @@ export const SLASH_COMMANDS = [
   },
   {
     name: '/plan',
-    description: 'Toggle plan mode on/off (no-arg = show status) — saved',
+    description: 'Toggle plan mode on/off (no-arg = show status) — session only',
     argumentHint: '[on|off]',
   },
   { name: '/clear', description: 'Clear conversation history' },
-  { name: '/ps', description: 'List managed background terminals' },
+  { name: '/ps', description: 'List managed background terminals', argumentHint: '[page|shell-id]' },
   { name: '/stop', description: 'Stop all or one managed background terminal', argumentHint: '[shell-id]' },
   { name: '/clear-peer-context', description: 'Remove the peer-influenced conversation suffix' },
   { name: '/list-agents', description: 'List reachable cross-session peers' },
@@ -71,7 +71,35 @@ export const SLASH_COMMANDS = [
   { name: '/init', description: 'Initialize project knowledge' },
   { name: '/review', description: 'Review a pull request (no-arg = list open PRs)', argumentHint: '[PR]' },
   { name: '/usage', description: 'Show current-session token usage (input/output/cache)' },
-  { name: '/usage-history', description: 'List past sessions in this project' },
+  { name: '/usage-history', description: 'List past sessions in this project', argumentHint: '[count]' },
+  {
+    name: '/export',
+    description: 'Export this session as Markdown or HTML in the current workspace',
+    argumentHint: '[markdown|html]',
+  },
+  {
+    name: '/impact',
+    description: 'Analyze dependents and related tests for changed files (default: git status)',
+    argumentHint: '[--lsp] [files...]',
+  },
+
+  {
+    name: '/index-code',
+    description: 'Build the local semantic code index for this workspace',
+    argumentHint: '[path]',
+  },
+
+  {
+    name: '/search',
+    description: 'Search memory / docs / sessions / code with citations',
+    argumentHint: '[memory|docs|sessions|code] <query>',
+  },
+
+  {
+    name: '/reload',
+    description: 'Reload MCP / skills / plugins (default: all)',
+    argumentHint: '[all|mcp|skill|plugin]',
+  },
   {
     name: '/memory',
     description: 'Inspect and manage global long-term memory',

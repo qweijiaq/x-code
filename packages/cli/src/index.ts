@@ -20,6 +20,7 @@ import {
   emptyHookBus,
   ensureDefaultMarketplaces,
   ensureDefaultWorkspace,
+  flushToolAudit,
   flushTurnTrace,
   forceTerminateManagedShellsSync,
   getAvailableProviders,
@@ -58,6 +59,7 @@ import { parseCliArgs } from './cli-args.js'
 import { restoreInvocationCwd } from './launch-cwd.js'
 import { startCliPeerService } from './peer-lifecycle.js'
 import { runPluginCli } from './plugins/cli.js'
+import { abortPrintMode } from './print-signals.js'
 import { runShutdownPhases } from './shutdown-coordinator.js'
 import { checkForUpdate, printNoApiKeyMessage, printNoWebSearchKeyHint, printResumeHint } from './startup-prints.js'
 import { installTerminalStreamErrorGuards } from './terminal-stream-errors.js'
@@ -67,6 +69,7 @@ import { setShikiTheme, warmShikiEngine } from './ui/render/shiki-highlight.js'
 import { setSyntaxTheme } from './ui/render/syntax-highlight.js'
 import { getThemeColors, parseThemeName, setTheme } from './ui/render/theme.js'
 import { VERSION } from './version.js'
+import type { WatchOptions } from './watch.js'
 
 restoreInvocationCwd()
 installTerminalStreamErrorGuards([process.stdout, process.stderr])
@@ -183,6 +186,7 @@ async function gracefulShutdown(exitCode: number, reason: TerminationReason = 'c
     ordinaryFinalizers: finalizers,
   })
   await flushTurnTrace().catch(() => undefined)
+  await flushToolAudit().catch(() => undefined)
   if (exitCode === 0 && shutdown.emergency.requested > 0) exitCode = 1
 
   resetTerminal()
@@ -206,10 +210,60 @@ async function main() {
   // 非交互式插件管理子命令。在 yargs 解析其余 argv 之前路由——否则
   // `xc plugin install ./foo` 会被当作 agent 应当响应的提示词。这一路径
   // 不挂载 Ink，执行完就退出。
-  const rawArgs = hideBin(process.argv)
+  let rawArgs = hideBin(process.argv)
+  if (rawArgs[0] === 'help') {
+    const target = rawArgs[1]
+    if (!target) {
+      rawArgs = ['--help']
+    } else if (target === 'plugin') {
+      const { runPluginCli } = await import('./plugins/cli.js')
+      process.exit(await runPluginCli(['--help']))
+    } else if (target === 'trace') {
+      const { runTraceCommand } = await import('./trace-command.js')
+      process.exit(await runTraceCommand(['--help']))
+    } else if (target === 'audit') {
+      const { runAuditCommand } = await import('./audit-command.js')
+      process.exit(await runAuditCommand(['--help']))
+    } else if (target === 'completion') {
+      const { runCompletionCommand } = await import('./completion.js')
+      process.exit(runCompletionCommand(['--help']))
+    } else if (target === 'watch') {
+      const { watchUsage } = await import('./watch.js')
+      process.stdout.write(`${watchUsage()}\n`)
+      process.exit(0)
+    } else {
+      console.error(`Unknown help topic: ${target}\nTopics: watch, plugin, trace, audit, completion`)
+      process.exit(1)
+    }
+  }
+  let watch: WatchOptions | null = null
+  if (rawArgs[0] === 'watch') {
+    const { parseWatchArgs, watchUsage } = await import('./watch.js')
+    const parsed = parseWatchArgs(rawArgs.slice(1))
+    if ('error' in parsed) {
+      console.error(parsed.error)
+      console.error(watchUsage())
+      process.exit(1)
+    }
+    if ('help' in parsed) {
+      process.stdout.write(`${watchUsage()}\n`)
+      process.exit(0)
+    }
+    watch = parsed
+    // watch 的参数已经手工解析；不再让 yargs 把子命令当成提示词。
+    rawArgs = []
+  }
   if (rawArgs[0] === 'trace') {
     const { runTraceCommand } = await import('./trace-command.js')
     process.exit(await runTraceCommand(rawArgs.slice(1)))
+  }
+  if (rawArgs[0] === 'audit') {
+    const { runAuditCommand } = await import('./audit-command.js')
+    process.exit(await runAuditCommand(rawArgs.slice(1)))
+  }
+  if (rawArgs[0] === 'completion') {
+    const { runCompletionCommand } = await import('./completion.js')
+    process.exit(runCompletionCommand(rawArgs.slice(1)))
   }
   if (rawArgs[0] === 'plugin') {
     const exitCode = await runPluginCli(rawArgs.slice(1))
@@ -250,7 +304,7 @@ async function main() {
   if (!process.stdin.isTTY) {
     stdinContent = await readStdin()
   }
-  const printMode = argv.print || !process.stdin.isTTY || !process.stdout.isTTY
+  const printMode = watch !== null || argv.print || !process.stdin.isTTY || !process.stdout.isTTY
 
   // 一旦交互式产品启动确认 ChatGPT 处于激活状态，就尽快预热订阅模型目录。
   // 这是刻意即发即忘的：/model 始终读取内存中的目录（或其内置回退），
@@ -544,6 +598,21 @@ async function main() {
   // 已排队的卸载之后仍保持存活——这就是 -p 过去会一直挂到按键为止的原因。
   // 参见 packages/cli/src/print.ts。
   if (printMode) {
+    if (watch) {
+      await mcpLoadResult.registry.connectAll()
+      const { runWatchMode } = await import('./watch.js')
+      const code = await runWatchMode({
+        cwd: process.cwd(),
+        paths: watch.paths,
+        prompt: watch.prompt,
+        debounceMs: watch.debounceMs,
+        intervalMs: watch.intervalMs,
+        model,
+        options: { ...options, trustMode: watch.trust ? true : options.trustMode },
+      })
+      resetTerminal()
+      process.exit(code)
+    }
     if (!fullPrompt) {
       console.error('Error: -p / --print requires a prompt (as an argument or via stdin).')
       process.exit(1)
@@ -632,8 +701,16 @@ async function findSessionFile(input: string): Promise<string | null> {
     if (s.name && s.name === input) return s.filePath
   }
   if (input.length >= 8) {
-    for (const s of sessions) {
-      if (s.sessionId.startsWith(input)) return s.filePath
+    const matches = sessions.filter((s) => s.sessionId.startsWith(input))
+    if (matches.length === 1) return matches[0]!.filePath
+    if (matches.length > 1) {
+      console.error(
+        `Error: "${input}" matches ${matches.length} sessions. Use a longer prefix:\n` +
+          matches
+            .slice(0, 8)
+            .map((s) => `  ${s.sessionId}  ${s.firstPrompt.slice(0, 60)}`)
+            .join('\n'),
+      )
     }
   }
   return null
@@ -750,6 +827,9 @@ let sigintCount = 0
 process.on('SIGINT', () => {
   sigintCount++
   process.exitCode = 0
+  // --print 有自己的 abort + finally 保存路径。第一次 Ctrl+C 让给它；
+  // 第二次才走全局强制退出。
+  if (sigintCount === 1 && abortPrintMode()) return
   if (sigintCount >= 2) {
     // 第二次 Ctrl+C → 用户想立刻退出。跳过异步清理（gracefulShutdown 从第一次
     // 按下时就已经在运行）但始终恢复终端，让 shell 提示符可用。没有这次重置，

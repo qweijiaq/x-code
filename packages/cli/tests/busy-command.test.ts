@@ -18,6 +18,7 @@ describe('busy slash command policy', () => {
     expect(isSlashCommandAllowedWhileBusy('/goal cancel', 'goal', false)).toBe(true)
     expect(isSlashCommandAllowedWhileBusy('/goal steer change direction', 'goal', false)).toBe(true)
     expect(isSlashCommandAllowedWhileBusy('/goal status', 'goal', false)).toBe(false)
+    expect(isSlashCommandAllowedWhileBusy('/policy explain edit', 'user', false)).toBe(true)
     expect(isSlashCommandAllowedWhileBusy('/compact', 'user', true)).toBe(false)
   })
 })

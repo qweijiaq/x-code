@@ -15,10 +15,13 @@ const PROVIDER_MODELS: Record<string, string[]> = {
   DEEPSEEK_API_KEY: ['deepseek:deepseek-flash', 'deepseek:deepseek-v4-pro'],
   ANTHROPIC_API_KEY: [
     'anthropic:claude-fable-5-1',
+    'anthropic:claude-opus-5-5',
     'anthropic:claude-opus-5',
     'anthropic:claude-fable-5',
     'anthropic:claude-opus-4-8',
+    'anthropic:claude-sonnet-5-5',
     'anthropic:claude-sonnet-5',
+    'anthropic:claude-haiku-5-5',
     'anthropic:claude-haiku-4-5',
   ],
   OPENAI_API_KEY: [
@@ -29,14 +32,20 @@ const PROVIDER_MODELS: Record<string, string[]> = {
     'openai:gpt-5.4-mini',
   ],
   GOOGLE_GENERATIVE_AI_API_KEY: [
+    'google:gemini-4-argon',
     'google:gemini-3.8-flash',
-    'google:gemini-3.7-flash',
     'google:gemini-3.6-flash',
-    'google:gemini-3.5-flash',
     'google:gemini-2.5-pro',
     'google:gemini-2.5-flash',
   ],
-  XAI_API_KEY: ['xai:grok-4.6', 'xai:grok-4.20', 'xai:grok-4.20-non-reasoning', 'xai:grok-4.5'],
+  XAI_API_KEY: [
+    'xai:grok-4.7',
+    'xai:grok-4.6',
+    'xai:grok-4.20-0309-reasoning',
+    'xai:grok-4.20-0309-non-reasoning',
+    'xai:grok-4.5',
+    'xai:grok-4.3',
+  ],
   ALIBABA_API_KEY: [
     'alibaba:qwen3.8-max',
     'alibaba:qwen3.8-flash',
@@ -48,6 +57,8 @@ const PROVIDER_MODELS: Record<string, string[]> = {
   ],
   ZHIPU_API_KEY: ['zhipu:glm-5.3', 'zhipu:glm-5.3-flash', 'zhipu:glm-5.2', 'zhipu:glm-5', 'zhipu:glm-4.7'],
   MOONSHOT_API_KEY: [
+    'moonshotai:kimi-k3.1-pro',
+    'moonshotai:kimi-k3.1-pro-highspeed',
     'moonshotai:kimi-k3',
     'moonshotai:kimi-k2.7-code',
     'moonshotai:kimi-k2.7-code-highspeed',
@@ -59,9 +70,9 @@ const PROVIDER_MODELS: Record<string, string[]> = {
  *  `MODEL_ALIASES` 表对齐；保持同步。 */
 export const ALIASES: Record<string, string> = {
   fable: 'anthropic:claude-fable-5-1',
-  sonnet: 'anthropic:claude-sonnet-5',
-  opus: 'anthropic:claude-opus-5',
-  haiku: 'anthropic:claude-haiku-4-5',
+  sonnet: 'anthropic:claude-sonnet-5-5',
+  opus: 'anthropic:claude-opus-5-5',
+  haiku: 'anthropic:claude-haiku-5-5',
   gpt6: 'openai:gpt-6-astra',
   astra: 'openai:gpt-6-astra',
   gpt5: 'openai:gpt-5.6-sol',
@@ -69,9 +80,9 @@ export const ALIASES: Record<string, string> = {
   deepseek: 'deepseek:deepseek-flash',
   'deepseek-pro': 'deepseek:deepseek-v4-pro',
   qwen: 'alibaba:qwen3.8-max',
-  grok: 'xai:grok-4.6',
+  grok: 'xai:grok-4.7',
   glm: 'zhipu:glm-5.3',
-  kimi: 'moonshotai:kimi-k3',
+  kimi: 'moonshotai:kimi-k3.1-pro',
 }
 
 export function resolveModelArg(input: string): string {

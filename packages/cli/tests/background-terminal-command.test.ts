@@ -1,4 +1,10 @@
-import { formatBackgroundTerminals, formatStopResult } from '../src/ui/app/commands/background-terminal.js'
+import type { ShellSessionSummary } from '@x-code-cli/core'
+
+import {
+  formatBackgroundTerminalDetail,
+  formatBackgroundTerminals,
+  formatStopResult,
+} from '../src/ui/app/commands/background-terminal.js'
 
 describe('background terminal slash command formatting', () => {
   it('lists only live managed trees and sanitizes terminal controls', () => {
@@ -111,5 +117,46 @@ describe('background terminal slash command formatting', () => {
     })
 
     expect(text).toBe('Stopped 1 background terminal; 1 background terminal had already exited.')
+  })
+})
+
+describe('background terminal pagination and detail', () => {
+  const summary = (shellId: string): ShellSessionSummary =>
+    ({
+      managerInstanceId: 'manager',
+      ownerSessionId: 'owner',
+      shellId,
+      originToolCallId: 'call',
+      command: `${shellId} command`,
+      effectiveCwd: '/repo',
+      tty: false,
+      status: 'running',
+      yielded: true,
+      spawnOutcome: 'ready',
+      cleanupResidual: false,
+      spawnRequestedAt: 1,
+      startedAt: 1_000,
+      rootExited: false,
+      treeConfirmedExited: false,
+      outputFinalized: false,
+      timedOut: false,
+      recentOutput: `output from ${shellId}`,
+      omittedBytes: 0,
+      uiOmittedBytes: 0,
+    }) as ShellSessionSummary
+
+  it('paginates background terminals', () => {
+    const text = formatBackgroundTerminals([summary('bg_1'), summary('bg_2')], 3_000, 2, 1)
+    expect(text).toContain('page 2/2')
+    expect(text).toContain('bg_2')
+    expect(text).not.toContain('bg_1 ·')
+  })
+
+  it('shows one terminal in detail when a shell id is provided', () => {
+    const text = formatBackgroundTerminalDetail([summary('bg_1'), summary('bg_2')], 'bg_2', 3_000)
+    expect(text).toContain('Background terminal bg_2')
+    expect(text).toContain('bg_2 command')
+    expect(text).toContain('/repo')
+    expect(text).toContain('output from bg_2')
   })
 })

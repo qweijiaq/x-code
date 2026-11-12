@@ -27,7 +27,6 @@ import { useStdout } from 'ink'
 
 import { debugLog, suggestRuleLabel } from '@x-code-cli/core'
 
-import { isSlashCommandAllowedWhileBusy } from '../busy-command.js'
 import { renderInlineMarkdown } from '../render/render-markdown.js'
 import { highlightShellCommand } from '../render/shiki-highlight.js'
 import {
@@ -133,8 +132,6 @@ export function ChatInput({
   disabled,
   hidden,
   spinner,
-  activeTurnOwner = null,
-  hasStableForkBoundary = false,
   activeToolCalls,
   shellWaitStreak,
   backgroundTerminalCount = 0,
@@ -533,17 +530,8 @@ export function ChatInput({
   const handleSubmit = (override?: string) => {
     const raw = override ?? text
     if (!raw.trim()) return
-    // 当 agent 仍在思考时，斜杠命令保持阻塞 —— 在回合中途运行 /compact 或 /resume 会破坏
-    // 共享状态。`/goal` 控制运行中的目标；`/fork` 只允许提交路径捕获了稳定请求前前缀的
-    // owner 使用。纯文本仍然流向正常的 steering 队列。
-    if (spinner) {
-      const command = raw.trimStart().toLowerCase().split(/\s+/, 1)[0]
-      if (
-        command.startsWith('/') &&
-        (!activeTurnOwner || !isSlashCommandAllowedWhileBusy(raw, activeTurnOwner, hasStableForkBoundary))
-      )
-        return
-    }
+    // 忙碌时的斜杠命令准入由 App 统一判断并给出可见提示。此前这里静默 return，
+    // 用户输入 /help、/theme 看起来像没反应。
     const expanded = override ? raw : expandPasteRefs(raw, pastedContents)
     // 把展开前的形式记入输入历史（上/下回忆），这样恢复一个条目时不会把整块粘贴又展开回
     // 输入框 —— `[#N +M lines]` 引用保持紧凑，就像提交时一样。`override` 是斜杠补全路径

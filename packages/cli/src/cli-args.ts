@@ -125,6 +125,10 @@ export async function parseCliArgs(args: string[] = hideBin(process.argv)) {
     .alias('v', 'version')
     .help()
     .alias('h', 'help')
-    .epilogue('  xc trace [--last N] [--json]   Show recent local turn traces')
+    .epilogue(
+      '  xc trace [--last N] [--json]   Show recent local turn traces\n' +
+        '  xc audit [--last N] [--json]   Show recent local tool approval decisions\n' +
+        '  xc completion <bash|zsh|fish>  Print a shell completion script',
+    )
     .parse()
 }

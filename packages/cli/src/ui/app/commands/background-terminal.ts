@@ -12,11 +12,19 @@ function elapsed(startedAt: number | undefined, now = Date.now()): string {
   return `${minutes}m ${seconds % 60}s`
 }
 
-export function formatBackgroundTerminals(sessions: readonly ShellSessionSummary[], now = Date.now()): string {
+export function formatBackgroundTerminals(
+  sessions: readonly ShellSessionSummary[],
+  now = Date.now(),
+  page = 1,
+  pageSize = 10,
+): string {
   const allLive = sessions.filter((session) => !session.treeConfirmedExited)
-  const live = allLive.slice(0, 16)
-  if (live.length === 0) return 'No running background terminals.'
-  const lines = ['Background terminals']
+  if (allLive.length === 0) return 'No running background terminals.'
+  const totalPages = Math.max(1, Math.ceil(allLive.length / pageSize))
+  const currentPage = Math.min(Math.max(1, Math.floor(page) || 1), totalPages)
+  const start = (currentPage - 1) * pageSize
+  const live = allLive.slice(start, start + pageSize)
+  const lines = [`Background terminals (page ${currentPage}/${totalPages}, ${allLive.length} total)`]
   for (const session of live) {
     const state = session.cleanupResidual
       ? 'cleanup unconfirmed'
@@ -32,8 +40,48 @@ export function formatBackgroundTerminals(sessions: readonly ShellSessionSummary
       lines.push(`    ↳ ${safeText(output)}`)
     }
   }
-  if (allLive.length > live.length) {
-    lines.push(`  … ${allLive.length - live.length} more`)
+  const remaining = allLive.length - (start + live.length)
+  if (remaining > 0) lines.push(`  … ${remaining} more · run /ps ${currentPage + 1} or /ps <shell-id>`)
+  else if (currentPage > 1) lines.push('  Use /ps <page> to move between pages, or /ps <shell-id> for details.')
+  return lines.join('\n')
+}
+
+/** `/ps <shell-id>`：查看单个后台终端的详情与最近输出。 */
+export function formatBackgroundTerminalDetail(
+  sessions: readonly ShellSessionSummary[],
+  shellIdPrefix: string,
+  now = Date.now(),
+): string {
+  const prefix = shellIdPrefix.trim()
+  const live = sessions.filter((session) => !session.treeConfirmedExited)
+  const matches = live.filter((session) => session.shellId === prefix || session.shellId.startsWith(prefix))
+  if (matches.length === 0) return `No running background terminal matches \`${safeText(prefix)}\`.`
+  if (matches.length > 1) {
+    return [
+      `Multiple background terminals match \`${safeText(prefix)}\`:`,
+      ...matches.map((session) => `  • ${safeText(session.shellId)} · ${safeText(session.command)}`),
+    ].join('\n')
+  }
+  const session = matches[0]!
+  const state = session.cleanupResidual
+    ? 'cleanup unconfirmed'
+    : session.status === 'termination-failed'
+      ? 'stop unconfirmed'
+      : session.status
+  const lines = [
+    `Background terminal ${safeText(session.shellId)}`,
+    `  command: ${safeText(session.command)}`,
+    `  cwd:     ${safeText(session.effectiveCwd)}`,
+    `  state:   ${state} · ${elapsed(session.startedAt, now)}${session.tty ? ' · tty' : ''}`,
+  ]
+  const output = session.recentOutput
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-20)
+  if (output.length > 0) {
+    lines.push('  recent output:')
+    for (const line of output) lines.push(`    ↳ ${safeText(line)}`)
   }
   return lines.join('\n')
 }
