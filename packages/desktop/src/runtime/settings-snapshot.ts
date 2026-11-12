@@ -8,7 +8,9 @@ import {
   WEB_SEARCH_PROVIDERS,
   getContextWindow,
   getModelContextWindowOverride,
+  getOpenAIAuthStatus,
   getPermissionLevel,
+  loadUserConfig,
   toolRegistry,
 } from '@x-code-cli/core'
 import type { AgentOptions, PluginRegistry, SkillRegistry } from '@x-code-cli/core'
@@ -51,7 +53,17 @@ export interface SettingsSnapshotInput {
   activePricing?: ModelPricingView
 }
 
+function maskAccount(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  if (value.includes('@')) {
+    const [local, domain] = value.split('@', 2)
+    return local && domain ? `${local.slice(0, 2)}***@${domain}` : '***'
+  }
+  return value.length <= 6 ? `${value.slice(0, 1)}***` : `${value.slice(0, 4)}…${value.slice(-2)}`
+}
+
 export function buildSettingsSnapshot(input: SettingsSnapshotInput): SettingsSnapshot {
+  const userConfig = loadUserConfig()
   const providers: ProviderSettingsView[] = PROVIDERS.map((provider) => {
     const status = providerSecretStatus(provider.name)
     return {
@@ -61,7 +73,10 @@ export function buildSettingsSnapshot(input: SettingsSnapshotInput): SettingsSna
       available: input.providers.some((entry) => entry.name === provider.name && entry.available),
       source: status.source,
       hint: status.hint,
-      baseUrl: status.baseUrl,
+      baseUrl: userConfig.baseUrls?.[provider.name] ?? status.baseUrl,
+      ...(provider.baseUrlOptions
+        ? { baseUrlOptions: provider.baseUrlOptions.map((option) => ({ label: option.label, url: option.url })) }
+        : {}),
     }
   })
   const customStatus = providerSecretStatus('custom')
@@ -150,6 +165,18 @@ export function buildSettingsSnapshot(input: SettingsSnapshotInput): SettingsSna
       ),
     ),
     ...(input.activePricing ? { activePricing: input.activePricing } : {}),
+    openaiAuth: (() => {
+      const status = getOpenAIAuthStatus()
+      return {
+        mode: status.mode,
+        ...(status.email ? { email: maskAccount(status.email) } : {}),
+        ...(status.accountId ? { accountId: maskAccount(status.accountId) } : {}),
+        ...(status.planType ? { planType: status.planType } : {}),
+        ...(status.expiresAt ? { expiresAt: status.expiresAt } : {}),
+        apiKeyConfigured: status.apiKeyConfigured,
+        ...(status.credentialError ? { credentialError: status.credentialError } : {}),
+      }
+    })(),
     toolProfile: (input.baseOptions.toolProfile ?? 'full') as 'full' | 'standard',
     thinking: input.baseOptions.thinking ?? false,
     alwaysAllowAll: input.alwaysAllowAll,

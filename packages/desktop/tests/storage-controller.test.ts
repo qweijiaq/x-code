@@ -36,7 +36,7 @@ afterEach(async () => {
 })
 
 describe('storage controller', () => {
-  it('reports the five storage categories with sizes', async () => {
+  it('reports the storage categories with sizes', async () => {
     const workspace = await temporaryDirectory('xc-storage-workspace-')
     const sessions = path.join(workspace, '.x-code', 'sessions')
     await writeFile(path.join(sessions, 'a.jsonl'), '12345')
@@ -52,6 +52,8 @@ describe('storage controller', () => {
       'library',
       'attachments',
       'whisper',
+      'diagnostics',
+      'documents',
       'logs',
     ])
     expect(usage.categories[0]?.bytes).toBe(5)
@@ -94,6 +96,31 @@ describe('storage controller', () => {
     for (const kept of [freshSession, pinnedSession, activeSession, freshAttachment, unrelated]) {
       await expect(fs.access(kept)).resolves.toBeUndefined()
     }
+  })
+
+  it('reports and clears the document baseline store', async () => {
+    const workspace = await temporaryDirectory('xc-storage-workspace-')
+    const home = process.env.X_CODE_HOME!
+    const storeFile = path.join(home, 'desktop-documents.json')
+    await writeFile(storeFile, '{"version":1,"documents":{},"recent":[]}')
+    const controller = createStorageController({
+      workspace: () => workspace,
+      isBusy: () => false,
+      activeSessionPath: () => null,
+    })
+
+    const usage = await controller.usage()
+    const documents = usage.categories.find((category) => category.id === 'documents')
+    expect(documents).toMatchObject({ bytes: 40, files: 1 })
+
+    const result = await controller.cleanup({ documents: true })
+    expect(result.deletedFiles).toBe(1)
+    expect(result.freedBytes).toBe(40)
+    await expect(fs.access(storeFile)).rejects.toThrow()
+    expect(result.usage.categories.find((category) => category.id === 'documents')).toMatchObject({
+      bytes: 0,
+      files: 0,
+    })
   })
 
   it('refuses to clean while a turn is running', async () => {

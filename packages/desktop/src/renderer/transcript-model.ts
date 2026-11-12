@@ -77,6 +77,25 @@ export type TurnRenderItem =
   | { kind: 'entry'; entry: Entry }
   | { kind: 'toggle'; key: string; count: number; failures: number; collapsed: boolean }
 
+export const TOOL_DISPLAY_MODES = ['minimal', 'balanced', 'full'] as const
+export type ToolDisplayMode = (typeof TOOL_DISPLAY_MODES)[number]
+
+export const TOOL_DISPLAY_LABEL: Record<ToolDisplayMode, string> = {
+  minimal: '极简',
+  balanced: '适中',
+  full: '全面',
+}
+
+export const TOOL_DISPLAY_HINT: Record<ToolDisplayMode, string> = {
+  minimal: '默认收起工具调用',
+  balanced: '展开工具调用，单个工具收起',
+  full: '全部展开',
+}
+
+export function normalizeToolDisplayMode(value: string | null | undefined): ToolDisplayMode {
+  return value === 'minimal' || value === 'full' ? value : 'balanced'
+}
+
 export const ROLE_LABEL: Record<Role, string> = {
   user: '你',
   assistant: 'X-CODE',

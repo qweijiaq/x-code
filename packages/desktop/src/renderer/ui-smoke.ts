@@ -68,13 +68,43 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
   reportProgress('start')
   try {
     for (const key of Object.keys(localStorage)) {
-      if (key === 'xcode.lastSession' || key.startsWith('xcode.draft.')) localStorage.removeItem(key)
+      if (key === 'xcode.lastSession' || key === 'xcode.toolDisplay' || key.startsWith('xcode.draft.'))
+        localStorage.removeItem(key)
     }
     setInput('')
     setAttachments([])
   } catch {
     // Smoke 隔离是尽力而为。
   }
+
+  interface SmokeComposerEditor {
+    commands: {
+      setContent: (content: string, options?: { contentType?: string }) => void
+      focus: (position?: string) => void
+      selectAll: () => void
+      setTextSelection: (position: number | { from: number; to: number }) => void
+    }
+    getText: (options?: { blockSeparator?: string }) => string
+    getMarkdown: () => string
+  }
+  // 富文本 composer 在 smoke 模式下会把编辑器实例暴露到 window，测试用
+  // ProseMirror API 读写内容，而不是伪造 contenteditable 的 DOM 事件。
+  const composerEditor = (): SmokeComposerEditor | null =>
+    (window as unknown as { __xcodeComposer?: SmokeComposerEditor }).__xcodeComposer ?? null
+  const setComposer = (markdown: string): boolean => {
+    const editor = composerEditor()
+    if (!editor) return false
+    editor.commands.setContent(markdown, { contentType: 'markdown' })
+    editor.commands.focus('end')
+    return true
+  }
+  const composerText = (): string => composerEditor()?.getText({ blockSeparator: '\n' }) ?? ''
+  const pressComposerKey = (key: string, init: KeyboardEventInit = {}): void => {
+    document
+      .querySelector('[data-testid="composer-editor"]')
+      ?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
+  }
+  const composerHeight = (): number => document.querySelector('.composer-editor')?.getBoundingClientRect().height ?? 0
   const openToolsMenu = async (): Promise<boolean> => {
     document.querySelector<HTMLButtonElement>('[data-testid="tools-menu-toggle"]')?.click()
     return waitFor(() => document.querySelector('[data-testid="tools-menu"]') !== null, 2_000)
@@ -258,18 +288,14 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         : 'markdown did not render',
     }
 
-    const composer = document.querySelector('.composer textarea') as HTMLTextAreaElement | null
-    if (composer) {
-      const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setValue?.call(composer, '@')
-      composer.setSelectionRange(1, 1)
-      composer.dispatchEvent(new Event('input', { bubbles: true }))
+    const composerReady = await waitFor(() => composerEditor() !== null, 3_000)
+    if (composerReady) {
+      setComposer('@')
       const paletteReady = await waitFor(
         () => document.querySelectorAll('[data-testid="mention-palette"] .slash-item').length > 1,
         3_000,
       )
-      composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-      composer.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowDown', bubbles: true }))
+      pressComposerKey('ArrowDown')
       const arrowKept = await waitFor(
         () =>
           document.querySelectorAll('[data-testid="mention-palette"] .slash-item')[1]?.classList.contains('active') ??
@@ -280,15 +306,14 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         '[data-testid="mention-palette"] .slash-item',
       ) as HTMLButtonElement | null
       firstItem?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-      const inserted = await waitFor(() => composer.value.startsWith('@') && composer.value.length > 2, 2_000)
+      const inserted = await waitFor(() => composerText().startsWith('@') && composerText().length > 2, 2_000)
       checks.mention = {
-        ok: paletteReady && arrowKept && inserted,
+        ok: composerReady && paletteReady && arrowKept && inserted,
         detail: `palette=${paletteReady} arrow=${arrowKept} inserted=${inserted}`,
       }
-      setValue?.call(composer, '')
-      composer.dispatchEvent(new Event('input', { bubbles: true }))
+      setComposer('')
     } else {
-      checks.mention = { ok: false, detail: 'composer textarea missing' }
+      checks.mention = { ok: false, detail: 'composer editor missing' }
     }
 
     let sawApproval = false
@@ -374,36 +399,43 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail: `approval=${diffApproved} bar=${activityDuringApproval} gone=${activityGone} text=${activityTextDuringApproval.slice(0, 40)}`,
     }
 
-    await waitFor(() => document.querySelectorAll('.tool-card .diff').length > 0, 2_000)
-    const diffCard = Array.from(document.querySelectorAll<HTMLElement>('.tool-card .diff')).pop()
+    await waitFor(() => document.querySelectorAll('.tool-card').length > 0, 2_000)
+    const diffCard = Array.from(document.querySelectorAll<HTMLElement>('.tool-card')).pop()
+    // 适中模式默认只显示工具卡片头部，先展开这张卡片再检查 diff。
+    const toolBodyCollapsed = diffCard !== undefined && diffCard.querySelector('.diff') === null
+    diffCard?.querySelector<HTMLButtonElement>('[data-testid="tool-card-toggle"]')?.click()
+    const diffReady = await waitFor(() => diffCard?.querySelector('.diff') !== null, 1_000)
+    const diffView = diffCard?.querySelector<HTMLElement>('.diff') ?? null
     let diffCollapsed = false
     let diffExpanded = false
     let diffRecollapsed = false
     let diffPreviewLines = 0
     let diffExpandedLines = 0
-    if (diffCard) {
-      diffCollapsed = diffCard.querySelector('.diff-body')?.classList.contains('collapsed') === true
-      diffPreviewLines = diffCard.querySelectorAll('.diff-body .diff-line').length
-      diffCard.querySelector<HTMLButtonElement>('.diff-more')?.click()
+    if (diffView) {
+      diffCollapsed = diffView.querySelector('.diff-body')?.classList.contains('collapsed') === true
+      diffPreviewLines = diffView.querySelectorAll('.diff-body .diff-line').length
+      diffView.querySelector<HTMLButtonElement>('.diff-more')?.click()
       diffExpanded = await waitFor(
-        () => diffCard.querySelector('.diff-body')?.classList.contains('open') === true,
+        () => diffView.querySelector('.diff-body')?.classList.contains('open') === true,
         1_000,
       )
-      diffExpandedLines = diffCard.querySelectorAll('.diff-body .diff-line').length
-      diffCard.querySelector<HTMLButtonElement>('.diff-toggle')?.click()
+      diffExpandedLines = diffView.querySelectorAll('.diff-body .diff-line').length
+      diffView.querySelector<HTMLButtonElement>('.diff-toggle')?.click()
       diffRecollapsed = await waitFor(
-        () => diffCard.querySelector('.diff-body')?.classList.contains('collapsed') === true,
+        () => diffView.querySelector('.diff-body')?.classList.contains('collapsed') === true,
         1_000,
       )
     }
     checks.diffCollapsed = {
       ok:
+        toolBodyCollapsed &&
+        diffReady &&
         diffCollapsed &&
         diffPreviewLines <= 4 &&
         diffExpanded &&
         diffExpandedLines > diffPreviewLines &&
         diffRecollapsed,
-      detail: `collapsed=${diffCollapsed} preview=${diffPreviewLines} expanded=${diffExpanded}/${diffExpandedLines} recollapsed=${diffRecollapsed}`,
+      detail: `cardCollapsed=${toolBodyCollapsed} ready=${diffReady} collapsed=${diffCollapsed} preview=${diffPreviewLines} expanded=${diffExpanded}/${diffExpandedLines} recollapsed=${diffRecollapsed}`,
     }
 
     const hintKinds = {
@@ -572,10 +604,146 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       params: { prompt: '[subagent-demo]' },
     })
     offSubagent()
+    // 适中模式下工具卡片只显示头部，展开后再检查子代理块。
+    Array.from(document.querySelectorAll<HTMLElement>('.tool-card'))
+      .pop()
+      ?.querySelector<HTMLButtonElement>('[data-testid="tool-card-toggle"]')
+      ?.click()
     const subagentDom = await waitFor(() => document.querySelector('[data-testid="subagent"]') !== null, 3_000)
     checks.subagent = {
       ok: subagentTurn.ok && subagentStart && subagentEnd && subagentDom,
       detail: `turn=${subagentTurn.ok} start=${subagentStart} end=${subagentEnd} dom=${subagentDom}`,
+    }
+
+    const setToolDisplayMode = async (mode: 'minimal' | 'balanced' | 'full'): Promise<boolean> => {
+      document.querySelector<HTMLButtonElement>('[data-testid="tools-menu-toggle"]')?.click()
+      const ready = await waitFor(() => document.querySelector('[data-testid="tools-menu"]') !== null, 2_000)
+      if (!ready) return false
+      document.querySelector<HTMLButtonElement>(`[data-testid="tool-display-${mode}"]`)?.click()
+      document.querySelector<HTMLButtonElement>('[data-testid="tools-menu-toggle"]')?.click()
+      await waitFor(() => document.querySelector('[data-testid="tools-menu"]') === null, 1_000)
+      return true
+    }
+    const minimalOk = await setToolDisplayMode('minimal')
+    const minimalCollapsed = await waitFor(() => document.querySelectorAll('.tool-card').length === 0, 1_500)
+    const fullOk = await setToolDisplayMode('full')
+    const fullExpanded = await waitFor(() => document.querySelectorAll('.tool-card .diff-body.open').length > 0, 1_500)
+    const balancedOk = await setToolDisplayMode('balanced')
+    const balancedCards = await waitFor(() => document.querySelectorAll('.tool-card').length > 0, 1_500)
+    const balancedCollapsed = document.querySelectorAll('.tool-card .diff-body').length === 0
+    const storedMode = localStorage.getItem('xcode.toolDisplay')
+    checks.toolDisplayModes = {
+      ok:
+        minimalOk &&
+        minimalCollapsed &&
+        fullOk &&
+        fullExpanded &&
+        balancedOk &&
+        balancedCards &&
+        balancedCollapsed &&
+        storedMode === 'balanced',
+      detail: `minimal=${minimalOk}/${minimalCollapsed} full=${fullOk}/${fullExpanded} balanced=${balancedOk}/${balancedCards}/${balancedCollapsed} stored=${storedMode}`,
+    }
+
+    const editBadgeIdle = document.querySelector('[data-testid="edit-badge"]') === null
+    const recordingBarIdle = document.querySelector('[data-testid="recording-bar"]') === null
+    const palettesIdle = document.querySelectorAll('.slash-palette').length === 0
+    const composerPlaceholderReady = await waitFor(() => {
+      const element = document.querySelector<HTMLElement>('.composer-editor.is-empty')
+      return (element?.getAttribute('data-placeholder') ?? '').length > 0
+    }, 1_500)
+    checks.composerChromeIdle = {
+      ok: editBadgeIdle && recordingBarIdle && palettesIdle && composerPlaceholderReady,
+      detail: `editBadge=${editBadgeIdle} recording=${recordingBarIdle} palettes=${palettesIdle} placeholder=${composerPlaceholderReady}`,
+    }
+
+    // 多选题的选项都不合适时，必须能直接输入回答。
+    let questionCallId = ''
+    let questionResult = ''
+    let questionRequestId = ''
+    const offQuestion = window.xcode.onEvent((event) => {
+      if (event.type === 'agent:tool-call' && event.toolName === 'askUser') {
+        questionCallId = event.toolCallId
+      }
+      if (event.type === 'approval:request' && event.kind === 'question') {
+        questionRequestId = event.requestId
+      }
+      if (event.type === 'agent:tool-result' && questionCallId && event.toolCallId === questionCallId) {
+        questionResult = event.result
+      }
+    })
+    const questionTurn = window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'agent:submit',
+      params: { prompt: '[question-demo]' },
+    })
+    const answerReady = await waitFor(
+      () => document.querySelector('[data-testid="approval-answer-input"]') !== null,
+      3_000,
+    )
+    const answerInput = answerReady
+      ? document.querySelector<HTMLInputElement>('[data-testid="approval-answer-input"]')
+      : null
+    let answerSent = false
+    if (answerInput) {
+      const setAnswer = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+      setAnswer?.call(answerInput, '自定义答案：先补测试')
+      answerInput.dispatchEvent(new Event('input', { bubbles: true }))
+      answerSent = await waitFor(
+        () => document.querySelector<HTMLButtonElement>('[data-testid="approval-answer-send"]')?.disabled === false,
+        1_000,
+      )
+      document.querySelector<HTMLButtonElement>('[data-testid="approval-answer-send"]')?.click()
+    }
+    reportProgress(
+      `question:sent=${answerSent} disabled=${document.querySelector<HTMLButtonElement>('[data-testid="approval-answer-send"]')?.disabled}`,
+    )
+    if (!answerSent && questionRequestId) {
+      // 兜底：界面未能发送时直接回答，避免整轮 smoke 卡在等待批准上。
+      void window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'approval:respond',
+        params: { requestId: questionRequestId, kind: 'question', answer: '自定义答案：先补测试' },
+      })
+    }
+    const questionTurnResponse = await questionTurn
+    offQuestion()
+    const questionModalClosed = await waitFor(
+      () => document.querySelector('[data-testid="approval-answer-input"]') === null,
+      2_000,
+    )
+    checks.questionFreeText = {
+      ok:
+        questionTurnResponse.ok &&
+        Boolean(answerInput) &&
+        answerSent &&
+        questionModalClosed &&
+        questionResult.includes('先补测试'),
+      detail: `input=${Boolean(answerInput)} sent=${answerSent} closed=${questionModalClosed} result=${questionResult.slice(0, 40)}`,
+    }
+
+    // 工具执行后模型不再输出时，界面要补一条说明而不是静默停住。
+    let silentApproved = false
+    const offSilent = window.xcode.onEvent((event) => {
+      if (event.type === 'approval:request' && event.kind === 'permission') {
+        silentApproved = true
+        void window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'approval:respond',
+          params: { requestId: event.requestId, kind: 'permission', decision: 'yes' },
+        })
+      }
+    })
+    const silentTurn = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'agent:submit',
+      params: { prompt: '[silent-stop-demo]' },
+    })
+    offSilent()
+    const silentNotice = await waitFor(() => (document.body.textContent ?? '').includes('模型没有继续回复'), 2_000)
+    checks.silentStopNotice = {
+      ok: silentTurn.ok && silentApproved && silentNotice,
+      detail: `approval=${silentApproved} notice=${silentNotice}`,
     }
 
     let sawDenyApproval = false
@@ -1289,11 +1457,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail: `approval=${autoApproval} diff=${autoDiff}`,
     }
 
-    const composerTextarea = document.querySelector<HTMLTextAreaElement>('.composer textarea')
-    if (composerTextarea) {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setter?.call(composerTextarea, '/')
-      composerTextarea.dispatchEvent(new Event('input', { bubbles: true }))
+    if (composerEditor()) {
+      setComposer('/')
       const paletteMounted = await waitFor(() => document.querySelector('.slash-palette') !== null, 2000)
       const slashCommandCount = document.querySelectorAll('[data-testid="slash-palette"] .slash-item').length
       checks.slashPalette = {
@@ -1301,14 +1466,14 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         detail: paletteMounted ? `${slashCommandCount} command(s) listed` : 'command palette missing',
       }
 
-      setter?.call(composerTextarea, '/usage')
-      composerTextarea.dispatchEvent(new Event('input', { bubbles: true }))
+      setComposer('/usage')
       const usageSelected = await waitFor(
         () => [...document.querySelectorAll('.slash-name')].some((el) => el.textContent === '/usage'),
         2000,
       )
       if (usageSelected) {
-        composerTextarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 80))
+        pressComposerKey('Enter')
       }
       const usageReport = await waitFor(
         () => (document.querySelector('.report')?.textContent ?? '').includes('用量'),
@@ -1631,6 +1796,25 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     }
     document.querySelector<HTMLButtonElement>('[data-testid="git-drawer"] .drawer-head .btn:last-child')?.click()
 
+    // 直接点 Inspector 的 Git 标签也必须触发加载，而不是永远停在“加载中”。
+    const gitTabMenu = await openToolsMenu()
+    document.querySelector<HTMLButtonElement>('[data-testid="tools-outline"]')?.click()
+    const gitTabPresent = await waitFor(
+      () => document.querySelector('[data-testid="inspector-tab-git"]') !== null,
+      3_000,
+    )
+    document.querySelector<HTMLButtonElement>('[data-testid="inspector-tab-git"]')?.click()
+    const gitTabLoaded = await waitFor(
+      () => document.querySelector('[data-testid="git-drawer"] .git-summary') !== null,
+      5_000,
+    )
+    const gitTabLoadingText = document.querySelector('[data-testid="git-drawer"] .settings-empty')?.textContent ?? ''
+    checks.gitTabReload = {
+      ok: gitTabMenu && gitTabPresent && gitTabLoaded && gitTabLoadingText !== '加载中…',
+      detail: `menu=${gitTabMenu} tab=${gitTabPresent} loaded=${gitTabLoaded} text=${gitTabLoadingText.slice(0, 20)}`,
+    }
+    document.querySelector<HTMLButtonElement>('[data-testid="git-drawer"] .drawer-head .btn:last-child')?.click()
+
     const checksMenu = await openToolsMenu()
     document.querySelector<HTMLButtonElement>('[data-testid="checks-toggle"]')?.click()
     const checksDrawer = await waitFor(() => document.querySelector('[data-testid="checks-drawer"]') !== null, 3_000)
@@ -1720,7 +1904,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       ok: Boolean(document.querySelector('.composer .attach')),
       detail: document.querySelector('.composer .attach') ? 'document picker mounted' : 'document picker missing',
     }
-    const attachButtonElement = document.querySelector<HTMLButtonElement>('.composer .btn.attach')
+    const attachButtonElement = document.querySelector<HTMLButtonElement>('[data-testid="document-button"]')
     const attachIcon = attachButtonElement?.querySelector('svg')
     let attachCentered = false
     let attachCenterDetail = 'button or icon missing'
@@ -1770,14 +1954,35 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     }
     document.querySelector<HTMLButtonElement>('[data-testid="outline-toggle"]')?.click()
     const outlineMounted = await waitFor(() => document.querySelector('[data-testid="outline-panel"]') !== null, 3_000)
-    const outlineItems = document.querySelectorAll('[data-testid="outline-item"]').length
+    const outlineQuestions = document.querySelectorAll(
+      '[data-testid="outline-item"][data-outline-role="question"]',
+    ).length
+    const answersInitiallyCollapsed = document.querySelectorAll('[data-testid="outline-answer"]').length === 0
+    const outlineAnswerToggles = document.querySelectorAll('[data-testid="outline-answer-toggle"]').length
+    document.querySelector<HTMLButtonElement>('[data-testid="outline-answer-toggle"]')?.click()
+    const answersShown = await waitFor(
+      () => document.querySelectorAll('[data-testid="outline-answer"]').length > 0,
+      2_000,
+    )
+    document.querySelector<HTMLButtonElement>('[data-testid="outline-answer-toggle"]')?.click()
+    const answersHiddenAgain = await waitFor(
+      () => document.querySelectorAll('[data-testid="outline-answer"]').length === 0,
+      2_000,
+    )
     document.querySelector<HTMLButtonElement>('[data-testid="outline-item"]')?.click()
     document.querySelector<HTMLButtonElement>('[data-testid="inspector-close"]')?.click()
     const outlineClosed = await waitFor(() => document.querySelector('[data-testid="inspector"]') === null, 2_000)
     document.querySelector<HTMLButtonElement>('.scroll-bottom')?.click()
     checks.outline = {
-      ok: outlineMounted && outlineItems > 0 && outlineClosed,
-      detail: `mounted=${outlineMounted} items=${outlineItems} closed=${outlineClosed}`,
+      ok:
+        outlineMounted &&
+        outlineQuestions > 0 &&
+        answersInitiallyCollapsed &&
+        outlineAnswerToggles > 0 &&
+        answersShown &&
+        answersHiddenAgain &&
+        outlineClosed,
+      detail: `mounted=${outlineMounted} questions=${outlineQuestions} collapsed=${answersInitiallyCollapsed} toggles=${outlineAnswerToggles} shown=${answersShown}/${answersHiddenAgain} closed=${outlineClosed}`,
     }
     if (!writeAlways) {
       await window.xcode.request({
@@ -1932,7 +2137,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail:
         imagePreview === null ? 'no pasted image' : imagePreview.ok ? 'data:image/png' : imagePreview.error.message,
     }
-    const pasteComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+    const pasteComposer = document.querySelector<HTMLElement>('[data-testid="composer-editor"]')
     if (pasteComposer) {
       const bytes = Uint8Array.from(atob(pngBase64), (char) => char.charCodeAt(0))
       const transfer = new DataTransfer()
@@ -1952,10 +2157,9 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         2_000,
       )
       const userCountBeforeImage = document.querySelectorAll('.message.user').length
-      const pasteValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      pasteValue?.call(pasteComposer, 'image attachment smoke')
-      pasteComposer.dispatchEvent(new Event('input', { bubbles: true }))
-      pasteComposer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      setComposer('image attachment smoke')
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      pressComposerKey('Enter')
       const imageUserSent = await waitFor(
         () => document.querySelectorAll('.message.user').length > userCountBeforeImage,
         4_000,
@@ -2618,15 +2822,14 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail: `mounted=${manualMounted} chapters=${manualChapters} images=${manualImages} filtered=${manualFiltered} content=${manualContent} closed=${manualClosed}`,
     }
 
-    const continuityComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+    const continuityComposer = composerEditor()
     const userCountBefore = document.querySelectorAll('.message.user').length
     let continuityDetail = 'composer missing'
     let continuityOk = false
     if (continuityComposer) {
-      const setTextareaValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setTextareaValue?.call(continuityComposer, 'ui continuity smoke')
-      continuityComposer.dispatchEvent(new Event('input', { bubbles: true }))
-      continuityComposer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      setComposer('ui continuity smoke')
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      pressComposerKey('Enter')
       const userAdded = await waitFor(() => document.querySelectorAll('.message.user').length > userCountBefore, 4_000)
       await waitFor(() => document.querySelector('.send.stop') !== null, 2_000)
       const turnSettled = await waitFor(() => document.querySelector('.send.stop') === null, 15_000)
@@ -2636,14 +2839,13 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       )
       editButton?.click()
       const editBadge = await waitFor(() => document.querySelector('[data-testid="edit-badge"]') !== null, 2_000)
-      const editPrefill = await waitFor(() => continuityComposer.value === 'ui continuity smoke', 2_000)
+      const editPrefill = await waitFor(() => composerText() === 'ui continuity smoke', 2_000)
       const lastAssistant = Array.from(document.querySelectorAll('.message.assistant')).pop()
       const regenerateButton = Array.from(lastAssistant?.querySelectorAll<HTMLButtonElement>('.copy-btn') ?? []).some(
         (button) => button.textContent?.includes('重新生成'),
       )
       document.querySelector<HTMLButtonElement>('[data-testid="edit-badge"] .attachment-remove')?.click()
-      setTextareaValue?.call(continuityComposer, 'draft-check')
-      continuityComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      setComposer('draft-check')
       await new Promise((resolve) => setTimeout(resolve, 250))
       const draftSaved = Object.keys(localStorage).some((key) => {
         if (!key.startsWith('xcode.draft.')) return false
@@ -2653,71 +2855,164 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
           return false
         }
       })
-      setTextareaValue?.call(continuityComposer, '')
-      continuityComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      setComposer('')
       continuityOk = userAdded && turnSettled && editBadge && editPrefill && regenerateButton && draftSaved
       continuityDetail = `user=${userAdded} settled=${turnSettled} edit=${editBadge}/${editPrefill} regen=${regenerateButton} draft=${draftSaved}`
     }
     checks.continuity = { ok: continuityOk, detail: continuityDetail }
 
-    const markdownComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+    // 运行中可以切到其他会话浏览；运行会话继续在后台接收事件。
+    const slowApproval: { request: { requestId: string; kind: string } | null } = { request: null }
+    const offSlowApproval = window.xcode.onEvent((event) => {
+      if (event.type === 'approval:request' && !slowApproval.request) {
+        slowApproval.request = { requestId: event.requestId, kind: event.kind }
+      }
+    })
+    // 之前的用例可能直接切换过运行时会话；先把 host 对齐到当前标签。
+    const activeBeforeSlow = document.querySelector('.tab-item.active')?.getAttribute('data-session-id') ?? ''
+    const slowSessionList = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'session:list',
+      params: {},
+    })
+    const slowSessionItem = slowSessionList.ok
+      ? (slowSessionList.result as SessionListItem[]).find((item) => item.sessionId === activeBeforeSlow)
+      : undefined
+    if (slowSessionItem) {
+      await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'session:load',
+        params: { filePath: slowSessionItem.filePath },
+      })
+    }
+    const slowTurn = window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'agent:submit',
+      params: { prompt: '[question-demo]' },
+    })
+    let slowEnded = false
+    const slowEvents: string[] = []
+    const offSlowEnd = window.xcode.onEvent((event) => {
+      if (event.type === 'agent:turn-end') slowEnded = true
+      if (event.type.startsWith('agent:') || event.type === 'approval:request') {
+        slowEvents.push(
+          `${event.type}${event.type === 'agent:turn-start' || event.type === 'agent:turn-end' ? `:${event.sessionId}` : ''}`,
+        )
+      }
+    })
+    const slowApprovalReady = await waitFor(() => slowApproval.request !== null, 3_000)
+    const slowBusy = await waitFor(() => document.querySelector('.tab-busy') !== null, 2_000)
+    const slowTab = document.querySelector('.tab-item.active')?.getAttribute('data-session-id') ?? ''
+    const sessionRowIds = new Set(
+      Array.from(document.querySelectorAll('.sidebar-session-row')).map((row) => row.getAttribute('data-session-id')),
+    )
+    const otherTab = Array.from(document.querySelectorAll<HTMLElement>('.tab-item')).find(
+      (tab) =>
+        tab.getAttribute('data-session-id') !== slowTab && sessionRowIds.has(tab.getAttribute('data-session-id') ?? ''),
+    )
+    otherTab?.querySelector<HTMLButtonElement>('.tab-label')?.click()
+    const switchedAway = await waitFor(
+      () => document.querySelector('.tab-item.active')?.getAttribute('data-session-id') !== slowTab,
+      3_000,
+    )
+    const backgroundBanner = await waitFor(
+      () => document.querySelector('[data-testid="background-session"]') !== null,
+      2_000,
+    )
+    const runningTabBusy =
+      document.querySelector('.tab-busy')?.closest('.tab-item')?.getAttribute('data-session-id') === slowTab
+    document.querySelector<HTMLButtonElement>(`.tab-item[data-session-id="${slowTab}"] .tab-label`)?.click()
+    const restoredRunningTab = await waitFor(
+      () => document.querySelector('.tab-item.active')?.getAttribute('data-session-id') === slowTab,
+      3_000,
+    )
+    if (slowApproval.request) {
+      const pending = slowApproval.request
+      void window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'approval:respond',
+        params:
+          pending.kind === 'question'
+            ? { requestId: pending.requestId, kind: 'question', answer: '继续' }
+            : { requestId: pending.requestId, kind: pending.kind, decision: 'yes' },
+      } as RuntimeRequest)
+    }
+    const slowResponse = await slowTurn
+    offSlowApproval()
+    offSlowEnd()
+    const slowText = await waitFor(
+      () =>
+        (document.querySelector('.chat')?.textContent ?? '').includes('已收到工具结果') ||
+        document.querySelectorAll('.chat > .tool-card').length > 0,
+      4_000,
+    )
+    checks.backgroundSession = {
+      ok:
+        slowResponse.ok &&
+        slowApprovalReady &&
+        slowBusy &&
+        Boolean(otherTab) &&
+        switchedAway &&
+        backgroundBanner &&
+        runningTabBusy &&
+        restoredRunningTab &&
+        slowText,
+      detail: `approval=${slowApprovalReady} busy=${slowBusy} other=${Boolean(otherTab)} away=${switchedAway} banner=${backgroundBanner} tabBusy=${runningTabBusy} back=${restoredRunningTab} text=${slowText} ended=${slowEnded} running=${document.querySelector('.app')?.getAttribute('data-running-session')} active=${document.querySelector('.tab-item.active')?.getAttribute('data-session-id')} slowTab=${slowTab} stop=${Boolean(document.querySelector('.send.stop'))} modal=${Boolean(document.querySelector('.approval-card'))} tabs=${document.querySelectorAll('.tab-item').length} ok=${slowResponse.ok} err=${slowResponse.ok ? '' : slowResponse.error.code} events=${slowEvents.slice(0, 12).join(',')}`,
+    }
+
+    const markdownComposer = composerEditor()
     let markdownComposerOk = false
     let markdownComposerDetail = 'composer missing'
     if (markdownComposer) {
-      const setTextareaValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setTextareaValue?.call(markdownComposer, 'bold text')
-      markdownComposer.dispatchEvent(new Event('input', { bubbles: true }))
-      await new Promise((resolve) => setTimeout(resolve, 50))
-      markdownComposer.focus()
-      markdownComposer.setSelectionRange(0, 4)
-      document.querySelector<HTMLButtonElement>('[data-testid="markdown-toggle"]')?.click()
-      const toolbar = await waitFor(() => document.querySelector('[data-testid="markdown-toolbar"]') !== null, 2_000)
-      document.querySelector<HTMLButtonElement>('[data-testid="markdown-bold"]')?.click()
-      const wrapped = await waitFor(() => markdownComposer.value === '**bold** text', 2_000)
-      document.querySelector<HTMLButtonElement>('[data-testid="markdown-preview-toggle"]')?.click()
-      const preview = await waitFor(
-        () => document.querySelector('[data-testid="markdown-preview"] strong')?.textContent === 'bold',
-        2_000,
-      )
-      markdownComposerOk = toolbar && wrapped && preview
-      markdownComposerDetail = `toolbar=${toolbar} wrapped=${wrapped} preview=${preview}`
-      setTextareaValue?.call(markdownComposer, '')
-      markdownComposer.dispatchEvent(new Event('input', { bubbles: true }))
-      document.querySelector<HTMLButtonElement>('[data-testid="markdown-toggle"]')?.click()
-      await waitFor(() => document.querySelector('[data-testid="markdown-toolbar"]') === null, 2_000)
+      setComposer('bold text')
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      markdownComposer.commands.setTextSelection({ from: 1, to: 5 })
+      pressComposerKey('b', { metaKey: true })
+      const bolded = await waitFor(() => markdownComposer.getMarkdown().includes('**bold**'), 2_000)
+      markdownComposerOk = bolded
+      markdownComposerDetail = `shortcutBold=${bolded}`
+      setComposer('')
     }
     checks.markdownComposer = { ok: markdownComposerOk, detail: markdownComposerDetail }
 
-    const imeComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+    // 富文本内容发送后仍要还原为 Markdown 并正常渲染。
+    const richBefore = document.querySelectorAll('.message.user').length
+    setComposer('rich **bold** send')
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    pressComposerKey('Enter')
+    const richSent = await waitFor(() => document.querySelectorAll('.message.user').length > richBefore, 4_000)
+    const lastRich = Array.from(document.querySelectorAll('.message.user')).pop()
+    const richBold = lastRich?.querySelector('strong')?.textContent === 'bold'
+    checks.richSend = {
+      ok: richSent && richBold,
+      detail: `sent=${richSent} bold=${richBold}`,
+    }
+    await waitFor(() => document.querySelector('.send.stop') === null, 15_000)
+
+    const imeComposer = document.querySelector<HTMLElement>('[data-testid="composer-editor"]')
     let imeOk = false
     let imeDetail = 'composer missing'
-    if (imeComposer) {
-      const setImeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setImeValue?.call(imeComposer, 'ime composing test')
-      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+    if (imeComposer && composerEditor()) {
+      setComposer('ime composing test')
       await new Promise((resolve) => setTimeout(resolve, 50))
       imeComposer.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: true }),
       )
       await new Promise((resolve) => setTimeout(resolve, 100))
-      imeOk = imeComposer.value === 'ime composing test'
+      imeOk = composerText().trim() === 'ime composing test'
       imeDetail = imeOk ? 'composing Enter kept the draft' : 'composing Enter submitted the draft'
-      setImeValue?.call(imeComposer, '')
-      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      setComposer('')
     }
     checks.imeEnter = { ok: imeOk, detail: imeDetail }
 
     const imeAfterComposition = imeComposer
       ? (() => {
-          const setImeValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-          setImeValue?.call(imeComposer, 'ime after composing test')
-          imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+          setComposer('ime after composing test')
           imeComposer.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
           imeComposer.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
           imeComposer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
-          const kept = imeComposer.value === 'ime after composing test'
-          setImeValue?.call(imeComposer, '')
-          imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+          const kept = composerText() === 'ime after composing test'
+          setComposer('')
           return kept
         })()
       : false
@@ -2730,16 +3025,13 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
 
     let composerGrowth = false
     let composerGrowthDetail = 'composer missing'
-    if (imeComposer) {
-      const setGrowthValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setGrowthValue?.call(imeComposer, Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join('\n'))
-      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+    if (composerEditor()) {
+      setComposer(Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join('\n\n'))
       await new Promise((resolve) => setTimeout(resolve, 80))
-      const height = imeComposer.getBoundingClientRect().height
+      const height = composerHeight()
       composerGrowth = height > 80
       composerGrowthDetail = `height=${Math.round(height)}px`
-      setGrowthValue?.call(imeComposer, '')
-      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      setComposer('')
     }
     checks.composerGrowth = {
       ok: composerGrowth,
@@ -2748,23 +3040,24 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
 
     let composerRefit = false
     let composerRefitDetail = 'composer missing'
-    if (imeComposer) {
-      const setRefitValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+    if (composerEditor()) {
       const longLine = 'x'.repeat(60)
-      setRefitValue?.call(imeComposer, Array.from({ length: 6 }, () => longLine).join('\n'))
-      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      setComposer(Array.from({ length: 3 }, () => longLine).join('\n\n'))
       await new Promise((resolve) => setTimeout(resolve, 80))
-      const before = imeComposer.getBoundingClientRect().height
-      // 打开 Inspector 会收窄输入框，折行变多后高度需要跟着重算。
-      // 输入框是 flex 子项，必须同时取消 flex 才能让宽度真正变窄。
-      imeComposer.style.flex = 'none'
-      imeComposer.style.width = '45%'
+      const element = document.querySelector<HTMLElement>('.composer-editor')
+      const before = element?.getBoundingClientRect().height ?? 0
+      // 打开 Inspector 会收窄输入框，折行变多后高度需要跟着增长。
+      if (element) {
+        element.style.flex = 'none'
+        element.style.width = '45%'
+      }
       await new Promise((resolve) => setTimeout(resolve, 120))
-      const after = imeComposer.getBoundingClientRect().height
-      imeComposer.style.width = ''
-      imeComposer.style.flex = ''
-      setRefitValue?.call(imeComposer, '')
-      imeComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      const after = element?.getBoundingClientRect().height ?? 0
+      if (element) {
+        element.style.width = ''
+        element.style.flex = ''
+      }
+      setComposer('')
       composerRefit = after > before
       composerRefitDetail = `${Math.round(before)}px -> ${Math.round(after)}px`
     }
@@ -2789,7 +3082,9 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     captureButton?.click()
     const captureMenu = await waitFor(() => document.querySelector('[data-testid="capture-menu"]') !== null, 2_000)
     const captureMenuText = document.querySelector('[data-testid="capture-menu"]')?.textContent ?? ''
-    const captureOptions = captureMenuText.includes('框选区域') && captureMenuText.includes('整个屏幕')
+    const captureOptions =
+      captureMenuText.includes('框选区域') &&
+      (captureMenuText.includes('整个屏幕') || captureMenuText.includes('主屏幕'))
     document.querySelector<HTMLDivElement>('.capture-scrim')?.click()
     const captureMenuClosed = await waitFor(
       () => document.querySelector('[data-testid="capture-menu"]') === null,
@@ -3368,16 +3663,13 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     document.querySelector<HTMLButtonElement>('.sidebar-sessions-section .sidebar-add')?.click()
     await waitFor(() => document.querySelector('.sidebar-session-placeholder') !== null, 2_000)
     const newSessionId = document.querySelector('.tab-item.active')?.getAttribute('data-session-id') ?? ''
-    const saveComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+    const saveComposer = composerEditor()
     let newSessionTitle = false
     let newSessionRow = false
     if (saveComposer && newSessionId) {
-      const setSaveValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setSaveValue?.call(saveComposer, 'smoke autosave title')
-      saveComposer.dispatchEvent(new Event('input', { bubbles: true }))
-      saveComposer.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: false }),
-      )
+      setComposer('smoke autosave title')
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      pressComposerKey('Enter')
       newSessionTitle = await waitFor(
         () =>
           document
@@ -3399,16 +3691,13 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     }
 
     await waitFor(() => document.querySelector('.tab-busy') === null, 5_000)
-    const guardComposer = document.querySelector<HTMLTextAreaElement>('.composer textarea')
+    const guardComposer = composerEditor()
     let workspaceGuardShown = false
     let workspaceGuardClosed = false
     if (guardComposer) {
-      const setGuardValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setGuardValue?.call(guardComposer, '看看 /Users/example/other-project/file.ts')
-      guardComposer.dispatchEvent(new Event('input', { bubbles: true }))
-      guardComposer.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: false }),
-      )
+      setComposer('看看 /Users/example/other-project/file.ts')
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      pressComposerKey('Enter')
       workspaceGuardShown = await waitFor(
         () => document.querySelector('[data-testid="workspace-guard"]') !== null,
         3_000,
@@ -3420,8 +3709,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         () => document.querySelector('[data-testid="workspace-guard"]') === null,
         2_000,
       )
-      setGuardValue?.call(guardComposer, '')
-      guardComposer.dispatchEvent(new Event('input', { bubbles: true }))
+      setComposer('')
     }
     checks.workspaceGuard = {
       ok: workspaceGuardShown && workspaceGuardClosed,

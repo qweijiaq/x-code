@@ -8,19 +8,31 @@ import {
   BackgroundTaskRegistry,
   KEEP_RECENT_TOKENS,
   MIN_CONTEXT_WINDOW_OVERRIDE,
+  PROVIDERS,
   WEB_SEARCH_PROVIDERS,
   addSessionAllowRule,
+  admitGoalInput,
   agentLoop,
   appendCheckpoint,
+  appendGoalInput,
+  appendGoalState,
+  appendGoalVerification,
   buildContextBreakdownInput,
+  buildServerPreview,
   buildUserContent,
   calibrateContextBreakdown,
+  cancelGoal,
   capabilitiesOf,
   captureSessionForkSnapshot,
   classifyApiError,
+  clearCodeIndex as clearCoreCodeIndex,
+  clearGoal,
+  clearOpenAIChatGPTCredentials,
   clearPluginEntry,
   clearPluginUserConfig,
+  collectContextResults,
   compressTrackedMessagesWithUsage,
+  createGoal,
   createLoopState,
   createModelRegistry,
   ensureDefaultWorkspace,
@@ -28,30 +40,49 @@ import {
   expandCommandBody,
   extractFileReferences,
   extractText,
+  flushToolAudit,
   forkSession as forkSessionFile,
+  getAvailableProviders,
   getContextWindow,
   getDiffStatsForCheckpoint,
   getModelContextWindowOverride,
   getModelPricing,
   getPluginUserConfig,
+  getProviderModels,
   getSessionFilePath,
   hydrateLoopState,
+  indexCode as indexCodeAtPath,
+  initializeOpenAIAuthContext,
+  isProjectTrusted,
   listSessions,
   loadSession as loadCoreSession,
   loadLocalHookConfigs,
   loadPluginCommands,
   loadUserConfig,
   localHookPaths,
+  loginOpenAIChatGPTWithBrowser,
+  loginOpenAIChatGPTWithDevice,
   markBoundaryAndReflush,
   modelSupportsVision,
   parseHookConfig,
+  pauseGoal,
   persistRule,
+  providerOf,
+  codeIndexStats as readCodeIndexStats,
+  readMcpServersFromFile,
+  readOpenAIChatGPTCredentials,
   readPersistedRules,
   readTurnTraces,
+  refreshOpenAIChatGPTModels,
   reloadSkillRegistry,
+  remainingTokenBudget,
   removePersistedRule,
   removeSessionAllowRule,
   restoreCheckpoint,
+  resumeGoal,
+  revokeOpenAIChatGPTCredentials,
+  runGoalLoop,
+  runVerifierLadder,
   salvageSession as salvageSessionFile,
   saveSession,
   saveUserConfig,
@@ -66,14 +97,22 @@ import {
   shutdownBrowserMcp,
   testWebSearchProvider,
   toolRegistry,
+  trustProject,
   uninstallPlugin,
+  untrustProject,
   userXcodeDir,
+  withOpenAIChatGPTCredentialLock,
+  writeOpenAIChatGPTCredentials,
 } from '@x-code-cli/core'
 import type {
   AgentCallbacks,
+  AgentOptions,
   AllowRule,
   AuthorityApproval,
   FileEntry,
+  GoalAttempt,
+  GoalVerificationResult,
+  GoalVerifier,
   IngestedPart,
   LanguageModel,
   LoopState,
@@ -90,13 +129,22 @@ import type {
   BackupExportView,
   BackupImportView,
   BranchListView,
+  CodeIndexResultView,
+  CodeIndexStatsView,
   CompactResult,
+  ContextSearchResponse,
+  ContextSearchSourceView,
   CustomCommandView,
   DiagnosticsExportResult,
   EnvironmentRefreshResult,
   FileReadView,
   FileTreeEntryView,
   GitStatusView,
+  GoalAttemptView,
+  GoalCreateInput,
+  GoalVerificationView,
+  GoalVerifierView,
+  GoalView,
   HooksView,
   LibraryIndexResultView,
   LibrarySearchView,
@@ -111,6 +159,7 @@ import type {
   PluginInstallTarget,
   ProjectCheckResultView,
   ProjectSettingsView,
+  ProjectTrustView,
   RewindCheckpointView,
   RewindResultView,
   RuntimeEvent,
@@ -150,6 +199,7 @@ import {
 import type { ActiveTurn, PendingApproval, TurnResult } from './agent-host-support.js'
 import { DEMO_MODEL_ID, bootstrapRuntime } from './bootstrap.js'
 import type { RuntimeBootstrap } from './bootstrap.js'
+import { CodeIndexWatcher } from './code-index-watcher.js'
 import { testProviderConnection } from './connection-test.js'
 import { createDemoModel } from './demo-model.js'
 import { applySearchProviderPreference, loadDesktopSettings, saveDesktopSettings } from './desktop-settings.js'
@@ -258,6 +308,9 @@ export class AgentHost {
   private fileIndex: { workspace: string; entries: FileEntry[]; at: number } | null = null
   private taskMode: TaskMode = DEFAULT_TASK_MODE
   private autoChecksRunning = false
+  private autoFixRound = 0
+  private autoFixRemaining = 0
+  private readonly autoFixMaxRounds = 3
   private lastCheckResults: CheckResult[] = []
   private gitCheckpoints = new Map<string, GitCheckpoint>()
   private latestCheckpoint: GitCheckpoint | null = null
@@ -269,6 +322,7 @@ export class AgentHost {
   private turnSeq = 0
   private approvalSeq = 0
   private skillPollTimer: ReturnType<typeof setInterval> | null = null
+  private codeIndexWatcher: CodeIndexWatcher | null = null
   private skillSignature = ''
   private titleGenerating = new Set<string>()
 
@@ -475,6 +529,7 @@ export class AgentHost {
       if (model) void saveSession(this.loopState, model).catch(() => undefined)
     }
     this.cancelAllApprovals()
+    this.stopCodeIndexWatcher()
     this.workspaceOverride = resolved
     this.shellUnsubscribe?.()
     this.shellUnsubscribe = null
@@ -486,6 +541,7 @@ export class AgentHost {
     this.rememberWorkspace(resolved, !this.fixedWorkspace)
     this.send({ type: 'app:state', state: this.getState() })
     void this.emitSettings()
+    if (loadDesktopSettings().autoCodeIndex) this.startCodeIndexWatcher()
     return this.settingsResult()
   }
 
@@ -502,6 +558,16 @@ export class AgentHost {
     const existing = loadDesktopSettings().recentProjects ?? []
     const next = [resolved, ...existing.filter((entry) => path.resolve(entry) !== resolved)].slice(0, 20)
     saveDesktopSettings({ recentProjects: next, ...(persistLast ? { lastWorkspace: resolved } : {}) })
+  }
+
+  /** 只读打开会话，不替换当前 loopState；用于另一个标签正在运行时浏览历史。 */
+  async peekSession(filePath: string): Promise<LoadedSessionView> {
+    const loaded = await loadSessionView(filePath)
+    if (!loaded) throw new Error(`session-not-found: ${filePath}`)
+    if (loaded.loaded.transcriptIntegrity === 'failed') {
+      throw new Error('该会话的 transcript 完整性校验失败，可能已损坏，已拒绝加载。')
+    }
+    return loaded.view
   }
 
   async loadSession(filePath: string): Promise<LoadedSessionView> {
@@ -924,6 +990,52 @@ export class AgentHost {
     return this.library.clear()
   }
 
+  async codeIndexStats(): Promise<CodeIndexStatsView> {
+    if (loadDesktopSettings().autoCodeIndex) this.startCodeIndexWatcher()
+    return { ...(await readCodeIndexStats()), autoIndex: loadDesktopSettings().autoCodeIndex === true }
+  }
+
+  setAutoCodeIndex(enabled: boolean): { enabled: boolean } {
+    saveDesktopSettings({ autoCodeIndex: enabled })
+    if (enabled) this.startCodeIndexWatcher()
+    else this.stopCodeIndexWatcher()
+    return { enabled }
+  }
+
+  private startCodeIndexWatcher(): void {
+    if (!loadDesktopSettings().autoCodeIndex) return
+    this.stopCodeIndexWatcher()
+    this.codeIndexWatcher = new CodeIndexWatcher({
+      root: this.workspaceRoot(),
+      onIndex: async () => {
+        if (this.activeTurn) return
+        await this.indexCode(this.workspaceRoot(), true)
+      },
+    })
+    this.codeIndexWatcher.start()
+  }
+
+  private stopCodeIndexWatcher(): void {
+    this.codeIndexWatcher?.stop()
+    this.codeIndexWatcher = null
+  }
+
+  async indexCode(target?: string, semantic = true): Promise<CodeIndexResultView> {
+    this.assertIdle()
+    const resolved = target?.trim() || this.workspaceRoot()
+    const result = await indexCodeAtPath(resolved, {
+      semantic,
+      onProgress: (progress) => this.send({ type: 'code-index:progress', ...progress }),
+    })
+    if (loadDesktopSettings().autoCodeIndex) this.startCodeIndexWatcher()
+    return result
+  }
+
+  async clearCodeIndex(): Promise<null> {
+    await clearCoreCodeIndex()
+    return null
+  }
+
   async gitStatusView(): Promise<GitStatusView> {
     return this.git.status()
   }
@@ -1015,7 +1127,10 @@ export class AgentHost {
     return this.sessions.search(query, limit)
   }
 
-  async exportSession(filePath: string, format: 'markdown' | 'json' | 'pdf'): Promise<{ path: string; size: number }> {
+  async exportSession(
+    filePath: string,
+    format: 'markdown' | 'json' | 'html' | 'pdf',
+  ): Promise<{ path: string; size: number }> {
     return exportSessionFile(filePath, format)
   }
 
@@ -1038,12 +1153,19 @@ export class AgentHost {
     stopOnFailure = true,
   ): Promise<{ results: ProjectCheckResultView[]; summary: string; fixPrompt: string }> {
     if (this.autoChecksRunning) throw new Error('checks-busy')
-    const results = await runProjectChecks(this.requireBootstrap().workspace, { ids, stopOnFailure })
-    this.lastCheckResults = results
-    return {
-      results: results.map(toCheckResultView),
-      summary: summarizeCheckResults(results),
-      fixPrompt: failuresForAgent(results),
+    // 手动运行也占用同一个 busy 标志，避免与轮后自动检查并行跑同一套
+    // pnpm test / cargo test。
+    this.autoChecksRunning = true
+    try {
+      const results = await runProjectChecks(this.requireBootstrap().workspace, { ids, stopOnFailure })
+      this.lastCheckResults = results
+      return {
+        results: results.map(toCheckResultView),
+        summary: summarizeCheckResults(results),
+        fixPrompt: failuresForAgent(results),
+      }
+    } finally {
+      this.autoChecksRunning = false
     }
   }
 
@@ -1057,15 +1179,50 @@ export class AgentHost {
     return this.projectOverrides().autoChecks ?? settings.autoChecks === true
   }
 
-  checksStatus(): { autoChecks: boolean; lastResults?: ProjectCheckResultView[] } {
+  private autoFixChecksEnabled(): boolean {
+    return loadDesktopSettings().autoFixChecks === true
+  }
+
+  checksStatus(): { autoChecks: boolean; autoFixChecks: boolean; lastResults?: ProjectCheckResultView[] } {
     return {
       autoChecks: this.autoChecksEnabled(),
+      autoFixChecks: this.autoFixChecksEnabled(),
       ...(this.lastCheckResults.length > 0 ? { lastResults: this.lastCheckResults.map(toCheckResultView) } : {}),
     }
   }
 
+  setAutoFixChecks(enabled: boolean): { enabled: boolean } {
+    saveDesktopSettings({ autoFixChecks: enabled })
+    if (!enabled) {
+      this.autoFixRound = 0
+      this.autoFixRemaining = 0
+    }
+    return { enabled }
+  }
+
   setAutoChecks(enabled: boolean): { enabled: boolean } {
-    saveDesktopSettings({ autoChecks: enabled })
+    const workspace = path.resolve(this.requireBootstrap().workspace)
+    const settings = loadDesktopSettings()
+    const overrides = settings.projectSettings?.[workspace]
+    // 项目覆盖存在时，写全局值会被它遮蔽，按钮看起来失效。这里优先更新
+    // 当前项目的覆盖；没有覆盖才写全局默认。
+    if (overrides?.autoChecks !== undefined) {
+      saveDesktopSettings({
+        projectSettings: {
+          ...(settings.projectSettings ?? {}),
+          [workspace]: { ...overrides, autoChecks: enabled },
+        },
+      })
+    } else {
+      saveDesktopSettings({ autoChecks: enabled })
+    }
+    // 关闭自动检查时同时关闭自动修复，避免用户重新打开自动检查后
+    // 意外恢复一个之前开着的修复循环。
+    if (!enabled) {
+      saveDesktopSettings({ autoFixChecks: false })
+      this.autoFixRound = 0
+      this.autoFixRemaining = 0
+    }
     return { enabled }
   }
 
@@ -1089,7 +1246,7 @@ export class AgentHost {
     taskMode?: string | null
     autoChecks?: boolean | null
   }): Promise<SettingsActionResult> {
-    if (this.activeTurn) throw new Error('turn-busy')
+    if (this.activeTurn && update.modelId !== undefined) throw new Error('turn-busy')
     const workspace = path.resolve(this.requireBootstrap().workspace)
     const settings = loadDesktopSettings()
     const next: ProjectOverrides = { ...(settings.projectSettings?.[workspace] ?? {}) }
@@ -1118,11 +1275,16 @@ export class AgentHost {
         this.loopState.systemPromptCache = null
         this.loopState.systemPromptBlocks = undefined
       }
-    } else if (update.taskMode === null && isTaskMode(settings.taskMode ?? '') && settings.taskMode !== this.taskMode) {
-      this.taskMode = settings.taskMode as TaskMode
-      if (this.loopState) {
-        this.loopState.systemPromptCache = null
-        this.loopState.systemPromptBlocks = undefined
+    } else if (update.taskMode === null) {
+      // 清除项目覆盖时必须回到全局值；全局从未设置过就回到默认，
+      // 而不是把旧的项目覆盖值留在内存里。
+      const nextMode = isTaskMode(settings.taskMode ?? '') ? (settings.taskMode as TaskMode) : DEFAULT_TASK_MODE
+      if (nextMode !== this.taskMode) {
+        this.taskMode = nextMode
+        if (this.loopState) {
+          this.loopState.systemPromptCache = null
+          this.loopState.systemPromptBlocks = undefined
+        }
       }
     }
     if (next.modelId && this.state?.models.some((model) => model.id === next.modelId)) {
@@ -1154,6 +1316,8 @@ export class AgentHost {
     attachmentsOlderThanDays?: number
     library?: boolean
     whisperModels?: boolean
+    diagnostics?: boolean
+    documents?: boolean
   }): Promise<{ deletedFiles: number; freedBytes: number; usage: StorageUsageView }> {
     return this.storage.cleanup(options)
   }
@@ -1186,18 +1350,82 @@ export class AgentHost {
     return this.settingsResult()
   }
 
-  private async runAutoChecks(): Promise<void> {
+  private async runAutoChecks(autoFixTurn = false, allowAutoFix = true): Promise<void> {
     if (this.autoChecksRunning) return
     this.autoChecksRunning = true
     try {
+      // 新的用户轮次重新获得 3 次自动修复预算；自动修复轮次沿用剩余次数。
+      if (!autoFixTurn) {
+        this.autoFixRound = 0
+        this.autoFixRemaining = allowAutoFix && this.autoFixChecksEnabled() ? this.autoFixMaxRounds : 0
+      }
       const results = await runProjectChecks(this.requireBootstrap().workspace, { stopOnFailure: true })
       if (results.length === 0) return
       this.lastCheckResults = results
+      const fixPrompt = failuresForAgent(results)
       this.send({
         type: 'checks:finished',
         results: results.map(toCheckResultView),
         auto: true,
-        fixPrompt: failuresForAgent(results),
+        fixPrompt,
+      })
+
+      const failed = results.filter((result) => result.status === 'failed' || result.status === 'timeout')
+      if (failed.length === 0) {
+        if (autoFixTurn) {
+          this.send({
+            type: 'checks:auto-fix',
+            status: 'passed',
+            round: this.autoFixRound,
+            maxRounds: this.autoFixMaxRounds,
+          })
+        }
+        this.autoFixRound = 0
+        this.autoFixRemaining = 0
+        return
+      }
+      if (!allowAutoFix) return
+      const action = autoFixAction({
+        enabled: this.autoFixChecksEnabled(),
+        failedCount: failed.length,
+        remaining: this.autoFixRemaining,
+        hasFixPrompt: Boolean(fixPrompt),
+        round: this.autoFixRound,
+      })
+      if (action === 'none') return
+      if (action === 'exhausted') {
+        this.send({
+          type: 'checks:auto-fix',
+          status: 'exhausted',
+          round: this.autoFixRound,
+          maxRounds: this.autoFixMaxRounds,
+        })
+        return
+      }
+
+      this.autoFixRemaining -= 1
+      this.autoFixRound += 1
+      const round = this.autoFixRound
+      this.send({
+        type: 'checks:auto-fix',
+        status: 'started',
+        round,
+        maxRounds: this.autoFixMaxRounds,
+      })
+      const prompt =
+        `自动验证修复（第 ${round}/${this.autoFixMaxRounds} 轮）。项目检查未通过。\n` +
+        '请直接修复以下问题，然后停止并等待复检；不要询问用户，也不要只解释原因。\n\n' +
+        fixPrompt
+      void this.submit(prompt, [], { autoFix: true }).catch((error) => {
+        this.autoFixRound = 0
+        this.autoFixRemaining = 0
+        this.send({
+          type: 'checks:auto-fix',
+          status: 'failed',
+          round,
+          maxRounds: this.autoFixMaxRounds,
+          message: error instanceof Error ? error.message : String(error),
+        })
       })
     } catch {
       // 自动检查是建议性的；此处绝不把失败当作轮次错误上报。
@@ -1239,7 +1467,6 @@ export class AgentHost {
 
   /** 重新探测 Ollama / LM Studio 并就地刷新模型列表。 */
   async discoverLocal(): Promise<AppState> {
-    if (this.activeTurn) throw new Error('turn-busy')
     const local = await discoverLocalModels(true)
     if (this.state) {
       this.state.models = [
@@ -1319,8 +1546,9 @@ export class AgentHost {
     return lines.join('\n')
   }
 
-  async submit(prompt: string, attachments: string[] = []): Promise<TurnResult> {
+  async submit(prompt: string, attachments: string[] = [], options: { autoFix?: boolean } = {}): Promise<TurnResult> {
     if (this.activeTurn) throw new Error('turn-busy')
+    const autoFixTurn = options.autoFix === true
     // 缓存 30 秒：使其他终端安装的工具在下一轮可见，
     // 且无需每轮都付出登录 shell 启动的成本。
     await refreshShellEnvironment()
@@ -1406,7 +1634,17 @@ export class AgentHost {
         this.notify('任务失败', '本轮执行失败，打开应用查看错误详情', state.sessionId)
       }
       if (reason === 'completed' && this.autoChecksEnabled()) {
-        void this.runAutoChecks()
+        void this.runAutoChecks(autoFixTurn)
+      } else if (autoFixTurn) {
+        this.autoFixRound = 0
+        this.autoFixRemaining = 0
+        this.send({
+          type: 'checks:auto-fix',
+          status: 'failed',
+          round: 0,
+          maxRounds: this.autoFixMaxRounds,
+          message: reason,
+        })
       }
     }
 
@@ -1661,7 +1899,6 @@ export class AgentHost {
   }
 
   async saveMemoryTopic(id: string, content: string): Promise<MemoryPanelView> {
-    if (this.activeTurn) throw new Error('turn-busy')
     if (content.length > 1_000_000) throw new Error('主题内容超过 1MB')
     const topicId = this.assertMemoryId(id)
     const file = this.memoryTopicPath(topicId)
@@ -1675,7 +1912,6 @@ export class AgentHost {
   }
 
   async deleteMemoryTopic(id: string): Promise<MemoryPanelView> {
-    if (this.activeTurn) throw new Error('turn-busy')
     const file = this.memoryTopicPath(id)
     await fs.promises.unlink(file).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error
@@ -1754,7 +1990,6 @@ export class AgentHost {
     body: string
     scope: 'user' | 'project'
   }): Promise<{ commands: CustomCommandView[] }> {
-    if (this.activeTurn) throw new Error('turn-busy')
     const body = input.body.trim()
     if (!body) throw new Error('命令内容不能为空')
     if (body.length > 200_000) throw new Error('命令内容超过 200KB')
@@ -1770,7 +2005,6 @@ export class AgentHost {
   }
 
   async deleteCommand(name: string, scope: 'user' | 'project'): Promise<{ commands: CustomCommandView[] }> {
-    if (this.activeTurn) throw new Error('turn-busy')
     const file = this.commandFilePath(name, scope)
     await fs.promises.unlink(file).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error
@@ -1834,6 +2068,11 @@ export class AgentHost {
 
   private workspaceRoot(): string {
     return path.resolve(this.requireBootstrap().workspace)
+  }
+
+  /** 文档/媒体访问守卫需要知道当前工作区根；只暴露根路径，不暴露内部状态。 */
+  documentWorkspaceRoot(): string {
+    return this.workspaceRoot()
   }
 
   /** 对最深的现有祖先做符号链接解析，然后检查
@@ -2106,11 +2345,291 @@ export class AgentHost {
   }
 
   goalReport(): TextReport {
-    const goal = this.loopState?.goal
-    if (!goal) return { text: '当前没有 goal。' }
-    const lines = ['Goal', '', `- 状态：${goal.status}`, `- 目标：${goal.objective}`, `- 轮次：${goal.turnCount}`]
-    if (goal.finalSummary) lines.push(`- 总结：${goal.finalSummary}`)
+    const view = this.goalState()
+    if (!view) return { text: '当前没有 goal。' }
+    const lines = [
+      'Goal',
+      '',
+      `- 状态：${view.status}`,
+      `- 目标：${view.objective}`,
+      `- 轮次：${view.turnCount}${view.maxTurns ? ` / ${view.maxTurns}` : ''}`,
+      `- Token：${view.tokensUsed}${view.tokenBudget ? ` / ${view.tokenBudget}` : ''}`,
+    ]
+    for (const verifier of view.verifiers) lines.push(`- 验证：${verifier.label} · ${verifier.detail}`)
+    if (view.finalSummary) lines.push(`- 总结：${view.finalSummary}`)
     return { text: lines.join('\n') }
+  }
+
+  /** 结构化 Goal 视图，供桌面面板使用。 */
+  goalState(): GoalView | null {
+    const state = this.loopState
+    const goal = state?.goal
+    if (!state || !goal) return null
+    const tokensUsed = Math.max(0, state.tokenUsage.totalTokens - goal.baselineTokens)
+    const remaining = remainingTokenBudget(goal, state)
+    return {
+      id: goal.id,
+      objective: goal.objective,
+      status: goal.status,
+      createdAt: goal.createdAt,
+      updatedAt: goal.updatedAt,
+      ...(goal.maxTurns !== undefined ? { maxTurns: goal.maxTurns } : {}),
+      turnCount: goal.turnCount,
+      ...(goal.tokenBudget !== undefined ? { tokenBudget: goal.tokenBudget } : {}),
+      tokensUsed,
+      ...(remaining !== undefined ? { remainingTokens: remaining } : {}),
+      verifiers: goal.verifiers.map((verifier) => toGoalVerifierView(verifier)),
+      verificationResults: goal.verificationResults.slice(-8).map((result) => toGoalVerificationView(result)),
+      attempts: goal.attempts.slice(-10).map((attempt) => toGoalAttemptView(attempt)),
+      ...(goal.finalSummary ? { finalSummary: goal.finalSummary } : {}),
+      ...(goal.lastBlocker ? { lastBlocker: goal.lastBlocker } : {}),
+      requiresUserConfirmation: goal.requiresUserConfirmation === true,
+      ...(goal.pendingTransition ? { pendingTransition: goal.pendingTransition.kind } : {}),
+    }
+  }
+
+  async searchContext(
+    query: string,
+    scopes?: ContextSearchSourceView[],
+    limit?: number,
+  ): Promise<ContextSearchResponse> {
+    const trimmed = query.trim()
+    if (!trimmed) return { query, results: [], notes: ['Enter a search query.'] }
+    const bootstrap = this.requireBootstrap()
+    const state = this.loopState ?? createLoopState('default', { projectCwd: bootstrap.workspace })
+    const result = await collectContextResults(
+      {
+        projectCwd: bootstrap.workspace,
+        state,
+        ...(bootstrap.memoryService ? { memoryService: bootstrap.memoryService } : {}),
+      },
+      trimmed,
+      scopes,
+      Math.min(limit ?? 6, 20),
+    )
+    return result
+  }
+
+  async createGoalFromInput(input: GoalCreateInput): Promise<GoalView> {
+    this.assertIdle()
+    if (!this.demo && !this.model) throw new Error('no-model-configured')
+    const state = this.goalLoopState()
+    const goal = createGoal(state, {
+      objective: input.objective,
+      ...(input.maxTurns && input.maxTurns > 0 ? { maxTurns: input.maxTurns } : {}),
+      ...(input.tokenBudget && input.tokenBudget > 0 ? { tokenBudget: input.tokenBudget } : {}),
+      verifiers: buildGoalVerifiers(input, this.requireBootstrap().workspace),
+      requiresUserConfirmation: input.requiresUserConfirmation === true,
+      createdBy: 'slash',
+    })
+    await appendGoalState(state)
+    this.emitGoal()
+    void this.runGoal(goal.id)
+    return this.goalState()!
+  }
+
+  async pauseGoalRun(): Promise<GoalView | null> {
+    const state = this.loopState
+    if (!state?.goal) return null
+    if (state.goal.status === 'active') {
+      pauseGoal(state)
+      this.abort()
+      await appendGoalState(state)
+      this.emitGoal()
+    }
+    return this.goalState()
+  }
+
+  async resumeGoalRun(): Promise<GoalView | null> {
+    this.assertIdle()
+    const state = this.loopState
+    if (!state?.goal) return null
+    resumeGoal(state)
+    await appendGoalState(state)
+    this.emitGoal()
+    void this.runGoal(state.goal.id)
+    return this.goalState()
+  }
+
+  async cancelGoalRun(): Promise<GoalView | null> {
+    const state = this.loopState
+    if (!state?.goal) return null
+    cancelGoal(state)
+    this.abort()
+    await appendGoalState(state)
+    this.emitGoal()
+    return this.goalState()
+  }
+
+  async clearGoalRun(): Promise<null> {
+    const state = this.loopState
+    if (state?.goal) {
+      clearGoal(state)
+      this.abort()
+      await appendGoalState(state)
+      this.emitGoal()
+    }
+    return null
+  }
+
+  async steerGoalRun(instruction: string): Promise<GoalView | null> {
+    const state = this.loopState
+    if (!state?.goal) return null
+    const content = instruction.trim()
+    if (!content) throw new Error('Steering instruction is required')
+    const input = admitGoalInput(state, {
+      goalId: state.goal.id,
+      kind: 'user_steering',
+      content,
+    })
+    await appendGoalInput(state, input)
+    this.emitGoal()
+    return this.goalState()
+  }
+
+  async verifyGoalRun(): Promise<GoalView | null> {
+    this.assertIdle()
+    const state = this.loopState
+    const goal = state?.goal
+    if (!state || !goal) return null
+    const bootstrap = this.requireBootstrap()
+    const model = this.demo ? createDemoModel() : this.model
+    if (!model) throw new Error('no-model-configured')
+    const turnId = `goal-verify-${++this.turnSeq}`
+    const turn: ActiveTurn = { id: turnId, text: '', startedAt: Date.now() }
+    this.activeTurn = turn
+    const callbacks = this.buildCallbacks(turnId, turn)
+    const controller = new AbortController()
+    this.controller = controller
+    this.send({ type: 'agent:turn-start', turnId, sessionId: state.sessionId })
+    try {
+      const result = await runVerifierLadder({
+        goal,
+        state,
+        options: this.agentOptions(controller.signal),
+        callbacks,
+        model,
+      })
+      for (const verification of result.results) {
+        await appendGoalVerification(state, goal.id, verification)
+      }
+      await appendGoalState(state)
+      this.emitGoal()
+      this.send({
+        type: 'agent:turn-end',
+        turnId,
+        sessionId: state.sessionId,
+        reason: result.ok ? 'completed' : 'failed',
+        text: `${result.ok ? '验证通过' : '验证失败'}：${result.summary}`,
+      })
+      if (bootstrap) void saveSession(state, model).catch(() => undefined)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.send({ type: 'agent:error', turnId, message })
+      this.send({ type: 'agent:turn-end', turnId, sessionId: state.sessionId, reason: 'failed', text: message })
+      throw error
+    } finally {
+      this.activeTurn = null
+      this.controller = null
+    }
+    return this.goalState()
+  }
+
+  /** 目标循环的外层 turn：所有内层 agentLoop 共用同一个 turnId，
+   *  这样 UI 的 busy 状态不会在每个 attempt 之间闪断。 */
+  private async runGoal(goalId: string): Promise<void> {
+    if (this.activeTurn) return
+    const state = this.goalLoopState()
+    const goal = state.goal
+    if (!goal || goal.id !== goalId) return
+    const model = this.demo ? createDemoModel() : this.model
+    if (!model) {
+      this.send({ type: 'agent:error', turnId: `goal-${goalId}`, message: 'no-model-configured' })
+      return
+    }
+    const turnId = `goal-${++this.turnSeq}`
+    const turn: ActiveTurn = { id: turnId, text: '', startedAt: Date.now() }
+    this.activeTurn = turn
+    const controller = new AbortController()
+    this.controller = controller
+    this.send({ type: 'agent:turn-start', turnId, sessionId: state.sessionId })
+    const callbacks = this.buildCallbacks(turnId, turn)
+    const options = this.agentOptions(controller.signal)
+    let reason = 'completed'
+    try {
+      const summary = await runGoalLoop({
+        state,
+        model,
+        options,
+        callbacks,
+        goalId,
+        signal: controller.signal,
+        runAgentTurn: async (content) => {
+          const result = await agentLoop(content, model, options, callbacks, state)
+          this.loopState = result.state
+          await saveSession(result.state, model).catch(() => undefined)
+          this.emitSessionSaved(result.state)
+          await appendGoalState(result.state).catch(() => undefined)
+          this.emitGoal()
+          return result
+        },
+      })
+      reason = controller.signal.aborted ? 'aborted' : summary.status === 'failed' ? 'failed' : 'completed'
+    } catch (error) {
+      reason = controller.signal.aborted ? 'aborted' : 'failed'
+      const message = controller.signal.aborted
+        ? 'Turn aborted'
+        : classifyApiError(error).message || (error instanceof Error ? error.message : String(error))
+      this.send({ type: 'agent:error', turnId, message })
+    } finally {
+      this.activeTurn = null
+      this.controller = null
+      if (this.loopState && this.loopState.messages.length > 0) {
+        await saveSession(this.loopState, model).catch(() => undefined)
+        this.emitSessionSaved(this.loopState)
+        if (reason === 'completed') void this.generateSessionTitle(this.loopState)
+      }
+      this.emitGoal()
+      this.send({
+        type: 'agent:turn-end',
+        turnId,
+        sessionId: state.sessionId,
+        reason,
+        text: turn.text,
+      })
+      if (reason === 'completed') {
+        this.notify('目标完成', this.goalState()?.finalSummary ?? turn.text.trim().slice(0, 160), state.sessionId)
+      } else if (reason === 'failed') {
+        this.notify('目标失败', '目标执行失败，打开应用查看错误详情', state.sessionId)
+      }
+      // Goal 自身有验证器；这里只展示检查结果，不触发自动修复循环。
+      if (reason === 'completed' && this.autoChecksEnabled()) void this.runAutoChecks(false, false)
+    }
+  }
+
+  private goalLoopState(): LoopState {
+    const existing = this.loopState
+    if (existing) return existing
+    const state = createLoopState('default', { projectCwd: this.requireBootstrap().workspace })
+    this.loopState = state
+    this.watchShellSessions(state)
+    return state
+  }
+
+  private agentOptions(signal: AbortSignal): AgentOptions {
+    const bootstrap = this.requireBootstrap()
+    return {
+      ...bootstrap.baseOptions,
+      modelId: this.modelId,
+      abortSignal: signal,
+      backgroundTaskRegistry: this.backgroundTasks,
+      backgroundInfoProvider: { list: () => this.querySharedBackground() },
+      systemPromptExtra: `${taskModeInstruction(this.taskMode)}\nSave user-facing deliverables under ${bootstrap.workspace}; use the system temp directory only for disposable intermediates.`,
+    }
+  }
+
+  private emitGoal(): void {
+    this.send({ type: 'goal:update', goal: this.goalState() })
   }
 
   respondApproval(
@@ -2165,7 +2684,7 @@ export class AgentHost {
     const activePricing = getModelPricing(this.modelId)
     return buildSettingsSnapshot({
       workspace: bootstrap.workspace,
-      providers: bootstrap.appState.providers,
+      providers: this.state?.providers ?? bootstrap.appState.providers,
       modelId: this.modelId,
       disabledTools: this.disabledTools,
       autoAllowedTools: this.autoAllowedTools,
@@ -2218,6 +2737,145 @@ export class AgentHost {
     this.send({ type: 'app:state', state: this.getState() })
     void this.emitSettings()
     return this.settingsResult()
+  }
+
+  async setProviderBaseUrl(provider: string, url: string): Promise<SettingsActionResult> {
+    this.assertIdle()
+    const meta = PROVIDERS.find((entry) => entry.name === provider)
+    if (!meta?.baseUrlOptions?.length) throw new Error('该 provider 没有可选端点')
+    const trimmed = url.trim()
+    if (trimmed && !meta.baseUrlOptions.some((option) => option.url === trimmed)) {
+      throw new Error('端点不在允许列表中')
+    }
+    const config = loadUserConfig()
+    const next = { ...(config.baseUrls ?? {}) }
+    if (trimmed) next[provider] = trimmed
+    else delete next[provider]
+    saveUserConfig({ baseUrls: next })
+    const bootstrap = this.requireBootstrap()
+    const registry = withLocalModels(createModelRegistry())
+    bootstrap.modelRegistry = registry
+    bootstrap.baseOptions.modelRegistry = registry
+    if (!this.demo && providerOf(this.modelId) === provider) this.applyModel(this.modelId, false)
+    this.invalidatePromptCache()
+    this.send({ type: 'app:state', state: this.getState() })
+    void this.emitSettings()
+    return this.settingsResult()
+  }
+
+  async loginOpenAI(deviceAuth = false): Promise<SettingsActionResult> {
+    this.assertIdle()
+    const userAgent = 'x-code-desktop'
+    const persist = async (credentials: Awaited<ReturnType<typeof loginOpenAIChatGPTWithBrowser>>) => {
+      await withOpenAIChatGPTCredentialLock(() => writeOpenAIChatGPTCredentials(credentials))
+    }
+    const credentials = deviceAuth
+      ? await loginOpenAIChatGPTWithDevice({
+          userAgent,
+          onUserCode: (url, code) => this.send({ type: 'auth:device-code', url, code }),
+        })
+      : await loginOpenAIChatGPTWithBrowser({
+          userAgent,
+          onAuthorizationUrl: (url) => this.send({ type: 'auth:login-url', url }),
+          onCredentials: persist,
+        })
+    if (deviceAuth) await persist(credentials)
+    initializeOpenAIAuthContext()
+    await this.refreshAuthDerivedState()
+    return this.settingsResult()
+  }
+
+  async logoutOpenAI(): Promise<SettingsActionResult> {
+    this.assertIdle()
+    await withOpenAIChatGPTCredentialLock(async () => {
+      let credentials
+      try {
+        credentials = await readOpenAIChatGPTCredentials()
+      } catch {
+        // 缺失或损坏的凭据仍需要在本地移除。
+      }
+      if (credentials) {
+        try {
+          await revokeOpenAIChatGPTCredentials(credentials, {
+            signal: AbortSignal.timeout(10_000),
+            userAgent: 'x-code-desktop',
+          })
+        } catch {
+          // 远端撤销失败也继续删除本地凭据。
+        }
+      }
+      return clearOpenAIChatGPTCredentials()
+    })
+    initializeOpenAIAuthContext()
+    await this.refreshAuthDerivedState()
+    return this.settingsResult()
+  }
+
+  /** OpenAI 登录/登出后刷新可用 provider、模型列表与当前模型实例。 */
+  private async refreshAuthDerivedState(): Promise<void> {
+    initializeOpenAIAuthContext()
+    try {
+      await refreshOpenAIChatGPTModels('x-code-desktop', { force: true })
+    } catch {
+      // 模型目录刷新失败不阻断登录本身。
+    }
+    const available = new Set(getAvailableProviders())
+    const bootstrap = this.requireBootstrap()
+    const registry = withLocalModels(createModelRegistry())
+    bootstrap.modelRegistry = registry
+    bootstrap.baseOptions.modelRegistry = registry
+    if (!this.demo) {
+      try {
+        this.model = registry.languageModel(this.modelId as `${string}:${string}`)
+      } catch {
+        // 当前模型在新认证状态下不可用时保留原实例；用户可手动切换模型。
+      }
+    }
+    if (this.state) {
+      this.state.providers = this.state.providers.map((provider) => ({
+        ...provider,
+        available: available.has(provider.name),
+      }))
+      const providerModels = getProviderModels()
+      const local = this.state.models.filter(
+        (model) =>
+          model.demo ||
+          model.provider === 'custom' ||
+          model.id.startsWith('ollama:') ||
+          model.id.startsWith('lmstudio:'),
+      )
+      const next: typeof this.state.models = []
+      for (const provider of available) {
+        for (const model of providerModels[provider] ?? []) {
+          next.push({
+            id: model.id,
+            label: model.label,
+            provider,
+            description: model.description ?? '',
+            contextWindow: getContextWindow(model.id),
+          })
+        }
+      }
+      for (const model of local) if (!next.some((entry) => entry.id === model.id)) next.push(model)
+      const current = this.state.models.find((model) => model.id === this.modelId)
+      if (current && !next.some((entry) => entry.id === current.id)) next.unshift(current)
+      this.state.models = next
+      if (!this.demo && !next.some((model) => model.id === this.modelId)) {
+        const fallback = next.find((model) => !model.demo)
+        if (fallback) {
+          this.applyModel(fallback.id, false)
+        } else {
+          this.model = null
+          this.modelId = DEMO_MODEL_ID
+          this.demo = true
+          this.state.activeModelId = DEMO_MODEL_ID
+          this.state.demo = true
+        }
+      }
+    }
+    this.invalidatePromptCache()
+    this.send({ type: 'app:state', state: this.getState() })
+    void this.emitSettings()
   }
 
   async clearApiKey(provider: string): Promise<SettingsActionResult> {
@@ -2425,6 +3083,7 @@ export class AgentHost {
   }
 
   async setToolAlwaysAllow(name: string, enabled: boolean): Promise<SettingsActionResult> {
+    this.assertIdle()
     if (enabled) this.autoAllowedTools.add(name)
     else this.autoAllowedTools.delete(name)
     saveDesktopSettings({ autoAllowedTools: [...this.autoAllowedTools].sort() })
@@ -2432,6 +3091,8 @@ export class AgentHost {
   }
 
   async setAlwaysAllowAll(enabled: boolean): Promise<SettingsActionResult> {
+    // 运行中开启会让当前轮剩余工具立即自动放行，风险过高；只允许空闲时切换。
+    this.assertIdle()
     this.alwaysAllowAll = enabled
     saveDesktopSettings({ alwaysAllowAll: enabled })
     this.requireBootstrap().baseOptions.trustMode = enabled
@@ -2600,16 +3261,24 @@ export class AgentHost {
     return { added: added.length > 0 ? added : [sourceName], settings }
   }
 
-  async installPluginPath(path: string): Promise<PluginInstallResult> {
+  async installPluginPath(path: string, confirmed = false): Promise<PluginInstallResult> {
+    if (!confirmed) throw new Error('plugin-install-requires-confirmation')
     return this.installPluginFromTarget(path)
   }
 
-  async installSkillCommand(command: string): Promise<SkillImportResult> {
+  async installSkillCommand(command: string, confirmed = false): Promise<SkillImportResult> {
     this.assertIdle()
     const bootstrap = this.requireBootstrap()
     const before = new Set(bootstrap.skillRegistry?.listAll().map((skill) => skill.name) ?? [])
 
     if (isPluginInstallCommand(command)) {
+      // 这条路径等价于插件安装，必须走与 plugins:install 相同的预览/确认；
+      // 粘贴框只确认了命令文本，没有展示 hooks/MCP 贡献。
+      if (!confirmed) {
+        throw new Error(
+          'This command installs a plugin. Use Settings → Plugins → Marketplace so its hooks and MCP servers can be reviewed first.',
+        )
+      }
       const info = await installPluginTarget(command)
       await this.reloadExtensions(this.modelId)
       const registry = this.requireBootstrap().skillRegistry
@@ -2673,7 +3342,12 @@ export class AgentHost {
     }
   }
 
-  async installPluginCommand(command: string, userConfig?: UserConfigValues): Promise<PluginInstallResult> {
+  async installPluginCommand(
+    command: string,
+    userConfig?: UserConfigValues,
+    confirmed = false,
+  ): Promise<PluginInstallResult> {
+    if (!confirmed) throw new Error('plugin-install-requires-confirmation')
     return this.installPluginFromTarget(command, userConfig)
   }
 
@@ -2688,7 +3362,8 @@ export class AgentHost {
     return listMarketplacePlugins(query, refresh)
   }
 
-  async installMarketplace(id: string): Promise<PluginInstallResult> {
+  async installMarketplace(id: string, confirmed = false): Promise<PluginInstallResult> {
+    if (!confirmed) throw new Error('plugin-install-requires-confirmation')
     this.assertIdle()
     const info = await installMarketplacePluginInfo(id)
     await this.reloadExtensions(this.modelId)
@@ -2822,6 +3497,44 @@ export class AgentHost {
     this.rewireMcp()
     this.invalidatePromptCache()
     return this.settingsResult()
+  }
+
+  async projectTrustView(): Promise<ProjectTrustView> {
+    const workspace = path.resolve(this.requireBootstrap().workspace)
+    const hooks = this.hooksView()
+    const projectServers = (await readMcpServersFromFile(path.join(workspace, '.x-code', 'config.json'))) ?? {}
+    return {
+      workspace,
+      hooks: {
+        trusted: hooks.projectTrusted,
+        present: hooks.projectHooksPresent,
+        count: hooks.active.filter((hook) => hook.source === 'project').length,
+      },
+      mcp: {
+        trusted: await isProjectTrusted(workspace),
+        servers: Object.entries(projectServers).map(([name, config]) => ({
+          name,
+          preview: buildServerPreview(config),
+        })),
+      },
+    }
+  }
+
+  async setProjectTrust(scope: 'hooks' | 'mcp', trusted: boolean): Promise<ProjectTrustView> {
+    this.assertIdle()
+    if (scope === 'hooks') {
+      await this.setProjectHooksTrusted(trusted)
+      return this.projectTrustView()
+    }
+    const workspace = path.resolve(this.requireBootstrap().workspace)
+    if (trusted) await trustProject(workspace)
+    else await untrustProject(workspace)
+    if (this.mcp) {
+      await this.mcp.reload()
+      this.rewireMcp()
+    }
+    this.invalidatePromptCache()
+    return this.projectTrustView()
   }
 
   async authenticateMcp(name: string): Promise<SettingsActionResult> {
@@ -3009,6 +3722,7 @@ export class AgentHost {
 
   async shutdown(): Promise<void> {
     this.abort()
+    this.stopCodeIndexWatcher()
     if (this.skillPollTimer) {
       clearInterval(this.skillPollTimer)
       this.skillPollTimer = null
@@ -3018,6 +3732,7 @@ export class AgentHost {
     await this.mcp?.shutdown()
     const memory = this.bootstrap?.memoryService
     if (memory) await memory.shutdown(memory.getConfig().drainTimeoutMs).catch(() => undefined)
+    await flushToolAudit().catch(() => undefined)
     if (!this.loopState || this.loopState.messages.length === 0) return
     const model = this.demo ? createDemoModel() : this.model
     if (!model) return
@@ -3302,4 +4017,82 @@ export class AgentHost {
     if (!this.bootstrap) throw new Error('runtime-not-initialized')
     return this.bootstrap
   }
+}
+
+export function buildGoalVerifiers(input: GoalCreateInput, workspace: string): GoalVerifier[] {
+  const kind = input.verifierKind ?? 'auto'
+  const value = input.verifierValue?.trim() ?? ''
+  if (kind === 'shell' && value) return [{ kind: 'shell', command: value }]
+  if (kind === 'file' && value) {
+    return [
+      {
+        kind: 'file',
+        path: path.isAbsolute(value) ? value : path.resolve(workspace, value),
+        ...(input.verifierContains?.trim() ? { contains: input.verifierContains.trim() } : {}),
+      },
+    ]
+  }
+  if (kind === 'subagent' && value) {
+    return [
+      {
+        kind: 'subagent',
+        agent: value,
+        prompt: input.verifierPrompt?.trim() || 'Verify that the goal objective has been fully satisfied.',
+      },
+    ]
+  }
+  return []
+}
+
+export function toGoalVerifierView(verifier: GoalVerifier): GoalVerifierView {
+  if (verifier.kind === 'shell') return { kind: 'shell', label: 'Shell', detail: verifier.command }
+  if (verifier.kind === 'file') {
+    const conditions = [
+      verifier.exists === false ? 'must not exist' : '',
+      verifier.contains ? `contains ${JSON.stringify(verifier.contains)}` : '',
+    ].filter(Boolean)
+    return {
+      kind: 'file',
+      label: 'File',
+      detail: conditions.length > 0 ? `${verifier.path} · ${conditions.join(' · ')}` : verifier.path,
+    }
+  }
+  return { kind: 'subagent', label: `Subagent · ${verifier.agent}`, detail: verifier.prompt }
+}
+
+export function toGoalVerificationView(result: GoalVerificationResult): GoalVerificationView {
+  return {
+    ok: result.ok,
+    summary: result.summary,
+    kind: result.verifier.kind,
+    at: result.ts,
+    durationMs: result.durationMs,
+    ...(result.requiredFixes?.length ? { requiredFixes: result.requiredFixes } : {}),
+  }
+}
+
+export function toGoalAttemptView(attempt: GoalAttempt): GoalAttemptView {
+  return {
+    turn: attempt.turn,
+    inputKind: attempt.inputKind,
+    finish: attempt.finish,
+    startedAt: attempt.startedAt,
+    ...(attempt.endedAt ? { endedAt: attempt.endedAt } : {}),
+  }
+}
+
+export type AutoFixAction = 'fix' | 'exhausted' | 'none'
+
+/** 自动修复循环的纯决策函数，便于不启动 AgentHost 也能单测。 */
+export function autoFixAction(input: {
+  enabled: boolean
+  failedCount: number
+  remaining: number
+  hasFixPrompt: boolean
+  round: number
+}): AutoFixAction {
+  if (input.failedCount <= 0) return 'none'
+  if (!input.enabled || !input.hasFixPrompt) return 'none'
+  if (input.remaining > 0) return 'fix'
+  return input.round > 0 ? 'exhausted' : 'none'
 }

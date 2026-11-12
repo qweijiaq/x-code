@@ -26,7 +26,6 @@ interface DocumentPanelProps {
   onSaveBaseline(): Promise<void>
   focusPage: number | null
   /** 在统一检查器内渲染，而非固定抽屉。 */
-  embedded?: boolean
 }
 
 function formatBytes(bytes: number): string {
@@ -55,7 +54,6 @@ export function DocumentPanel({
   onApplyHunks,
   onSaveBaseline,
   focusPage,
-  embedded = false,
 }: DocumentPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const [sheetIndex, setSheetIndex] = useState(0)
@@ -194,12 +192,7 @@ export function DocumentPanel({
 
   return (
     <>
-      {!embedded ? <div className="drawer-scrim" onClick={onClose} aria-hidden="true" /> : null}
-      <aside
-        className={`document-drawer${embedded ? ' embedded' : ''}`}
-        data-testid="document-drawer"
-        aria-label={t('文档面板')}
-      >
+      <aside className="document-drawer embedded" data-testid="document-drawer" aria-label={t('文档面板')}>
         <header className="drawer-head">
           <span className="drawer-seal" aria-hidden="true">
             阅

@@ -13,7 +13,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { PROVIDERS, WEB_SEARCH_PROVIDERS, userXcodeDir } from '@x-code-cli/core'
+import { PROVIDERS, WEB_SEARCH_PROVIDERS, acquireFileLock, userXcodeDir } from '@x-code-cli/core'
 
 import { requestMain } from './main-bridge.js'
 
@@ -105,6 +105,26 @@ export function setSecretCipher(next: SecretCipher | null): void {
 
 function secretsPath(): string {
   return path.join(userXcodeDir(), 'desktop-secrets.json')
+}
+
+/**
+ * 多窗口并发保存不同 provider 时，read → encrypt → write 必须是一个
+ * 跨进程原子段，否则后写会覆盖前写、丢掉刚保存的 key。
+ */
+async function withSecretsLock<T>(fn: () => Promise<T>): Promise<T> {
+  fs.mkdirSync(path.dirname(secretsPath()), { recursive: true })
+  const lease = await acquireFileLock(`${secretsPath()}.lock`, {
+    waitMs: 3_000,
+    retryMs: 25,
+    staleMs: 15_000,
+    timeoutError: 'secrets-busy',
+  })
+  if (!lease) throw new Error('secrets-busy')
+  try {
+    return await fn()
+  } finally {
+    await lease.release()
+  }
 }
 
 function readRaw(): SecretsFile {
@@ -261,14 +281,16 @@ export async function saveSearchKey(provider: string, key: string): Promise<void
   if (!trimmed) throw new Error('API Key 不能为空')
   captureOriginals()
   const loaded = await ensureLoaded()
-  const raw = readRaw()
-  const nextSearch: Record<string, StoredEntry> = {}
-  for (const [name, entry] of Object.entries(raw.search ?? {})) {
-    if (typeof entry === 'string') nextSearch[name] = await encodeEntry(entry)
-    else if (entry && typeof entry === 'object') nextSearch[name] = entry
-  }
-  nextSearch[provider] = await encodeEntry(trimmed)
-  writeRaw({ providers: raw.providers ?? {}, search: nextSearch, baseUrls: raw.baseUrls ?? {} })
+  await withSecretsLock(async () => {
+    const raw = readRaw()
+    const nextSearch: Record<string, StoredEntry> = {}
+    for (const [name, entry] of Object.entries(raw.search ?? {})) {
+      if (typeof entry === 'string') nextSearch[name] = await encodeEntry(entry)
+      else if (entry && typeof entry === 'object') nextSearch[name] = entry
+    }
+    nextSearch[provider] = await encodeEntry(trimmed)
+    writeRaw({ providers: raw.providers ?? {}, search: nextSearch, baseUrls: raw.baseUrls ?? {} })
+  })
   loaded.search.set(provider, trimmed)
   process.env[envKey] = trimmed
 }
@@ -277,10 +299,12 @@ export async function clearSearchKey(provider: string): Promise<void> {
   const envKey = SEARCH_ENV_BY_PROVIDER.get(provider)
   if (!envKey) throw new Error(`未知的搜索服务: ${provider}`)
   const loaded = await ensureLoaded()
-  const raw = readRaw()
-  const nextSearch = { ...(raw.search ?? {}) }
-  delete nextSearch[provider]
-  writeRaw({ providers: raw.providers ?? {}, search: nextSearch, baseUrls: raw.baseUrls ?? {} })
+  await withSecretsLock(async () => {
+    const raw = readRaw()
+    const nextSearch = { ...(raw.search ?? {}) }
+    delete nextSearch[provider]
+    writeRaw({ providers: raw.providers ?? {}, search: nextSearch, baseUrls: raw.baseUrls ?? {} })
+  })
   loaded.search.delete(provider)
 
   captureOriginals()
@@ -316,16 +340,18 @@ export async function saveProviderKey(provider: string, key: string, baseUrl?: s
   if (!trimmed) throw new Error('API Key 不能为空')
   captureOriginals()
   const loaded = await ensureLoaded()
-  const raw = readRaw()
-  const nextEntries: Record<string, StoredEntry> = {}
-  for (const [name, entry] of Object.entries(raw.providers ?? {})) {
-    if (typeof entry === 'string') nextEntries[name] = await encodeEntry(entry)
-    else if (entry && typeof entry === 'object') nextEntries[name] = entry
-  }
-  nextEntries[provider] = await encodeEntry(trimmed)
-  const nextBaseUrls = { ...(raw.baseUrls ?? {}) }
-  if (provider === 'custom' && baseUrl?.trim()) nextBaseUrls.custom = baseUrl.trim()
-  writeRaw({ providers: nextEntries, search: raw.search ?? {}, baseUrls: nextBaseUrls })
+  await withSecretsLock(async () => {
+    const raw = readRaw()
+    const nextEntries: Record<string, StoredEntry> = {}
+    for (const [name, entry] of Object.entries(raw.providers ?? {})) {
+      if (typeof entry === 'string') nextEntries[name] = await encodeEntry(entry)
+      else if (entry && typeof entry === 'object') nextEntries[name] = entry
+    }
+    nextEntries[provider] = await encodeEntry(trimmed)
+    const nextBaseUrls = { ...(raw.baseUrls ?? {}) }
+    if (provider === 'custom' && baseUrl?.trim()) nextBaseUrls.custom = baseUrl.trim()
+    writeRaw({ providers: nextEntries, search: raw.search ?? {}, baseUrls: nextBaseUrls })
+  })
 
   loaded.providers.set(provider, trimmed)
   if (provider === 'custom' && baseUrl?.trim()) loaded.baseUrls.set('custom', baseUrl.trim())
@@ -338,9 +364,11 @@ export async function saveCustomBaseUrl(baseUrl: string): Promise<void> {
   if (!trimmed) throw new Error('Base URL 不能为空')
   captureOriginals()
   const loaded = await ensureLoaded()
-  const raw = readRaw()
-  const nextBaseUrls = { ...(raw.baseUrls ?? {}), custom: trimmed }
-  writeRaw({ providers: raw.providers ?? {}, search: raw.search ?? {}, baseUrls: nextBaseUrls })
+  await withSecretsLock(async () => {
+    const raw = readRaw()
+    const nextBaseUrls = { ...(raw.baseUrls ?? {}), custom: trimmed }
+    writeRaw({ providers: raw.providers ?? {}, search: raw.search ?? {}, baseUrls: nextBaseUrls })
+  })
   loaded.baseUrls.set('custom', trimmed)
   process.env[CUSTOM_BASE_URL_ENV] = trimmed
 }
@@ -349,12 +377,14 @@ export async function clearProviderKey(provider: string): Promise<void> {
   const envKey = envKeyFor(provider)
   if (!envKey) throw new Error(`未知的 provider: ${provider}`)
   const loaded = await ensureLoaded()
-  const raw = readRaw()
-  const nextEntries = { ...(raw.providers ?? {}) }
-  delete nextEntries[provider]
-  const nextBaseUrls = { ...(raw.baseUrls ?? {}) }
-  if (provider === 'custom') delete nextBaseUrls.custom
-  writeRaw({ providers: nextEntries, search: raw.search ?? {}, baseUrls: nextBaseUrls })
+  await withSecretsLock(async () => {
+    const raw = readRaw()
+    const nextEntries = { ...(raw.providers ?? {}) }
+    delete nextEntries[provider]
+    const nextBaseUrls = { ...(raw.baseUrls ?? {}) }
+    if (provider === 'custom') delete nextBaseUrls.custom
+    writeRaw({ providers: nextEntries, search: raw.search ?? {}, baseUrls: nextBaseUrls })
+  })
 
   loaded.providers.delete(provider)
   if (provider === 'custom') loaded.baseUrls.delete('custom')

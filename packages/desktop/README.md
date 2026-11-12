@@ -48,8 +48,8 @@ Smoke prints one `SMOKE_RESULT {json}` line and exits non-zero if any probe fail
   `X_CODE_OPEN_TERMINAL=1 pnpm start` opens it at launch for inspection.
 - `诊断` runs the same probe set as `--smoke-test` and displays the JSON without exiting the app.
 
-Not in this MVP: live MCP OAuth acceptance, file/image attachments, the slash
-command palette, fork/rewind, peers, and Windows/Linux acceptance. See
+Current limitations: desktop peers are not wired, automated updates only download and open the installer,
+and Linux/Windows installers have not completed native-device acceptance. See
 [`docs/development/desktop-plan.md`](../../docs/development/desktop-plan.md).
 
 `pnpm smoke:ui` runs the renderer end to end against the demo model: streaming, permission approval and denial
@@ -59,7 +59,7 @@ diagnostics, and the terminal toggle.
 
 ## Settings
 
-`设置` opens a drawer with seven tabs:
+`设置` opens a drawer with 14 tabs:
 
 - **模型与密钥**: configure provider API keys. Keys are encrypted with Electron `safeStorage` (OS keychain) and
   stored in `~/.x-code/desktop-secrets.json` with mode `0600`, then injected into the runtime environment before

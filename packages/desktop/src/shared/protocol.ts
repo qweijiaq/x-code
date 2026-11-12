@@ -61,6 +61,96 @@ export interface TextReport {
   text: string
 }
 
+export type ContextSearchSourceView = 'memory' | 'docs' | 'sessions' | 'code'
+
+export interface ContextSearchResultView {
+  source: ContextSearchSourceView
+  title: string
+  snippet: string
+  score?: number
+  path?: string
+  page?: number
+  sessionId?: string
+  role?: string
+  line?: number
+}
+
+export interface ContextSearchResponse {
+  query: string
+  results: ContextSearchResultView[]
+  notes: string[]
+}
+
+export type GoalStatusView =
+  | 'active'
+  | 'paused'
+  | 'blocked'
+  | 'complete'
+  | 'cancelled'
+  | 'budget_limited'
+  | 'usage_limited'
+  | 'max_turns'
+  | 'failed'
+
+export type GoalVerifierKindView = 'shell' | 'file' | 'subagent'
+
+export interface GoalVerifierView {
+  kind: GoalVerifierKindView
+  label: string
+  detail: string
+}
+
+export interface GoalVerificationView {
+  ok: boolean
+  summary: string
+  kind: GoalVerifierKindView
+  at: string
+  durationMs?: number
+  requiredFixes?: string[]
+}
+
+export interface GoalAttemptView {
+  turn: number
+  inputKind: string
+  finish: string
+  startedAt: string
+  endedAt?: string
+}
+
+export interface GoalView {
+  id: string
+  objective: string
+  status: GoalStatusView
+  createdAt: string
+  updatedAt: string
+  maxTurns?: number
+  turnCount: number
+  tokenBudget?: number
+  tokensUsed: number
+  remainingTokens?: number
+  verifiers: GoalVerifierView[]
+  verificationResults: GoalVerificationView[]
+  attempts: GoalAttemptView[]
+  finalSummary?: string
+  lastBlocker?: string
+  requiresUserConfirmation: boolean
+  pendingTransition?: string
+}
+
+export interface GoalCreateInput {
+  objective: string
+  verifierKind?: 'auto' | GoalVerifierKindView
+  /** shell: 命令；file: 路径；subagent: 子代理名。 */
+  verifierValue?: string
+  /** file verifier 的可选包含文本。 */
+  verifierContains?: string
+  /** subagent verifier 的提示词。 */
+  verifierPrompt?: string
+  maxTurns?: number
+  tokenBudget?: number
+  requiresUserConfirmation?: boolean
+}
+
 export interface DiagnosticsExportResult {
   path: string
   bytes: number
@@ -174,6 +264,19 @@ export interface HookEntryView {
   pluginId: string
 }
 
+export interface ProjectTrustView {
+  workspace: string
+  hooks: {
+    trusted: boolean
+    present: boolean
+    count: number
+  }
+  mcp: {
+    trusted: boolean
+    servers: Array<{ name: string; preview: string }>
+  }
+}
+
 export interface HooksView {
   active: HookEntryView[]
   configs: { user: Record<string, unknown>; project: Record<string, unknown> }
@@ -181,6 +284,14 @@ export interface HooksView {
   errors: string[]
   projectTrusted: boolean
   projectHooksPresent: boolean
+}
+
+export interface CaptureScreenView {
+  id: number
+  name: string
+  primary: boolean
+  width: number
+  height: number
 }
 
 export interface FileTreeEntryView {
@@ -225,8 +336,22 @@ export interface ProviderSettingsView {
   source: ApiKeySource
   hint?: string
   baseUrl?: string
+  /** 同一 provider 的多个区域/套餐端点。 */
+  baseUrlOptions?: Array<{ label: string; url: string }>
   /** 自定义 OpenAI 兼容模型 id（不带 `custom:` 前缀）。 */
   modelId?: string
+}
+
+export type OpenAIAuthMode = 'none' | 'api-key' | 'chatgpt'
+
+export interface OpenAIAuthView {
+  mode: OpenAIAuthMode
+  email?: string
+  accountId?: string
+  planType?: string
+  expiresAt?: number
+  apiKeyConfigured: boolean
+  credentialError?: string
 }
 
 export type SkillRuntimeStatus = 'none' | 'ready' | 'stale' | 'error' | 'unsupported'
@@ -364,6 +489,7 @@ export interface SettingsSnapshot {
   searchProviders: SearchProviderView[]
   /** 首选独立 provider id；空表示自动顺序。 */
   searchProvider: string
+  openaiAuth: OpenAIAuthView
   toolProfile: 'full' | 'standard'
   thinking: boolean
   alwaysAllowAll: boolean
@@ -532,6 +658,20 @@ export interface LibraryStatsView {
   semanticEnabled: boolean
   semantic: LibrarySemanticView
 }
+
+export interface CodeIndexStatsView {
+  autoIndex: boolean
+  files: number
+  chunks: number
+  characters: number
+  vectors: number
+  dimensions: number
+  updatedAt: string
+  indexPath: string
+  semantic: LibrarySemanticView
+}
+
+export type CodeIndexResultView = LibraryIndexResultView
 
 export interface LibraryIndexResultView {
   files: number
@@ -943,6 +1083,11 @@ export interface RequestMap {
     result: HooksView
   }
   'hooks:trust-project': { params: { trusted: boolean }; result: HooksView }
+  'project:trust-view': { params: Record<string, never>; result: ProjectTrustView }
+  'project:trust-set': {
+    params: { scope: 'hooks' | 'mcp'; trusted: boolean }
+    result: ProjectTrustView
+  }
   'files:list': { params: { path?: string }; result: { path: string; entries: FileTreeEntryView[] } }
   'files:read': { params: { path: string }; result: FileReadView }
   'files:write': { params: { path: string; content: string }; result: { path: string; size: number } }
@@ -955,6 +1100,24 @@ export interface RequestMap {
   'shell:list': { params: Record<string, never>; result: TextReport }
   'agents:list': { params: Record<string, never>; result: TextReport }
   'goal:get': { params: Record<string, never>; result: TextReport }
+  'goal:state': { params: Record<string, never>; result: GoalView | null }
+  'goal:create': { params: GoalCreateInput; result: GoalView }
+  'goal:pause': { params: Record<string, never>; result: GoalView | null }
+  'goal:resume': { params: Record<string, never>; result: GoalView | null }
+  'goal:cancel': { params: Record<string, never>; result: GoalView | null }
+  'goal:clear': { params: Record<string, never>; result: null }
+  'goal:steer': { params: { instruction: string }; result: GoalView | null }
+  'goal:verify': { params: Record<string, never>; result: GoalView | null }
+  'context:search': {
+    params: { query: string; scopes?: ContextSearchSourceView[]; limit?: number }
+    result: ContextSearchResponse
+  }
+  'auth:login': { params: { deviceAuth?: boolean }; result: SettingsActionResult }
+  'auth:logout': { params: Record<string, never>; result: SettingsActionResult }
+  'settings:set-provider-base-url': {
+    params: { provider: string; url: string }
+    result: SettingsActionResult
+  }
   'app:quit': { params: Record<string, never>; result: null }
   'app:new-window': {
     params: { sessionFilePath?: string; workspacePath?: string; prompt?: string; displayPrompt?: string }
@@ -975,9 +1138,10 @@ export interface RequestMap {
     params: { path: string }
     result: { dataUrl: string; mime: string; name: string; size: number }
   }
+  'app:list-screens': { params: Record<string, never>; result: { screens: CaptureScreenView[] } }
   'app:capture-screen': {
-    params: Record<string, never>
-    result: { dataUrl: string; width: number; height: number; name: string }
+    params: { displayId?: number }
+    result: { dataUrl: string; width: number; height: number; name: string; displayId: number }
   }
   'app:capture-region': {
     params: Record<string, never>
@@ -1006,6 +1170,7 @@ export interface RequestMap {
   'models:discover': { params: Record<string, never>; result: AppState }
   'session:list': { params: Record<string, never>; result: SessionListItem[] }
   'session:load': { params: { filePath: string }; result: LoadedSessionView }
+  'session:peek': { params: { filePath: string }; result: LoadedSessionView }
   'session:salvage': {
     params: { filePath: string }
     result: { sessionId: string; filePath: string; messageCount: number; view: LoadedSessionView }
@@ -1020,7 +1185,7 @@ export interface RequestMap {
     result: { results: SessionSearchResult[] }
   }
   'session:export': {
-    params: { filePath: string; format: 'markdown' | 'json' | 'pdf' }
+    params: { filePath: string; format: 'markdown' | 'json' | 'html' | 'pdf' }
     result: { path: string; size: number }
   }
   'session:checkpoints': { params: Record<string, never>; result: { checkpoints: RewindCheckpointView[] } }
@@ -1119,6 +1284,8 @@ export interface RequestMap {
       attachmentsOlderThanDays?: number
       library?: boolean
       whisperModels?: boolean
+      diagnostics?: boolean
+      documents?: boolean
     }
     result: { deletedFiles: number; freedBytes: number; usage: StorageUsageView }
   }
@@ -1142,7 +1309,7 @@ export interface RequestMap {
     result: TestConnectionResult
   }
   'skills:import': { params: { path: string }; result: SkillImportResult }
-  'skills:install-command': { params: { command: string }; result: SkillImportResult }
+  'skills:install-command': { params: { command: string; confirmed?: boolean }; result: SkillImportResult }
   'skills:reload': { params: Record<string, never>; result: SettingsActionResult }
   'skills:runtime-install': { params: { name: string }; result: SettingsActionResult }
   'skills:runtime-clear': { params: { name: string }; result: SettingsActionResult }
@@ -1157,9 +1324,9 @@ export interface RequestMap {
     result: SkillImportResult
   }
   'skill-market:register-mcp': { params: Record<string, never>; result: SettingsActionResult }
-  'plugins:import': { params: { path: string }; result: PluginInstallResult }
+  'plugins:import': { params: { path: string; confirmed?: boolean }; result: PluginInstallResult }
   'plugins:install-command': {
-    params: { command: string; userConfig?: UserConfigValues }
+    params: { command: string; userConfig?: UserConfigValues; confirmed?: boolean }
     result: PluginInstallResult
   }
   'plugins:preview': { params: { target: PluginInstallTarget }; result: PluginConsentPreviewView }
@@ -1183,7 +1350,7 @@ export interface RequestMap {
     params: { query?: string; refresh?: boolean }
     result: MarketplaceListView
   }
-  'settings:marketplace-install': { params: { id: string }; result: PluginInstallResult }
+  'settings:marketplace-install': { params: { id: string; confirmed?: boolean }; result: PluginInstallResult }
   'settings:marketplace-add': {
     params: { name: string; source: string }
     result: MarketplaceListView
@@ -1225,6 +1392,10 @@ export interface RequestMap {
   }
   'library:clear': { params: Record<string, never>; result: null }
   'library:set-semantic': { params: { enabled: boolean }; result: { enabled: boolean } }
+  'code-index:stats': { params: Record<string, never>; result: CodeIndexStatsView }
+  'code-index:index': { params: { path?: string; semantic?: boolean }; result: CodeIndexResultView }
+  'code-index:clear': { params: Record<string, never>; result: null }
+  'code-index:set-auto': { params: { enabled: boolean }; result: { enabled: boolean } }
   'checks:detect': { params: Record<string, never>; result: { checks: ProjectCheckView[] } }
   'checks:run': {
     params: { ids?: string[]; stopOnFailure?: boolean }
@@ -1232,9 +1403,10 @@ export interface RequestMap {
   }
   'checks:status': {
     params: Record<string, never>
-    result: { autoChecks: boolean; lastResults?: ProjectCheckResultView[] }
+    result: { autoChecks: boolean; autoFixChecks: boolean; lastResults?: ProjectCheckResultView[] }
   }
   'checks:set-auto': { params: { enabled: boolean }; result: { enabled: boolean } }
+  'checks:set-auto-fix': { params: { enabled: boolean }; result: { enabled: boolean } }
   'git:status': { params: Record<string, never>; result: GitStatusView }
   'git:branches': { params: Record<string, never>; result: BranchListView }
   'worktree:open': { params: { branch: string; remoteRef?: string }; result: WorktreeOpenResult }
@@ -1289,6 +1461,10 @@ export type RuntimeResponse = { id: string; ok: true; result: unknown } | { id: 
 
 export type RuntimeEvent =
   | { type: 'runtime:ready'; pid: number; versions: Record<string, string> }
+  | { type: 'runtime:exit'; code: number }
+  | { type: 'goal:update'; goal: GoalView | null }
+  | { type: 'auth:login-url'; url: string }
+  | { type: 'auth:device-code'; url: string; code: string }
   | { type: 'runtime:log'; level: 'info' | 'warn' | 'error'; message: string }
   | { type: 'app:state'; state: AppState }
   | { type: 'agent:turn-start'; turnId: string; sessionId: string }
@@ -1338,6 +1514,7 @@ export type RuntimeEvent =
   | { type: 'app:open-session'; sessionId: string }
   | { type: 'app:new-session' }
   | { type: 'library:progress'; phase: string; processed: number; total: number; chunks: number }
+  | { type: 'code-index:progress'; phase: string; processed: number; total: number; chunks: number }
   | {
       type: 'app:update-download-progress'
       receivedBytes: number
@@ -1345,6 +1522,13 @@ export type RuntimeEvent =
       bytesPerSecond?: number
     }
   | { type: 'checks:finished'; results: ProjectCheckResultView[]; auto: boolean; fixPrompt: string }
+  | {
+      type: 'checks:auto-fix'
+      status: 'started' | 'passed' | 'exhausted' | 'failed'
+      round: number
+      maxRounds: number
+      message?: string
+    }
   | { type: 'background:changed' }
   | { type: 'mcp:auth-url'; server: string; url: string }
   | { type: 'shell:output'; id: string; data: string }
@@ -1356,6 +1540,7 @@ export type RuntimeInbound =
   | { kind: 'request'; request: RuntimeRequest }
   | { kind: 'main-response'; id: string; ok: true; result: unknown }
   | { kind: 'main-response'; id: string; ok: false; error: string }
+  | { kind: 'document-grant'; path: string }
   | { kind: 'shutdown' }
 
 /** 运行时 → 只有 Electron 主进程能服务的调用。 */

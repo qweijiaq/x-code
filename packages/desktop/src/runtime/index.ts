@@ -15,6 +15,7 @@ import type {
   RuntimeResponse,
 } from '../shared/protocol.js'
 import { AgentHost } from './agent-host.js'
+import { createDocumentAccess } from './document-access.js'
 import { applyDocumentHunks, documentDiff, saveCurrentBaseline } from './document-review.js'
 import {
   forgetDocumentOcr,
@@ -74,6 +75,16 @@ const host = new AgentHost(sendEvent, {
   workspace: process.env.X_CODE_WINDOW_WORKSPACE?.trim() || undefined,
 })
 const shells = new ShellManager(sendEvent)
+
+/**
+ * 文档访问范围 = 工作区 + 用户通过原生文件选择器显式授权的路径 + 最近文档。
+ * 选择器授权由 main 进程发出，renderer 无法伪造，因此 `document:*` 不再
+ * 是任意路径读写入口。具体策略在 document-access.ts 中单测。
+ */
+const documentAccess = createDocumentAccess({
+  workspaceRoot: () => host.documentWorkspaceRoot(),
+  recentPaths: () => recentDocuments().map((item) => item.path),
+})
 
 let initialization: Promise<unknown> | null = null
 
@@ -177,6 +188,14 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.deleteCommand(request.params.name, request.params.scope))
       }
+      case 'project:trust-view': {
+        await ensureInitialized()
+        return ok(request.id, await host.projectTrustView())
+      }
+      case 'project:trust-set': {
+        await ensureInitialized()
+        return ok(request.id, await host.setProjectTrust(request.params.scope, request.params.trusted))
+      }
       case 'hooks:get': {
         await ensureInitialized()
         return ok(request.id, host.hooksView())
@@ -233,6 +252,45 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, host.goalReport())
       }
+      case 'goal:state': {
+        await ensureInitialized()
+        return ok(request.id, host.goalState())
+      }
+      case 'goal:create': {
+        await ensureInitialized()
+        return ok(request.id, await host.createGoalFromInput(request.params))
+      }
+      case 'goal:pause': {
+        await ensureInitialized()
+        return ok(request.id, await host.pauseGoalRun())
+      }
+      case 'goal:resume': {
+        await ensureInitialized()
+        return ok(request.id, await host.resumeGoalRun())
+      }
+      case 'goal:cancel': {
+        await ensureInitialized()
+        return ok(request.id, await host.cancelGoalRun())
+      }
+      case 'goal:clear': {
+        await ensureInitialized()
+        return ok(request.id, await host.clearGoalRun())
+      }
+      case 'goal:steer': {
+        await ensureInitialized()
+        return ok(request.id, await host.steerGoalRun(request.params.instruction))
+      }
+      case 'goal:verify': {
+        await ensureInitialized()
+        return ok(request.id, await host.verifyGoalRun())
+      }
+      case 'context:search': {
+        await ensureInitialized()
+        return ok(
+          request.id,
+          await host.searchContext(request.params.query, request.params.scopes, request.params.limit),
+        )
+      }
       case 'app:state': {
         await ensureInitialized()
         return ok(request.id, host.getState())
@@ -277,6 +335,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       case 'session:load': {
         await ensureInitialized()
         return ok(request.id, await host.loadSession(request.params.filePath))
+      }
+      case 'session:peek': {
+        await ensureInitialized()
+        return ok(request.id, await host.peekSession(request.params.filePath))
       }
       case 'session:salvage': {
         await ensureInitialized()
@@ -340,9 +402,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       }
       case 'document:open': {
         await ensureInitialized()
+        const target = documentAccess.assert(request.params.path)
         return ok(
           request.id,
-          await openDocumentView(request.params.path, {
+          await openDocumentView(target, {
             start: request.params.start,
             count: request.params.count,
           }),
@@ -350,15 +413,18 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       }
       case 'document:pages': {
         await ensureInitialized()
-        return ok(request.id, await loadDocumentPages(request.params.path, request.params.start, request.params.count))
+        const target = documentAccess.assert(request.params.path)
+        return ok(request.id, await loadDocumentPages(target, request.params.start, request.params.count))
       }
       case 'document:ocr-page': {
         await ensureInitialized()
-        return ok(request.id, { text: await ocrDocumentPage(request.params.path, request.params.page) })
+        const target = documentAccess.assert(request.params.path)
+        return ok(request.id, { text: await ocrDocumentPage(target, request.params.page) })
       }
       case 'document:forget-ocr': {
         await ensureInitialized()
-        return ok(request.id, { cleared: forgetDocumentOcr(request.params.path) })
+        const target = documentAccess.assert(request.params.path)
+        return ok(request.id, { cleared: forgetDocumentOcr(target) })
       }
       case 'document:list': {
         await ensureInitialized()
@@ -366,14 +432,13 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       }
       case 'document:diff': {
         await ensureInitialized()
-        return ok(request.id, { diff: await documentDiff(request.params.path) })
+        const target = documentAccess.assert(request.params.path)
+        return ok(request.id, { diff: await documentDiff(target) })
       }
       case 'document:apply-hunks': {
         await ensureInitialized()
-        return ok(
-          request.id,
-          await applyDocumentHunks(request.params.path, request.params.accepted, request.params.hash),
-        )
+        const target = documentAccess.assert(request.params.path)
+        return ok(request.id, await applyDocumentHunks(target, request.params.accepted, request.params.hash))
       }
       case 'checks:detect': {
         await ensureInitialized()
@@ -390,6 +455,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       case 'checks:set-auto': {
         await ensureInitialized()
         return ok(request.id, host.setAutoChecks(request.params.enabled))
+      }
+      case 'checks:set-auto-fix': {
+        await ensureInitialized()
+        return ok(request.id, host.setAutoFixChecks(request.params.enabled))
       }
       case 'git:status': {
         await ensureInitialized()
@@ -456,9 +525,26 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.libraryClear())
       }
+      case 'code-index:stats': {
+        await ensureInitialized()
+        return ok(request.id, await host.codeIndexStats())
+      }
+      case 'code-index:index': {
+        await ensureInitialized()
+        return ok(request.id, await host.indexCode(request.params.path, request.params.semantic !== false))
+      }
+      case 'code-index:clear': {
+        await ensureInitialized()
+        return ok(request.id, await host.clearCodeIndex())
+      }
+      case 'code-index:set-auto': {
+        await ensureInitialized()
+        return ok(request.id, host.setAutoCodeIndex(request.params.enabled))
+      }
       case 'document:save-baseline': {
         await ensureInitialized()
-        return ok(request.id, await saveCurrentBaseline(request.params.path))
+        const target = documentAccess.assert(request.params.path)
+        return ok(request.id, await saveCurrentBaseline(target))
       }
       case 'workspace:files': {
         await ensureInitialized()
@@ -500,6 +586,18 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       case 'settings:clear-api-key': {
         await ensureInitialized()
         return ok(request.id, await host.clearApiKey(request.params.provider))
+      }
+      case 'settings:set-provider-base-url': {
+        await ensureInitialized()
+        return ok(request.id, await host.setProviderBaseUrl(request.params.provider, request.params.url))
+      }
+      case 'auth:login': {
+        await ensureInitialized()
+        return ok(request.id, await host.loginOpenAI(request.params.deviceAuth === true))
+      }
+      case 'auth:logout': {
+        await ensureInitialized()
+        return ok(request.id, await host.logoutOpenAI())
       }
       case 'settings:set-search-key': {
         await ensureInitialized()
@@ -619,6 +717,8 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
             attachmentsOlderThanDays: request.params.attachmentsOlderThanDays,
             library: request.params.library,
             whisperModels: request.params.whisperModels,
+            diagnostics: request.params.diagnostics,
+            documents: request.params.documents,
           }),
         )
       }
@@ -654,7 +754,7 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       }
       case 'skills:install-command': {
         await ensureInitialized()
-        return ok(request.id, await host.installSkillCommand(request.params.command))
+        return ok(request.id, await host.installSkillCommand(request.params.command, request.params.confirmed === true))
       }
       case 'skills:reload': {
         await ensureInitialized()
@@ -701,11 +801,18 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       }
       case 'plugins:import': {
         await ensureInitialized()
-        return ok(request.id, await host.installPluginPath(request.params.path))
+        return ok(request.id, await host.installPluginPath(request.params.path, request.params.confirmed === true))
       }
       case 'plugins:install-command': {
         await ensureInitialized()
-        return ok(request.id, await host.installPluginCommand(request.params.command, request.params.userConfig))
+        return ok(
+          request.id,
+          await host.installPluginCommand(
+            request.params.command,
+            request.params.userConfig,
+            request.params.confirmed === true,
+          ),
+        )
       }
       case 'plugins:preview': {
         await ensureInitialized()
@@ -737,7 +844,7 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       }
       case 'settings:marketplace-install': {
         await ensureInitialized()
-        return ok(request.id, await host.installMarketplace(request.params.id))
+        return ok(request.id, await host.installMarketplace(request.params.id, request.params.confirmed === true))
       }
       case 'settings:marketplace-add': {
         await ensureInitialized()
@@ -831,6 +938,11 @@ parentPort.on('message', (event) => {
   if (!message || typeof message !== 'object') return
 
   if (handleMainResponse(message)) return
+
+  if (message.kind === 'document-grant') {
+    documentAccess.grant(message.path)
+    return
+  }
 
   if (message.kind === 'shutdown') {
     void host.shutdown().finally(() => shells.disposeAll())

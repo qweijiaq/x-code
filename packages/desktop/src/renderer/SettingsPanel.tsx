@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next'
 
 import type {
   AppState,
+  CodeIndexResultView,
+  CodeIndexStatsView,
   DiagnosticsExportResult,
   EnvironmentRefreshResult,
   LibrarySearchView,
@@ -38,6 +40,7 @@ import { HooksSettings } from './HooksSettings.js'
 import { MemorySettings } from './MemorySettings.js'
 import { ProjectSettings } from './ProjectSettings.js'
 import { StorageSettings } from './StorageSettings.js'
+import { TrustSettings } from './TrustSettings.js'
 import i18n from './i18n.js'
 import { isImeEnter } from './ime.js'
 
@@ -46,6 +49,7 @@ const MIN_CONTEXT_WINDOW = 32_768
 type Tab =
   | 'api'
   | 'project'
+  | 'trust'
   | 'skills'
   | 'skillmarket'
   | 'commands'
@@ -62,6 +66,7 @@ type Tab =
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'api', label: '模型与密钥' },
   { id: 'project', label: '项目' },
+  { id: 'trust', label: '项目信任' },
   { id: 'skills', label: '技能' },
   { id: 'skillmarket', label: '技能市场' },
   { id: 'commands', label: '命令' },
@@ -201,6 +206,7 @@ export function SettingsPanel({
   const [mcpName, setMcpName] = useState('')
   const [mcpJson, setMcpJson] = useState(MCP_PLACEHOLDER)
   const [notice, setNotice] = useState<string | null>(null)
+  const [authPrompt, setAuthPrompt] = useState<string | null>(null)
   const [updateFeedDraft, setUpdateFeedDraft] = useState(settings.updateFeed)
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [updateDownload, setUpdateDownload] = useState<UpdateDownloadView | null>(null)
@@ -223,6 +229,22 @@ export function SettingsPanel({
   const [marketQuery, setMarketQuery] = useState('')
   const [marketName, setMarketName] = useState('')
   const [marketSource, setMarketSource] = useState('')
+
+  useEffect(() => {
+    const off = window.xcode.onEvent((event) => {
+      if (event.type === 'auth:login-url') {
+        setAuthPrompt(i18n.t('请在浏览器完成 ChatGPT 登录；如果没有自动打开，请访问：{{url}}', { url: event.url }))
+      } else if (event.type === 'auth:device-code') {
+        setAuthPrompt(
+          i18n.t('打开 {{url}}，输入设备码 {{code}} 完成 ChatGPT 登录。', {
+            url: event.url,
+            code: event.code,
+          }),
+        )
+      }
+    })
+    return off
+  }, [])
   const [pluginPreview, setPluginPreview] = useState<{
     preview: PluginConsentPreviewView
     target: PluginInstallTarget
@@ -236,6 +258,10 @@ export function SettingsPanel({
   const [libraryQuery, setLibraryQuery] = useState('')
   const [librarySearch, setLibrarySearch] = useState<LibrarySearchView | null>(null)
   const [libraryConfirmClear, setLibraryConfirmClear] = useState(false)
+  const [codeIndex, setCodeIndex] = useState<CodeIndexStatsView | null>(null)
+  const [codeIndexBusy, setCodeIndexBusy] = useState<string | null>(null)
+  const [codeIndexProgress, setCodeIndexProgress] = useState<string | null>(null)
+  const [codeIndexConfirmClear, setCodeIndexConfirmClear] = useState(false)
   const [pluginConfigDraft, setPluginConfigDraft] = useState<Record<string, string>>({})
   const [pluginConfig, setPluginConfig] = useState<{
     id: string
@@ -1044,6 +1070,64 @@ export function SettingsPanel({
     if (response.ok) setLibrary(response.result as LibraryStatsView)
   }
 
+  const loadCodeIndex = async (): Promise<void> => {
+    const response = await request('code-index:stats', {})
+    if (response.ok) setCodeIndex(response.result as CodeIndexStatsView)
+  }
+
+  const indexCodeNow = async (): Promise<void> => {
+    setCodeIndexBusy('code-index')
+    setCodeIndexProgress(null)
+    try {
+      const response = await request('code-index:index', { path: workspace, semantic: true })
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      const result = response.result as CodeIndexResultView
+      setNotice(
+        t(
+          '代码索引完成：新增/更新 {{indexed}}，跳过 {{skipped}}，移除 {{removed}}；共 {{files}} 个文件，{{chunks}} 个分块，{{vectors}} 个向量{{semantic}}',
+          {
+            indexed: result.indexed,
+            skipped: result.skipped,
+            removed: result.removed,
+            files: result.files,
+            chunks: result.chunks,
+            vectors: result.vectors,
+            semantic: result.semantic ? '' : t('（仅关键词）'),
+          },
+        ),
+      )
+      if (result.note) setError(result.note)
+      await loadCodeIndex()
+    } finally {
+      setCodeIndexBusy(null)
+      setCodeIndexProgress(null)
+    }
+  }
+
+  const clearCodeIndexNow = async (): Promise<void> => {
+    setCodeIndexConfirmClear(false)
+    const response = await request('code-index:clear', {})
+    if (!response.ok) {
+      setError(response.error.message)
+      return
+    }
+    await loadCodeIndex()
+    setNotice(t('代码索引已清空'))
+  }
+
+  const toggleAutoCodeIndex = async (): Promise<void> => {
+    if (!codeIndex) return
+    const response = await request('code-index:set-auto', { enabled: !codeIndex.autoIndex })
+    if (!response.ok) {
+      setError(response.error.message)
+      return
+    }
+    await loadCodeIndex()
+  }
+
   const indexLibraryAt = async (target: string, rebuild = false): Promise<void> => {
     if (!target) return
     setLibraryBusy(rebuild ? 'library-rebuild' : 'library-index')
@@ -1140,14 +1224,19 @@ export function SettingsPanel({
   }
 
   useEffect(() => {
-    if (tab !== 'library' || library) return
-    void loadLibrary()
-  }, [tab, library])
+    if (tab !== 'library') return
+    if (!library) void loadLibrary()
+    if (!codeIndex) void loadCodeIndex()
+  }, [tab, library, codeIndex])
 
   useEffect(() => {
     const off = window.xcode.onEvent((event) => {
-      if (event.type !== 'library:progress') return
-      setLibraryProgress(`${event.phase} ${event.processed}/${event.total} · ${event.chunks}`)
+      if (event.type === 'library:progress') {
+        setLibraryProgress(`${event.phase} ${event.processed}/${event.total} · ${event.chunks}`)
+      } else if (event.type === 'code-index:progress') {
+        setCodeIndexProgress(`${event.phase} ${event.processed}/${event.total} · ${event.chunks}`)
+        if (event.phase === 'save') void loadCodeIndex()
+      }
     })
     return off
   }, [])
@@ -1416,6 +1505,60 @@ export function SettingsPanel({
         <div className="settings-body">
           {tab === 'api' ? (
             <>
+              <div className="settings-section-title">{t('OpenAI 登录')}</div>
+              <p className="settings-note">
+                {settings.openaiAuth.mode === 'chatgpt'
+                  ? t('当前使用 ChatGPT 订阅登录；OpenAI 请求会优先走订阅额度，OPENAI_API_KEY 暂时不生效。')
+                  : settings.openaiAuth.mode === 'api-key'
+                    ? t('当前使用 OPENAI_API_KEY。登录 ChatGPT 订阅后，订阅凭据会优先于 API Key。')
+                    : t('未检测到 OpenAI 认证。可以登录 ChatGPT 订阅，或在下方配置 OPENAI_API_KEY。')}
+              </p>
+              {settings.openaiAuth.mode === 'chatgpt' ? (
+                <div className="settings-actions">
+                  <span className="settings-badge on">
+                    {settings.openaiAuth.email ?? settings.openaiAuth.accountId ?? t('ChatGPT 已登录')}
+                  </span>
+                  {settings.openaiAuth.planType ? (
+                    <span className="settings-hint">{settings.openaiAuth.planType}</span>
+                  ) : null}
+                  {settings.openaiAuth.expiresAt ? (
+                    <span className="settings-hint">
+                      {t('Token 过期时间：{{time}}', {
+                        time: new Date(settings.openaiAuth.expiresAt).toLocaleString(),
+                      })}
+                    </span>
+                  ) : null}
+                  <button
+                    className="btn"
+                    disabled={busy !== null}
+                    onClick={() => void apply('auth:logout', {}, 'auth-logout')}
+                  >
+                    {busy === 'auth-logout' ? t('退出中…') : t('退出 ChatGPT')}
+                  </button>
+                </div>
+              ) : (
+                <div className="settings-actions">
+                  <button
+                    className="btn solid"
+                    disabled={busy !== null}
+                    onClick={() => void apply('auth:login', { deviceAuth: false }, 'auth-login')}
+                  >
+                    {busy === 'auth-login' ? t('等待登录…') : t('使用浏览器登录')}
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={busy !== null}
+                    onClick={() => void apply('auth:login', { deviceAuth: true }, 'auth-device')}
+                  >
+                    {busy === 'auth-device' ? t('等待登录…') : t('使用设备码登录')}
+                  </button>
+                </div>
+              )}
+              {settings.openaiAuth.credentialError ? (
+                <p className="settings-error">{settings.openaiAuth.credentialError}</p>
+              ) : null}
+              {authPrompt ? <p className="settings-hint">{authPrompt}</p> : null}
+
               <div className="settings-section-title">{t('模型服务密钥')}</div>
               <p className="settings-hint" data-testid="secret-storage">
                 {settings.secretStorage === 'encrypted'
@@ -1451,6 +1594,29 @@ export function SettingsPanel({
                       ) : null}
                     </div>
                     <div className="provider-meta">{provider.envKey}</div>
+                    {provider.baseUrlOptions?.length ? (
+                      <div className="provider-fields">
+                        <select
+                          className="settings-input"
+                          value={provider.baseUrl ?? ''}
+                          disabled={busy !== null}
+                          onChange={(event) =>
+                            void apply(
+                              'settings:set-provider-base-url',
+                              { provider: provider.name, url: event.target.value },
+                              `base-url:${provider.name}`,
+                            )
+                          }
+                        >
+                          <option value="">{t('默认端点')}</option>
+                          {provider.baseUrlOptions.map((option) => (
+                            <option key={option.url} value={option.url}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
                     {provider.name === 'custom' ? (
                       <div className="provider-fields" data-testid="provider-fields">
                         <input
@@ -1931,6 +2097,7 @@ export function SettingsPanel({
           {tab === 'project' ? (
             <ProjectSettings settings={settings} onSettings={onSettings} onState={onState} onNotice={setNotice} />
           ) : null}
+          {tab === 'trust' ? <TrustSettings onNotice={setNotice} /> : null}
           {tab === 'commands' ? <CommandsSettings onNotice={setNotice} /> : null}
           {tab === 'hooks' ? <HooksSettings onNotice={setNotice} /> : null}
           {tab === 'memory' ? <MemorySettings onNotice={setNotice} /> : null}
@@ -1942,7 +2109,7 @@ export function SettingsPanel({
               <div className="settings-section-title">{t('MCP 服务器')}</div>
               <p className="settings-note">
                 {t('新增和修改写入用户级')} <code>~/.x-code/config.json</code>
-                {t('，保存后重新连接。项目级配置需先在 CLI 中完成信任。')}
+                {t('，保存后重新连接。项目级配置需先在“项目信任”中授权。')}
               </p>
               {settings.mcpProjectSkipped ? (
                 <div className="settings-warn">
@@ -2843,6 +3010,85 @@ export function SettingsPanel({
                     </div>
                   ) : null}
                   <div className="settings-hint">{library.indexPath}</div>
+
+                  <div className="settings-section-title">{t('代码索引')}</div>
+                  <p className="settings-note">
+                    {t(
+                      '为当前工作区建立代码索引，支持语义代码检索。最多 1500 个文件 / 600 万字符；跳过 node_modules、dist、.git 等目录。',
+                    )}
+                  </p>
+                  {codeIndex ? (
+                    <>
+                      <div className="library-status">
+                        <div>
+                          <span>{t('文件')}</span>
+                          <b>{codeIndex.files}</b>
+                        </div>
+                        <div>
+                          <span>{t('分块')}</span>
+                          <b>{codeIndex.chunks}</b>
+                        </div>
+                        <div>
+                          <span>{t('字符')}</span>
+                          <b>{codeIndex.characters}</b>
+                        </div>
+                        <div>
+                          <span>{t('向量')}</span>
+                          <b>
+                            {codeIndex.vectors}
+                            {codeIndex.dimensions > 0 ? ` (${codeIndex.dimensions}d)` : ''}
+                          </b>
+                        </div>
+                      </div>
+                      <p className="settings-hint">{codeIndex.semantic.note}</p>
+                      <div className="setting-row">
+                        <div className="setting-main">
+                          <div className="setting-name">{t('自动增量索引')}</div>
+                          <div className="setting-desc">
+                            {t('监听工作区代码变更，防抖后自动增量更新索引；Linux 回退为低频轮询。')}
+                          </div>
+                        </div>
+                        <button
+                          className={`settings-toggle ${codeIndex.autoIndex ? 'on' : ''}`}
+                          disabled={codeIndexBusy !== null}
+                          onClick={() => void toggleAutoCodeIndex()}
+                        >
+                          {codeIndex.autoIndex ? t('已开启（点击关闭）') : t('开启')}
+                        </button>
+                      </div>
+                      <div className="settings-actions">
+                        <button
+                          className="settings-btn primary"
+                          disabled={codeIndexBusy !== null}
+                          onClick={() => void indexCodeNow()}
+                        >
+                          {codeIndexBusy === 'code-index' ? t('索引中…') : t('索引当前项目')}
+                        </button>
+                        {codeIndexConfirmClear ? (
+                          <>
+                            <button className="settings-btn danger" onClick={() => void clearCodeIndexNow()}>
+                              {t('确认清空')}
+                            </button>
+                            <button className="settings-btn" onClick={() => setCodeIndexConfirmClear(false)}>
+                              {t('取消')}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="settings-btn"
+                            disabled={codeIndexBusy !== null || codeIndex.files === 0}
+                            onClick={() => setCodeIndexConfirmClear(true)}
+                          >
+                            {t('清空索引')}
+                          </button>
+                        )}
+                      </div>
+                      {codeIndexProgress ? <div className="settings-hint">{codeIndexProgress}</div> : null}
+                      <div className="settings-hint">{codeIndex.indexPath}</div>
+                    </>
+                  ) : (
+                    <div className="settings-empty">{t('加载中…')}</div>
+                  )}
                 </>
               ) : (
                 <div className="settings-empty">{t('加载中…')}</div>

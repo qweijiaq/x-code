@@ -7,7 +7,6 @@ import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { WorkspaceFileItem } from '../shared/protocol.js'
-import { MarkdownView } from './MarkdownView.js'
 import { isImageAttachment } from './media.js'
 import type { SlashCommand } from './slash-commands.js'
 import { AttachmentImage } from './transcript-components.js'
@@ -21,8 +20,10 @@ export function MentionPalette({
   items: WorkspaceFileItem[]
   index: number
   onPick: (file: WorkspaceFileItem) => void
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const { t } = useTranslation()
+  // 空列表不渲染容器：否则会留下一道空白边框，看起来像输入框上方的白条。
+  if (items.length === 0) return null
   return (
     <div className="slash-palette mention-palette" data-testid="mention-palette">
       {items.map((file, itemIndex) => (
@@ -55,7 +56,8 @@ export function SlashPalette({
   index: number
   paletteRef: RefObject<HTMLDivElement | null>
   onRun: (command: SlashCommand) => void
-}): React.JSX.Element {
+}): React.JSX.Element | null {
+  if (commands.length === 0) return null
   return (
     <div className="slash-palette" data-testid="slash-palette" ref={paletteRef}>
       {commands.map((command, commandIndex) => (
@@ -107,27 +109,17 @@ export function BackgroundWait({
   )
 }
 
-export function BackgroundIdle({ count, onOpen }: { count: number; onOpen: () => void }): React.JSX.Element {
-  const { t } = useTranslation()
-  return (
-    <div className="background-wait idle" data-testid="background-idle">
-      <span>{t('{{count}} 个后台任务运行中，可以继续提问；完成后会通知。', { count })}</span>
-      <button className="btn btn-quiet" onClick={onOpen}>
-        {t('查看')}
-      </button>
-    </div>
-  )
-}
-
 /** 回复运行中的活动条：说明当前在等什么、已经等了多久，避免看起来像卡死。 */
 export function TurnActivityBar({
   activity,
   elapsedMs,
   idleMs,
+  inline = false,
 }: {
   activity: { kind: string; detail?: string } | null
   elapsedMs: number
   idleMs: number
+  inline?: boolean
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   if (!activity) return null
@@ -153,10 +145,15 @@ export function TurnActivityBar({
   // 单纯等模型时两个数字相同，再提示一遍只会显得吵。
   const showIdle = idleSeconds >= 10 && idleSeconds < seconds - 2
   return (
-    <div className="turn-activity" data-testid="turn-activity" role="status" aria-live="polite">
+    <div
+      className={`turn-activity ${inline ? 'inline' : ''}`}
+      data-testid="turn-activity"
+      role="status"
+      aria-live="polite"
+    >
       <span className="turn-activity-dot" aria-hidden="true" />
       <span className="turn-activity-label">{label}</span>
-      <span className="spacer" />
+      {inline ? null : <span className="spacer" />}
       <span className="turn-activity-clock">
         {t('已等待 {{duration}}', { duration: formatDuration(seconds) })}
         {showIdle ? ` · ${t('{{count}} 秒无新输出', { count: idleSeconds })}` : ''}
@@ -265,79 +262,3 @@ export function AttachmentsStrip({
 }
 
 export type MarkdownFormat = 'bold' | 'italic' | 'code' | 'codeBlock' | 'link' | 'list' | 'quote'
-
-export function MarkdownBar({
-  open,
-  preview,
-  content,
-  onToggleOpen,
-  onTogglePreview,
-  onFormat,
-}: {
-  open: boolean
-  preview: boolean
-  content: string
-  onToggleOpen: () => void
-  onTogglePreview: () => void
-  onFormat: (kind: MarkdownFormat) => void
-}): React.JSX.Element {
-  const { t } = useTranslation()
-  const stopMouseDown = (event: React.MouseEvent): void => event.preventDefault()
-  const buttons: Array<{ kind: MarkdownFormat; title: string; label: React.ReactNode; testId?: string }> = [
-    { kind: 'bold', title: `${t('粗体')} (⌘B)`, label: <strong>B</strong>, testId: 'markdown-bold' },
-    { kind: 'italic', title: `${t('斜体')} (⌘I)`, label: <em>I</em> },
-    { kind: 'code', title: `${t('行内代码')} (⌘E)`, label: '</>' },
-    { kind: 'codeBlock', title: t('代码块'), label: '{ }' },
-    { kind: 'link', title: t('链接'), label: t('链接') },
-    { kind: 'list', title: t('列表'), label: t('列表') },
-    { kind: 'quote', title: t('引用'), label: t('引用') },
-  ]
-  return (
-    <>
-      <div className="markdown-bar">
-        <button
-          type="button"
-          className={`btn btn-quiet markdown-toggle ${open ? 'active' : ''}`}
-          data-testid="markdown-toggle"
-          title={t('Markdown 格式')}
-          aria-label={t('Markdown 格式')}
-          onClick={onToggleOpen}
-        >
-          MD
-        </button>
-        {open ? (
-          <div className="markdown-toolbar" data-testid="markdown-toolbar">
-            {buttons.map((button) => (
-              <button
-                key={button.kind}
-                type="button"
-                data-testid={button.testId}
-                title={button.title}
-                onMouseDown={stopMouseDown}
-                onClick={() => onFormat(button.kind)}
-              >
-                {button.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
-        <span className="spacer" />
-        {open ? (
-          <button
-            type="button"
-            className={`btn btn-quiet markdown-preview-toggle ${preview ? 'active' : ''}`}
-            data-testid="markdown-preview-toggle"
-            onClick={onTogglePreview}
-          >
-            {t('预览')}
-          </button>
-        ) : null}
-      </div>
-      {open && preview ? (
-        <div className="markdown-preview" data-testid="markdown-preview">
-          {content.trim() ? <MarkdownView text={content} /> : <div className="menu-hint">{t('暂无内容')}</div>}
-        </div>
-      ) : null}
-    </>
-  )
-}

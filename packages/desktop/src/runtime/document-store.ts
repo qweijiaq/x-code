@@ -40,6 +40,21 @@ function storePath(): string {
   return path.join(userXcodeDir(), STORE_FILE)
 }
 
+/** 统计存储文件本身；它不是目录，不能复用 directoryStats。 */
+export async function documentStoreStats(): Promise<{ bytes: number; files: number }> {
+  try {
+    const stat = await fs.promises.stat(storePath())
+    return stat.isFile() ? { bytes: stat.size, files: 1 } : { bytes: 0, files: 0 }
+  } catch {
+    return { bytes: 0, files: 0 }
+  }
+}
+
+/** 删除 OCR 文本与变更对比基线。原始文档不受影响，最近文档列表也会清空。 */
+export async function clearDocumentStore(): Promise<void> {
+  await fs.promises.rm(storePath(), { force: true }).catch(() => undefined)
+}
+
 function loadStore(): DocumentStoreFile {
   try {
     const raw = fs.readFileSync(storePath(), 'utf8')

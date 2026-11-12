@@ -70,6 +70,21 @@ export class McpService {
     }
   }
 
+  /**
+   * renderer 只需要知道"配置了哪些 env/header 键"，不需要值。此前 list()
+   * 原样返回 config，MCP 的 API key / Authorization 会进入 renderer 内存，
+   * 与"凭据不回传 renderer"的边界冲突。
+   */
+  private redactConfig(config: Record<string, unknown>): Record<string, unknown> {
+    const redacted = { ...config }
+    for (const field of ['env', 'headers'] as const) {
+      const value = redacted[field]
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+      redacted[field] = Object.fromEntries(Object.keys(value as Record<string, unknown>).map((key) => [key, '••••']))
+    }
+    return redacted
+  }
+
   async list(): Promise<McpServerView[]> {
     const items: McpServerView[] = []
     for (const server of this.registry.serverStatus()) {
@@ -88,7 +103,7 @@ export class McpService {
         name: server.name,
         scope,
         enabled: config?.enabled !== false,
-        config: config ? ({ ...config } as Record<string, unknown>) : {},
+        config: config ? this.redactConfig(config as unknown as Record<string, unknown>) : {},
         status: toStatusView(server.status, this.authUrls, server.name),
       })
     }

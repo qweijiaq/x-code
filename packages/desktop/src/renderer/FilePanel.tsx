@@ -127,17 +127,9 @@ interface Props {
   onOpenDocument?: (path: string) => void
   onClose: () => void
   /** 在统一检查器内渲染，而非固定抽屉。 */
-  embedded?: boolean
 }
 
-export function FilePanel({
-  workspace,
-  initialPath,
-  onOpenEditor,
-  onOpenDocument,
-  onClose,
-  embedded = false,
-}: Props): React.JSX.Element {
+export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument, onClose }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const [children, setChildren] = useState<Record<string, FileTreeEntryView[]>>({})
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['.']))
@@ -350,8 +342,7 @@ export function FilePanel({
 
   return (
     <>
-      {!embedded ? <div className="drawer-scrim" onClick={close} aria-hidden="true" /> : null}
-      <aside className={`file-drawer${embedded ? ' embedded' : ''}`} data-testid="file-drawer" aria-label={t('文件')}>
+      <aside className="file-drawer embedded" data-testid="file-drawer" aria-label={t('文件')}>
         <header className="drawer-head">
           <span className="drawer-seal" aria-hidden="true">
             档

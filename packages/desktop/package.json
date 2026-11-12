@@ -43,6 +43,12 @@
   },
   "devDependencies": {
     "@ai-sdk/provider": "^4.0.0",
+    "@tiptap/core": "3.32.2",
+    "@tiptap/extensions": "3.32.2",
+    "@tiptap/markdown": "3.32.2",
+    "@tiptap/pm": "3.32.2",
+    "@tiptap/react": "3.32.2",
+    "@tiptap/starter-kit": "3.32.2",
     "@types/node": "^22.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

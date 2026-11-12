@@ -11,6 +11,7 @@ import { clearDocumentLibrary, userXcodeDir } from '@x-code-cli/core'
 import type { StorageUsageView } from '../shared/protocol.js'
 import { directoryStats } from './agent-host-support.js'
 import { loadDesktopSettings } from './desktop-settings.js'
+import { clearDocumentStore, documentStoreStats } from './document-store.js'
 
 export interface StorageControllerHost {
   workspace(): string
@@ -23,6 +24,8 @@ export interface CleanupStorageOptions {
   attachmentsOlderThanDays?: number
   library?: boolean
   whisperModels?: boolean
+  diagnostics?: boolean
+  documents?: boolean
 }
 
 export interface StorageController {
@@ -41,11 +44,13 @@ export function createStorageController(host: StorageControllerHost): StorageCon
       { id: 'library', label: '文档库', path: path.join(root, 'library') },
       { id: 'attachments', label: '附件与截图', path: path.join(root, 'attachments') },
       { id: 'whisper', label: '语音模型', path: path.join(root, 'whisper-models') },
+      { id: 'diagnostics', label: '诊断包', path: path.join(root, 'diagnostics') },
+      { id: 'documents', label: '文档基线与 OCR', path: path.join(root, 'desktop-documents.json') },
       { id: 'logs', label: '日志', path: path.join(root, 'logs') },
     ]
     const categories = []
     for (const definition of definitions) {
-      const stats = await directoryStats(definition.path)
+      const stats = definition.id === 'documents' ? await documentStoreStats() : await directoryStats(definition.path)
       categories.push({ ...definition, ...stats })
     }
     return { categories, totalBytes: categories.reduce((sum, category) => sum + category.bytes, 0) }
@@ -133,6 +138,21 @@ export function createStorageController(host: StorageControllerHost): StorageCon
         const dir = path.join(root, 'whisper-models')
         const before = await directoryStats(dir)
         await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+        freedBytes += before.bytes
+        deletedFiles += before.files
+      }
+
+      if (options.diagnostics) {
+        const dir = path.join(root, 'diagnostics')
+        const before = await directoryStats(dir)
+        await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+        freedBytes += before.bytes
+        deletedFiles += before.files
+      }
+
+      if (options.documents) {
+        const before = await documentStoreStats()
+        await clearDocumentStore()
         freedBytes += before.bytes
         deletedFiles += before.files
       }

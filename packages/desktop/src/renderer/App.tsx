@@ -6,6 +6,7 @@ import type {
   ApprovalRequestEvent,
   BranchInfoView,
   BranchListView,
+  CaptureScreenView,
   CompactResult,
   CustomCommandView,
   DocumentDiffView,
@@ -13,6 +14,7 @@ import type {
   DocumentRecentItem,
   DocumentView,
   GitStatusView,
+  GoalView,
   LoadedSessionView,
   ModelOption,
   ProjectCheckResultView,
@@ -38,29 +40,34 @@ import { BackgroundPanel } from './BackgroundPanel.js'
 import { ChecksPanel } from './ChecksPanel.js'
 import { CommandPalette } from './CommandPalette.js'
 import { ComposerBox } from './ComposerBox.js'
+import type { MarkdownFormat } from './ComposerChrome.js'
 import {
   AttachmentsStrip,
-  BackgroundIdle,
   BackgroundWait,
   EditBadge,
-  MarkdownBar,
   MentionPalette,
   QueuedList,
   RecordingBar,
   SlashPalette,
   TurnActivityBar,
 } from './ComposerChrome.js'
+import type { ComposerEditorHandle } from './ComposerEditor.js'
+import { ContextSearchPanel } from './ContextSearchPanel.js'
 import { DocumentPanel } from './DocumentPanel.js'
 import { GitPanel } from './GitPanel.js'
+import { GoalPanel } from './GoalPanel.js'
 import { Inspector } from './Inspector.js'
 import type { InspectorTab } from './Inspector.js'
 import { OutlinePanel } from './OutlinePanel.js'
 import { RewindPanel } from './RewindPanel.js'
+import type { RewindMode } from './RewindPanel.js'
 import { TranscriptEntry, TranscriptEntryProvider } from './TranscriptEntry.js'
 import { UsageFooter } from './UsageFooter.js'
+import { TOOL_MENU_ACTION_IDS, createAppActions } from './actions.js'
 import {
   BranchIcon,
   ChevronIcon,
+  GoalIcon,
   HelpIcon,
   MoreIcon,
   OutlineIcon,
@@ -70,8 +77,7 @@ import {
 } from './icons.js'
 import { isImeEnter, isImeEvent } from './ime.js'
 import { base64FromBuffer } from './media.js'
-import { detectMention, insertMention } from './mention.js'
-import { createPaletteActions } from './palette-actions.js'
+import { detectMention } from './mention.js'
 import {
   USAGE_DISMISSED_KEY,
   draftStorageKey,
@@ -92,13 +98,17 @@ import {
   TASK_MODE_DESCRIPTION,
   TASK_MODE_LABEL,
   TASK_MODE_TEMPLATE,
+  TOOL_DISPLAY_HINT,
+  TOOL_DISPLAY_LABEL,
+  TOOL_DISPLAY_MODES,
   formatContextTokens,
   normalizeTaskMode,
+  normalizeToolDisplayMode,
   sessionTime,
   sessionTitle,
   taskBranchName,
 } from './transcript-model.js'
-import type { Entry, TaskMode, TurnRenderItem } from './transcript-model.js'
+import type { Entry, TaskMode, ToolDisplayMode, TurnRenderItem } from './transcript-model.js'
 import { forcedOnboarding, isUiSmoke, runUiSmoke } from './ui-smoke.js'
 import { useComposerKeyDown } from './use-composer-keydown.js'
 import { encodeWav } from './wav.js'
@@ -129,6 +139,14 @@ interface TurnActivity {
   kind: TurnActivityKind
   detail?: string
   startedAt: number
+}
+
+/** 另一个标签正在运行、当前看的却是别的会话时，运行会话的实时状态暂存在这里。 */
+interface BackgroundSession {
+  sessionId: string
+  entries: Entry[]
+  usage: UsageView | null
+  todos: TodoView[]
 }
 
 export function App(): React.JSX.Element {
@@ -202,6 +220,10 @@ export function App(): React.JSX.Element {
   const [workspaceGuardOff, setWorkspaceGuardOff] = useState(false)
   const workspaceGuardBypassRef = useRef(false)
   const [rewindOpen, setRewindOpen] = useState(false)
+  const [rewindInitialMode, setRewindInitialMode] = useState<RewindMode>('both')
+  const [goalOpen, setGoalOpen] = useState(false)
+  const [contextSearchOpen, setContextSearchOpen] = useState(false)
+  const [goal, setGoal] = useState<GoalView | null>(null)
   const [onboardingDismissed, setOnboardingDismissed] = useState(false)
   const [usageProgress, setUsageProgress] = useState<Record<UsageKey, boolean>>(() => readUsage())
   const [usageDismissed, setUsageDismissed] = useState(() => {
@@ -223,8 +245,6 @@ export function App(): React.JSX.Element {
   const [newBranchBusy, setNewBranchBusy] = useState(false)
   const [newBranchParent, setNewBranchParent] = useState('')
   const [newTaskPrompt, setNewTaskPrompt] = useState('')
-  const [markdownToolsOpen, setMarkdownToolsOpen] = useState(false)
-  const [markdownPreview, setMarkdownPreview] = useState(false)
   const [imageLightbox, setImageLightbox] = useState<{ src: string; name: string } | null>(null)
   const [removeWorktree, setRemoveWorktree] = useState<{ path: string; branch: string } | null>(null)
   const [removeWorktreeBusy, setRemoveWorktreeBusy] = useState(false)
@@ -240,7 +260,18 @@ export function App(): React.JSX.Element {
   const [workspaceInsights, setWorkspaceInsights] = useState<WorkspaceInsightsView | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
-  const [collapsedTurns, setCollapsedTurns] = useState<Set<string>>(new Set())
+  const activeSessionIdRef = useRef<string | null>(null)
+  // 正在执行的会话与当前浏览的会话可能不同：执行中的标签在后台继续收事件。
+  const [runningSessionId, setRunningSessionId] = useState<string | null>(null)
+  const runningSessionIdRef = useRef<string | null>(null)
+  const hostSessionIdRef = useRef<string | null>(null)
+  const [backgroundSession, setBackgroundSession] = useState<BackgroundSession | null>(null)
+  const backgroundSessionRef = useRef<BackgroundSession | null>(null)
+  const [toolDisplayMode, setToolDisplayMode] = useState<ToolDisplayMode>(() =>
+    normalizeToolDisplayMode(localStorage.getItem('xcode.toolDisplay')),
+  )
+  // 记录用户对某一轮工具组的显式展开/收起，优先级高于模式默认值。
+  const [turnToolOverrides, setTurnToolOverrides] = useState<Map<string, boolean>>(new Map())
   const [tabs, setTabs] = useState<string[]>([])
   const [tabTitles, setTabTitles] = useState<Record<string, string>>({})
   const [pendingSession, setPendingSession] = useState<{ sessionId: string; at: number } | null>(null)
@@ -265,10 +296,11 @@ export function App(): React.JSX.Element {
   const [gitSelected, setGitSelected] = useState<{ path: string; staged: boolean } | null>(null)
   const [gitDiffText, setGitDiffText] = useState<string | null>(null)
   const [gitDiffTruncated, setGitDiffTruncated] = useState(false)
-  const [gitBusy, setGitBusy] = useState(false)
+
   const [projectChecks, setProjectChecks] = useState<ProjectCheckView[]>([])
   const [checkResults, setCheckResults] = useState<ProjectCheckResultView[]>([])
   const [checkAuto, setCheckAuto] = useState(false)
+  const [checkAutoFix, setCheckAutoFix] = useState(false)
   const [checksLoading, setChecksLoading] = useState(false)
   const [checksError, setChecksError] = useState<string | null>(null)
   const documentViewsRef = useRef<Record<string, DocumentView>>({})
@@ -289,7 +321,16 @@ export function App(): React.JSX.Element {
     document.title = name ? `X-Code · ${name}` : 'X-Code'
   }, [appState?.workspace])
   const [approval, setApproval] = useState<ApprovalRequestEvent | null>(null)
+  const [questionDraft, setQuestionDraft] = useState('')
+  useEffect(() => {
+    setQuestionDraft('')
+  }, [approval?.requestId])
   const [todos, setTodos] = useState<TodoView[]>([])
+  // 清单在全部完成后会被核心清空；短暂保留再淡出，避免很短的任务让面板
+  // 出现后立刻消失，看起来一直在闪。
+  const [shownTodos, setShownTodos] = useState<TodoView[]>([])
+  const [todosLeaving, setTodosLeaving] = useState(false)
+  const todosShownRef = useRef<TodoView[]>([])
   const [usage, setUsage] = useState<UsageView | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [movingTempEntry, setMovingTempEntry] = useState<string | null>(null)
@@ -301,6 +342,7 @@ export function App(): React.JSX.Element {
   const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [audioLevel, setAudioLevel] = useState(0)
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
+  const [captureScreens, setCaptureScreens] = useState<CaptureScreenView[]>([])
   const [paletteIndex, setPaletteIndex] = useState(0)
   const activeTurn = useRef<string | null>(null)
   const activeTextEntryId = useRef<string | null>(null)
@@ -317,7 +359,7 @@ export function App(): React.JSX.Element {
   const submitRef = useRef<
     (prompt: string, alreadyShown?: boolean, attachments?: string[], displayText?: string) => void
   >(() => {})
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const composerRef = useRef<ComposerEditorHandle | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const audioProcessorRef = useRef<ScriptProcessorNode | null>(null)
@@ -337,6 +379,72 @@ export function App(): React.JSX.Element {
 
   const append = (entry: Omit<Entry, 'id'> & { id?: string }): void => {
     setEntries((prev) => [...prev, { id: entry.id ?? crypto.randomUUID(), ...entry }])
+  }
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId
+  }, [activeSessionId])
+
+  const storeBackgroundSession = (next: BackgroundSession | null): void => {
+    backgroundSessionRef.current = next
+    setBackgroundSession(next)
+  }
+  /** 当前浏览的不是执行中的会话时，把事件写进后台缓冲而不是界面。 */
+  const isBackgroundEvent = (): boolean =>
+    runningSessionIdRef.current !== null && activeSessionIdRef.current !== runningSessionIdRef.current
+  const appendRouted = (entry: Omit<Entry, 'id'> & { id?: string }): void => {
+    if (isBackgroundEvent()) {
+      const current = backgroundSessionRef.current
+      if (!current) return
+      storeBackgroundSession({
+        ...current,
+        entries: [...current.entries, { id: entry.id ?? crypto.randomUUID(), ...entry }],
+      })
+      return
+    }
+    append(entry)
+  }
+  const updateEntriesRouted = (updater: (previous: Entry[]) => Entry[]): void => {
+    if (isBackgroundEvent()) {
+      const current = backgroundSessionRef.current
+      if (!current) return
+      storeBackgroundSession({ ...current, entries: updater(current.entries) })
+      return
+    }
+    setEntries(updater)
+  }
+  const setUsageRouted = (usage: UsageView): void => {
+    if (isBackgroundEvent()) {
+      const current = backgroundSessionRef.current
+      if (current) storeBackgroundSession({ ...current, usage })
+      return
+    }
+    setUsage(usage)
+  }
+  const setTodosRouted = (todos: TodoView[]): void => {
+    if (isBackgroundEvent()) {
+      const current = backgroundSessionRef.current
+      if (current) storeBackgroundSession({ ...current, todos })
+      return
+    }
+    setTodos(todos)
+  }
+  const setNoticeRouted = (notice: string | null): void => {
+    if (isBackgroundEvent()) return
+    setNotice(notice)
+  }
+
+  /** 回到仍在执行的会话时，把后台缓冲换回界面。 */
+  const restoreBackgroundSession = (sessionId: string): boolean => {
+    const background = backgroundSessionRef.current
+    if (!background || background.sessionId !== sessionId) return false
+    activeSessionIdRef.current = sessionId
+    setEntries(background.entries)
+    setUsage(background.usage)
+    setTodos(background.todos)
+    setActiveSessionId(sessionId)
+    storeBackgroundSession(null)
+    return true
   }
 
   /** 记录当前轮次正在做什么；相同阶段不重置起始时间，只刷新最后活动时间。 */
@@ -381,6 +489,7 @@ export function App(): React.JSX.Element {
 
   /** 显示一个尚未写入磁盘的会话标签页（还没有发送任何消息）。 */
   const activateEmptyTab = (sessionId: string): void => {
+    activeSessionIdRef.current = sessionId
     setActiveSessionId(sessionId)
     setEntries([])
     setUsage(null)
@@ -467,88 +576,17 @@ export function App(): React.JSX.Element {
 
   const pickMention = (file: WorkspaceFileItem): void => {
     if (!mention) return
-    const next = insertMention(input, mention, file)
-    setInput(next.text)
+    const target = file.isDirectory ? `${file.path}/` : file.path
+    const quoted = /\s|["\\]/.test(target)
+    const token = quoted ? `@"${target.replace(/"/g, '\\"')}"` : `@${target}`
+    // 只替换当前 @-token；光标落在结束引号前时目录会继续展开子项。
+    composerRef.current?.replaceBeforeCaret(mention.tokenEnd - mention.atIdx, token, quoted ? 1 : 0)
     setMention(null)
     setMentionItems([])
-    requestAnimationFrame(() => {
-      const element = textareaRef.current
-      if (!element) return
-      element.focus()
-      element.setSelectionRange(next.cursor, next.cursor)
-      // 保持浏览：选择目录后会在其子项上重新打开菜单。
-      if (file.isDirectory) updateMention(next.text, next.cursor)
-    })
   }
 
-  const applyMarkdown = (kind: 'bold' | 'italic' | 'code' | 'codeBlock' | 'link' | 'list' | 'quote'): void => {
-    const element = textareaRef.current
-    const start = element?.selectionStart ?? input.length
-    const end = element?.selectionEnd ?? input.length
-    const selected = input.slice(start, end)
-    if (kind === 'list' || kind === 'quote') {
-      const prefix = kind === 'list' ? '- ' : '> '
-      const lineStart = input.lastIndexOf('\n', start - 1) + 1
-      const block = input
-        .slice(lineStart, end)
-        .split('\n')
-        .map((line) => (line.startsWith(prefix) ? line : prefix + line))
-        .join('\n')
-      const next = input.slice(0, lineStart) + block + input.slice(end)
-      const cursor = lineStart + block.length
-      setInput(next)
-      updateMention(next, cursor)
-      requestAnimationFrame(() => {
-        const node = textareaRef.current
-        if (!node) return
-        node.focus()
-        node.setSelectionRange(cursor, cursor)
-      })
-      return
-    }
-
-    let before = ''
-    let after = ''
-    let placeholder = ''
-    switch (kind) {
-      case 'bold':
-        before = '**'
-        after = '**'
-        placeholder = t('粗体')
-        break
-      case 'italic':
-        before = '*'
-        after = '*'
-        placeholder = t('斜体')
-        break
-      case 'code':
-        before = '`'
-        after = '`'
-        placeholder = t('行内代码')
-        break
-      case 'codeBlock':
-        before = (start > 0 ? '\n' : '') + '```\n'
-        after = '\n```\n'
-        placeholder = t('代码块')
-        break
-      case 'link':
-        before = '['
-        after = '](https://)'
-        placeholder = t('链接')
-        break
-    }
-    const content = selected || placeholder
-    const next = input.slice(0, start) + before + content + after + input.slice(end)
-    const cursorStart = start + before.length
-    const cursorEnd = cursorStart + content.length
-    setInput(next)
-    updateMention(next, cursorEnd)
-    requestAnimationFrame(() => {
-      const node = textareaRef.current
-      if (!node) return
-      node.focus()
-      node.setSelectionRange(cursorStart, cursorEnd)
-    })
+  const applyMarkdown = (kind: MarkdownFormat): void => {
+    composerRef.current?.toggleFormat(kind)
   }
 
   useEffect(() => {
@@ -715,37 +753,6 @@ export function App(): React.JSX.Element {
     }
   }, [draftKey, input, attachments])
 
-  // 草稿随内容增高，到达可读上限后在框内滚动，避免把对话顶出屏幕。
-  useEffect(() => {
-    const element = textareaRef.current
-    if (!element) return
-    const fit = (): void => {
-      element.style.height = 'auto'
-      const max = Math.min(240, Math.max(96, window.innerHeight * 0.35))
-      const next = Math.min(element.scrollHeight, max)
-      element.style.height = `${Math.max(40, next)}px`
-      element.style.overflowY = element.scrollHeight > max ? 'auto' : 'hidden'
-    }
-    fit()
-    window.addEventListener('resize', fit)
-    // 打开或收起 Inspector 会改变输入框宽度、重新折行，但窗口尺寸不变；
-    // 只在宽度变化时重算，避免高度回写触发观察循环。
-    let lastWidth = element.clientWidth
-    const observer =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(() => {
-            if (Math.abs(element.clientWidth - lastWidth) < 1) return
-            lastWidth = element.clientWidth
-            fit()
-          })
-    observer?.observe(element)
-    return () => {
-      window.removeEventListener('resize', fit)
-      observer?.disconnect()
-    }
-  }, [input])
-
   useEffect(() => {
     const query = sessionQuery.trim()
     if (query.length < 2) {
@@ -788,7 +795,7 @@ export function App(): React.JSX.Element {
       const pending = pendingTextRef.current
       pendingTextRef.current = null
       if (!pending) return
-      setEntries((prev) =>
+      updateEntriesRouted((prev) =>
         prev.map((entry) => (entry.id === pending.entryId ? { ...entry, text: entry.text + pending.text } : entry)),
       )
     }
@@ -815,7 +822,7 @@ export function App(): React.JSX.Element {
       switch (event.type) {
         case 'runtime:ready':
           setStatus('ready')
-          append({
+          appendRouted({
             role: 'system',
             text: i18n.t('运行时已连接 · Node {{node}} · Electron {{electron}}', {
               node: event.versions.node ?? '?',
@@ -823,26 +830,47 @@ export function App(): React.JSX.Element {
             }),
           })
           break
+        case 'runtime:exit':
+          setStatus('offline')
+          appendRouted({
+            role: 'error',
+            text: i18n.t('运行时已退出（code {{code}}）。下次发送消息时会自动重启。', { code: event.code }),
+          })
+          break
+        case 'goal:update':
+          setGoal(event.goal)
+          break
         case 'app:state':
           setAppState(event.state)
           break
-        case 'agent:turn-start':
+        case 'agent:turn-start': {
           activeTurn.current = event.turnId
           activeTextEntryId.current = null
           busyRef.current = true
           setBusy(true)
+          runningSessionIdRef.current = event.sessionId
+          setRunningSessionId(event.sessionId)
+          hostSessionIdRef.current = event.sessionId
           markTurnActivity('model')
-          setNotice(null)
-          setActiveSessionId(event.sessionId)
           addTab(event.sessionId)
+          if (activeSessionIdRef.current === null || activeSessionIdRef.current === event.sessionId) {
+            // 还没有活动会话，或这一轮就属于当前标签：直接显示。
+            activeSessionIdRef.current = event.sessionId
+            setActiveSessionId(event.sessionId)
+          } else if (backgroundSessionRef.current?.sessionId !== event.sessionId) {
+            // 后台会话开始新一轮：确保它有独立的界面缓冲。
+            storeBackgroundSession({ sessionId: event.sessionId, entries: [], usage: null, todos: [] })
+          }
+          setNoticeRouted(null)
           break
+        }
         case 'agent:text-delta': {
           markTurnActivity('streaming')
           const textEntryId = activeTextEntryId.current
           if (!textEntryId) {
             const id = crypto.randomUUID()
             activeTextEntryId.current = id
-            append({ id, role: 'assistant', text: event.delta, turnId: activeTurn.current ?? undefined })
+            appendRouted({ id, role: 'assistant', text: event.delta, turnId: activeTurn.current ?? undefined })
           } else {
             const pending = pendingTextRef.current
             pendingTextRef.current = {
@@ -861,7 +889,7 @@ export function App(): React.JSX.Element {
           // 工具之后的文本属于这张卡片之后，而不是工具运行前
           // 创建的那个更早的助手气泡。
           activeTextEntryId.current = null
-          append({
+          appendRouted({
             id: event.toolCallId,
             role: 'tool',
             text: '',
@@ -874,7 +902,7 @@ export function App(): React.JSX.Element {
           })
           break
         case 'agent:tool-progress':
-          setEntries((prev) =>
+          updateEntriesRouted((prev) =>
             prev.map((entry) =>
               entry.toolCallId === event.toolCallId ? { ...entry, toolProgress: event.message } : entry,
             ),
@@ -882,7 +910,7 @@ export function App(): React.JSX.Element {
           break
         case 'agent:tool-result':
           markTurnActivity('model')
-          setEntries((prev) =>
+          updateEntriesRouted((prev) =>
             prev.map((entry) =>
               entry.toolCallId === event.toolCallId
                 ? {
@@ -896,13 +924,13 @@ export function App(): React.JSX.Element {
           )
           break
         case 'agent:file-edit':
-          setEntries((prev) =>
+          updateEntriesRouted((prev) =>
             prev.map((entry) => (entry.toolCallId === event.toolCallId ? { ...entry, diff: event.payload } : entry)),
           )
           break
         case 'agent:background-task':
           if (event.phase === 'end') {
-            append({
+            appendRouted({
               role: event.task.status === 'completed' ? 'system' : 'error',
               text: t('后台任务结束：{{agent}} — {{description}}（{{status}}）', {
                 agent: event.task.agentName,
@@ -913,7 +941,7 @@ export function App(): React.JSX.Element {
           }
           break
         case 'agent:subagent':
-          setEntries((prev) =>
+          updateEntriesRouted((prev) =>
             prev.map((entry) => {
               if (entry.toolCallId !== event.toolCallId) return entry
               const current: SubAgentView = entry.subagent ?? {
@@ -982,31 +1010,31 @@ export function App(): React.JSX.Element {
           )
           break
         case 'agent:todos':
-          setTodos(event.todos)
+          setTodosRouted(event.todos)
           break
         case 'agent:usage':
-          setUsage(event.usage)
+          setUsageRouted(event.usage)
           break
         case 'agent:permission-mode':
-          setNotice(event.mode === 'plan' ? i18n.t('计划模式') : null)
+          setNoticeRouted(event.mode === 'plan' ? i18n.t('计划模式') : null)
           break
         case 'agent:context-compressed':
           activeTextEntryId.current = null
-          append({
+          appendRouted({
             role: 'system',
             text: i18n.t('上下文已压缩：{{summary}}', { summary: event.summary.slice(0, 160) }),
             turnId: activeTurn.current ?? undefined,
           })
-          setNotice(null)
+          setNoticeRouted(null)
           break
         case 'agent:compression-progress':
-          setNotice(event.description)
+          setNoticeRouted(event.description)
           break
         case 'agent:ingest-progress':
-          setNotice(event.description)
+          setNoticeRouted(event.description)
           break
         case 'agent:attachments':
-          setNotice(
+          setNoticeRouted(
             i18n.t('附件已读取：{{files}} 个文件，{{chars}} 字符', {
               files: event.files.length,
               chars: event.textBytes,
@@ -1015,7 +1043,7 @@ export function App(): React.JSX.Element {
           break
         case 'agent:stream-retry':
           markTurnActivity('retry', `${event.attempt}/${event.maxAttempts}`)
-          setNotice(
+          setNoticeRouted(
             i18n.t('连接波动，重试 {{attempt}}/{{max}}…', {
               attempt: event.attempt,
               max: event.maxAttempts,
@@ -1023,12 +1051,12 @@ export function App(): React.JSX.Element {
           )
           break
         case 'agent:model-fallback':
-          append({
+          appendRouted({
             role: 'system',
             text: i18n.t('主模型不可用，已切换到 {{model}}', { model: event.toModelId }),
             turnId: activeTurn.current ?? undefined,
           })
-          setNotice(null)
+          setNoticeRouted(null)
           break
         case 'agent:turn-end':
           activeTurn.current = null
@@ -1036,17 +1064,32 @@ export function App(): React.JSX.Element {
           busyRef.current = false
           setBusy(false)
           clearTurnActivity()
-          setNotice(null)
-          setEntries((prev) =>
-            prev.map((entry) =>
+          setNoticeRouted(null)
+          updateEntriesRouted((prev) => {
+            const next: Entry[] = prev.map((entry) =>
               entry.subagent?.status === 'running'
                 ? {
                     ...entry,
                     subagent: { ...entry.subagent, status: event.reason === 'completed' ? 'completed' : 'aborted' },
                   }
                 : entry,
-            ),
-          )
+            )
+            // 有些模型在工具结果之后直接结束这一轮，界面上会像“无缘无故停了”。
+            // 补一条说明，提示用户可以继续或重新生成。
+            const last = next[next.length - 1]
+            if (event.reason === 'completed' && last?.role === 'tool') {
+              const notice: Entry = {
+                id: crypto.randomUUID(),
+                role: 'system',
+                text: i18n.t('工具已执行，但模型没有继续回复。可以继续提问，或重新生成。'),
+                turnId: event.turnId,
+              }
+              next.push(notice)
+            }
+            return next
+          })
+          runningSessionIdRef.current = null
+          setRunningSessionId(null)
           setQueued(queueRef.current.length)
           if (queueRef.current.length > 0) {
             const next = queueRef.current.shift()
@@ -1058,9 +1101,11 @@ export function App(): React.JSX.Element {
           break
         case 'agent:error':
           activeTextEntryId.current = null
-          append({ role: 'error', text: event.message, turnId: activeTurn.current ?? undefined })
+          appendRouted({ role: 'error', text: event.message, turnId: activeTurn.current ?? undefined })
           busyRef.current = false
           setBusy(false)
+          runningSessionIdRef.current = null
+          setRunningSessionId(null)
           clearTurnActivity()
           break
         case 'approval:request':
@@ -1069,7 +1114,7 @@ export function App(): React.JSX.Element {
           break
         case 'session:saved':
           setSessions((prev) => [event.item, ...prev.filter((item) => item.sessionId !== event.item.sessionId)])
-          setActiveSessionId(event.item.sessionId)
+          if (!isBackgroundEvent()) setActiveSessionId(event.item.sessionId)
           setTabTitles((prev) => {
             const title = (event.item.name || event.item.title || event.item.firstPrompt || '').trim()
             return title ? { ...prev, [event.item.sessionId]: title.slice(0, 80) } : prev
@@ -1092,13 +1137,26 @@ export function App(): React.JSX.Element {
             (result) => result.status === 'failed' || result.status === 'timeout',
           ).length
           if (event.auto) {
-            append({
+            appendRouted({
               role: 'system',
               text:
                 failed > 0 ? i18n.t('自动项目检查失败：{{count}} 项', { count: failed }) : i18n.t('自动项目检查通过'),
             })
-            setNotice(failed > 0 ? i18n.t('自动项目检查失败，可在“检查”面板查看') : i18n.t('自动项目检查通过'))
+            setNoticeRouted(failed > 0 ? i18n.t('自动项目检查失败，可在“检查”面板查看') : i18n.t('自动项目检查通过'))
           }
+          break
+        }
+        case 'checks:auto-fix': {
+          const text =
+            event.status === 'started'
+              ? i18n.t('自动修复：第 {{round}}/{{max}} 轮', { round: event.round, max: event.maxRounds })
+              : event.status === 'passed'
+                ? i18n.t('自动修复后项目检查通过')
+                : event.status === 'exhausted'
+                  ? i18n.t('自动修复已用尽 {{max}} 轮，项目检查仍未通过', { max: event.maxRounds })
+                  : i18n.t('自动修复中止：{{message}}', { message: event.message ?? '' })
+          appendRouted({ role: event.status === 'failed' || event.status === 'exhausted' ? 'error' : 'system', text })
+          setNoticeRouted(text)
           break
         }
         case 'settings:changed':
@@ -1128,7 +1186,7 @@ export function App(): React.JSX.Element {
           void refreshCommands()
           break
         case 'audio:progress':
-          setNotice(event.message)
+          setNoticeRouted(event.message)
           break
         case 'app:open-session':
           void openSessionById(event.sessionId)
@@ -1239,6 +1297,37 @@ export function App(): React.JSX.Element {
   }, [busy])
 
   useEffect(() => {
+    if (todos.length > 0) {
+      todosShownRef.current = todos
+      setShownTodos(todos)
+      setTodosLeaving(false)
+      return
+    }
+    if (todosShownRef.current.length === 0) return
+    setTodosLeaving(true)
+    const timer = setTimeout(() => {
+      todosShownRef.current = []
+      setShownTodos([])
+      setTodosLeaving(false)
+    }, 1_200)
+    return () => clearTimeout(timer)
+  }, [todos])
+
+  // 切换显示模式等同于重置默认值：之前手动展开/收起的轮次重新按模式摆放。
+  useEffect(() => {
+    setTurnToolOverrides(new Map())
+  }, [toolDisplayMode])
+
+  const changeToolDisplayMode = (mode: ToolDisplayMode): void => {
+    setToolDisplayMode(mode)
+    try {
+      localStorage.setItem('xcode.toolDisplay', mode)
+    } catch {
+      // 本地偏好保存失败不影响本次使用。
+    }
+  }
+
+  useEffect(() => {
     if (!isUiSmoke || uiSmokeRan.current) return
     uiSmokeRan.current = true
     void runUiSmoke({ setInput, setAttachments, openDocument, closeInspector, activeSessionId })
@@ -1311,6 +1400,10 @@ export function App(): React.JSX.Element {
   ): Promise<void> => {
     const prompt = promptText.trim() || (files.length > 0 ? t('请阅读并分析这些附件。') : '')
     if (!prompt) return
+    if (!alreadyShown && busyRef.current && runningSessionIdRef.current !== activeSessionIdRef.current) {
+      setReport(t('另一个标签的回复仍在运行；请在对应标签停止或等待结束后再发送。'))
+      return
+    }
     const display = displayText?.trim() || prompt
     if (!alreadyShown && !busyRef.current && !workspaceGuardOff && !workspaceGuardBypassRef.current) {
       const external = detectExternalWorkspacePaths(prompt, appState?.workspace ?? settings?.workspace ?? '')
@@ -1328,6 +1421,29 @@ export function App(): React.JSX.Element {
       setTabTitles((prev) =>
         prev[activeSessionId] ? prev : { ...prev, [activeSessionId]: display.replace(/\s+/g, ' ').slice(0, 80) },
       )
+    }
+    // 之前在其他会话运行期间浏览了别的标签：发送前先把运行时切回当前会话。
+    if (
+      !alreadyShown &&
+      !busyRef.current &&
+      activeSessionIdRef.current &&
+      hostSessionIdRef.current !== activeSessionIdRef.current
+    ) {
+      const target = sessions.find((session) => session.sessionId === activeSessionIdRef.current)
+      if (!target) {
+        setReport(t('该标签还没有可发送的会话，请新建会话。'))
+        return
+      }
+      const loaded = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'session:load',
+        params: { filePath: target.filePath },
+      })
+      if (!loaded.ok) {
+        setReport(t('恢复会话失败：{{message}}', { message: loaded.error.message }))
+        return
+      }
+      hostSessionIdRef.current = target.sessionId
     }
     if (editArmed && !alreadyShown && !busyRef.current) {
       const rewound = await rewindConversation()
@@ -1748,8 +1864,13 @@ export function App(): React.JSX.Element {
     setChecksError(null)
     setProjectChecks((detectResponse.result as { checks: ProjectCheckView[] }).checks)
     if (statusResponse.ok) {
-      const status = statusResponse.result as { autoChecks: boolean; lastResults?: ProjectCheckResultView[] }
+      const status = statusResponse.result as {
+        autoChecks: boolean
+        autoFixChecks: boolean
+        lastResults?: ProjectCheckResultView[]
+      }
       setCheckAuto(status.autoChecks)
+      setCheckAutoFix(status.autoFixChecks)
       if (status.lastResults) setCheckResults(status.lastResults)
     }
   }
@@ -1787,6 +1908,20 @@ export function App(): React.JSX.Element {
       return
     }
     setCheckAuto((response.result as { enabled: boolean }).enabled)
+    if (!(response.result as { enabled: boolean }).enabled) setCheckAutoFix(false)
+  }
+
+  const toggleAutoFixChecks = async (): Promise<void> => {
+    const response = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'checks:set-auto-fix',
+      params: { enabled: !checkAutoFix },
+    })
+    if (!response.ok) {
+      setChecksError(response.error.message)
+      return
+    }
+    setCheckAutoFix((response.result as { enabled: boolean }).enabled)
   }
 
   const fixFromChecks = (): void => {
@@ -1804,24 +1939,35 @@ export function App(): React.JSX.Element {
 
   const refreshGit = async (): Promise<void> => {
     setGitLoading(true)
-    const response = await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'git:status',
-      params: {},
-    })
-    setGitLoading(false)
-    if (!response.ok) {
-      setGitError(response.error.message)
-      return
+    try {
+      const response = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'git:status',
+        params: {},
+      })
+      if (!response.ok) {
+        setGitError(response.error.message)
+        return
+      }
+      setGitError(null)
+      setGitStatusView(response.result as GitStatusView)
+    } catch (error) {
+      // 传输层失败也要结束“加载中”，否则面板会永远停在加载状态。
+      setGitError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setGitLoading(false)
     }
-    setGitError(null)
-    setGitStatusView(response.result as GitStatusView)
   }
 
+  // 点击 Inspector 的 Git 标签不会经过 openGitPanel，这里统一兜底加载。
+  useEffect(() => {
+    if (inspectorTab !== 'git') return
+    void refreshGit()
+  }, [inspectorTab])
+
   const openGitPanel = async (): Promise<void> => {
-    openInspector('git')
     setSettingsOpen(false)
-    await refreshGit()
+    openInspector('git')
   }
 
   const selectGitFile = async (filePath: string, staged: boolean): Promise<void> => {
@@ -1842,28 +1988,15 @@ export function App(): React.JSX.Element {
     setGitDiffTruncated(result.truncated)
   }
 
-  const undoGitTurn = async (): Promise<void> => {
-    setGitBusy(true)
-    try {
-      const response = await window.xcode.request({
-        id: crypto.randomUUID(),
-        method: 'git:undo-turn',
-        params: {},
-      })
-      if (!response.ok) {
-        setGitError(response.error.message)
-        return
-      }
-      const result = response.result as { message: string }
-      setNotice(t('已撤销本轮修改'))
-      setGitSelected(null)
-      setGitDiffText(null)
-      append({ role: 'system', text: result.message })
-      await refreshGit()
-    } finally {
-      setGitBusy(false)
-    }
+  // 用户可见的“回退本轮”统一走 RewindPanel；Git 面板直接预选“仅代码”。
+  const openRewind = (mode: RewindMode = 'both'): void => {
+    setRewindInitialMode(mode)
+    setRewindOpen(true)
   }
+
+  useEffect(() => {
+    if (!rewindOpen) setRewindInitialMode('both')
+  }, [rewindOpen])
 
   const openDocumentPanel = async (): Promise<void> => {
     markUsage('document')
@@ -2000,6 +2133,51 @@ export function App(): React.JSX.Element {
   }
 
   const loadSession = async (item: SessionListItem): Promise<void> => {
+    if (restoreBackgroundSession(item.sessionId)) return
+    const busy = busyRef.current
+    if (busy) {
+      // 把正在显示的运行会话转入后台缓冲，再用只读接口打开另一份历史。
+      if (activeSessionIdRef.current === runningSessionIdRef.current) {
+        const running = runningSessionIdRef.current
+        if (running) storeBackgroundSession({ sessionId: running, entries, usage, todos })
+      }
+      const peek = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'session:peek',
+        params: { filePath: item.filePath },
+      })
+      if (!peek.ok) {
+        if (peek.error.message.includes('完整性')) {
+          setSalvageTarget(item)
+          return
+        }
+        setReport(t('查看会话失败：{{message}}', { message: peek.error.message }))
+        return
+      }
+      const view = peek.result as {
+        sessionId: string
+        modelId: string
+        messages: Entry[]
+        usage: UsageView
+      }
+      activeSessionIdRef.current = item.sessionId
+      setEntries(view.messages.map((message) => ({ ...message })))
+      setUsage(view.usage)
+      setTodos([])
+      setActiveSessionId(item.sessionId)
+      emptyTabsRef.current.delete(item.sessionId)
+      addTab(item.sessionId)
+      pendingSessionRef.current = null
+      setPendingSession(null)
+      try {
+        localStorage.setItem('xcode.lastSession', item.filePath)
+      } catch {
+        // 恢复上次会话是尽力而为。
+      }
+      // 运行时里正在跑的会话没有变，因此不调用 refreshState。
+      return
+    }
+    storeBackgroundSession(null)
     const response = await window.xcode.request({
       id: crypto.randomUUID(),
       method: 'session:load',
@@ -2019,6 +2197,8 @@ export function App(): React.JSX.Element {
       messages: Entry[]
       usage: UsageView
     }
+    hostSessionIdRef.current = view.sessionId
+    activeSessionIdRef.current = item.sessionId
     setEntries(view.messages.map((message) => ({ ...message })))
     setUsage(view.usage)
     setTodos([])
@@ -2054,6 +2234,31 @@ export function App(): React.JSX.Element {
     // 上一个窗口的最后会话。
     const windowParams = new URLSearchParams(window.location.search)
     if (windowParams.get('session') || windowParams.get('fresh')) return
+
+    // 先恢复上次的标签组（仅限同一工作区），再回退到 lastSession。
+    let savedTabs: { workspace?: unknown; tabs?: unknown; active?: unknown } | null = null
+    try {
+      const raw = localStorage.getItem('xcode.tabs')
+      if (raw) savedTabs = JSON.parse(raw) as { workspace?: unknown; tabs?: unknown; active?: unknown }
+    } catch {
+      savedTabs = null
+    }
+    if (savedTabs && savedTabs.workspace === appState?.workspace && Array.isArray(savedTabs.tabs)) {
+      const known = new Set(sessions.map((session) => session.sessionId))
+      const restoredTabs = savedTabs.tabs.filter((id): id is string => typeof id === 'string' && known.has(id))
+      if (restoredTabs.length > 0) {
+        restoredSessionRef.current = true
+        setTabs(restoredTabs)
+        const active =
+          typeof savedTabs.active === 'string' && restoredTabs.includes(savedTabs.active)
+            ? savedTabs.active
+            : restoredTabs[0]!
+        const item = sessions.find((session) => session.sessionId === active)
+        if (item) void loadSession(item)
+        return
+      }
+    }
+
     let lastPath: string | null = null
     try {
       lastPath = localStorage.getItem('xcode.lastSession')
@@ -2065,7 +2270,39 @@ export function App(): React.JSX.Element {
     if (!item) return
     restoredSessionRef.current = true
     void loadSession(item)
-  }, [sessions, activeSessionId, loadSession])
+  }, [sessions, activeSessionId, loadSession, appState?.workspace])
+
+  useEffect(() => {
+    if (!appState?.workspace) return
+    try {
+      localStorage.setItem(
+        'xcode.tabs',
+        JSON.stringify({ workspace: appState.workspace, tabs, active: activeSessionId }),
+      )
+    } catch {
+      // localStorage 不可用时静默降级；标签恢复是尽力而为。
+    }
+  }, [tabs, activeSessionId, appState?.workspace])
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      setGoal(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      const response = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'goal:state',
+        params: {},
+      })
+      if (cancelled) return
+      if (response.ok) setGoal(response.result as GoalView | null)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activeSessionId, appState?.workspace])
 
   const openSessionById = async (sessionId: string): Promise<void> => {
     const response = await window.xcode.request({
@@ -2081,6 +2318,10 @@ export function App(): React.JSX.Element {
   }
 
   const newSession = async (): Promise<void> => {
+    if (busyRef.current) {
+      setReport(t('另一个标签的回复仍在运行。可以打开新窗口并行处理，或等当前回复结束后再新建会话。'))
+      return
+    }
     const response = await window.xcode.request({
       id: crypto.randomUUID(),
       method: 'session:new',
@@ -2088,6 +2329,8 @@ export function App(): React.JSX.Element {
     })
     if (response.ok) {
       const { sessionId } = response.result as { sessionId: string }
+      hostSessionIdRef.current = sessionId
+      storeBackgroundSession(null)
       emptyTabsRef.current.add(sessionId)
       addTab(sessionId)
       activateEmptyTab(sessionId)
@@ -2097,10 +2340,6 @@ export function App(): React.JSX.Element {
 
   const activateTab = async (sessionId: string): Promise<void> => {
     if (sessionId === activeSessionId) return
-    if (busyRef.current) {
-      setReport(t('请先停止当前回复，再切换标签页。'))
-      return
-    }
     const item = sessions.find((session) => session.sessionId === sessionId)
     if (item) {
       emptyTabsRef.current.delete(sessionId)
@@ -2108,6 +2347,10 @@ export function App(): React.JSX.Element {
       return
     }
     if (emptyTabsRef.current.has(sessionId)) {
+      if (busyRef.current && activeSessionIdRef.current === runningSessionIdRef.current) {
+        const running = runningSessionIdRef.current
+        if (running) storeBackgroundSession({ sessionId: running, entries, usage, todos })
+      }
       activateEmptyTab(sessionId)
       return
     }
@@ -2116,8 +2359,8 @@ export function App(): React.JSX.Element {
   }
 
   const closeTab = async (sessionId: string): Promise<void> => {
-    if (busyRef.current && sessionId === activeSessionId) {
-      setReport(t('请先停止当前回复，再关闭标签页。'))
+    if (busyRef.current && sessionId === runningSessionIdRef.current) {
+      setReport(t('该标签的回复仍在运行，请先停止后再关闭。'))
       return
     }
     const remaining = tabs.filter((id) => id !== sessionId)
@@ -2437,6 +2680,8 @@ export function App(): React.JSX.Element {
       if (event.key === 'Escape') {
         if (imageLightbox) setImageLightbox(null)
         else if (salvageTarget) setSalvageTarget(null)
+        else if (goalOpen) setGoalOpen(false)
+        else if (contextSearchOpen) setContextSearchOpen(false)
         else if (paletteOpen) setPaletteOpen(false)
         else if (inspectorTab) setInspectorTab(null)
         else if (branchOpen) {
@@ -2455,6 +2700,8 @@ export function App(): React.JSX.Element {
   }, [
     imageLightbox,
     salvageTarget,
+    goalOpen,
+    contextSearchOpen,
     paletteOpen,
     inspectorTab,
     branchOpen,
@@ -2538,7 +2785,7 @@ export function App(): React.JSX.Element {
     setInput(lastUser.text)
     setAttachments(lastUser.attachments ?? [])
     setEditArmed(true)
-    textareaRef.current?.focus()
+    composerRef.current?.focus()
   }
 
   const recoverDamagedSession = async (): Promise<void> => {
@@ -2619,7 +2866,7 @@ export function App(): React.JSX.Element {
         }
       }
       if (saved.length > 0) setAttachments((current) => [...new Set([...current, ...saved])])
-      textareaRef.current?.focus()
+      composerRef.current?.focus()
     })()
   }
 
@@ -2678,14 +2925,31 @@ export function App(): React.JSX.Element {
     setAttachments((current) => [...new Set([...current, path])])
   }
 
-  const captureScreen = async (): Promise<void> => {
+  const loadCaptureScreens = async (): Promise<void> => {
+    const response = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'app:list-screens',
+      params: {},
+    })
+    if (response.ok) setCaptureScreens((response.result as { screens: CaptureScreenView[] }).screens)
+  }
+
+  const toggleCaptureMenu = (): void => {
+    setCaptureMenuOpen((open) => {
+      const next = !open
+      if (next) void loadCaptureScreens()
+      return next
+    })
+  }
+
+  const captureScreen = async (displayId?: number): Promise<void> => {
     setCaptureMenuOpen(false)
     setNotice(t('正在截屏…'))
     try {
       const response = await window.xcode.request({
         id: crypto.randomUUID(),
         method: 'app:capture-screen',
-        params: {},
+        params: displayId === undefined ? {} : { displayId },
       })
       if (!response.ok) {
         setReport(t('截屏失败：{{message}}', { message: response.error.message }))
@@ -2834,7 +3098,7 @@ export function App(): React.JSX.Element {
         return
       }
       setInput((previous) => (previous ? `${previous} ${text}` : text))
-      textareaRef.current?.focus()
+      composerRef.current?.focus()
     } finally {
       setVoiceBusy(false)
       setNotice(null)
@@ -2919,7 +3183,7 @@ export function App(): React.JSX.Element {
     }
   }
 
-  const exportCurrentSession = async (format: 'markdown' | 'json' | 'pdf'): Promise<void> => {
+  const exportCurrentSession = async (format: 'markdown' | 'json' | 'html' | 'pdf'): Promise<void> => {
     const item = sessions.find((session) => session.sessionId === activeSessionId)
     if (!item) {
       setReport(t('没有可导出的当前会话（先发送一条消息）。'))
@@ -3053,6 +3317,8 @@ export function App(): React.JSX.Element {
     submit,
     forkCurrentSession,
     setRewindOpen,
+    setGoalOpen,
+    setContextSearchOpen,
     setManualOpen,
     append,
   })
@@ -3096,7 +3362,7 @@ export function App(): React.JSX.Element {
     openInspector('file')
   }
 
-  const paletteActions = createPaletteActions({
+  const paletteActions = createAppActions({
     t,
     appState,
     terminalOpen,
@@ -3114,6 +3380,8 @@ export function App(): React.JSX.Element {
     setSettingsOpen,
     setBackgroundOpen,
     setRewindOpen,
+    setGoalOpen,
+    setContextSearchOpen,
     setSidebarOpen,
     setShortcutSheetOpen,
     setManualOpen,
@@ -3129,6 +3397,11 @@ export function App(): React.JSX.Element {
     captureRegion,
     captureScreen,
     toggleRecording,
+  })
+  // “更多工具”菜单不再维护独立按钮列表：从同一份 Action Registry 取条目。
+  const toolMenuActions = TOOL_MENU_ACTION_IDS.flatMap((id) => {
+    const action = paletteActions.find((entry) => entry.id === id)
+    return action ? [action] : []
   })
   const slashQuery = input.startsWith('/') ? input.slice(1).toLowerCase() : null
   const paletteCommands =
@@ -3200,6 +3473,13 @@ export function App(): React.JSX.Element {
   const localModelOptions = filteredModels.filter(isLocalModel)
   const remoteModelOptions = filteredModels.filter((model) => !isLocalModel(model))
   const canSend = !busy && (input.trim().length > 0 || attachments.length > 0)
+  const busyForActive = busy && runningSessionId !== null && runningSessionId === activeSessionId
+  const backgroundRunning = busy && runningSessionId !== null && runningSessionId !== activeSessionId
+  const backgroundTitle = backgroundRunning
+    ? tabTitles[runningSessionId] ||
+      sessions.find((item) => item.sessionId === runningSessionId)?.firstPrompt?.slice(0, 40) ||
+      t('另一个会话')
+    : ''
   // composer 的键盘逻辑与输入框解耦，供 ComposerBox 复用。
   const handleComposerKeyDown = useComposerKeyDown({
     mention,
@@ -3288,7 +3568,7 @@ export function App(): React.JSX.Element {
     const entryKey = group.find((entry) => entry.role === 'user')?.id ?? group[0]?.id ?? 'turn'
     const key = `${activeSessionId ?? 'current'}:${entryKey}`
     const tools = group.filter((entry) => entry.role === 'tool')
-    const collapsed = collapsedTurns.has(key)
+    const collapsed = !(turnToolOverrides.get(key) ?? toolDisplayMode !== 'minimal')
     const failures = tools.filter((entry) => entry.toolStatus === 'error' || entry.toolStatus === 'denied').length
     let toggleAdded = false
     for (const entry of group) {
@@ -3303,10 +3583,10 @@ export function App(): React.JSX.Element {
     }
   }
   const toggleTurnTools = (key: string): void => {
-    setCollapsedTurns((previous) => {
-      const next = new Set(previous)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
+    setTurnToolOverrides((previous) => {
+      const current = previous.get(key) ?? toolDisplayMode !== 'minimal'
+      const next = new Map(previous)
+      next.set(key, !current)
       return next
     })
   }
@@ -3358,6 +3638,7 @@ export function App(): React.JSX.Element {
   return (
     <div
       className="app"
+      data-running-session={runningSessionId ?? ''}
       onPaste={handlePaste}
       onDragOver={(event) => {
         if (event.dataTransfer.types.includes('Files')) {
@@ -3823,6 +4104,24 @@ export function App(): React.JSX.Element {
               <SidebarIcon />
             </button>
             <button
+              className={`icon-btn ${goalOpen ? 'active' : ''}`}
+              data-testid="goal-toggle"
+              title={t('目标循环')}
+              aria-label={t('目标循环')}
+              onClick={() => {
+                setModelMenuOpen(false)
+                setSettingsOpen(false)
+                setTaskModeMenuOpen(false)
+                setToolsMenuOpen(false)
+                setGoalOpen(true)
+              }}
+            >
+              <GoalIcon />
+              {goal && ['active', 'paused', 'blocked', 'max_turns'].includes(goal.status) ? (
+                <span className={`goal-dot ${goal.status === 'active' ? 'active' : ''}`} aria-hidden="true" />
+              ) : null}
+            </button>
+            <button
               className={`icon-btn ${inspectorTab === 'outline' ? 'active' : ''}`}
               data-testid="outline-toggle"
               title={t('对话目录')}
@@ -3893,104 +4192,43 @@ export function App(): React.JSX.Element {
                 <>
                   <div className="menu-scrim" onClick={() => setToolsMenuOpen(false)} aria-hidden="true" />
                   <div className="tools-menu" role="menu" data-testid="tools-menu">
-                    <button
-                      className="tools-item"
-                      data-testid="files-toggle"
-                      onClick={() => {
-                        setToolsMenuOpen(false)
-                        openInspector('file')
-                      }}
-                    >
-                      <span className="tools-item-label">{t('文件')}</span>
-                      <span className="tools-item-meta">{t('浏览与编辑')}</span>
-                    </button>
-                    <button
-                      className="tools-item"
-                      data-testid="document-toggle"
-                      onClick={() => {
-                        setToolsMenuOpen(false)
-                        void openDocumentPanel()
-                      }}
-                    >
-                      <span className="tools-item-label">{t('文档面板')}</span>
-                    </button>
-                    <button
-                      className="tools-item"
-                      data-testid="tools-skill-market"
-                      onClick={() => {
-                        setToolsMenuOpen(false)
-                        void openSettings('skillmarket')
-                      }}
-                    >
-                      <span className="tools-item-label">{t('技能市场')}</span>
-                      <span className="tools-item-meta">SkillHub / SkillsMP</span>
-                    </button>
-                    <button
-                      className="tools-item"
-                      data-testid="git-toggle"
-                      onClick={() => {
-                        setToolsMenuOpen(false)
-                        void openGitPanel()
-                      }}
-                    >
-                      <span className="tools-item-label">Git</span>
-                      <span className="tools-item-meta">{t('变更')}</span>
-                    </button>
-                    <button
-                      className="tools-item"
-                      data-testid="checks-toggle"
-                      onClick={() => {
-                        setToolsMenuOpen(false)
-                        void openChecksPanel()
-                      }}
-                    >
-                      <span className="tools-item-label">{t('项目检查')}</span>
-                    </button>
-                    <button
-                      className="tools-item"
-                      data-testid="tools-outline"
-                      onClick={() => {
-                        setToolsMenuOpen(false)
-                        toggleInspector('outline')
-                      }}
-                    >
-                      <span className="tools-item-label">{t('对话目录')}</span>
-                    </button>
-                    <button
-                      className="tools-item"
-                      data-testid="background-toggle"
-                      onClick={() => {
-                        setToolsMenuOpen(false)
-                        setBackgroundOpen(true)
-                      }}
-                    >
-                      <span className="tools-item-label">
-                        {t('后台任务')}
-                        {backgroundActive > 0 ? ` · ${backgroundActive}` : ''}
-                      </span>
-                    </button>
-                    <button
-                      className="tools-item"
-                      data-testid="diagnostics-toggle"
-                      onClick={() => {
-                        setToolsMenuOpen(false)
-                        void runDiagnostics()
-                      }}
-                    >
-                      <span className="tools-item-label">{t('诊断')}</span>
-                    </button>
-                    <button
-                      className="tools-item"
-                      data-testid="tools-manual"
-                      onClick={() => {
-                        setToolsMenuOpen(false)
-                        setManualOpen(true)
-                      }}
-                    >
-                      <span className="tools-item-label">{t('用户手册')}</span>
-                      <span className="tools-item-meta">{t('功能与使用')}</span>
-                    </button>
+                    {toolMenuActions.map((action) => (
+                      <button
+                        key={action.id}
+                        className="tools-item"
+                        data-testid={action.menuTestId ?? `tools-${action.id}`}
+                        onClick={() => {
+                          setToolsMenuOpen(false)
+                          void action.run()
+                        }}
+                      >
+                        <span className="tools-item-label">
+                          {action.menuLabel ?? action.label}
+                          {action.id === 'background' && backgroundActive > 0 ? ` · ${backgroundActive}` : ''}
+                        </span>
+                        {(action.menuHint ?? action.hint) ? (
+                          <span className="tools-item-meta">{action.menuHint ?? action.hint}</span>
+                        ) : null}
+                      </button>
+                    ))}
                     <div className="tools-separator" />
+                    <div className="tools-display" data-testid="tool-display">
+                      <span className="tools-item-label">{t('工具显示')}</span>
+                      <div className="settings-segments" role="group" aria-label={t('工具显示')}>
+                        {TOOL_DISPLAY_MODES.map((mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            className={`settings-tab-inline ${toolDisplayMode === mode ? 'active' : ''}`}
+                            data-testid={`tool-display-${mode}`}
+                            title={t(TOOL_DISPLAY_HINT[mode])}
+                            onClick={() => changeToolDisplayMode(mode)}
+                          >
+                            {t(TOOL_DISPLAY_LABEL[mode])}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <button className="tools-item" data-testid="theme-toggle" onClick={cycleTheme}>
                       <span className="tools-item-label">{t('主题')}</span>
                       <span className="tools-item-meta">
@@ -4025,7 +4263,7 @@ export function App(): React.JSX.Element {
                     title={item?.filePath ?? item?.firstPrompt ?? t('新会话')}
                     onClick={() => void activateTab(sessionId)}
                   >
-                    {busy && sessionId === activeSessionId ? <span className="tab-busy" aria-hidden="true" /> : null}
+                    {busy && sessionId === runningSessionId ? <span className="tab-busy" aria-hidden="true" /> : null}
                     <span className="tab-title">{item ? sessionTitle(item) : tabTitles[sessionId] || t('新会话')}</span>
                   </button>
                   <button
@@ -4117,6 +4355,7 @@ export function App(): React.JSX.Element {
                 value={{
                   busy,
                   now: turnNow,
+                  toolDisplayMode,
                   movingTempEntry,
                   shellSandboxEnabled: settings?.shellSandbox.enabled === true,
                   shellSandboxAllowNetwork: settings?.shellSandbox.allowNetwork === true,
@@ -4181,10 +4420,10 @@ export function App(): React.JSX.Element {
 
             {notice ? <div className="notice">{notice}</div> : null}
 
-            {todos.length > 0 ? (
-              <div className="todos">
+            {shownTodos.length > 0 ? (
+              <div className={`todos ${todosLeaving ? 'leaving' : ''}`} data-testid="todos">
                 <span className="todos-title">{t('待办')}</span>
-                {todos.map((todo, index) => (
+                {shownTodos.map((todo, index) => (
                   <span key={index} className={`todo ${todo.status}`}>
                     <span className="todo-glyph" aria-hidden="true">
                       {todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '◐' : '○'}
@@ -4220,71 +4459,73 @@ export function App(): React.JSX.Element {
                 paletteRef={slashPaletteRef}
                 onRun={runSlashCommand}
               />
-              <EditBadge
-                onCancel={() => {
-                  setEditArmed(false)
-                  setInput('')
-                  setAttachments([])
-                }}
-              />
-              <TurnActivityBar
-                activity={busy ? turnActivity : null}
-                elapsedMs={busy && turnActivity ? Math.max(0, turnNow - turnActivity.startedAt) : 0}
-                idleMs={busy && lastAgentEventAtRef.current ? Math.max(0, turnNow - lastAgentEventAtRef.current) : 0}
-              />
+              {editArmed ? (
+                <EditBadge
+                  onCancel={() => {
+                    setEditArmed(false)
+                    setInput('')
+                    setAttachments([])
+                  }}
+                />
+              ) : null}
+              {backgroundRunning && runningSessionId ? (
+                <div className="background-wait" data-testid="background-session">
+                  <span>{t('“{{title}}”正在后台运行。', { title: backgroundTitle })}</span>
+                  <button className="btn btn-quiet" onClick={() => void activateTab(runningSessionId)}>
+                    {t('查看')}
+                  </button>
+                  <button className="btn btn-quiet" onClick={() => void abort()}>
+                    {t('停止')}
+                  </button>
+                </div>
+              ) : null}
               {busy && backgroundActive > 0 ? (
                 <BackgroundWait count={backgroundActive} queued={queued} onStop={() => void abort()} />
-              ) : null}
-              {!busy && backgroundActive > 0 ? (
-                <BackgroundIdle count={backgroundActive} onOpen={() => setBackgroundOpen(true)} />
               ) : null}
               <QueuedList
                 items={queuedItems}
                 onOpenInNewWindow={(index) => void openQueuedInNewWindow(index)}
                 onRemove={removeQueued}
               />
-              <RecordingBar
-                recording={recording}
-                voiceBusy={voiceBusy}
-                seconds={recordingSeconds}
-                level={audioLevel}
-                onCancel={() => void stopRecording(false)}
-                onFinish={() => void stopRecording(true)}
-              />
+              {recording || voiceBusy ? (
+                <RecordingBar
+                  recording={recording}
+                  voiceBusy={voiceBusy}
+                  seconds={recordingSeconds}
+                  level={audioLevel}
+                  onCancel={() => void stopRecording(false)}
+                  onFinish={() => void stopRecording(true)}
+                />
+              ) : null}
               <AttachmentsStrip
                 files={attachments}
                 onRemove={(file) => setAttachments((current) => current.filter((entry) => entry !== file))}
                 onOpenImage={(src, name) => setImageLightbox({ src, name })}
               />
-              <MarkdownBar
-                open={markdownToolsOpen}
-                preview={markdownPreview}
-                content={input}
-                onToggleOpen={() => setMarkdownToolsOpen((open) => !open)}
-                onTogglePreview={() => setMarkdownPreview((preview) => !preview)}
-                onFormat={applyMarkdown}
-              />
               <ComposerBox
                 value={input}
-                textareaRef={textareaRef}
+                editorRef={composerRef}
+                placeholder={busy ? t('落笔未竟…') : t('写下你的问题，或输入指令…')}
                 busy={busy}
                 canSend={canSend}
                 recording={recording}
                 voiceBusy={voiceBusy}
                 backgroundActive={backgroundActive}
                 captureMenuOpen={captureMenuOpen}
-                onChange={(event) => {
-                  setInput(event.target.value)
-                  updateMention(event.target.value, event.target.selectionStart)
+                onComposerChange={({ markdown, text, caret }) => {
+                  setInput(markdown)
+                  updateMention(text, caret)
                 }}
-                onKeyUp={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
-                onClick={(event) => updateMention(event.currentTarget.value, event.currentTarget.selectionStart)}
-                onKeyDown={handleComposerKeyDown}
+                onComposerKeyDown={(event) => {
+                  handleComposerKeyDown(event)
+                  return event.defaultPrevented
+                }}
                 onOpenDocumentPanel={() => void openDocumentPanel()}
                 onPickDocument={() => void pickDocument()}
-                onToggleCaptureMenu={() => setCaptureMenuOpen((open) => !open)}
+                screens={captureScreens}
+                onToggleCaptureMenu={toggleCaptureMenu}
                 onCaptureRegion={() => void captureRegion()}
-                onCaptureScreen={() => void captureScreen()}
+                onCaptureScreen={(displayId) => void captureScreen(displayId)}
                 onToggleRecording={toggleRecording}
                 onAbort={() => void abort()}
                 onSubmit={() => {
@@ -4294,7 +4535,28 @@ export function App(): React.JSX.Element {
                 }}
               />
               <div className="composer-hint">
-                <span>{busy ? t('Enter 排队 · 停止按钮结束当前任务') : t('Enter 发送 · Shift+Enter 换行')}</span>
+                {busyForActive && turnActivity ? (
+                  <TurnActivityBar
+                    inline
+                    activity={turnActivity}
+                    elapsedMs={Math.max(0, turnNow - turnActivity.startedAt)}
+                    idleMs={lastAgentEventAtRef.current ? Math.max(0, turnNow - lastAgentEventAtRef.current) : 0}
+                  />
+                ) : backgroundRunning ? (
+                  <span>{t('“{{title}}”正在另一个标签运行；可切换过去查看或停止。', { title: backgroundTitle })}</span>
+                ) : (
+                  <span>{busy ? t('Enter 排队 · 停止按钮结束当前任务') : t('Enter 发送 · Shift+Enter 换行')}</span>
+                )}
+                {!busy && backgroundActive > 0 ? (
+                  <button
+                    type="button"
+                    className="capability-hint background-chip"
+                    data-testid="background-idle"
+                    onClick={() => setBackgroundOpen(true)}
+                  >
+                    {t('{{count}} 个后台任务', { count: backgroundActive })} · {t('查看')}
+                  </button>
+                ) : null}
                 <button type="button" className="capability-hint" onClick={() => setPaletteOpen(true)}>
                   {window.xcode.platform === 'darwin' ? '⌘K' : 'Ctrl+K'} {t('全部能力')}
                 </button>
@@ -4347,7 +4609,6 @@ export function App(): React.JSX.Element {
                   onApplyHunks={applyReviewedHunks}
                   onSaveBaseline={saveDocumentBaseline}
                   focusPage={documentFocusPage}
-                  embedded
                 />
               ) : null}
               {inspectorTab === 'git' ? (
@@ -4358,13 +4619,12 @@ export function App(): React.JSX.Element {
                   selected={gitSelected}
                   diff={gitDiffText}
                   diffTruncated={gitDiffTruncated}
-                  busy={gitBusy}
+                  busy={false}
                   onRefresh={() => void refreshGit()}
                   onSelect={(path, staged) => void selectGitFile(path, staged)}
-                  onUndo={() => void undoGitTurn()}
+                  onRewind={() => openRewind('code')}
                   onOpenEditor={(path, line) => openInEditor(path, line)}
                   onClose={closeInspector}
-                  embedded
                 />
               ) : null}
               {inspectorTab === 'checks' ? (
@@ -4372,14 +4632,15 @@ export function App(): React.JSX.Element {
                   checks={projectChecks}
                   results={checkResults}
                   autoChecks={checkAuto}
+                  autoFix={checkAutoFix}
                   loading={checksLoading}
                   error={checksError}
                   onRefresh={() => void refreshChecks()}
                   onRun={() => void runChecksNow()}
                   onToggleAuto={() => void toggleAutoChecks()}
+                  onToggleAutoFix={() => void toggleAutoFixChecks()}
                   onFix={fixFromChecks}
                   onClose={closeInspector}
-                  embedded
                 />
               ) : null}
               {inspectorTab === 'file' ? (
@@ -4393,7 +4654,6 @@ export function App(): React.JSX.Element {
                       closeInspector()
                       setFileInitialPath(null)
                     }}
-                    embedded
                   />
                 </Suspense>
               ) : null}
@@ -4468,8 +4728,37 @@ export function App(): React.JSX.Element {
                 {approval.preview?.reason ? <div className="approval-reason">{approval.preview.reason}</div> : null}
               </div>
             ) : null}
+            {backgroundRunning ? <div className="approval-reason">{t('该请求来自正在后台运行的会话。')}</div> : null}
             {approval.kind === 'question' ? <div className="approval-body text">{approval.question}</div> : null}
             {approval.kind === 'plan' ? <pre className="approval-body">{approval.planText ?? ''}</pre> : null}
+
+            {approval.kind === 'question' ? (
+              <div className="approval-answer">
+                <input
+                  className="settings-input"
+                  data-testid="approval-answer-input"
+                  value={questionDraft}
+                  placeholder={t('选项都不合适？直接输入你的回答…')}
+                  onChange={(event) => setQuestionDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (isImeEvent(event)) return
+                    if (event.key === 'Enter') {
+                      if (isImeEnter(event)) return
+                      event.preventDefault()
+                      if (questionDraft.trim()) void respondApproval(approval, questionDraft.trim())
+                    }
+                  }}
+                />
+                <button
+                  className="btn solid"
+                  data-testid="approval-answer-send"
+                  disabled={!questionDraft.trim()}
+                  onClick={() => void respondApproval(approval, questionDraft.trim())}
+                >
+                  {t('发送回答')}
+                </button>
+              </div>
+            ) : null}
 
             <div className="approval-actions">
               {approval.kind === 'question' ? (
@@ -4544,6 +4833,7 @@ export function App(): React.JSX.Element {
       ) : null}
       {rewindOpen ? (
         <RewindPanel
+          initialMode={rewindInitialMode}
           onClose={() => setRewindOpen(false)}
           onRewound={(view, mode) => {
             applySessionView(view)
@@ -4553,6 +4843,15 @@ export function App(): React.JSX.Element {
             void refreshSessions()
             void refreshState()
           }}
+        />
+      ) : null}
+      {goalOpen ? <GoalPanel goal={goal} onGoal={setGoal} onClose={() => setGoalOpen(false)} /> : null}
+      {contextSearchOpen ? (
+        <ContextSearchPanel
+          onClose={() => setContextSearchOpen(false)}
+          onOpenPath={(path, line) => openInEditor(path, line)}
+          onOpenDocument={(path, page) => void openDocument(path, page)}
+          onOpenSession={(sessionId) => void openSessionById(sessionId)}
         />
       ) : null}
       <CommandPalette
@@ -4974,12 +5273,15 @@ export function App(): React.JSX.Element {
                   ['Shift+Enter', t('换行')],
                   ['Esc', t('关闭浮层')],
                 ] as Array<[string, string]>
-              ).map(([key, label]) => (
-                <div className="shortcut-row" key={key}>
-                  <kbd>{window.xcode.platform === 'darwin' ? `⌘${key}` : `Ctrl+${key}`}</kbd>
-                  <span>{label}</span>
-                </div>
-              ))}
+              ).map(([key, label]) => {
+                const plain = key === '?' || key === 'Esc' || key === 'Enter' || key === 'Shift+Enter'
+                return (
+                  <div className="shortcut-row" key={key}>
+                    <kbd>{plain ? key : window.xcode.platform === 'darwin' ? `⌘${key}` : `Ctrl+${key}`}</kbd>
+                    <span>{label}</span>
+                  </div>
+                )
+              })}
             </div>
             <p className="settings-note">{t('在文本框中输入时，? 与单键快捷键不会触发；带修饰键的快捷键始终可用。')}</p>
           </div>

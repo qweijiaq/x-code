@@ -26,6 +26,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import type {
+  RuntimeEvent,
   RuntimeInbound,
   RuntimeOutbound,
   RuntimeRequest,
@@ -33,6 +34,7 @@ import type {
   SharedBackgroundSnapshot,
   SmokeReport,
 } from '../shared/protocol.js'
+import { DownloadControllerRegistry } from './download-registry.js'
 import { downloadUpdateArtifact, parseReleaseInfo, pickUpdateArtifact } from './update.js'
 
 /** 即使没有 DEBUG_STDOUT，renderer 和事件处理器错误也会追加到这里，
@@ -176,6 +178,7 @@ function timeoutFor(method: string): number | null {
     method === 'settings:mcp-auth' ||
     method === 'library:index' ||
     method === 'library:search' ||
+    method === 'code-index:index' ||
     method === 'checks:run' ||
     method === 'audio:transcribe' ||
     method === 'session:export'
@@ -193,6 +196,8 @@ function timeoutFor(method: string): number | null {
     return LONG_REQUEST_TIMEOUT_MS
   }
   if (method === 'agent:compact') return 10 * 60_000
+  // 浏览器 OAuth 默认 5 分钟，设备码默认 15 分钟。
+  if (method === 'auth:login') return 16 * 60_000
   if (method === 'smoke:run') return 5 * 60_000
   return REQUEST_TIMEOUT_MS
 }
@@ -220,6 +225,8 @@ interface RuntimeContext {
   sessionFiles: Set<string>
   /** 运行时上报的后台任务快照，供其他窗口只读查询。 */
   sharedBackground?: SharedBackgroundSnapshot
+  /** 已进入优雅关闭流程，避免 close 事件重复 preventDefault。 */
+  closing?: boolean
 }
 
 /** 每个窗口拥有自己的 AgentHost 运行时，使会话可以
@@ -229,7 +236,7 @@ const runtimeContexts = new Map<number, RuntimeContext>()
 /** 在此进程中下载并校验过校验和的安装器；renderer
  *  只能要求主进程打开此集合中的路径。 */
 const downloadedUpdateFiles = new Set<string>()
-let activeUpdateDownload: AbortController | null = null
+const updateDownloads = new DownloadControllerRegistry()
 
 function contextForWindow(window: BrowserWindow | null | undefined): RuntimeContext | null {
   if (!window || window.isDestroyed()) return null
@@ -512,6 +519,9 @@ function spawnRuntime(context: RuntimeContext): void {
     if (context.runtime === child) context.runtime = null
     context.ready = false
     failPending(context, 'runtime-exited', `Runtime process exited (code ${code})`)
+    if (!context.window.isDestroyed()) {
+      context.window.webContents.send('runtime:event', { type: 'runtime:exit', code } satisfies RuntimeEvent)
+    }
   })
 }
 
@@ -840,6 +850,30 @@ function createWindow(show = true, search = '', workspacePath?: string): Runtime
     }
   })
 
+  window.on('close', (event) => {
+    if (appQuitting || context.closing) return
+    const child = context.runtime
+    if (!child) return
+    // 先让 runtime 走 host.shutdown()（保存当前轮、关闭 MCP/记忆），
+    // 而不是直接 kill 丢失进行中的 turn。最多等 1.2 秒。
+    event.preventDefault()
+    context.closing = true
+    try {
+      child.postMessage({ kind: 'shutdown' } satisfies RuntimeInbound)
+    } catch {
+      // 运行时可能已经消失。
+    }
+    setTimeout(() => {
+      if (window.isDestroyed()) return
+      try {
+        child.kill()
+      } catch {
+        // 已死。
+      }
+      window.destroy()
+    }, 1200)
+  })
+
   window.on('closed', () => {
     // 审批是失败关闭的：关闭的窗口绝不能留下一个
     // 等待永远不会到来的决定的工具调用。
@@ -1099,6 +1133,14 @@ function installIpc(): void {
       const result = senderWindow
         ? await dialog.showOpenDialog(senderWindow, options)
         : await dialog.showOpenDialog(options)
+      // 文档/媒体选择器是用户显式授权。把路径作为不可伪造的 main→runtime
+      // 事件授予本次窗口，document:* 才能安全地允许工作区外文件。
+      if (!result.canceled && kind === 'document') {
+        const context = contextForWindow(senderWindow)
+        for (const filePath of result.filePaths) {
+          context?.runtime?.postMessage({ kind: 'document-grant', path: filePath } satisfies RuntimeInbound)
+        }
+      }
       return {
         id: request.id,
         ok: true,
@@ -1185,8 +1227,24 @@ function installIpc(): void {
         fs.rmSync(target, { force: true })
       }
     }
+    if (request?.method === 'app:list-screens') {
+      const primaryId = screen.getPrimaryDisplay().id
+      const screens = screen
+        .getAllDisplays()
+        .map((display, index) => ({
+          id: display.id,
+          name: display.label?.trim() || `屏幕 ${index + 1}`,
+          primary: display.id === primaryId,
+          width: Math.max(1, Math.round(display.size.width * (display.scaleFactor || 1))),
+          height: Math.max(1, Math.round(display.size.height * (display.scaleFactor || 1))),
+        }))
+        .sort((left, right) => Number(right.primary) - Number(left.primary))
+      return { id: request.id, ok: true, result: { screens } }
+    }
     if (request?.method === 'app:capture-screen') {
-      const display = screen.getPrimaryDisplay()
+      const requestedDisplayId = (request.params as { displayId?: number }).displayId
+      const display =
+        screen.getAllDisplays().find((entry) => entry.id === requestedDisplayId) ?? screen.getPrimaryDisplay()
       const scale = display.scaleFactor || 1
       const width = Math.max(1, Math.round(display.size.width * scale))
       const height = Math.max(1, Math.round(display.size.height * scale))
@@ -1207,7 +1265,10 @@ function installIpc(): void {
           },
         }
       }
-      const source = sources.find((entry) => entry.display_id === String(display.id)) ?? sources[0]
+      const source =
+        sources.find((entry) => entry.display_id === String(display.id)) ??
+        sources.find((entry) => entry.name === display.label) ??
+        sources[0]
       if (!source || source.thumbnail.isEmpty()) {
         return {
           id: request.id,
@@ -1225,7 +1286,8 @@ function installIpc(): void {
           dataUrl: source.thumbnail.toDataURL(),
           width,
           height,
-          name: source.name,
+          name: display.label?.trim() || source.name,
+          displayId: display.id,
         },
       }
     }
@@ -1301,9 +1363,8 @@ function installIpc(): void {
       const feed = (request.params as { feed?: string }).feed?.trim() ?? ''
       const requestedPath = (request.params as { destPath?: string }).destPath?.trim()
       const destPath = requestedPath ? path.resolve(requestedPath) : undefined
-      activeUpdateDownload?.abort()
-      const controller = new AbortController()
-      activeUpdateDownload = controller
+      const ownerId = event.sender.id
+      const controller = updateDownloads.start(ownerId)
       try {
         if (!feed.startsWith('https://')) throw new Error('更新源必须是 https URL')
         // net.fetch 使用 Chromium 的网络栈，因此系统代理工作，
@@ -1352,13 +1413,11 @@ function installIpc(): void {
           },
         }
       } finally {
-        if (activeUpdateDownload === controller) activeUpdateDownload = null
+        updateDownloads.finish(ownerId, controller)
       }
     }
     if (request?.method === 'app:cancel-update-download') {
-      const cancelled = activeUpdateDownload !== null
-      activeUpdateDownload?.abort()
-      return { id: request.id, ok: true, result: { cancelled } }
+      return { id: request.id, ok: true, result: { cancelled: updateDownloads.cancel(event.sender.id) } }
     }
     if (request?.method === 'app:open-update') {
       const target = path.resolve((request.params as { filePath?: string }).filePath ?? '')

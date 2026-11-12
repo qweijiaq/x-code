@@ -83,9 +83,37 @@ export function createDemoModel(): MockLanguageModelV3 {
     doStream: async (options) => {
       const { lastUserText, toolResultIds } = inspectPrompt((options as { prompt?: unknown } | undefined)?.prompt)
 
+      if (pendingCallId && toolResultIds.has(pendingCallId) && lastUserText.includes('[silent-stop-demo]')) {
+        pendingCallId = null
+        // 模拟部分模型在工具结果之后直接结束、不再输出文字的场景。
+        return textStream('')
+      }
+
       if (pendingCallId && toolResultIds.has(pendingCallId)) {
         pendingCallId = null
         return textStream('演示模式下已收到工具结果。写入、权限确认和 diff 链路都正常。')
+      }
+
+      if (lastUserText.includes('[sleep-demo]') && !pendingCallId) {
+        pendingCallId = `demo-sleep-${Date.now()}`
+        const parts: LanguageModelV3StreamPart[] = [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 'demo-text' },
+          { type: 'text-delta', id: 'demo-text', delta: '演示模式：运行一个 6 秒命令，用于验证运行中切换标签。\n' },
+          { type: 'text-end', id: 'demo-text' },
+          {
+            type: 'tool-call',
+            toolCallId: pendingCallId,
+            toolName: 'shell',
+            input: JSON.stringify({ command: 'sleep 6' }),
+          },
+          {
+            type: 'finish',
+            finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' },
+            usage: usage(),
+          },
+        ]
+        return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
       }
 
       if (lastUserText.includes('[compact-demo]')) {
@@ -171,6 +199,56 @@ export function createDemoModel(): MockLanguageModelV3 {
           { type: 'text-delta', id: 'demo-text', delta: '演示模式：模拟一条被沙箱拦住的 GUI 命令。\n' },
           { type: 'text-end', id: 'demo-text' },
           { type: 'tool-call', toolCallId: pendingCallId, toolName: 'shell', input: JSON.stringify({ command }) },
+          {
+            type: 'finish',
+            finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' },
+            usage: usage(),
+          },
+        ]
+        return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
+      }
+
+      if (lastUserText.includes('[question-demo]') && !pendingCallId) {
+        pendingCallId = `demo-question-${Date.now()}`
+        const parts: LanguageModelV3StreamPart[] = [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 'demo-text' },
+          { type: 'text-delta', id: 'demo-text', delta: '演示模式：发一个问题让用户选择。\n' },
+          { type: 'text-end', id: 'demo-text' },
+          {
+            type: 'tool-call',
+            toolCallId: pendingCallId,
+            toolName: 'askUser',
+            input: JSON.stringify({
+              question: '这轮想先做哪一项？',
+              options: [
+                { label: '修补样式', description: '先处理界面细节。' },
+                { label: '补测试', description: '先补齐自动化测试。' },
+              ],
+            }),
+          },
+          {
+            type: 'finish',
+            finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' },
+            usage: usage(),
+          },
+        ]
+        return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
+      }
+
+      if (lastUserText.includes('[silent-stop-demo]') && !pendingCallId) {
+        pendingCallId = `demo-silent-${Date.now()}`
+        const parts: LanguageModelV3StreamPart[] = [
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 'demo-text' },
+          { type: 'text-delta', id: 'demo-text', delta: '演示模式：执行工具后不再输出文字。\n' },
+          { type: 'text-end', id: 'demo-text' },
+          {
+            type: 'tool-call',
+            toolCallId: pendingCallId,
+            toolName: 'shell',
+            input: JSON.stringify({ command: 'printf silent-stop-demo' }),
+          },
           {
             type: 'finish',
             finishReason: { unified: 'tool-calls' as const, raw: 'tool_calls' },

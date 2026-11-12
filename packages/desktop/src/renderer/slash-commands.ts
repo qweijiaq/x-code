@@ -30,7 +30,7 @@ export interface SlashCommandContext {
   runDiagnostics: () => Promise<void>
   runCompact: () => Promise<void>
   requestTextReport: (method: string, params?: Record<string, unknown>) => Promise<void>
-  exportCurrentSession: (format: 'markdown' | 'json' | 'pdf') => Promise<void>
+  exportCurrentSession: (format: 'markdown' | 'json' | 'html' | 'pdf') => Promise<void>
   setBackgroundOpen: Dispatch<SetStateAction<boolean>>
   toggleThinking: () => Promise<void>
   togglePlan: () => Promise<void>
@@ -40,6 +40,8 @@ export interface SlashCommandContext {
   submit: (prompt: string, alreadyShown?: boolean, files?: string[]) => Promise<void>
   forkCurrentSession: () => Promise<void>
   setRewindOpen: Dispatch<SetStateAction<boolean>>
+  setGoalOpen: Dispatch<SetStateAction<boolean>>
+  setContextSearchOpen: Dispatch<SetStateAction<boolean>>
   setManualOpen: Dispatch<SetStateAction<boolean>>
   append: (entry: { role: 'system'; text: string }) => void
 }
@@ -70,6 +72,8 @@ export function createSlashCommands(context: SlashCommandContext): SlashCommand[
     submit,
     forkCurrentSession,
     setRewindOpen,
+    setGoalOpen,
+    setContextSearchOpen,
     setManualOpen,
     append,
   } = context
@@ -118,7 +122,8 @@ export function createSlashCommands(context: SlashCommandContext): SlashCommand[
     { name: '/ps', description: t('后台任务面板'), run: () => setBackgroundOpen(true) },
     { name: '/background', description: t('后台任务面板'), run: () => setBackgroundOpen(true) },
     { name: '/list-agents', description: t('列出子代理'), run: () => void requestTextReport('agents:list') },
-    { name: '/goal', description: t('查看 goal 状态'), run: () => void requestTextReport('goal:get') },
+    { name: '/search', description: t('全局检索本地上下文'), run: () => setContextSearchOpen(true) },
+    { name: '/goal', description: t('查看 goal 状态'), run: () => setGoalOpen(true) },
     { name: '/thinking', description: t('切换思考模式'), run: () => void toggleThinking() },
     { name: '/plan', description: t('切换计划模式'), run: () => void togglePlan() },
     {
@@ -161,16 +166,15 @@ export function createSlashCommands(context: SlashCommandContext): SlashCommand[
       description: t('查看用户记忆'),
       run: () => void requestTextReport('memory:get'),
     },
-    { name: '/theme', description: t('主题说明'), run: () => setReport(t('当前仅提供水墨主题。')) },
     {
-      name: '/browser',
-      description: t('浏览器子代理说明'),
-      run: () => setReport(t('浏览器子代理可在 设置 → 工具 中开启或关闭。')),
+      name: '/theme',
+      description: t('打开外观设置（亮色 / 暗色 / 跟随系统）'),
+      run: () => void openSettings(),
     },
     {
-      name: '/clear-peer-context',
-      description: t('peer 上下文说明'),
-      run: () => setReport(t('peer 跨会话消息未在桌面端启用。')),
+      name: '/browser',
+      description: t('打开浏览器子代理与视觉检查设置'),
+      run: () => void openSettings('tools'),
     },
     {
       name: '/exit',

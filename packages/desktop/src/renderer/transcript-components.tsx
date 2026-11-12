@@ -76,17 +76,23 @@ export const AttachmentImage = memo(
 export function DiffView({
   diff,
   reverted,
+  expanded,
   onRevert,
   onOpenEditor,
 }: {
   diff: FileEditView
   reverted?: boolean
+  expanded?: boolean
   onRevert?: () => void
   onOpenEditor?: (path: string, line?: number) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   // 默认只给几行预览：一次编辑可能长达几十行，整段铺开会把对话挤出屏幕。
-  const [open, setOpen] = useState(false)
+  // 局部展开/收起覆盖模式默认值；模式切换后自动回到默认。
+  const baseOpen = expanded === true
+  const [override, setOverride] = useState<{ base: boolean; open: boolean } | null>(null)
+  const open = override && override.base === baseOpen ? override.open : baseOpen
+  const setOpen = (next: boolean): void => setOverride({ base: baseOpen, open: next })
   const allLines = diff.isCreate && diff.content ? diff.content.split('\n') : diff.hunks.flatMap((hunk) => hunk.lines)
   const lines = allLines.slice(0, 80)
   const preview = lines.slice(0, 4)
@@ -106,7 +112,7 @@ export function DiffView({
           +{diff.additions} −{diff.removals}
         </span>
         {reverted ? <span className="diff-reverted">{t('已回退')}</span> : null}
-        <button type="button" className="diff-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <button type="button" className="diff-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
           {open ? t('收起') : t('展开')}
         </button>
         {onRevert && !reverted ? (
@@ -170,9 +176,17 @@ export const SourceList = memo(function SourceList({ text }: { text: string }): 
   )
 })
 
-export const SubAgentBlock = memo(function SubAgentBlock({ agent }: { agent: SubAgentView }): React.JSX.Element {
+export const SubAgentBlock = memo(function SubAgentBlock({
+  agent,
+  expanded,
+}: {
+  agent: SubAgentView
+  expanded?: boolean
+}): React.JSX.Element {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
+  const baseOpen = expanded === true
+  const [override, setOverride] = useState<{ base: boolean; open: boolean } | null>(null)
+  const open = override && override.base === baseOpen ? override.open : baseOpen
   const statusLabel =
     agent.status === 'running'
       ? t('运行中')
@@ -183,7 +197,7 @@ export const SubAgentBlock = memo(function SubAgentBlock({ agent }: { agent: Sub
           : t('失败')
   return (
     <div className="subagent" data-testid="subagent">
-      <button className="subagent-head" onClick={() => setOpen((value) => !value)}>
+      <button className="subagent-head" onClick={() => setOverride({ base: baseOpen, open: !open })}>
         <span className="subagent-name">{agent.agentName}</span>
         <span className={`subagent-status ${agent.status}`}>{statusLabel}</span>
         <span className="subagent-meta">

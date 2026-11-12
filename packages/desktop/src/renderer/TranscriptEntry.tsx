@@ -2,14 +2,14 @@
 //
 // 从 App.tsx 的 turnItems.map 中拆出：工具卡片、消息、diff、附件和操作按钮。
 // 组件只通过 props 读取状态和回调，不直接访问 App 的 ref/闭包。
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton, MarkdownView } from './MarkdownView.js'
 import { isImageAttachment } from './media.js'
 import { AttachmentImage, DiffView, SourceList, SubAgentBlock } from './transcript-components.js'
-import type { Entry } from './transcript-model.js'
+import type { Entry, ToolDisplayMode } from './transcript-model.js'
 import {
   ROLE_LABEL,
   TOOL_STATUS_LABEL,
@@ -23,6 +23,7 @@ import {
 export interface TranscriptEntryContextValue {
   busy: boolean
   now: number
+  toolDisplayMode: ToolDisplayMode
   movingTempEntry: string | null
   shellSandboxEnabled: boolean
   shellSandboxAllowNetwork: boolean
@@ -62,6 +63,7 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
   const {
     busy,
     now,
+    toolDisplayMode,
     movingTempEntry,
     shellSandboxEnabled,
     shellSandboxAllowNetwork,
@@ -96,6 +98,13 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
     entry.toolStatus === 'running' && entry.toolStartedAt && now > 0
       ? Math.max(0, Math.floor((now - entry.toolStartedAt) / 1000))
       : null
+  // 适中模式只保留卡片头部；全面模式默认展开全部内容。
+  // 手动展开/收起只对当前模式生效，切换模式后回到该模式的默认值。
+  const [cardOverride, setCardOverride] = useState<{ mode: ToolDisplayMode; open: boolean } | null>(null)
+  const cardOpen =
+    cardOverride && cardOverride.mode === toolDisplayMode ? cardOverride.open : toolDisplayMode === 'full'
+  const toggleCard = (): void => setCardOverride({ mode: toolDisplayMode, open: !cardOpen })
+  const hasBody = entry.role === 'tool' && Boolean(entry.diff || entry.toolOutput || entry.subagent)
   return entry.role === 'tool' ? (
     <article key={entry.id} className={`tool-card ${entry.toolStatus ?? 'running'}`}>
       <div className="tool-head">
@@ -111,21 +120,35 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
             {t('预览')}
           </button>
         ) : null}
+        {hasBody ? (
+          <button
+            type="button"
+            className="tool-toggle"
+            data-testid="tool-card-toggle"
+            aria-expanded={cardOpen}
+            onClick={toggleCard}
+          >
+            {cardOpen ? t('收起') : t('展开')}
+          </button>
+        ) : null}
       </div>
       {entry.toolProgress ? <div className="tool-progress">{entry.toolProgress}</div> : null}
-      {entry.subagent ? <SubAgentBlock agent={entry.subagent} /> : null}
-      {entry.diff ? (
+      {cardOpen && entry.subagent ? (
+        <SubAgentBlock agent={entry.subagent} expanded={toolDisplayMode === 'full'} />
+      ) : null}
+      {cardOpen && entry.diff ? (
         <DiffView
           diff={entry.diff}
           reverted={entry.reverted}
+          expanded={toolDisplayMode === 'full'}
           onOpenEditor={(path, line) => onOpenEditor(path, line)}
           onRevert={
             entry.diff.revertible && entry.toolCallId ? () => void onRevertEdit(entry.toolCallId!, entry.id) : undefined
           }
         />
       ) : null}
-      {entry.toolOutput ? (
-        <details className="tool-output">
+      {cardOpen && entry.toolOutput ? (
+        <details className="tool-output" {...(toolDisplayMode === 'full' ? { open: true } : {})}>
           <summary>{t('结果')}</summary>
           <pre>{entry.toolOutput}</pre>
         </details>
@@ -204,7 +227,7 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
           </span>
         </div>
       ) : null}
-      {entry.toolOutput && (entry.toolName === 'webSearch' || entry.toolName === 'webFetch') ? (
+      {cardOpen && entry.toolOutput && (entry.toolName === 'webSearch' || entry.toolName === 'webFetch') ? (
         <SourceList text={entry.toolOutput} />
       ) : null}
     </article>

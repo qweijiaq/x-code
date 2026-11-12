@@ -54,21 +54,3 @@ export function detectMention(text: string, cursor: number): MentionTrigger | nu
   }
   return null
 }
-
-/** 用选中的路径替换整个 @-token。包含空白、引号或反斜杠的路径会
- *  加上引号；光标落在结束引号之前，方便用户继续收窄目录。 */
-export function insertMention(
-  text: string,
-  trigger: MentionTrigger,
-  file: { path: string; isDirectory: boolean },
-): { text: string; cursor: number } {
-  const target = file.isDirectory ? `${file.path}/` : file.path
-  const quoted = /\s|["\\]/.test(target)
-  const insert = quoted ? `@"${target.replace(/"/g, '\\"')}"` : `@${target}`
-  const before = text.slice(0, trigger.atIdx)
-  const after = text.slice(trigger.tokenEnd)
-  return {
-    text: before + insert + after,
-    cursor: before.length + insert.length - (quoted ? 1 : 0),
-  }
-}

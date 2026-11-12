@@ -1,3 +1,5 @@
+import { flockSync } from 'fs-ext-extra-prebuilt'
+
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -20,6 +22,8 @@ interface DesktopSettingsFile {
   libraryRoot?: string
   taskMode?: string
   autoChecks?: boolean
+  autoFixChecks?: boolean
+  autoCodeIndex?: boolean
   shellSandbox?: boolean
   shellSandboxNetwork?: boolean
   shellSandboxExtensions?: boolean
@@ -109,6 +113,8 @@ export function loadDesktopSettings(): DesktopSettingsFile {
         libraryRoot: typeof data.libraryRoot === 'string' ? data.libraryRoot : undefined,
         taskMode: typeof data.taskMode === 'string' ? data.taskMode : undefined,
         autoChecks: data.autoChecks === true,
+        autoFixChecks: data.autoFixChecks === true,
+        autoCodeIndex: data.autoCodeIndex === true,
         shellSandbox: data.shellSandbox !== false,
         shellSandboxNetwork: data.shellSandboxNetwork === true,
         shellSandboxExtensions: data.shellSandboxExtensions === true,
@@ -138,13 +144,37 @@ export function loadDesktopSettings(): DesktopSettingsFile {
   return { disabledTools: [], autoAllowedTools: [], alwaysAllowAll: false, recentProjects: [] }
 }
 
-export function saveDesktopSettings(update: DesktopSettingsFile): void {
+/**
+ * 多窗口是多个 utilityProcess，各自 read-modify-write 同一个 JSON。
+ * 用操作系统级 flock 把「重新读取 → 合并 → rename」包成原子段，避免两个
+ * 窗口同时保存不同字段时后写覆盖前写。
+ */
+function withSettingsLock<T>(fn: () => T): T {
   const file = settingsPath()
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  const data: DesktopSettingsFile = { ...loadDesktopSettings(), ...update }
-  const tmp = `${file}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8')
-  fs.renameSync(tmp, file)
+  const lockFile = `${file}.lock`
+  const fd = fs.openSync(lockFile, 'a+', 0o600)
+  try {
+    flockSync(fd, 'ex')
+    return fn()
+  } finally {
+    try {
+      flockSync(fd, 'un')
+    } catch {
+      // 解锁失败不掩盖原始错误。
+    }
+    fs.closeSync(fd)
+  }
+}
+
+export function saveDesktopSettings(update: DesktopSettingsFile): void {
+  withSettingsLock(() => {
+    const file = settingsPath()
+    const data: DesktopSettingsFile = { ...loadDesktopSettings(), ...update }
+    const tmp = `${file}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8')
+    fs.renameSync(tmp, file)
+  })
 }
 
 let searchProviderOriginal: string | undefined

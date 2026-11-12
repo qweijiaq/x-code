@@ -235,6 +235,20 @@ export function StorageSettings({ onNotice, onSessionsChanged }: Props): React.J
         },
       )}
       {actionRow(
+        'diagnostics',
+        t('清空诊断包'),
+        { diagnostics: true },
+        { hint: t('删除 ~/.x-code/diagnostics 下已生成的脱敏诊断 JSON。') },
+      )}
+      {actionRow(
+        'documents',
+        t('清空文档基线与 OCR'),
+        { documents: true },
+        {
+          hint: t('删除 ~/.x-code/desktop-documents.json 中保存的 OCR 文本和变更对比基线；原始文档不受影响。'),
+        },
+      )}
+      {actionRow(
         'whisper',
         t('删除语音模型'),
         { whisperModels: true },

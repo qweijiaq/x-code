@@ -1,30 +1,33 @@
 // @x-code-cli/desktop — composer 输入框与动作按钮
 //
-// textarea 的 ref、IME 和键盘逻辑仍由 App 控制（通过事件回调传入）；这里只负责
-// 输入框本身和附件/截图/语音/发送按钮的 JSX，避免 App 继续内联两百行结构。
-import type { ChangeEvent, KeyboardEvent, MouseEvent, RefObject } from 'react'
+// 富文本编辑器负责输入与格式；这里只负责输入区和附件/截图/语音/发送按钮的
+// JSX，避免 App 继续内联两百行结构。
+import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { CaptureScreenView } from '../shared/protocol.js'
+import { ComposerEditor } from './ComposerEditor.js'
+import type { ComposerChange, ComposerEditorHandle } from './ComposerEditor.js'
 import { AttachIcon, CaptureIcon, DocumentIcon, MicIcon, RegionIcon, SendIcon, StopIcon } from './icons.js'
 
 export interface ComposerBoxProps {
   value: string
-  textareaRef: RefObject<HTMLTextAreaElement | null>
+  editorRef: RefObject<ComposerEditorHandle | null>
+  placeholder: string
   busy: boolean
   canSend: boolean
   recording: boolean
   voiceBusy: boolean
   backgroundActive: number
   captureMenuOpen: boolean
-  onChange: (event: ChangeEvent<HTMLTextAreaElement>) => void
-  onKeyUp: (event: KeyboardEvent<HTMLTextAreaElement>) => void
-  onClick: (event: MouseEvent<HTMLTextAreaElement>) => void
-  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void
+  screens: CaptureScreenView[]
+  onComposerChange: (change: ComposerChange) => void
+  onComposerKeyDown: (event: KeyboardEvent) => boolean
   onOpenDocumentPanel: () => void
   onPickDocument: () => void
   onToggleCaptureMenu: () => void
   onCaptureRegion: () => void
-  onCaptureScreen: () => void
+  onCaptureScreen: (displayId?: number) => void
   onToggleRecording: () => void
   onAbort: () => void
   onSubmit: () => void
@@ -32,17 +35,17 @@ export interface ComposerBoxProps {
 
 export function ComposerBox({
   value,
-  textareaRef,
+  editorRef,
+  placeholder,
   busy,
   canSend,
   recording,
   voiceBusy,
   backgroundActive,
   captureMenuOpen,
-  onChange,
-  onKeyUp,
-  onClick,
-  onKeyDown,
+  screens,
+  onComposerChange,
+  onComposerKeyDown,
   onOpenDocumentPanel,
   onPickDocument,
   onToggleCaptureMenu,
@@ -55,15 +58,12 @@ export function ComposerBox({
   const { t } = useTranslation()
   return (
     <div className="composer-box">
-      <textarea
-        ref={textareaRef}
+      <ComposerEditor
         value={value}
-        rows={1}
-        placeholder={busy ? t('落笔未竟…') : t('写下你的问题，或输入指令…')}
-        onChange={onChange}
-        onKeyUp={onKeyUp}
-        onClick={onClick}
-        onKeyDown={onKeyDown}
+        placeholder={placeholder}
+        editorRef={editorRef}
+        onChange={onComposerChange}
+        onKeyDown={onComposerKeyDown}
       />
       <button
         className="btn attach"
@@ -94,10 +94,29 @@ export function ComposerBox({
                 <RegionIcon />
                 <span>{t('框选区域')}</span>
               </button>
-              <button className="capture-item" data-testid="capture-screen" onClick={onCaptureScreen}>
-                <CaptureIcon />
-                <span>{t('整个屏幕')}</span>
-              </button>
+              {screens.length > 1 ? (
+                screens.map((screen) => (
+                  <button
+                    className="capture-item"
+                    key={screen.id}
+                    data-testid={screen.primary ? 'capture-screen' : `capture-screen-${screen.id}`}
+                    onClick={() => onCaptureScreen(screen.id)}
+                  >
+                    <CaptureIcon />
+                    <span>
+                      {screen.name}
+                      <span className="capture-item-meta">
+                        {screen.primary ? ` · ${t('主屏幕')}` : ''} · {screen.width}×{screen.height}
+                      </span>
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <button className="capture-item" data-testid="capture-screen" onClick={() => onCaptureScreen()}>
+                  <CaptureIcon />
+                  <span>{t('整个屏幕')}</span>
+                </button>
+              )}
             </div>
           </>
         ) : null}

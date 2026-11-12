@@ -12,11 +12,9 @@ interface GitPanelProps {
   busy: boolean
   onRefresh(): void
   onSelect(path: string, staged: boolean): void
-  onUndo(): void
+  onRewind(): void
   onOpenEditor?(path: string, line?: number): void
   onClose(): void
-  /** 在统一检查器内渲染，而非固定抽屉。 */
-  embedded?: boolean
 }
 
 function statusLabel(status: string, untracked: boolean, staged: boolean): string {
@@ -45,10 +43,9 @@ export function GitPanel({
   busy,
   onRefresh,
   onSelect,
-  onUndo,
+  onRewind,
   onOpenEditor,
   onClose,
-  embedded = false,
 }: GitPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const firstChangedLine = (() => {
@@ -58,8 +55,7 @@ export function GitPanel({
 
   return (
     <>
-      {!embedded ? <div className="drawer-scrim" onClick={onClose} aria-hidden="true" /> : null}
-      <aside className={`git-drawer${embedded ? ' embedded' : ''}`} data-testid="git-drawer" aria-label={t('变更')}>
+      <aside className="git-drawer embedded" data-testid="git-drawer" aria-label={t('变更')}>
         <header className="drawer-head">
           <span className="drawer-seal" aria-hidden="true">
             变
@@ -73,8 +69,8 @@ export function GitPanel({
           <button className="btn" onClick={onRefresh} disabled={loading}>
             {loading ? t('加载中…') : t('刷新')}
           </button>
-          <button className="btn" onClick={onUndo} disabled={busy || !status?.checkpoint}>
-            {busy ? t('撤销中…') : t('撤销本轮')}
+          <button className="btn" onClick={onRewind} disabled={busy}>
+            {t('回退本轮…')}
           </button>
           <button className="btn" onClick={onClose}>
             {t('关闭')}
@@ -90,7 +86,9 @@ export function GitPanel({
             </div>
           ) : null}
           {!status ? (
-            <div className="settings-empty">{t('加载中…')}</div>
+            error ? null : (
+              <div className="settings-empty">{t('加载中…')}</div>
+            )
           ) : !status.isRepo ? (
             <div className="settings-empty">{t('当前工作区不是 Git 仓库')}</div>
           ) : (
@@ -103,10 +101,10 @@ export function GitPanel({
                 {status.behind ? <span>{t('落后 {{behind}}', { behind: status.behind })}</span> : null}
                 {status.checkpoint ? (
                   <span className="git-checkpoint">
-                    {t('可撤销本轮（{{time}}）', { time: new Date(status.checkpoint.createdAt).toLocaleTimeString() })}
+                    {t('可回退本轮（{{time}}）', { time: new Date(status.checkpoint.createdAt).toLocaleTimeString() })}
                   </span>
                 ) : (
-                  <span className="git-checkpoint muted">{t('本轮暂无可撤销的改动')}</span>
+                  <span className="git-checkpoint muted">{t('本轮暂无可回退的改动')}</span>
                 )}
               </div>
               {status.root ? <div className="settings-hint">{status.root}</div> : null}

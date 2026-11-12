@@ -16,6 +16,12 @@ export interface PaletteAction {
   hint?: string
   /** 额外搜索词（同义词、英文名、示例）。 */
   keywords?: string[]
+  /** “更多工具”菜单中的短标签；省略时用 label。 */
+  menuLabel?: string
+  /** “更多工具”菜单中的辅助说明；省略时用 hint。 */
+  menuHint?: string
+  /** 保留既有 UI smoke / 测试使用的 data-testid。 */
+  menuTestId?: string
   run: () => void | Promise<void>
 }
 

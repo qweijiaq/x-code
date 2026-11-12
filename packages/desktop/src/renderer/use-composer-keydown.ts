@@ -33,9 +33,19 @@ export interface ComposerKeyDownOptions {
   submit: (prompt: string) => Promise<unknown>
 }
 
-export function useComposerKeyDown(
-  options: ComposerKeyDownOptions,
-): (event: React.KeyboardEvent<HTMLTextAreaElement>) => void {
+export interface ComposerKeyEvent {
+  key: string
+  shiftKey: boolean
+  metaKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  keyCode: number
+  isComposing?: boolean
+  nativeEvent?: { isComposing?: boolean }
+  preventDefault: () => void
+}
+
+export function useComposerKeyDown(options: ComposerKeyDownOptions): (event: ComposerKeyEvent) => void {
   const { t } = useTranslation()
   const {
     mention,
@@ -78,7 +88,7 @@ export function useComposerKeyDown(
         setMentionIndex((index) => (index - 1 + mentionItems.length) % mentionItems.length)
         return
       }
-      if (event.key === 'Tab' || event.key === 'Enter') {
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
         event.preventDefault()
         const picked = mentionItems[mentionIndex]
         if (picked) pickMention(picked)

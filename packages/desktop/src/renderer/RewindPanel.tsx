@@ -15,11 +15,13 @@ function request<T extends RequestMethod>(method: T, params: RequestMap[T]['para
   return window.xcode.request({ id: crypto.randomUUID(), method, params } as RuntimeRequest)
 }
 
-type RewindMode = 'both' | 'code' | 'conversation'
+export type RewindMode = 'both' | 'code' | 'conversation'
 
 interface Props {
   onClose: () => void
   onRewound: (view: LoadedSessionView, mode: RewindMode) => void
+  /** 入口可以预选模式，例如 Git 面板直接进入“仅代码”。 */
+  initialMode?: RewindMode
 }
 
 function formatTime(ts: string): string {
@@ -35,12 +37,16 @@ function formatTime(ts: string): string {
   }
 }
 
-export function RewindPanel({ onClose, onRewound }: Props): React.JSX.Element {
+export function RewindPanel({ onClose, onRewound, initialMode = 'both' }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const [checkpoints, setCheckpoints] = useState<RewindCheckpointView[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [stats, setStats] = useState<{ filesChanged: string[]; insertions: number; deletions: number } | null>(null)
-  const [mode, setMode] = useState<RewindMode>('both')
+  const [mode, setMode] = useState<RewindMode>(initialMode)
+
+  useEffect(() => {
+    setMode(initialMode)
+  }, [initialMode])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

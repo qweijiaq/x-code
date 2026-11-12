@@ -6,15 +6,15 @@ interface ChecksPanelProps {
   checks: ProjectCheckView[]
   results: ProjectCheckResultView[]
   autoChecks: boolean
+  autoFix: boolean
   loading: boolean
   error: string | null
   onRefresh(): void
   onRun(): void
   onToggleAuto(): void
+  onToggleAutoFix(): void
   onFix(): void
   onClose(): void
-  /** 在统一检查器内渲染，而非固定抽屉。 */
-  embedded?: boolean
 }
 
 const STATUS_LABEL: Record<ProjectCheckResultView['status'], string> = {
@@ -28,26 +28,22 @@ export function ChecksPanel({
   checks,
   results,
   autoChecks,
+  autoFix,
   loading,
   error,
   onRefresh,
   onRun,
   onToggleAuto,
+  onToggleAutoFix,
   onFix,
   onClose,
-  embedded = false,
 }: ChecksPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const hasFailures = results.some((result) => result.status === 'failed' || result.status === 'timeout')
 
   return (
     <>
-      {!embedded ? <div className="drawer-scrim" onClick={onClose} aria-hidden="true" /> : null}
-      <aside
-        className={`checks-drawer${embedded ? ' embedded' : ''}`}
-        data-testid="checks-drawer"
-        aria-label={t('项目检查')}
-      >
+      <aside className="checks-drawer embedded" data-testid="checks-drawer" aria-label={t('项目检查')}>
         <header className="drawer-head">
           <span className="drawer-seal" aria-hidden="true">
             检
@@ -58,6 +54,9 @@ export function ChecksPanel({
           </div>
           <button className={`btn ${autoChecks ? 'solid' : ''}`} onClick={onToggleAuto}>
             {t('自动检查')}：{autoChecks ? t('开') : t('关')}
+          </button>
+          <button className={`btn ${autoFix ? 'solid' : ''}`} onClick={onToggleAutoFix} disabled={!autoChecks}>
+            {t('自动修复')}：{autoFix ? t('开') : t('关')}
           </button>
           <button className="btn" onClick={onRefresh} disabled={loading}>
             {loading ? t('加载中…') : t('刷新')}
