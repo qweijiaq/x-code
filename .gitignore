@@ -166,3 +166,6 @@ packages/desktop/release/
 
 # Bundled speech model (fetched by scripts/fetch-whisper-model.mjs)
 packages/desktop/build/whisper/*.bin
+
+# Local documentation and blog drafts
+docs/
