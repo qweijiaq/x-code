@@ -143,6 +143,14 @@ function pathInputs(toolName: string, input: Record<string, unknown>, cwd: strin
     lspDefinition: ['filePath'],
     lspReferences: ['filePath'],
     lspRename: ['filePath'],
+    readDocument: ['filePath', 'path'],
+    documentSearch: ['path'],
+    documentLibrary: ['path'],
+    documentExport: ['output'],
+    transcribe: ['filePath'],
+    batchRename: ['directory'],
+    convert: ['output'],
+    spreadsheet: ['filePath'],
   }
   return (keys[toolName] ?? [])
     .map((key) => input[key])
@@ -170,6 +178,22 @@ function classifyBuiltin(
     return { capabilities: [mutatesTerminal ? 'local-mutation' : 'sensitive-read'] }
   }
   if (toolName === 'memorySearch') return { capabilities: ['sensitive-read'] }
+  if (['readDocument', 'documentSearch', 'transcribe', 'backgroundOutput'].includes(toolName)) {
+    return { capabilities: ['content-read'], paths }
+  }
+  if (toolName === 'spreadsheet') {
+    const readOnly = input.action === 'read' || input.action === 'query'
+    return { capabilities: [readOnly ? 'content-read' : 'local-mutation'], paths }
+  }
+  if (['batchRename', 'convert', 'documentExport'].includes(toolName)) {
+    return { capabilities: ['local-mutation'], paths }
+  }
+  if (toolName === 'documentLibrary') {
+    return { capabilities: [input.action === 'stats' ? 'content-read' : 'local-mutation'], paths }
+  }
+  if (['backgroundList', 'backgroundGet'].includes(toolName)) {
+    return { capabilities: ['session-metadata-read'] }
+  }
   if (toolName === 'webSearch') return { capabilities: ['network-egress'], destination: 'web-search-provider' }
   if (toolName === 'webFetch') {
     const destination = typeof input.url === 'string' ? input.url : 'unknown-url'

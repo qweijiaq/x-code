@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import os from 'node:os'
+import path from 'node:path'
+
 import { createGoal, requestGoalComplete } from '../src/agent/goal/state.js'
 import { runVerifierLadder } from '../src/agent/goal/verifier.js'
 import { createLoopState } from '../src/agent/loop-state.js'
@@ -77,7 +80,20 @@ describe('goal verifier', () => {
 
     expect(result.ok).toBe(true)
     expect(cb.onAskPermission).not.toHaveBeenCalled()
-    expect(spawn).toHaveBeenCalledWith('pwd', expect.objectContaining({ cwd: process.cwd() }))
+    expect(spawn).toHaveBeenCalledWith('pwd', expect.objectContaining({ cwd: state.projectCwd }))
+  })
+
+  it('runs shell verifiers in the session project cwd, not the process cwd', async () => {
+    const state = createLoopState()
+    const projectCwd = path.join(os.tmpdir(), 'xcode-goal-verifier-project')
+    state.projectCwd = projectCwd
+    const goal = createGoal(state, { objective: 'verify', verifiers: [{ kind: 'shell', command: 'pwd' }] })
+    const cb = callbacks()
+
+    const result = await runVerifierLadder({ goal, state, options: options(), callbacks: cb, model: {} as any })
+
+    expect(result.ok).toBe(true)
+    expect(spawn).toHaveBeenCalledWith('pwd', expect.objectContaining({ cwd: projectCwd }))
   })
 
   it('fails closed before any verifier executes for peer-influenced goals', async () => {
@@ -122,7 +138,7 @@ describe('goal verifier', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(spawn).toHaveBeenCalledWith('pwd', expect.objectContaining({ cwd: process.cwd() }))
+    expect(spawn).toHaveBeenCalledWith('pwd', expect.objectContaining({ cwd: state.projectCwd }))
     expect(cb.onAskPermission).not.toHaveBeenCalled()
   })
 

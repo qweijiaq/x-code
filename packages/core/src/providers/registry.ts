@@ -80,7 +80,7 @@ export function createModelRegistry() {
   if (opts.deepseek) providers.deepseek = createDeepSeek({ fetch: permanentErrorFetch })
   if (opts.alibaba) {
     providers.alibaba = createAlibaba({
-      baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      baseURL: config.baseUrls?.alibaba ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       fetch: permanentErrorFetch,
     })
   }
@@ -88,7 +88,7 @@ export function createModelRegistry() {
     providers.zhipu = createOpenAICompatible({
       name: 'zhipu',
       apiKey: opts.zhipu,
-      baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+      baseURL: config.baseUrls?.zhipu ?? 'https://open.bigmodel.cn/api/paas/v4',
       fetch: zhipuReasoningFetch,
       includeUsage: true,
     })
@@ -104,7 +104,7 @@ export function createModelRegistry() {
     // 转换（如 thinking 配置包装），与 Coding Plan 的直接 API 不兼容——通过
     // Coding Plan 控制台签发的 key 只能在这里认证，对 moonshot.* 端点会 401。
     // 改走 createOpenAICompatible，使请求原样透传。
-    if (baseURL?.includes('api.kimi.com/coding')) {
+    if (baseURL?.includes('kimi.com/coding') || baseURL?.includes('kimi.ai/coding')) {
       const codingProvider = createOpenAICompatible({
         name: 'moonshotai',
         apiKey: opts.moonshotai,

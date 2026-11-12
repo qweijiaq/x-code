@@ -30,7 +30,9 @@ import {
 } from '../providers/thinking.js'
 import { createActivateSkillTool } from '../tools/activate-skill.js'
 import { BROWSER_VISUAL_CHECK_TOOL_NAME, browserVisualCheck } from '../tools/browser-visual-check.js'
+import { createContextSearchTool } from '../tools/context-search.js'
 import { createGetGoalTool } from '../tools/get-goal.js'
+import { createImpactAnalysisTool } from '../tools/impact-analysis.js'
 import { toolRegistry } from '../tools/index.js'
 import { createMemorySearchTool } from '../tools/memory-search.js'
 import { createReadFileTool } from '../tools/read-file.js'
@@ -311,6 +313,18 @@ export function buildTools(options: AgentOptions, state: LoopState) {
 
   if (hasFullRootToolSurface && options.memoryService) {
     tools.memorySearch = createMemorySearchTool(options.memoryService, state, state.projectCwd)
+  }
+
+  if (hasFullRootToolSurface) {
+    tools.contextSearch = createContextSearchTool({
+      projectCwd: state.projectCwd,
+      state,
+      ...(options.memoryService ? { memoryService: options.memoryService } : {}),
+    })
+  }
+
+  if (hasFullRootToolSurface) {
+    tools.impactAnalysis = createImpactAnalysisTool(state.projectCwd)
   }
 
   if (hasFullRootToolSurface && options.peerService?.isAvailable()) {

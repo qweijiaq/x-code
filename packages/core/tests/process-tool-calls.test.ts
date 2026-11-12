@@ -1206,3 +1206,68 @@ describe('partitionToolCalls', () => {
     expect(batches[1]!.map((c) => c.toolCallId)).toEqual(['2', '3'])
   })
 })
+
+describe('processToolCalls permission gate for mutating tools', () => {
+  function recordCall(state: ReturnType<typeof createLoopState>, toolName: string, toolCallId: string, input: unknown) {
+    state.messages.push(
+      { role: 'user', content: 'mutate' } as ModelMessage,
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId, toolName, input }] } as ModelMessage,
+    )
+  }
+
+  async function dispatch(
+    toolName: string,
+    input: Record<string, unknown>,
+    decision: 'yes' | 'no' = 'no',
+  ): Promise<{ callbacks: AgentCallbacks; executor: ReturnType<typeof vi.fn> }> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'x-code-permission-gate-'))
+    temporaryDirectories.push(dir)
+    const state = createLoopState('default', { projectCwd: dir })
+    const toolCallId = `tc-${toolName}`
+    recordCall(state, toolName, toolCallId, input)
+    const executor = vi.fn().mockResolvedValue('executed')
+    state.manualToolExecutors.set(toolName, executor)
+    const callbacks = makeCallbacks({ onAskPermission: vi.fn().mockResolvedValue(decision) })
+    await processToolCalls([{ toolName, toolCallId, input }], state, options, callbacks, stubModel)
+    return { callbacks, executor }
+  }
+
+  it.each([
+    ['batchRename', { directory: '/tmp', dryRun: false }],
+    ['convert', { action: 'pdf-merge', output: '/tmp/out.pdf', inputs: [] }],
+    ['spreadsheet', { action: 'write', filePath: '/tmp/a.xlsx' }],
+    ['documentExport', { content: '# hi', output: '/tmp/a.pdf' }],
+    ['documentLibrary', { action: 'clear' }],
+  ])('asks before %s mutates and blocks on denial', async (toolName, input) => {
+    const { callbacks, executor } = await dispatch(toolName, input as Record<string, unknown>)
+
+    expect(callbacks.onAskPermission).toHaveBeenCalledTimes(1)
+    expect(executor).not.toHaveBeenCalled()
+    expect(callbacks.onToolResult).toHaveBeenCalledWith(
+      `tc-${toolName}`,
+      expect.stringContaining('Permission denied'),
+      false,
+    )
+  })
+
+  it('does not ask for a dry-run batch rename', async () => {
+    const { callbacks, executor } = await dispatch('batchRename', { directory: '/tmp', dryRun: true })
+
+    expect(callbacks.onAskPermission).not.toHaveBeenCalled()
+    expect(executor).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not ask for read-only spreadsheet queries', async () => {
+    const { callbacks, executor } = await dispatch('spreadsheet', { action: 'read', filePath: '/tmp/a.xlsx' })
+
+    expect(callbacks.onAskPermission).not.toHaveBeenCalled()
+    expect(executor).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not ask for document library stats', async () => {
+    const { callbacks, executor } = await dispatch('documentLibrary', { action: 'stats' })
+
+    expect(callbacks.onAskPermission).not.toHaveBeenCalled()
+    expect(executor).toHaveBeenCalledTimes(1)
+  })
+})

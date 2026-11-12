@@ -12,6 +12,12 @@ import { resetOpenAIChatGPTModelsForTesting } from '../src/providers/openai-chat
 
 export const PROVIDER_ENV_VARS: readonly string[] = [
   ...PROVIDERS.map((p) => p.envKey),
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+  'DASHSCOPE_API_KEY',
+  'ZHIPUAI_API_KEY',
+  'ZAI_API_KEY',
+  'KIMI_API_KEY',
   'OPENAI_COMPATIBLE_API_KEY',
   'OPENAI_COMPATIBLE_BASE_URL',
 ]

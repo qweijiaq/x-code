@@ -20,7 +20,11 @@ const SESSION_SUMMARY_MESSAGE_COUNT = 20
 
 /** 使用模型从消息生成会话摘要。返回完整结构化的 `SessionSummary`
  *  （title + status + key results + pendingWork + decisions）——调用方通常用
- *  `summary` 字段做上下文替换，其余用于选择器 / 展示。 */
+ *  `summary` 字段做上下文替换，其余用于选择器 / 展示。
+ *
+ *  @deprecated 旧的会话摘要伴生文件已移除；当前压缩摘要直接写入会话 JSONL 的
+ *  `compact-boundary` 行。此函数没有生产调用方，仅为兼容公开 API 保留，计划在
+ *  下一个 major 版本移除。 */
 export async function generateSessionSummary(
   messages: ModelMessage[],
   model: LanguageModel,

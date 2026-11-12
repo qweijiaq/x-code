@@ -84,7 +84,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   {
     name: 'anthropic',
     envKey: 'ANTHROPIC_API_KEY',
-    defaultModel: 'anthropic:claude-sonnet-5',
+    defaultModel: 'anthropic:claude-sonnet-5-5',
     keyUrl: 'https://console.anthropic.com/',
     models: [
       {
@@ -94,9 +94,27 @@ export const PROVIDERS: readonly ProviderInfo[] = [
         vision: true,
       },
       {
+        id: 'anthropic:claude-mythos-5-1',
+        label: 'Mythos 5.1',
+        description: 'Restricted-access flagship; requires an approved organization, 1M context',
+        vision: true,
+      },
+      {
+        id: 'anthropic:claude-mythos-5',
+        label: 'Mythos 5',
+        description: 'Restricted-access model for approved organizations, 1M context',
+        vision: true,
+      },
+      {
+        id: 'anthropic:claude-opus-5-5',
+        label: 'Opus 5.5',
+        description: 'Newest Opus, complex reasoning and agentic coding, 1M context',
+        vision: true,
+      },
+      {
         id: 'anthropic:claude-opus-5',
         label: 'Opus 5',
-        description: 'Latest Opus for complex reasoning and agentic coding, 1M context',
+        description: 'Previous Opus tier, complex reasoning and agentic coding, 1M context',
         vision: true,
       },
       {
@@ -112,21 +130,33 @@ export const PROVIDERS: readonly ProviderInfo[] = [
         vision: true,
       },
       {
+        id: 'anthropic:claude-sonnet-5-5',
+        label: 'Sonnet 5.5',
+        description: 'Newest balanced tier, $2/$10, 1M context',
+        vision: true,
+      },
+      {
         id: 'anthropic:claude-sonnet-5',
         label: 'Sonnet 5',
-        description: 'Best balance, near-Opus coding at $3/$15, 1M context',
+        description: 'Previous balanced tier, 1M context',
+        vision: true,
+      },
+      {
+        id: 'anthropic:claude-haiku-5-5',
+        label: 'Haiku 5.5',
+        description: 'Fastest, cheapest tier with effort levels, $0.10/$0.50',
         vision: true,
       },
       {
         id: 'anthropic:claude-haiku-4-5',
         label: 'Haiku 4.5',
-        description: 'Fastest, cheapest — $1/$5, shorter replies',
+        description: 'Previous fast tier, $1/$5, 200k context',
         vision: true,
       },
     ],
     reasoningTiers: [
       {
-        modelPattern: /claude-fable-5(?:-1)?$/,
+        modelPattern: /claude-(?:fable|mythos)-5(?:-1)?$/,
         offValue: 'low',
         options: [
           { label: 'Low', value: 'low', description: 'Minimum adaptive reasoning' },
@@ -137,7 +167,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
         ],
       },
       {
-        modelPattern: /claude-(?:opus-(?:5|4-8)|sonnet-5)$/,
+        modelPattern: /claude-(?:opus-(?:5-5|5|4-8)|sonnet-5-5|sonnet-5|haiku-5-5)$/,
         options: [
           { label: 'Low', value: 'low', description: 'Minimal reasoning, fastest' },
           { label: 'Medium', value: 'medium', description: 'Balanced reasoning' },
@@ -151,7 +181,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   {
     name: 'openai',
     envKey: 'OPENAI_API_KEY',
-    defaultModel: 'openai:gpt-5.6-sol',
+    defaultModel: 'openai:gpt-6-astra',
     keyUrl: 'https://platform.openai.com/api-keys',
     models: [
       {
@@ -161,9 +191,33 @@ export const PROVIDERS: readonly ProviderInfo[] = [
         vision: true,
       },
       {
+        id: 'openai:gpt-6.1-sol',
+        label: 'GPT-6.1 Sol',
+        description: 'Newest reasoning and coding tier, 1M context',
+        vision: true,
+      },
+      {
+        id: 'openai:gpt-6.1-terra',
+        label: 'GPT-6.1 Terra',
+        description: 'Balanced tier of the 6.1 generation, 1M context',
+        vision: true,
+      },
+      {
+        id: 'openai:gpt-6-sol',
+        label: 'GPT-6 Sol',
+        description: 'GPT-6 reasoning tier for complex coding, 1M context',
+        vision: true,
+      },
+      {
+        id: 'openai:gpt-6-luna',
+        label: 'GPT-6 Luna',
+        description: 'Cost-sensitive GPT-6 tier, 1M context',
+        vision: true,
+      },
+      {
         id: 'openai:gpt-5.6-sol',
         label: 'GPT-5.6 Sol',
-        description: 'Flagship reasoning and coding tier, $4/$20, 1M context',
+        description: 'Previous flagship reasoning and coding tier, $4/$20, 1M context',
         vision: true,
       },
       {
@@ -194,6 +248,28 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     reasoningTiers: [
       {
         modelPattern: /gpt-6-astra$/,
+        offValue: 'low',
+        options: [
+          { label: 'Low', value: 'low', description: 'Minimum supported reasoning' },
+          { label: 'Medium', value: 'medium', description: 'Balanced reasoning' },
+          { label: 'High', value: 'high', description: 'Thorough reasoning' },
+          { label: 'XHigh', value: 'xhigh', description: 'Very deep reasoning' },
+          { label: 'Max', value: 'max', description: 'Maximum reasoning depth' },
+        ],
+      },
+      {
+        modelPattern: /gpt-6\.1(?:-(?:sol|terra|luna))?$/,
+        offValue: 'low',
+        options: [
+          { label: 'Low', value: 'low', description: 'Minimum supported reasoning' },
+          { label: 'Medium', value: 'medium', description: 'Balanced reasoning' },
+          { label: 'High', value: 'high', description: 'Thorough reasoning' },
+          { label: 'XHigh', value: 'xhigh', description: 'Very deep reasoning' },
+          { label: 'Max', value: 'max', description: 'Maximum reasoning depth' },
+        ],
+      },
+      {
+        modelPattern: /gpt-6(?:-(?:sol|luna))?$/,
         offValue: 'low',
         options: [
           { label: 'Low', value: 'low', description: 'Minimum supported reasoning' },
@@ -269,6 +345,11 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     envKey: 'ALIBABA_API_KEY',
     defaultModel: 'alibaba:qwen3.8-max',
     keyUrl: 'https://dashscope.console.aliyun.com/apiKey',
+    baseUrlOptions: [
+      { label: 'China (dashscope.aliyuncs.com)', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+      { label: 'Singapore (dashscope-intl)', url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' },
+      { label: 'US (dashscope-us)', url: 'https://dashscope-us.aliyuncs.com/compatible-mode/v1' },
+    ],
     models: [
       {
         id: 'alibaba:qwen3.8-max',
@@ -329,9 +410,15 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   {
     name: 'google',
     envKey: 'GOOGLE_GENERATIVE_AI_API_KEY',
-    defaultModel: 'google:gemini-3.8-flash',
+    defaultModel: 'google:gemini-4-argon',
     keyUrl: 'https://aistudio.google.com/apikey',
     models: [
+      {
+        id: 'google:gemini-4-argon',
+        label: 'Gemini 4 Argon',
+        description: 'Newest Gemini flagship, 1M context and up to 1M output',
+        vision: true,
+      },
       {
         id: 'google:gemini-3.8-flash',
         label: 'Gemini 3.8 Flash',
@@ -341,7 +428,7 @@ export const PROVIDERS: readonly ProviderInfo[] = [
       {
         id: 'google:gemini-3.7-flash',
         label: 'Gemini 3.7 Flash',
-        description: 'Previous-generation multimodal agentic model, 1M context',
+        description: 'Deprecated; requests auto-route to Gemini 3.8 Flash',
         vision: true,
       },
       {
@@ -353,13 +440,19 @@ export const PROVIDERS: readonly ProviderInfo[] = [
       {
         id: 'google:gemini-3.5-flash',
         label: 'Gemini 3.5 Flash',
-        description: 'Latest flagship, agentic + coding, 1M context',
+        description: 'Deprecated; requests auto-route to Gemini 3.6 Flash',
+        vision: true,
+      },
+      {
+        id: 'google:gemini-3.5-flash-lite',
+        label: 'Gemini 3.5 Flash-Lite',
+        description: 'Cheapest Flash-Lite tier, 1M context',
         vision: true,
       },
       {
         id: 'google:gemini-2.5-pro',
         label: 'Gemini 2.5 Pro',
-        description: '1M context, strong long-doc handling',
+        description: 'Legacy Pro; auto-routes to Gemini 3.8 Flash after 2026-12-01',
         vision: true,
       },
       {
@@ -370,6 +463,15 @@ export const PROVIDERS: readonly ProviderInfo[] = [
       },
     ],
     reasoningTiers: [
+      {
+        modelPattern: /gemini-4-argon$/,
+        offValue: 'low',
+        options: [
+          { label: 'Low', value: 'low', description: 'Minimum supported reasoning' },
+          { label: 'Medium', value: 'medium', description: 'Balanced reasoning' },
+          { label: 'High', value: 'high', description: 'Deeper reasoning, higher quality' },
+        ],
+      },
       {
         modelPattern: /gemini-3\.[78]-flash$/,
         offValue: 'low',
@@ -394,32 +496,38 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   {
     name: 'xai',
     envKey: 'XAI_API_KEY',
-    defaultModel: 'xai:grok-4.6',
+    defaultModel: 'xai:grok-4.7',
     keyUrl: 'https://console.x.ai/',
     models: [
       {
+        id: 'xai:grok-4.7',
+        label: 'Grok 4.7',
+        description: 'Newest reasoning flagship, vision and 500k context',
+        vision: true,
+      },
+      {
         id: 'xai:grok-4.6',
         label: 'Grok 4.6',
-        description: 'Recommended flagship, native vision and 500k context',
+        description: 'Previous flagship; always-reasoning, text-only, 500k context',
+        vision: false,
+      },
+      {
+        id: 'xai:grok-4.20-0309-reasoning',
+        label: 'Grok 4.20 Reasoning',
+        description: 'Fixed-reasoning model with native vision and 2M context',
         vision: true,
       },
       {
-        id: 'xai:grok-4.20',
-        label: 'Grok 4.20',
-        description: 'Fixed-reasoning model with native vision and 1M context',
-        vision: true,
-      },
-      {
-        id: 'xai:grok-4.20-non-reasoning',
+        id: 'xai:grok-4.20-0309-non-reasoning',
         label: 'Grok 4.20 Non-Reasoning',
-        description: 'Low-latency non-reasoning variant with 1M context',
+        description: 'Low-latency non-reasoning variant with 2M context',
         vision: true,
       },
       {
         id: 'xai:grok-4.5',
         label: 'Grok 4.5',
-        description: 'Flagship, agentic coding, $2/$6, 500k context',
-        vision: true,
+        description: 'Agentic coding tier; always-reasoning, text-only, 500k context',
+        vision: false,
       },
       {
         id: 'xai:grok-4.3',
@@ -429,6 +537,16 @@ export const PROVIDERS: readonly ProviderInfo[] = [
       },
     ],
     reasoningTiers: [
+      {
+        modelPattern: /grok-4\.7$/,
+        offValue: 'low',
+        options: [
+          { label: 'Low', value: 'low', description: 'Minimum supported reasoning' },
+          { label: 'Medium', value: 'medium', description: 'Balanced reasoning' },
+          { label: 'High', value: 'high', description: 'Deeper reasoning (default)' },
+          { label: 'XHigh', value: 'xhigh', description: 'Maximum supported reasoning' },
+        ],
+      },
       {
         modelPattern: /grok-4\.6$/,
         offValue: 'low',
@@ -464,6 +582,18 @@ export const PROVIDERS: readonly ProviderInfo[] = [
     envKey: 'ZHIPU_API_KEY',
     defaultModel: 'zhipu:glm-5.3',
     keyUrl: 'https://open.bigmodel.cn/usercenter/apikeys',
+    baseUrlOptions: [
+      { label: 'China (open.bigmodel.cn)', url: 'https://open.bigmodel.cn/api/paas/v4' },
+      { label: 'International (api.z.ai)', url: 'https://api.z.ai/api/paas/v4' },
+      {
+        label: 'Coding Plan China (open.bigmodel.cn)',
+        url: 'https://open.bigmodel.cn/api/coding/paas/v4',
+      },
+      {
+        label: 'Coding Plan International (api.z.ai)',
+        url: 'https://api.z.ai/api/coding/paas/v4',
+      },
+    ],
     models: [
       {
         id: 'zhipu:glm-5.3',
@@ -521,7 +651,10 @@ export const PROVIDERS: readonly ProviderInfo[] = [
       {
         modelPattern: /glm-5\.2$/,
         options: [
+          { label: 'Low', value: 'low', description: 'Light reasoning' },
+          { label: 'Medium', value: 'medium', description: 'Balanced reasoning' },
           { label: 'High', value: 'high', description: 'Enhanced reasoning' },
+          { label: 'XHigh', value: 'xhigh', description: 'Very deep reasoning' },
           { label: 'Max', value: 'max', description: 'Deep reasoning (default)' },
         ],
       },
@@ -530,43 +663,56 @@ export const PROVIDERS: readonly ProviderInfo[] = [
   {
     name: 'moonshotai',
     envKey: 'MOONSHOT_API_KEY',
-    defaultModel: 'moonshotai:kimi-k3',
+    defaultModel: 'moonshotai:kimi-k3.1-pro',
     keyUrl: 'https://platform.moonshot.ai/console/api-keys',
     models: [
       {
+        id: 'moonshotai:kimi-k3.1-pro',
+        label: 'Kimi K3.1 Pro',
+        description: 'Newest flagship, 3T-class, 1M context, native multimodal',
+        vision: true,
+      },
+      {
+        id: 'moonshotai:kimi-k3.1-pro-highspeed',
+        label: 'Kimi K3.1 Pro Highspeed',
+        description: 'High-speed K3.1 Pro, 1M context, native multimodal',
+        vision: true,
+      },
+      {
         id: 'moonshotai:kimi-k3',
         label: 'Kimi K3',
-        description: 'Flagship, 2.8T params, 1M context, native multimodal',
+        description: 'Previous-generation flagship, 1M context, native multimodal',
         vision: true,
       },
       {
         id: 'moonshotai:kimi-k2.7-code',
-        label: 'Kimi K2.7 Code',
-        description: 'Dedicated coding model, 256k context',
+        label: 'Kimi K2.7 Code (Legacy)',
+        description: 'Legacy coding model; unavailable to accounts registered after 2026-11-01',
         vision: true,
       },
       {
         id: 'moonshotai:kimi-k2.7-code-highspeed',
-        label: 'Kimi K2.7 Code Highspeed',
-        description: 'High-speed coding variant, 256k context',
+        label: 'Kimi K2.7 Code Highspeed (Legacy)',
+        description: 'Legacy high-speed coding model; unavailable to new accounts',
         vision: true,
       },
       {
         id: 'moonshotai:kimi-k2.6',
-        label: 'Kimi K2.6',
-        description: 'Multimodal general-purpose, 256k context',
+        label: 'Kimi K2.6 (Legacy)',
+        description: 'Legacy multimodal model; unavailable to new accounts',
         vision: true,
       },
     ],
     baseUrlOptions: [
-      { label: 'api.kimi.com/coding (Coding Plan)', url: 'https://api.kimi.com/coding/v1' },
+      { label: 'api.kimi.com/coding (Coding Plan, China)', url: 'https://api.kimi.com/coding/v1' },
+      { label: 'api.kimi.ai/coding (Coding Plan, International)', url: 'https://api.kimi.ai/coding/v1' },
       { label: 'api.moonshot.cn (China)', url: 'https://api.moonshot.cn/v1' },
       { label: 'api.moonshot.ai (International)', url: 'https://api.moonshot.ai/v1' },
     ],
     reasoningTiers: [
       {
-        // reasoning_effort 仅 K3 支持；K2.x 使用二元 thinking 开关。
-        modelPattern: /kimi-k3/,
+        // reasoning_effort 支持 K3.1 Pro 和 K3；K2.x 使用二元 thinking 开关。
+        modelPattern: /kimi-k3(?:\.1-pro)?/,
         options: [
           { label: 'Low', value: 'low', description: 'Faster, concise reasoning' },
           { label: 'High', value: 'high', description: 'Deeper reasoning' },
@@ -581,9 +727,9 @@ export const PROVIDERS: readonly ProviderInfo[] = [
 
 export const MODEL_ALIASES: Record<string, string> = {
   fable: 'anthropic:claude-fable-5-1',
-  sonnet: 'anthropic:claude-sonnet-5',
-  opus: 'anthropic:claude-opus-5',
-  haiku: 'anthropic:claude-haiku-4-5',
+  sonnet: 'anthropic:claude-sonnet-5-5',
+  opus: 'anthropic:claude-opus-5-5',
+  haiku: 'anthropic:claude-haiku-5-5',
   gpt6: 'openai:gpt-6-astra',
   astra: 'openai:gpt-6-astra',
   gpt5: 'openai:gpt-5.6-sol',
@@ -591,9 +737,9 @@ export const MODEL_ALIASES: Record<string, string> = {
   deepseek: 'deepseek:deepseek-flash',
   'deepseek-pro': 'deepseek:deepseek-v4-pro',
   qwen: 'alibaba:qwen3.8-max',
-  grok: 'xai:grok-4.6',
+  grok: 'xai:grok-4.7',
   glm: 'zhipu:glm-5.3',
-  kimi: 'moonshotai:kimi-k3',
+  kimi: 'moonshotai:kimi-k3.1-pro',
 }
 
 // ─── 派生视图（为既有调用方保留的旧形态）───

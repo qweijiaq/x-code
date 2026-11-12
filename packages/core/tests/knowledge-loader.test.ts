@@ -25,12 +25,15 @@ describe('buildKnowledgeContext deterministic deduplication', () => {
     await fs.writeFile(path.join(userDir, 'AGENTS.md'), 'shared exact rule\n', 'utf8')
     await fs.writeFile(path.join(projectDir, 'AGENTS.md'), 'shared exact rule\n', 'utf8')
     await fs.writeFile(path.join(projectDir, 'AGENTS.local.md'), 'distinct local rule\n', 'utf8')
+    await fs.writeFile(path.join(projectDir, 'TEAM_MEMORY.md'), 'team shared rule\n', 'utf8')
 
     const context = await buildKnowledgeContext({ cwd: projectDir })
 
     expect(context.match(/shared exact rule/g)).toHaveLength(1)
     expect(context).toContain('### User Preferences')
     expect(context).not.toContain('### Project AGENTS.md')
+    expect(context).toContain('### Team Memory (TEAM_MEMORY.md)')
+    expect(context).toContain('team shared rule')
     expect(context).toContain('### Local Preferences')
     expect(context).toContain('distinct local rule')
   })

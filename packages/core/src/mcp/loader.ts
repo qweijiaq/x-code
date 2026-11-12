@@ -98,17 +98,14 @@ export async function loadMcpConfigsFromDisk(opts: {
   onExitRequested?: () => void
   extraServers?: Record<string, McpServerConfig>
 }): Promise<LoadResult> {
-  const { configs, configErrors, projectSkipped } = await loadMergedConfigsFromDisk({
+  const { configs, configErrors, projectSkipped, projectExitRequested } = await loadMergedConfigsFromDisk({
     cwd: opts.cwd,
     askUser: opts.askUser,
     extraServers: opts.extraServers,
   })
 
-  if (opts.onExitRequested && projectSkipped) {
-    // 信任对话框返回了 'exit'——执行调用方的关闭钩子。loadMergedConfigsFromDisk
-    // 会把 'exit' 映射为 'skip'（为了 /mcp refresh 的安全），所以这里
-    // 为 CLI 启动路径重新检查 projectSkipped。
-  }
+  // `/mcp refresh` 忽略 'exit'（从斜杠命令退出 CLI 太粗暴）；启动路径则尊重它。
+  if (opts.onExitRequested && projectExitRequested) opts.onExitRequested()
 
   if (configs.size === 0) {
     return {
@@ -151,12 +148,15 @@ export async function loadMergedConfigsFromDisk(opts: {
   configs: Map<string, McpServerConfig>
   configErrors: Array<{ name: string; message: string }>
   projectSkipped: boolean
+  /** 用户在信任对话框里明确选择了 Exit（不是 Skip）。 */
+  projectExitRequested: boolean
 }> {
   const userServers = await readMcpServersFromFile(getUserConfigPath())
   const projectServers = await readMcpServersFromFile(path.join(opts.cwd, XCODE_DIR, 'config.json'))
 
   const configErrors: Array<{ name: string; message: string }> = []
   let projectSkipped = false
+  let projectExitRequested = false
 
   const userParsed = parseServersBlock(userServers)
   configErrors.push(...userParsed.errors.map((e) => ({ name: `user:${e.name}`, message: e.message })))
@@ -180,9 +180,10 @@ export async function loadMergedConfigsFromDisk(opts: {
       )
       if (choice === 'exit') {
         // /mcp refresh 刻意忽略 'exit'——从一个斜杠命令里退出整个 CLI 太粗暴。
-        // 我们把它当作 'skip'，这样用户可以在真正重启时重新选择。
+        // 我们把它当作 'skip'，同时记录退出意图，供启动路径使用。
         projectServersToUse = {}
         projectSkipped = true
+        projectExitRequested = true
       } else if (choice === 'skip') {
         projectServersToUse = {}
         projectSkipped = true
@@ -200,7 +201,7 @@ export async function loadMergedConfigsFromDisk(opts: {
   const merged = new Map<string, McpServerConfig>(
     Object.entries({ ...userParsed.servers, ...(opts.extraServers ?? {}), ...projectServersToUse }),
   )
-  return { configs: merged, configErrors, projectSkipped }
+  return { configs: merged, configErrors, projectSkipped, projectExitRequested }
 }
 
 /** 纯 loader（配置不涉及磁盘 I/O——由调用方注入）。
@@ -330,7 +331,7 @@ async function askForTrust(
 /** 仅从 JSON 配置文件读出 `mcpServers` 字段。文件缺失 / 解析错误 / 字段缺失
  *  都返回 undefined——这些都表示"这里没有配置 MCP 服务器"，绝不是需要向上
  *  报告的错误。 */
-async function readMcpServersFromFile(filePath: string): Promise<Record<string, McpServerConfig> | undefined> {
+export async function readMcpServersFromFile(filePath: string): Promise<Record<string, McpServerConfig> | undefined> {
   let raw: string
   try {
     raw = await fs.readFile(filePath, 'utf-8')

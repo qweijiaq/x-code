@@ -102,6 +102,30 @@ export async function writeServerToConfig(
   return { path: getConfigPath(scope, cwd) }
 }
 
+/** 切换服务器的 `enabled` 字段，保留其余配置不变。服务器不存在时返回
+ *  `changed: false`，由调用方决定是否提示。 */
+export async function setServerEnabled(
+  name: string,
+  enabled: boolean,
+  scope: ConfigScope,
+  cwd: string,
+): Promise<{ path: string; changed: boolean }> {
+  const file = getConfigPath(scope, cwd)
+  const obj = await readConfigObject(scope, cwd)
+  const existing = obj.mcpServers
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+    return { path: file, changed: false }
+  }
+  const servers = existing as Record<string, unknown>
+  const current = servers[name]
+  if (!current || typeof current !== 'object' || Array.isArray(current)) {
+    return { path: file, changed: false }
+  }
+  const validated = parseServerConfig(name, { ...(current as Record<string, unknown>), enabled })
+  await writeConfigObject(scope, cwd, { ...obj, mcpServers: { ...servers, [name]: validated } })
+  return { path: file, changed: true }
+}
+
 /** 从给定 scope 的 config.json 移除服务器。幂等：当名字不存在（或文件
  *  不存在）时返回 `removed: false`。保留一个空的 `mcpServers: {}` 而不是
  *  删除该字段——为将来的添加保留位置，并避免让用 git diff 该文件的用户

@@ -4,7 +4,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { buildServerPreview, isProjectTrusted, promptForTrust, trustProject } from '../src/mcp/trust.js'
+import { readMcpServersFromFile } from '../src/mcp/loader.js'
+import { buildServerPreview, isProjectTrusted, promptForTrust, trustProject, untrustProject } from '../src/mcp/trust.js'
 
 /** 每个测试在 tmpdir 下获得自己的临时 ~/.x-code，因此我们从不碰
  *  开发者的真实 trusted-projects.json。 */
@@ -42,6 +43,18 @@ describe('trust persistence', () => {
     await trustProject('/foo')
     expect(await isProjectTrusted('/foo/sub')).toBe(false)
   })
+
+  it('revokes trust without touching other projects', async () => {
+    const first = path.resolve('first')
+    const second = path.resolve('second')
+    await trustProject(first)
+    await trustProject(second)
+
+    await untrustProject(first + path.sep)
+
+    expect(await isProjectTrusted(first)).toBe(false)
+    expect(await isProjectTrusted(second)).toBe(true)
+  })
 })
 
 describe('promptForTrust', () => {
@@ -63,6 +76,24 @@ describe('promptForTrust', () => {
   it('falls back to skip on any other / unrecognised answer', async () => {
     const choice = await promptForTrust('/p', [{ name: 's', preview: 'cmd' }], async () => '???')
     expect(choice).toBe('skip')
+  })
+})
+
+describe('readMcpServersFromFile', () => {
+  it('reads project mcpServers and ignores files without the field', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-mcp-config-'))
+    try {
+      const config = path.join(dir, 'config.json')
+      await fs.writeFile(config, JSON.stringify({ mcpServers: { demo: { command: 'npx', args: ['-y', 'demo'] } } }))
+      expect(await readMcpServersFromFile(config)).toMatchObject({ demo: { command: 'npx' } })
+
+      const empty = path.join(dir, 'empty.json')
+      await fs.writeFile(empty, JSON.stringify({ other: true }))
+      expect(await readMcpServersFromFile(empty)).toBeUndefined()
+      expect(await readMcpServersFromFile(path.join(dir, 'missing.json'))).toBeUndefined()
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
+    }
   })
 })
 

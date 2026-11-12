@@ -509,6 +509,7 @@ export interface AgentOptions {
   memoryService?: MemoryService
 }
 
+/** @deprecated 仅由兼容保留的 `generateSessionSummary` 使用；计划在下一个 major 版本移除。 */
 export interface SessionSummary {
   id: string
   title: string

@@ -184,7 +184,7 @@ async function runShellVerifier(input: {
     options.trustMode,
     callbacks.onAskPermission,
     state.permissionMode,
-    process.cwd(),
+    state.projectCwd,
   )
 
   if (options.abortSignal?.aborted) {
@@ -215,7 +215,7 @@ async function runShellVerifier(input: {
     callbacks.onToolProgress(toolCallId, `Verifying: ${verifier.command}`)
     const result = await getShellProvider().spawn(verifier.command, {
       timeout: verifier.timeoutMs ?? 120000,
-      cwd: process.cwd(),
+      cwd: state.projectCwd,
       signal: options.abortSignal,
     })
     const stdout = String(result.stdout ?? '')

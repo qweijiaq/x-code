@@ -21,6 +21,7 @@ afterEach(() => restoreOpenAIAuth())
 describe('supportsReasoningTier', () => {
   it('is true for tier-capable models', () => {
     expect(supportsReasoningTier('moonshotai:kimi-k3')).toBe(true)
+    expect(supportsReasoningTier('moonshotai:kimi-k3.1-pro')).toBe(true)
     expect(supportsReasoningTier('google:gemini-3.8-flash')).toBe(true)
     expect(supportsReasoningTier('google:gemini-3.7-flash')).toBe(true)
     expect(supportsReasoningTier('google:gemini-3.6-flash')).toBe(true)
@@ -137,6 +138,7 @@ describe('getReasoningLevel', () => {
   it('maps portable "max" tiers to "xhigh" while leaving DeepSeek on its native option', () => {
     expect(getReasoningLevel('deepseek:deepseek-flash', false, 'max')).toBeUndefined()
     expect(getReasoningLevel('moonshotai:kimi-k3', false, 'max')).toBe('xhigh')
+    expect(getReasoningLevel('moonshotai:kimi-k3.1-pro', false, 'max')).toBe('xhigh')
   })
 
   it('returns high when enabled and no effort specified', () => {

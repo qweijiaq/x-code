@@ -39,7 +39,8 @@ describe('getContextWindow', () => {
     expect(getContextWindow('deepseek:deepseek-flash')).toBe(1000000)
     expect(getContextWindow('alibaba:qwen3.8-max')).toBe(1000000)
     expect(getContextWindow('alibaba:qwen3.7-plus')).toBe(1000000)
-    expect(getContextWindow('xai:grok-4.20')).toBe(1000000)
+    expect(getContextWindow('xai:grok-4.20')).toBe(2000000)
+    expect(getContextWindow('moonshotai:kimi-k3.1-pro')).toBe(1000000)
     expect(getContextWindow('zhipu:glm-5.3-flash')).toBe(1000000)
     expect(getContextWindow('alibaba:qwen-max')).toBe(32768)
   })
@@ -96,7 +97,7 @@ describe('getCompressionThreshold', () => {
 
 describe('getMaxOutputTokens', () => {
   it('returns specific ceiling for known models', () => {
-    expect(getMaxOutputTokens('deepseek:deepseek-flash')).toBe(131072)
+    expect(getMaxOutputTokens('deepseek:deepseek-flash')).toBe(393216)
     expect(getMaxOutputTokens('anthropic:claude-sonnet-5')).toBe(128000)
     expect(getMaxOutputTokens('anthropic:claude-haiku-4-5')).toBe(64000)
     expect(getMaxOutputTokens('openai:gpt-6-astra')).toBe(128000)

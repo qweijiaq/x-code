@@ -5,7 +5,8 @@
 //   1. 用户 AGENTS.md（~/.x-code/）——缺失时回退到 CLAUDE.md
 //   2. 用户记忆 Core profile（~/.x-code/memory/MEMORY.md）
 //   3. 项目 AGENTS.md 链——每目录回退到 CLAUDE.md
-//   4. 项目根目录的 AGENTS.local.md        ——个人偏好，已 gitignore
+//   4. 项目根目录的 TEAM_MEMORY.md        ——团队共享记忆，提交进 Git
+//   5. 项目根目录的 AGENTS.local.md        ——个人偏好，已 gitignore
 //
 // 对模型而言后面的节权重更高：monorepo 子包（链中更深）覆盖共享上下文，
 // 本地个人偏好覆盖团队共享的知识文件。
@@ -107,6 +108,12 @@ export async function buildKnowledgeContext(options?: {
   for (const entry of projectKnowledge) {
     const relPath = path.relative(cwd, entry.dir) || '.'
     pushUniqueSection(`### Project ${entry.fileName} (${relPath})`, entry.content, entry.filePath)
+  }
+
+  const teamMemoryPath = path.join(cwd, 'TEAM_MEMORY.md')
+  const teamMemory = await readFileSafe(teamMemoryPath)
+  if (teamMemory) {
+    pushUniqueSection('### Team Memory (TEAM_MEMORY.md)', teamMemory, teamMemoryPath)
   }
 
   const localPrefs = await readFileSafe(path.join(cwd, 'AGENTS.local.md'))

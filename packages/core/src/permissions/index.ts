@@ -79,6 +79,127 @@ export function getPermissionLevel(toolName: string, input: PermissionInput): Pe
   return rule(input)
 }
 
+/**
+ * 除 writeFile/edit/shell 之外，仍会真正改动本地文件或文档库的工具。
+ * 这些工具必须走交互权限门；只读工具（lsp/background/transcribe 等）不在这里，
+ * 否则会被默认 ask 规则误伤，给每次读取都弹一次窗。
+ *
+ * dry-run 的 batchRename 与 read/query 的 spreadsheet 不会落盘，因此不触发询问。
+ */
+const INTERACTION_PERMISSION_TOOLS = new Set([
+  'batchRename',
+  'convert',
+  'spreadsheet',
+  'documentExport',
+  'documentLibrary',
+])
+
+export function needsInteractionPermission(toolName: string, input: PermissionInput): boolean {
+  if (toolName === 'writeFile' || toolName === 'edit' || toolName === 'shell') return true
+  // batchRename 默认 dryRun=true，只返回计划、不落盘，因此不需要询问。
+  if (toolName === 'batchRename' && input.dryRun !== false) return false
+  if (!INTERACTION_PERMISSION_TOOLS.has(toolName)) return false
+  return getPermissionLevel(toolName, input) === 'ask'
+}
+
+export type PermissionOutcome = 'allow' | 'ask'
+
+export interface PermissionExplanationOptions {
+  toolName: string
+  input: PermissionInput
+  trustMode?: boolean
+  permissionMode?: PermissionMode
+  projectCwd?: string
+  executionCwd?: string
+  externalContent?: ExternalContentState
+}
+
+export interface PermissionExplanation {
+  toolName: string
+  /** 工具自身规则给出的级别；`deny` 表示命令被归类为破坏性，仍会要求确认。 */
+  level: PermissionLevel
+  decision: PermissionOutcome
+  reason: string
+  /** 决策过程中检查过的因素，按实际求值顺序排列。 */
+  factors: string[]
+}
+
+/** 解释一次工具调用会被允许还是询问，不触发任何审批回调。
+ *
+ *  求值顺序必须与 `checkPermissionDetailed` 保持一致，否则 `/policy explain`
+ *  会给出与实际执行不同的答案。任何一侧改顺序时请同步另一侧。 */
+export function explainPermission(options: PermissionExplanationOptions): PermissionExplanation {
+  const { toolName } = options
+  const toolInput = options.input
+  const trustMode = options.trustMode === true
+  const permissionMode = options.permissionMode ?? 'default'
+  const factors: string[] = []
+  const level = getPermissionLevel(toolName, toolInput)
+  factors.push(
+    rules[toolName] ? `rule level: ${level}` : `rule level: ${level} (no explicit rule; unknown tools default to ask)`,
+  )
+
+  const taintApproval = shouldRequireExternalContentApproval(
+    options.externalContent?.policy,
+    options.externalContent?.tainted,
+    toolName,
+  )
+  if (taintApproval) {
+    const sources = options.externalContent?.sources?.join(', ') || 'external content'
+    factors.push(`external-content taint requires re-approval (sources: ${sources})`)
+  }
+
+  if (!taintApproval && (level === 'always-allow' || trustMode)) {
+    return {
+      toolName,
+      level,
+      decision: 'allow',
+      reason: trustMode && level !== 'always-allow' ? 'trust mode is enabled' : 'tool rule is always-allow',
+      factors,
+    }
+  }
+
+  if (!taintApproval && permissionMode === 'acceptEdits' && (toolName === 'writeFile' || toolName === 'edit')) {
+    const filePath = (toolInput.filePath as string) ?? ''
+    const projectDir = options.projectCwd ?? process.cwd()
+    const physicalPath = filePath ? resolvePhysicalPath(filePath, projectDir) : ''
+    const withinProject = Boolean(filePath) && isPathWithinProject(filePath, projectDir)
+    const sensitive = Boolean(filePath) && (isSensitivePath(filePath) || isSensitivePath(physicalPath))
+    factors.push(
+      `permission mode acceptEdits: ${withinProject ? 'path is inside the project' : 'path is outside the project'}; ${
+        sensitive ? 'path is sensitive' : 'path is not sensitive'
+      }`,
+    )
+    if (filePath && withinProject && !sensitive) {
+      return {
+        toolName,
+        level,
+        decision: 'allow',
+        reason: 'acceptEdits auto-approves in-project, non-sensitive edits',
+        factors,
+      }
+    }
+  }
+
+  if (!taintApproval && sessionRulesMatch(toolName, toolInput, options.executionCwd)) {
+    factors.push('a session or persisted allow rule matches this tool call')
+    return {
+      toolName,
+      level,
+      decision: 'allow',
+      reason: 'an allow rule matches this tool call',
+      factors,
+    }
+  }
+
+  const reason = taintApproval
+    ? 'external content policy requires explicit approval'
+    : level === 'deny'
+      ? 'destructive shell command requires explicit confirmation'
+      : 'no allow rule matched; the user will be asked'
+  return { toolName, level, decision: 'ask', reason, factors }
+}
+
 // ── 写工具的路径安全 ──
 // 即使启用了 acceptEdits 也不应自动批准的敏感 dotfile / 配置路径。
 // 对齐 Claude Code 的 isDangerousFilePathToAutoEdit。

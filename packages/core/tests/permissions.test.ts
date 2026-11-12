@@ -10,6 +10,7 @@ import {
   checkPermissionDetailed,
   getPermissionLevel,
   isPathWithinProject,
+  needsInteractionPermission,
 } from '../src/permissions/index.js'
 import {
   addSessionAllowRule,
@@ -34,6 +35,29 @@ describe('getPermissionLevel', () => {
   it('returns ask for write tools', () => {
     expect(getPermissionLevel('edit', {})).toBe('ask')
     expect(getPermissionLevel('writeFile', {})).toBe('ask')
+  })
+
+  it('requires an interaction gate for every mutating tool', () => {
+    expect(needsInteractionPermission('writeFile', {})).toBe(true)
+    expect(needsInteractionPermission('edit', {})).toBe(true)
+    expect(needsInteractionPermission('shell', { command: 'npm install' })).toBe(true)
+    expect(needsInteractionPermission('convert', { action: 'pdf-merge' })).toBe(true)
+    expect(needsInteractionPermission('documentExport', {})).toBe(true)
+    expect(needsInteractionPermission('documentLibrary', { action: 'clear' })).toBe(true)
+    expect(needsInteractionPermission('spreadsheet', { action: 'write' })).toBe(true)
+    expect(needsInteractionPermission('spreadsheet', { action: 'chart' })).toBe(true)
+    expect(needsInteractionPermission('batchRename', { dryRun: false })).toBe(true)
+  })
+
+  it('does not gate read-only or dry-run tool calls', () => {
+    expect(needsInteractionPermission('readFile', {})).toBe(false)
+    expect(needsInteractionPermission('documentSearch', {})).toBe(false)
+    expect(needsInteractionPermission('documentLibrary', { action: 'stats' })).toBe(false)
+    expect(needsInteractionPermission('spreadsheet', { action: 'read' })).toBe(false)
+    expect(needsInteractionPermission('spreadsheet', { action: 'query' })).toBe(false)
+    expect(needsInteractionPermission('batchRename', {})).toBe(false)
+    expect(needsInteractionPermission('batchRename', { dryRun: true })).toBe(false)
+    expect(needsInteractionPermission('lspDiagnostics', {})).toBe(false)
   })
 
   it('returns always-allow for read-only shell commands', () => {

@@ -11,6 +11,7 @@ import { markExternalContent } from '../permissions/external-content.js'
 import {
   evaluateToolAuthority,
   isPathWithinProject,
+  needsInteractionPermission,
   resolvePhysicalPath,
   verifyAuthorityApproval,
 } from '../permissions/index.js'
@@ -39,6 +40,7 @@ import { isReadOnly, splitShellCommands } from '../tools/shell-utils.js'
 import type { AgentCallbacks, AgentOptions, LanguageModel, PermissionDecision } from '../types/index.js'
 import { XCODE_DIR, debugLog, isAbortError } from '../utils.js'
 import { noteForRecentTempFiles, workspaceOutputNote } from '../utils/output-location.js'
+import { recordToolAudit } from './audit.js'
 import { runBrowserVisualCheck } from './browser/visual-check.js'
 import { createBuiltInToolHandlers } from './built-in-tool-handlers.js'
 import { computeEditDiff } from './diff.js'
@@ -784,15 +786,39 @@ async function handleBrowserVisualCheck(ctx: HandlerCtx): Promise<void> {
   }
 }
 
-/** writeFile/edit/shell 的权限门。若应继续执行则返回 true，若被阻止 / 拒绝 /
- *  中止则返回 false。 */
-async function checkWriteOrShellPermission(ctx: HandlerCtx): Promise<boolean> {
+/** 所有会落盘/改库工具的权限门。若应继续执行则返回 true，若被阻止 / 拒绝 /
+ *  中止则返回 false。
+ *
+ *  以前这里只覆盖 writeFile/edit/shell，导致 batchRename/convert/spreadsheet/
+ *  documentExport/documentLibrary 在规则表里声明 ask、实际却直接执行。现在由
+ *  `needsInteractionPermission` 统一决定哪些工具需要询问，避免继续漏门。 */
+async function checkToolPermission(ctx: HandlerCtx): Promise<boolean> {
   const { toolName, input, toolCallId, state, options, callbacks } = ctx
-  if (toolName !== 'writeFile' && toolName !== 'edit' && toolName !== 'shell') return true
+  if (!needsInteractionPermission(toolName, input)) return true
 
-  if (ctx.authorityApprovedOnce && state.executionAuthority.peerTainted) return true
+  const audit = (decision: 'allow' | 'deny' | 'allow-once', reason?: string): void => {
+    recordToolAudit({
+      sessionId: state.sessionId,
+      toolCallId,
+      tool: toolName,
+      principal: state.executionAuthority.peerTainted ? 'peer' : 'user',
+      permissionMode: state.permissionMode,
+      trustMode: options.trustMode === true,
+      tainted: state.externalContentTainted === true,
+      decision,
+      ...(reason ? { reason } : {}),
+      input,
+    })
+  }
 
-  if (isManagedMemoryMutation(toolName, input, options.memoryService?.memoryRoot)) {
+  if (ctx.authorityApprovedOnce && state.executionAuthority.peerTainted) {
+    audit('allow-once', 'peer allow-once approval')
+    return true
+  }
+
+  const isWriteOrShell = toolName === 'writeFile' || toolName === 'edit' || toolName === 'shell'
+
+  if (isWriteOrShell && isManagedMemoryMutation(toolName, input, options.memoryService?.memoryRoot)) {
     pushToolResult(
       state,
       callbacks,
@@ -803,12 +829,16 @@ async function checkWriteOrShellPermission(ctx: HandlerCtx): Promise<boolean> {
       undefined,
       false,
     )
+    audit('deny', 'managed-memory-write')
     return false
   }
 
   // 分发器已证明此路径等于 currentPlanPath。计划文件编辑本身就是规划的一部分，
   // 无需第二次对话框。
-  if (state.permissionMode === 'plan' && (toolName === 'writeFile' || toolName === 'edit')) return true
+  if (state.permissionMode === 'plan' && (toolName === 'writeFile' || toolName === 'edit')) {
+    audit('allow', 'plan-file')
+    return true
+  }
 
   if (toolName === 'shell') {
     const command = typeof input.command === 'string' ? input.command : ''
@@ -822,6 +852,7 @@ async function checkWriteOrShellPermission(ctx: HandlerCtx): Promise<boolean> {
         'Shell command denied by read-only sub-agent policy. Use a non-emitting read-only alternative (for example, tsc --noEmit instead of tsc -b).',
         true,
       )
+      audit('deny', 'subagent-read-only-shell')
       return false
     }
     const deniedKeyword = findDeniedShellKeyword(command, options.shellRestrictions)
@@ -834,6 +865,7 @@ async function checkWriteOrShellPermission(ctx: HandlerCtx): Promise<boolean> {
         `Shell command denied by sub-agent restriction: ${deniedKeyword}`,
         true,
       )
+      audit('deny', `subagent-shell-restriction:${deniedKeyword}`)
       return false
     }
   }
@@ -857,8 +889,10 @@ async function checkWriteOrShellPermission(ctx: HandlerCtx): Promise<boolean> {
   }
   if (!approved) {
     pushToolResult(state, callbacks, toolCallId, toolName, permissionDeniedMessage(feedback))
+    audit('deny', feedback?.trim() ? 'user-denied-with-feedback' : 'user-denied')
     return false
   }
+  audit('allow', options.trustMode ? 'trust-mode' : 'permission-granted')
   return true
 }
 
@@ -1133,7 +1167,7 @@ async function handleToolCall(
     }
 
     if (await applyLoopGuard(ctx, deferred)) return
-    if (!(await checkWriteOrShellPermission(ctx))) return
+    if (!(await checkToolPermission(ctx))) return
 
     const result = await executeWriteOrShell(ctx)
     if (result == null) return
@@ -1174,6 +1208,12 @@ const PLAN_MODE_EXECUTABLE_TOOLS = new Set([
   'writeFile',
   'edit',
   'exitPlanMode',
+  // 只读 LSP 工具在 plan 模式对探索有帮助；此前它们出现在工具面里、
+  // 却在这里被拒绝，导致模型多一次无效往返。
+  'lspDiagnostics',
+  'lspDefinition',
+  'lspReferences',
+  'lspRename',
 ])
 
 function sameResolvedPath(left: string, right: string): boolean {

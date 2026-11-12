@@ -71,6 +71,15 @@ export async function trustProject(projectPath: string): Promise<void> {
   await writeStore(store)
 }
 
+/** 撤销项目 MCP 信任。下次加载 `.x-code/config.json` 时会重新询问。 */
+export async function untrustProject(projectPath: string): Promise<void> {
+  const normalized = normalize(projectPath)
+  const store = await readStore()
+  const next = store.trusted.filter((entry) => normalize(entry.path) !== normalized)
+  if (next.length === store.trusted.length) return
+  await writeStore({ trusted: next })
+}
+
 export type TrustChoice = 'trust' | 'skip' | 'exit'
 
 /** 询问用户是否信任项目的 MCP 配置。

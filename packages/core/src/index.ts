@@ -159,6 +159,8 @@ export {
 export { checkBudget } from './agent/budget.js'
 export { flushTurnTrace, readTurnTraces } from './agent/turn-trace.js'
 export type { TurnTraceEntry } from './agent/turn-trace.js'
+export { flushToolAudit, readToolAudit, recordToolAudit, redactAuditInput, writeToolAudit } from './agent/audit.js'
+export type { AuditDecision, AuditPrincipal, ToolAuditEntry } from './agent/audit.js'
 export type { BudgetLimits, BudgetUsage, BudgetVerdict } from './agent/budget.js'
 export { estimateBreakdownCost, estimateUsageCost } from './agent/cost.js'
 export type { CostEstimate } from './agent/cost.js'
@@ -198,6 +200,23 @@ export type { DocumentReadOptions, DocumentReadResult } from './agent/document-e
 export { processPdf } from './agent/pdf-ingest.js'
 export type { ProcessPdfOptions, ProcessPdfResult } from './agent/pdf-ingest.js'
 export { clearDocumentLibrary, indexLibrary, libraryStats, searchLibrary } from './library/index.js'
+export {
+  CODE_INDEX_SKIP_DIRS,
+  clearCodeIndex,
+  codeIndexPaths,
+  codeIndexStats,
+  indexCode,
+  isCodeIndexFile,
+  scanCodeFiles,
+  searchCodeIndex,
+} from './code-index/index.js'
+export type { CodeIndexProgress, CodeIndexResult, CodeSearchResult } from './code-index/index.js'
+export { analyzeChangeImpact, formatImpactReport } from './analysis/impact.js'
+export { explainPermission } from './permissions/index.js'
+export type { PermissionExplanation, PermissionExplanationOptions, PermissionOutcome } from './permissions/index.js'
+export { renderSessionHtml } from './export/session-html.js'
+export type { SessionHtmlEntry, SessionHtmlMeta } from './export/session-html.js'
+export type { ImpactOptions, ImpactReport } from './analysis/impact.js'
 export type { IndexProgress, IndexResult, LibrarySearchResult, LibraryStats } from './library/index.js'
 export { EMBEDDING_DIMENSIONS, embedderStatus } from './library/embedder.js'
 export type { EmbedderStatus } from './library/embedder.js'
@@ -256,6 +275,8 @@ export { getReasoningTierOptions, supportsReasoningTier } from './providers/thin
 // 工具
 export { toolRegistry, truncateToolResult } from './tools/index.js'
 export { TOOL_SEARCH_TOOL_NAME } from './tools/tool-search.js'
+export { collectContextResults, createContextSearchTool } from './tools/context-search.js'
+export type { ContextSearchResult, ContextSearchSource } from './tools/context-search.js'
 export {
   resolveWebSearchProvider,
   setWebSearchModelProvider,
@@ -319,6 +340,8 @@ export * from './peers/index.js'
 // 工具函数
 export { USER_XCODE_DIR, XCODE_DIR, debugLog, errorMessage, setPluginDebugMirror, userXcodeDir } from './utils.js'
 export { LruCache } from './utils/lru-cache.js'
+export { acquireFileLock } from './utils/file-lock.js'
+export type { AcquireFileLockOptions, FileLockLease } from './utils/file-lock.js'
 export { knownMediaTypeFor, mediaTypeFor } from './utils/media-type.js'
 export { extractText } from './utils/message-helpers.js'
 export { ensureProjectStorageDir } from './project-storage.js'
@@ -537,7 +560,8 @@ export { loadMcpServers, loadMcpFromDisk, loadMcpConfigsFromDisk, loadMergedConf
 export type { LoadOptions as McpLoadOptions, LoadResult as McpLoadResult } from './mcp/loader.js'
 export { McpPermissionStore, classifyDecision } from './mcp/permissions.js'
 export type { McpPermissionDecision } from './mcp/permissions.js'
-export { isProjectTrusted, trustProject, promptForTrust, buildServerPreview } from './mcp/trust.js'
+export { isProjectTrusted, trustProject, untrustProject, promptForTrust, buildServerPreview } from './mcp/trust.js'
+export { readMcpServersFromFile } from './mcp/loader.js'
 export type { TrustChoice } from './mcp/trust.js'
 export { McpTokenStorage, getTokenStorage, setTokenStorageForTesting } from './mcp/oauth/token-storage.js'
 export type { StoredServerAuth } from './mcp/oauth/token-storage.js'
@@ -563,6 +587,7 @@ export {
   readServerConfig,
   removeServerFromConfig,
   serverExists,
+  setServerEnabled,
   writeServerToConfig,
 } from './mcp/config-writer.js'
 export type { DetectScopeResult } from './mcp/config-writer.js'

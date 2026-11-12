@@ -10,6 +10,7 @@ import {
   readServerConfig,
   removeServerFromConfig,
   serverExists,
+  setServerEnabled,
   writeServerToConfig,
 } from '../src/mcp/config-writer.js'
 
@@ -211,5 +212,26 @@ describe('config-writer: readServerConfig', () => {
 
   it('returns null for missing servers', async () => {
     expect(await readServerConfig('nope', 'user', ctx.project)).toBeNull()
+  })
+})
+
+describe('config-writer: setServerEnabled', () => {
+  let ctx: { home: string; project: string }
+  beforeEach(() => {
+    ctx = isolate()
+  })
+  afterEach(() => {
+    delete process.env.X_CODE_HOME
+  })
+
+  it('toggles enabled without dropping the rest of the config', async () => {
+    await writeServerToConfig('s', { command: 'node', args: ['a'] }, 'user', ctx.project)
+    const result = await setServerEnabled('s', false, 'user', ctx.project)
+    expect(result.changed).toBe(true)
+    expect(await readServerConfig('s', 'user', ctx.project)).toEqual({ command: 'node', args: ['a'], enabled: false })
+  })
+
+  it('reports changed=false for an unknown server', async () => {
+    expect((await setServerEnabled('nope', true, 'user', ctx.project)).changed).toBe(false)
   })
 })

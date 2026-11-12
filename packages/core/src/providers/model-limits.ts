@@ -35,29 +35,40 @@ export const PROVIDER_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
 export const MODEL_LIMITS: ReadonlyMap<string, ModelLimits> = new Map<string, ModelLimits>([
   // Anthropic
   ['anthropic:claude-fable-5-1', { contextWindow: 1000000, maxOutputTokens: 128000 }],
+  ['anthropic:claude-mythos-5-1', { contextWindow: 1000000, maxOutputTokens: 128000 }],
+  ['anthropic:claude-mythos-5', { contextWindow: 1000000, maxOutputTokens: 128000 }],
+  ['anthropic:claude-opus-5-5', { contextWindow: 1000000, maxOutputTokens: 128000 }],
   ['anthropic:claude-opus-5', { contextWindow: 1000000, maxOutputTokens: 128000 }],
   ['anthropic:claude-fable-5', { contextWindow: 1000000, maxOutputTokens: 128000 }],
   ['anthropic:claude-opus-4-8', { contextWindow: 1000000, maxOutputTokens: 128000 }],
+  ['anthropic:claude-sonnet-5-5', { contextWindow: 1000000, maxOutputTokens: 128000 }],
   ['anthropic:claude-sonnet-5', { contextWindow: 1000000, maxOutputTokens: 128000 }],
+  ['anthropic:claude-haiku-5-5', { contextWindow: 1000000, maxOutputTokens: 128000 }],
   ['anthropic:claude-haiku-4-5', { contextWindow: 200000, maxOutputTokens: 64000 }],
   // OpenAI
   ['openai:gpt-6-astra', { contextWindow: 1050000, maxOutputTokens: 128000 }],
+  ['openai:gpt-6.1-sol', { contextWindow: 1050000, maxOutputTokens: 128000 }],
+  ['openai:gpt-6.1-terra', { contextWindow: 1050000, maxOutputTokens: 128000 }],
+  ['openai:gpt-6-sol', { contextWindow: 1050000, maxOutputTokens: 128000 }],
+  ['openai:gpt-6-luna', { contextWindow: 1050000, maxOutputTokens: 128000 }],
   ['openai:gpt-5.6-sol', { contextWindow: 1047576 }],
   ['openai:gpt-5.6-terra', { contextWindow: 1047576 }],
   ['openai:gpt-5.6-luna', { contextWindow: 1047576 }],
   ['openai:gpt-5.4-mini', { contextWindow: 1047576 }],
   ['openai:gpt-5.4-nano', { contextWindow: 1047576 }],
   // Google
+  ['google:gemini-4-argon', { contextWindow: 1048576, maxOutputTokens: 1048576 }],
   ['google:gemini-3.8-flash', { contextWindow: 1048576, maxOutputTokens: 65536 }],
   ['google:gemini-3.7-flash', { contextWindow: 1048576, maxOutputTokens: 65536 }],
   ['google:gemini-3.6-flash', { contextWindow: 1048576, maxOutputTokens: 65536 }],
   ['google:gemini-3.5-flash', { contextWindow: 1000000 }],
+  ['google:gemini-3.5-flash-lite', { contextWindow: 1000000 }],
   ['google:gemini-2.5-pro', { contextWindow: 1000000 }],
   ['google:gemini-2.5-flash', { contextWindow: 1000000 }],
   // DeepSeek
-  ['deepseek:deepseek-flash', { contextWindow: 1000000, maxOutputTokens: 131072 }],
-  ['deepseek:deepseek-v4-flash', { contextWindow: 1000000, maxOutputTokens: 131072 }],
-  ['deepseek:deepseek-v4-pro', { contextWindow: 1000000, maxOutputTokens: 131072 }],
+  ['deepseek:deepseek-flash', { contextWindow: 1000000, maxOutputTokens: 393216 }],
+  ['deepseek:deepseek-v4-flash', { contextWindow: 1000000, maxOutputTokens: 393216 }],
+  ['deepseek:deepseek-v4-pro', { contextWindow: 1000000, maxOutputTokens: 393216 }],
   // Alibaba —— 当前的 Qwen3.8 系列、qwen3.7-max/plus 以及 qwen3-coder-plus 可扩展到 1M；
   // qwen-max 仍封顶在 32k。数值经
   // https://help.aliyun.com/zh/model-studio/models 核实。
@@ -72,10 +83,13 @@ export const MODEL_LIMITS: ReadonlyMap<string, ModelLimits> = new Map<string, Mo
   // 视觉变体没有单独的官方窗口数据，沿用 provider 回退值（与改动前一致）。
   ['alibaba:qwen3-vl-flash', { contextWindow: 128000 }],
   ['alibaba:qwen3-vl-plus', { contextWindow: 128000 }],
-  // xAI —— Grok 4.6/4.5 有 500k 窗口；Grok 4.20/4.3 有 1M。
+  // xAI —— Grok 4.7/4.6/4.5 有 500k 窗口；Grok 4.20/4.3 有 2M/1M。
+  ['xai:grok-4.7', { contextWindow: 500000 }],
   ['xai:grok-4.6', { contextWindow: 500000 }],
-  ['xai:grok-4.20', { contextWindow: 1000000 }],
-  ['xai:grok-4.20-non-reasoning', { contextWindow: 1000000 }],
+  ['xai:grok-4.20-0309-reasoning', { contextWindow: 2000000 }],
+  ['xai:grok-4.20-0309-non-reasoning', { contextWindow: 2000000 }],
+  ['xai:grok-4.20', { contextWindow: 2000000 }],
+  ['xai:grok-4.20-non-reasoning', { contextWindow: 2000000 }],
   ['xai:grok-4.5', { contextWindow: 500000 }],
   ['xai:grok-4.3', { contextWindow: 1000000 }],
   // Zhipu
@@ -88,6 +102,8 @@ export const MODEL_LIMITS: ReadonlyMap<string, ModelLimits> = new Map<string, Mo
   ['zhipu:glm-4.6v', { contextWindow: 128000 }],
   ['zhipu:glm-5v-turbo', { contextWindow: 128000 }],
   // Moonshot
+  ['moonshotai:kimi-k3.1-pro', { contextWindow: 1000000 }],
+  ['moonshotai:kimi-k3.1-pro-highspeed', { contextWindow: 1000000 }],
   ['moonshotai:kimi-k3', { contextWindow: 1000000 }],
   ['moonshotai:kimi-k2.7-code', { contextWindow: 262144 }],
   ['moonshotai:kimi-k2.7-code-highspeed', { contextWindow: 262144 }],

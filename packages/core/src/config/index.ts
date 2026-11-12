@@ -22,6 +22,30 @@ import { userXcodeDir } from '../utils.js'
 /** 提供商 → 环境变量的映射，由目录派生。 */
 const ENV_MAP: Record<string, string> = Object.fromEntries(PROVIDERS.map((p) => [p.name, p.envKey]))
 
+/** 官方文档使用、但不是 X-Code 首选的等价环境变量名。 */
+const ENV_ALIASES: Record<string, readonly string[]> = {
+  GOOGLE_GENERATIVE_AI_API_KEY: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
+  ALIBABA_API_KEY: ['DASHSCOPE_API_KEY'],
+  ZHIPU_API_KEY: ['ZHIPUAI_API_KEY', 'ZAI_API_KEY'],
+  MOONSHOT_API_KEY: ['KIMI_API_KEY'],
+}
+
+function envKeyValues(primary: string): readonly string[] {
+  return [primary, ...(ENV_ALIASES[primary] ?? [])]
+}
+
+function hasEnvKey(primary: string): boolean {
+  return envKeyValues(primary).some((key) => Boolean(process.env[key]))
+}
+
+function readEnvKey(primary: string): string | undefined {
+  for (const key of envKeyValues(primary)) {
+    const value = process.env[key]
+    if (value) return value
+  }
+  return undefined
+}
+
 /** 获取某个提供商的 API key —— 只从环境变量读取 */
 function getApiKey(provider: string): string | undefined {
   if (provider === 'openai') {
@@ -29,7 +53,7 @@ function getApiKey(provider: string): string | undefined {
     return auth.mode === 'api-key' ? auth.apiKey : undefined
   }
   const envKey = ENV_MAP[provider]
-  return envKey ? process.env[envKey] : undefined
+  return envKey ? readEnvKey(envKey) : undefined
 }
 
 /** 获取某个提供商的环境变量名 */
@@ -66,7 +90,7 @@ export function resolveModelId(input?: string): string | null {
   }
 
   for (const { envKey, defaultModel } of PROVIDER_DETECTION_ORDER) {
-    if (envKey === 'OPENAI_API_KEY' ? getOpenAIAuthContext().mode !== 'none' : !!process.env[envKey]) {
+    if (envKey === 'OPENAI_API_KEY' ? getOpenAIAuthContext().mode !== 'none' : hasEnvKey(envKey)) {
       return defaultModel
     }
   }
