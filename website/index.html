@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>X-Code · local-first, model-agnostic AI coding agent</title>
+    <meta
+      name="description"
+      content="X-Code is an AI coding agent for the desktop and the terminal. Bring your own model and key; sessions, memory, skills, MCP servers and permissions stay on your machine."
+    />
+    <meta name="theme-color" content="#faf9f7" />
+    <script>
+      (() => {
+        try {
+          const saved = localStorage.getItem('xcode-theme')
+          const dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+        } catch {
+          document.documentElement.dataset.theme = 'light'
+        }
+      })()
+    </script>
+    <meta property="og:title" content="X-Code · local-first, model-agnostic AI coding agent" />
+    <meta
+      property="og:description"
+      content="Desktop and terminal share one session, memory, skills and permission model. Bring your own model."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="./assets/desktop-chat.jpg" />
+    <link rel="icon" href="./assets/icon.png" type="image/png" />
+    <link rel="stylesheet" href="./styles.css?v=1" />
+  </head>
+  <body id="top">
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="X-Code home">
+        <img class="brand-icon" src="./assets/icon.png" alt="" width="26" height="26" />
+        <span class="brand-name">X-Code</span>
+      </a>
+      <nav class="site-nav" aria-label="Main">
+        <a href="#why">Why</a>
+        <a href="#models">Models</a>
+        <a href="#install">Install</a>
+        <a href="#limits">Limits</a>
+        <a href="https://github.com/qweijiaq/x-code/blob/main/GETTING_STARTED.md">Guide</a>
+      </nav>
+      <div class="header-actions">
+        <button
+          class="theme-toggle"
+          id="themeToggle"
+          type="button"
+          aria-label="Switch colour theme"
+          aria-pressed="false"
+        >
+          <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z" />
+          </svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2" />
+            <path
+              d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6"
+            />
+          </svg>
+        </button>
+        <a class="button button-small" href="https://github.com/qweijiaq/x-code/releases/latest" rel="noreferrer">
+          Download
+        </a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <p class="eyebrow">
+          <span class="dot" aria-hidden="true"></span>
+          macOS arm64 · MIT · no account
+        </p>
+        <h1>
+          An AI coding agent<br />
+          that <em>stays on your machine</em>.
+        </h1>
+        <p class="lede">
+          The window and the terminal are one program: same sessions, same memory, same skills,
+          same permission rules. You bring the model and the key, and nothing leaves the machine
+          except the request you configured.
+        </p>
+
+        <div class="cta-row">
+          <a class="button" href="https://github.com/qweijiaq/x-code/releases/latest" rel="noreferrer">
+            Download for macOS
+          </a>
+          <button class="copy-button" data-copy="npm install -g @x-code-cli/cli@latest" type="button">
+            <code>npm i -g @x-code-cli/cli</code>
+            <span class="copy-hint">Copy</span>
+          </button>
+        </div>
+
+        <p class="fine">
+          Community build, ad-hoc signed — macOS asks for approval once.
+          <a href="#install">Install notes</a>
+        </p>
+
+        <figure class="shot">
+          <img
+            src="./assets/desktop-chat.jpg"
+            alt="The X-Code desktop window: a conversation with tool calls, a diff card and a workspace sidebar"
+            width="1440"
+            height="891"
+            loading="eager"
+          />
+          <figcaption>
+            A conversation with tool calls and a diff card on the left, the workspace and project
+            checks on the right. <span>Actual UI.</span>
+          </figcaption>
+        </figure>
+      </section>
+
+      <section id="why" class="features">
+        <h2>Why it is built this way</h2>
+        <p class="section-lede">
+          Most agents assume a server in the middle. X-Code assumes your laptop is the server.
+        </p>
+
+        <ol class="cards">
+          <li>
+            <span class="num">01</span>
+            <h3>One runtime, two surfaces</h3>
+            <p>
+              Start in the terminal, continue in a window. Both read and write the same state
+              directory, so a task survives the switch — and so does everything you taught it.
+            </p>
+            <code>~/.x-code</code>
+          </li>
+          <li>
+            <span class="num">02</span>
+            <h3>Reviewable by default</h3>
+            <p>
+              Every file edit, shell command and download arrives as a diff or an approval card.
+              A three-level permission model decides what runs without asking, and the macOS
+              agent shell is sandboxed to the workspace.
+            </p>
+            <code>diff → approve → apply</code>
+          </li>
+          <li>
+            <span class="num">03</span>
+            <h3>Your key, your choice</h3>
+            <p>
+              Credentials are encrypted with the OS keychain and never reach the renderer process.
+              Switch models from the top bar without losing the conversation.
+            </p>
+            <code>safeStorage · 0600</code>
+          </li>
+        </ol>
+      </section>
+
+      <section id="models" class="models">
+        <h2>Bring any model</h2>
+        <p class="section-lede">
+          Sixteen presets, including Anthropic's native Messages protocol, plus any
+          OpenAI-compatible endpoint on localhost.
+        </p>
+        <ul class="pills">
+          <li>Claude</li>
+          <li>GPT</li>
+          <li>Gemini</li>
+          <li>DeepSeek</li>
+          <li>Qwen</li>
+          <li>Grok</li>
+          <li>GLM</li>
+          <li>Kimi</li>
+          <li>OpenRouter</li>
+          <li>Ollama</li>
+          <li>LM Studio</li>
+          <li>Custom</li>
+        </ul>
+        <p class="fine">
+          No key? The app starts on a local demo model so you can inspect the interface first.
+        </p>
+      </section>
+
+      <section id="install" class="install">
+        <h2>Install</h2>
+        <div class="install-grid">
+          <article class="install-card">
+            <h3>macOS app</h3>
+            <p>
+              Download the <code>-arm64.dmg</code> from the latest release, verify it against
+              <code>SHA256SUMS</code>, and drag X-Code into Applications.
+            </p>
+            <a class="button button-ghost" href="https://github.com/qweijiaq/x-code/releases/latest" rel="noreferrer">
+              Latest release
+            </a>
+          </article>
+
+          <article class="install-card">
+            <h3>CLI</h3>
+            <p>Node 22+ or the same release workflow that publishes the app.</p>
+            <div class="snippet">
+              <code>npm install -g @x-code-cli/cli@latest</code>
+              <button class="copy-button copy-button-quiet" data-copy="npm install -g @x-code-cli/cli@latest" type="button">
+                <span class="copy-hint">Copy</span>
+              </button>
+            </div>
+            <div class="snippet">
+              <code>xc --version</code>
+              <button class="copy-button copy-button-quiet" data-copy="xc --version" type="button">
+                <span class="copy-hint">Copy</span>
+              </button>
+            </div>
+          </article>
+
+          <article class="install-card">
+            <h3>From source</h3>
+            <p>Node 22+ and pnpm 10. Useful when npm lags behind the latest release.</p>
+            <div class="snippet">
+              <code>git clone https://github.com/qweijiaq/x-code.git</code>
+              <button
+                class="copy-button copy-button-quiet"
+                data-copy="git clone https://github.com/qweijiaq/x-code.git"
+                type="button"
+              >
+                <span class="copy-hint">Copy</span>
+              </button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="limits" class="limits">
+        <h2>What it does not do yet</h2>
+        <ul>
+          <li>
+            <h3>Windows and Linux installers</h3>
+            <p>They are configured in CI but have not been accepted on real devices.</p>
+          </li>
+          <li>
+            <h3>Automatic updates</h3>
+            <p>The app checks for a new release and hands you the download; it will not replace itself.</p>
+          </li>
+          <li>
+            <h3>Notarization</h3>
+            <p>The community build is ad-hoc signed, so macOS asks for approval on first launch.</p>
+          </li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-main">
+        <p class="footer-brand">X-Code</p>
+        <p class="footer-line">
+          Built by <a href="https://github.com/qweijiaq">Pony Wei</a>. Local-first, MIT licensed.
+        </p>
+      </div>
+      <nav class="footer-nav" aria-label="Footer">
+        <a href="https://github.com/qweijiaq/x-code">GitHub</a>
+        <a href="https://github.com/qweijiaq/x-code/releases">Releases</a>
+        <a href="https://github.com/qweijiaq/x-code/blob/main/GETTING_STARTED.md">Getting started</a>
+        <a href="https://github.com/qweijiaq/x-code/blob/main/README.zh-CN.md">简体中文</a>
+      </nav>
+    </footer>
+
+    <script src="./app.js?v=1" defer></script>
+  </body>
+</html>

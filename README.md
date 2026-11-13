@@ -14,6 +14,7 @@ hooks are shared between the desktop app and the CLI.
 [![license](https://img.shields.io/github/license/qweijiaq/x-code)](./LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 
+[Website](https://qweijiaq.github.io/x-code/) ·
 [Download for macOS](https://github.com/qweijiaq/x-code/releases/latest) ·
 [Getting started](./GETTING_STARTED.md)
 

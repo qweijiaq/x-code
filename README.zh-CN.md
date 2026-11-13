@@ -13,6 +13,7 @@
 [![license](https://img.shields.io/github/license/qweijiaq/x-code)](./LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 
+[官网](https://qweijiaq.github.io/x-code/) ·
 [下载 macOS 版](https://github.com/qweijiaq/x-code/releases/latest) ·
 [快速开始](./GETTING_STARTED.md)
 
