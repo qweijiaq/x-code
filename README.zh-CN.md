@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/banner.svg" alt="X-Code — 本地优先、模型无关的 AI 编程助手" width="100%">
+
 # X-Code
 
 **本地优先、模型无关的 AI 编程助手，提供桌面端和命令行两种形态。**
@@ -12,11 +14,9 @@
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 
 [下载 macOS 版](https://github.com/qweijiaq/x-code/releases/latest) ·
-[桌面端指南](./docs/desktop.md) ·
-[用户手册](./docs/desktop-manual.md) ·
-[English](./README.md)
+[快速开始](./GETTING_STARTED.md)
 
-<img src="./docs/assets/desktop-chat.png" alt="X-Code 桌面端：会话、工具调用、Markdown 代码块和工作区侧栏" width="100%" />
+[English](./README.md) · **简体中文**
 
 </div>
 
@@ -25,7 +25,7 @@
 **桌面端（macOS arm64）：** 从 [Releases](https://github.com/qweijiaq/x-code/releases/latest)
 下载 `X-Code-<version>-arm64.dmg`，用 `SHA256SUMS` 校验后拖进 Applications。
 社区版是 ad-hoc 签名、未公证，首次打开需要按提示放行；完整步骤见
-[未签名版安装指南](./docs/desktop-install-unsigned.md)。
+[快速开始](./GETTING_STARTED.md#desktop-macos-arm64)。
 
 **从 npm 安装 CLI**（Node 22+）：
 
@@ -138,7 +138,7 @@ DeepSeek 模型时，也可以直接用模型 Key 走内置搜索。
    不会回传到渲染进程。
 2. **可选：配置搜索。** **设置 → 工具 → 搜索服务** 粘贴 Tavily Key（有免费额度），
    选为首选并点 **测试连接**。
-3. **打开手册。** 顶栏 **?** 可以随时打开完整的内置[用户手册](./docs/desktop-manual.md)。
+3. **打开手册。** 顶栏 **?** 可以随时打开完整的内置手册（按 `?` 或输入 `/manual`）。
 
 没有配置 Key 时，应用会使用本地演示模型，方便先体验界面，不会消耗真实额度。
 
@@ -224,26 +224,14 @@ pnpm dev             # 从源码构建并运行 CLI
 ```
 
 打包、签名和更新源说明见
-[`docs/development/desktop-release.md`](./docs/development/desktop-release.md)。
+[`packages/desktop/README.md`](./packages/desktop/README.md)。
 
 ## 文档
 
-**文档站：** <https://qweijiaq.github.io/x-code/>（English / 简体中文）
-
-| 文档                                                      | 内容                             |
-| --------------------------------------------------------- | -------------------------------- |
-| [桌面端指南](./docs/desktop.md)                           | 窗口、Inspector、文档、Git、权限 |
-| [用户手册](./docs/desktop-manual.md)                      | 完整的应用内手册                 |
-| [未签名安装指南](./docs/desktop-install-unsigned.md)      | Gatekeeper 与校验步骤            |
-| [Skills](./docs/skills.md)                                | 可复用工作流模板                 |
-| [子 Agent](./docs/sub-agents.md)                          | 内置与自定义 Agent               |
-| [MCP](./docs/mcp.md)                                      | 服务器配置                       |
-| [语义代码导航](./docs/lsp.md)                             | TypeScript 诊断、定义、引用      |
-| [知识库与记忆](./docs/knowledge.md)                       | `AGENTS.md` 分层与自动记忆       |
-| [插件](./docs/plugins.md) / [市场](./docs/marketplace.md) | 扩展打包与来源                   |
-| [Hooks](./docs/hooks.md)                                  | 生命周期自动化                   |
-| [后台 Shell](./docs/shell-sessions.md)                    | 后台终端                         |
-| [桌面端发布](./docs/development/desktop-release.md)       | 构建、签名、验证、更新源         |
+- [快速开始](./GETTING_STARTED.md) — 安装、连接模型、第一个任务。
+- 应用内手册 — 按 `?` 或输入 `/manual`。
+- [桌面端包说明](./packages/desktop/README.md) — 运行时结构、构建与 smoke 测试。
+- 文档站点：<https://qweijiaq.github.io/x-code/>
 
 ## 路线图
 

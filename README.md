@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/banner.svg" alt="X-Code — local-first, model-agnostic AI coding agent" width="100%">
+
 # X-Code
 
 **A local-first, model-agnostic AI coding agent for the desktop and the terminal.**
@@ -13,11 +15,9 @@ hooks are shared between the desktop app and the CLI.
 ![platform](https://img.shields.io/badge/platform-macOS%20arm64-black)
 
 [Download for macOS](https://github.com/qweijiaq/x-code/releases/latest) ·
-[Desktop guide](./docs/desktop.en.md) ·
-[User manual](./docs/desktop-manual.en.md) ·
-[简体中文](./README.zh-CN.md)
+[Getting started](./GETTING_STARTED.md)
 
-<img src="./docs/assets/desktop-chat.png" alt="X-Code Desktop: a conversation with tool calls, Markdown, code and a workspace sidebar" width="100%" />
+**English** · [简体中文](./README.zh-CN.md)
 
 </div>
 
@@ -27,7 +27,7 @@ hooks are shared between the desktop app and the CLI.
 [Releases](https://github.com/qweijiaq/x-code/releases/latest), verify it against
 `SHA256SUMS`, and drag **X-Code** into Applications. The community build is
 ad-hoc signed, not notarized, so macOS asks for approval once — see the
-[unsigned install guide](./docs/desktop-install-unsigned.en.md).
+[getting-started guide](./GETTING_STARTED.md#desktop-macos-arm64).
 
 **CLI from npm** (Node 22+):
 
@@ -162,7 +162,7 @@ export, local model discovery, and a verified manual update check.
    a Tavily key (free tier), choose it as preferred and press **Test
    connection**.
 3. **Open the manual.** The **?** button in the top bar opens the complete
-   in-app [user manual](./docs/desktop-manual.en.md).
+   in-app manual (press `?` or run `/manual`).
 
 No key? The app starts with a local demo model so you can explore the interface
 without spending tokens.
@@ -257,26 +257,14 @@ pnpm dev             # build and run the CLI from source
 ```
 
 Packaging and signing notes live in
-[`docs/development/desktop-release.md`](./docs/development/desktop-release.md).
+[`packages/desktop/README.md`](./packages/desktop/README.md).
 
 ## Documentation
 
-**Documentation site:** <https://qweijiaq.github.io/x-code/> (English and 简体中文)
-
-| Document                                                                  | Contents                                        |
-| ------------------------------------------------------------------------- | ----------------------------------------------- |
-| [Desktop guide](./docs/desktop.en.md)                                     | Windows, inspector, documents, Git, permissions |
-| [User manual](./docs/desktop-manual.en.md)                                | Complete in-app manual                          |
-| [Unsigned install guide](./docs/desktop-install-unsigned.en.md)           | Gatekeeper and verification steps               |
-| [Skills](./docs/skills.en.md)                                             | Reusable workflow templates                     |
-| [Sub-agents](./docs/sub-agents.en.md)                                     | Built-in and custom agents                      |
-| [MCP](./docs/mcp.en.md)                                                   | Server configuration                            |
-| [Semantic navigation](./docs/lsp.en.md)                                   | TypeScript diagnostics, definitions, references |
-| [Knowledge and memory](./docs/knowledge.en.md)                            | `AGENTS.md` layers and auto-memory              |
-| [Plugins](./docs/plugins.en.md) / [marketplace](./docs/marketplace.en.md) | Extension packaging and sources                 |
-| [Hooks](./docs/hooks.en.md)                                               | Lifecycle automation                            |
-| [Shell sessions](./docs/shell-sessions.en.md)                             | Background terminals                            |
-| [Desktop release](./docs/development/desktop-release.md)                  | Build, sign, verify, update feed                |
+- [Getting started](./GETTING_STARTED.md) — install, connect a model, first task.
+- In-app manual — press `?` or run `/manual`.
+- [Desktop package README](./packages/desktop/README.md) — runtime layout, build and smoke tests.
+- Documentation site: <https://qweijiaq.github.io/x-code/>
 
 ## Roadmap
 
