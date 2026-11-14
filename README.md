@@ -61,7 +61,7 @@ yet; automatic updates are not enabled.
 1. Open a project folder from the sidebar and ask a question about the code.
 2. When the agent edits a file, review the diff card and approve or reject it.
 3. Run a project check from the Inspector and send failures back to the agent.
-4. Attach a PDF, Word or Excel file to test the document workspace.
+4. Attach a PDF, Word, Excel or PowerPoint file to test the document workspace.
 5. Type `/` or press `Cmd/Ctrl+K` to discover the rest of the capabilities.
 
 ## Why X-Code
@@ -100,23 +100,26 @@ documentation before choosing.
   for a window.
 - Branch **worktree windows**: open any local or `origin/*` branch in its own
   window with its own workspace and sessions.
-- Session search, pin, archive, rename, drafts, Markdown / JSON / PDF export.
+- Session search, pin, archive, rename, drafts, Markdown / JSON / HTML replay /
+  PDF export.
 - Checkpoints, rewind, fork, edit-and-resend, regenerate, queue steering.
 - Crash recovery and transcript salvage when a session is interrupted.
 
 ### One inspector for the workspace
 
-Documents, Git changes, project checks, terminal and the file browser share a
-single resizable inspector, so the conversation stays visible while you work.
+Documents, Git changes, project checks, terminal, the file browser and the
+conversation outline share a single resizable inspector, so the conversation
+stays visible while you work.
 
-- **Documents** — open PDF, Word, Excel, CSV, Markdown and source files; read
-  pages, review proposed edits, and keep recent documents one click away.
+- **Documents** — open PDF, Word, Excel, PowerPoint, CSV, Markdown and source
+  files; read pages, review proposed edits, and keep recent documents one click
+  away.
 - **Document library** — a local index with keyword and optional semantic
   search. Add folders, rebuild, and search without uploading files.
 - **Git** — status, diffs, checkpoint revert, branch switching and worktree
   management.
-- **Project checks** — detect test / lint / typecheck commands, run them and let
-  the agent fix failures.
+- **Project checks** — detect test / lint / typecheck commands for Node and
+  Cargo projects, run them and let the agent fix failures.
 - **Semantic navigation** — TypeScript definitions, references, diagnostics and
   rename previews from the workspace's own language service.
 - **Terminal** — a full PTY that survives tab switches, separate from the
@@ -124,10 +127,11 @@ single resizable inspector, so the conversation stays visible while you work.
 
 ### Input that fits real work
 
-Markdown composer with preview, `@` file references, drag-and-drop attachments,
-clipboard images, region or full-screen capture, and local Whisper voice input.
-PDFs, Office documents, spreadsheets, images and audio are read locally; only
-the extracted content or a page image is sent to the model you chose.
+Rich-text Markdown composer (formats as you type), `@` file references,
+drag-and-drop attachments, clipboard images, region or full-screen capture, and
+local Whisper voice input. PDFs, Office documents, spreadsheets, images and
+audio are read locally; only the extracted content or a page image is sent to
+the model you chose.
 
 ### Extensions
 
@@ -209,9 +213,10 @@ denied there; use an interactive session to approve them.
 ## Supported models
 
 Anthropic Claude, OpenAI (API key or ChatGPT sign-in), DeepSeek, Google Gemini,
-Alibaba Qwen, xAI Grok, Zhipu GLM, Moonshot Kimi, local Ollama / LM Studio, and
-any OpenAI-compatible gateway via `OPENAI_COMPATIBLE_API_KEY` +
-`OPENAI_COMPATIBLE_BASE_URL` (model ids as `custom:<id>`).
+Alibaba Qwen, xAI Grok, Zhipu GLM, Moonshot Kimi, OpenCode Zen / OpenCode Go,
+OpenDesign / OpenDesign Go, local Ollama / LM Studio, and any OpenAI-compatible
+gateway via `OPENAI_COMPATIBLE_API_KEY` + `OPENAI_COMPATIBLE_BASE_URL` (model
+ids as `custom:<id>`).
 
 The in-app model picker shows each model's context window and supports per-model
 overrides. Vision attachments go only to the active vision model; text-only
@@ -240,6 +245,8 @@ models get local OCR instead.
 | `Cmd/Ctrl+F`                | Find in conversation     |
 | `Cmd/Ctrl+,`                | Settings                 |
 | `Cmd/Ctrl+Shift+D`          | Document panel           |
+| `Cmd/Ctrl+=` / `-` / `0`    | Zoom in / out / reset    |
+| `?`                         | Shortcut sheet           |
 | `Esc`                       | Close inspector / dialog |
 
 ## Build from source
@@ -265,7 +272,7 @@ Packaging and signing notes live in
 - [Getting started](./GETTING_STARTED.md) — install, connect a model, first task.
 - In-app manual — press `?` or run `/manual`.
 - [Desktop package README](./packages/desktop/README.md) — runtime layout, build and smoke tests.
-- Documentation site: <https://qweijiaq.github.io/x-code/>
+- [Release notes](./CHANGELOG.md) — what changed in each version.
 
 ## Roadmap
 

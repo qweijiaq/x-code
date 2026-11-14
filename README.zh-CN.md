@@ -55,7 +55,7 @@ git clone https://github.com/qweijiaq/x-code.git && cd x-code && pnpm install &&
 1. 从侧栏打开一个项目文件夹，直接问代码相关问题。
 2. Agent 修改文件时，在 diff 卡片上逐条批准或拒绝。
 3. 在 Inspector 里运行项目检查，失败输出可以直接交回给 Agent。
-4. 附加一份 PDF、Word 或 Excel，体验文档工作区。
+4. 附加一份 PDF、Word、Excel 或 PowerPoint，体验文档工作区。
 5. 输入 `/` 或按 `Cmd/Ctrl+K` 查看其余能力。
 
 ## 为什么选 X-Code
@@ -88,29 +88,31 @@ git clone https://github.com/qweijiaq/x-code.git && cd x-code && pnpm install &&
 - 多窗口、多标签会话；`Cmd/Ctrl+T` 新建标签，`Cmd/Ctrl+Shift+N` 新建窗口。
 - 分支 **worktree 窗口**：任意本地分支或 `origin/*` 远程分支都可以在独立窗口打开，
   拥有自己的工作区和会话目录。
-- 会话搜索、置顶、归档、重命名、草稿保留，以及 Markdown / JSON / PDF 导出。
+- 会话搜索、置顶、归档、重命名、草稿保留，以及 Markdown / JSON / HTML 回放 /
+  PDF 导出。
 - 检查点、回退、分叉、编辑重发、重新生成、运行中插入消息。
 - 异常中断后的崩溃恢复和 transcript 抢救。
 
 ### 一个 Inspector 覆盖整个工作区
 
-文档、Git 改动、项目检查、终端和文件浏览器共用一个可调整宽度的右侧 Inspector，
-聊天内容始终可见。
+文档、Git 改动、项目检查、终端、文件浏览器和对话目录共用一个可调整宽度的右侧
+Inspector，聊天内容始终可见。
 
-- **文档** — 打开 PDF、Word、Excel、CSV、Markdown 和源码文件；按页阅读、审查
-  修改建议，最近文档一键切回。
+- **文档** — 打开 PDF、Word、Excel、PowerPoint、CSV、Markdown 和源码文件；
+  按页阅读、审查修改建议，最近文档一键切回。
 - **文档库** — 本地索引，支持关键词和可选语义检索。添加目录、重建索引、直接搜索，
   文件不会被上传。
 - **Git** — 状态、diff、按检查点撤销、切换分支和 worktree 管理。
-- **项目检查** — 自动识别 test / lint / typecheck 命令，运行后让 Agent 修复失败项。
+- **项目检查** — 自动识别 Node（package.json）和 Cargo 项目的 test / lint /
+  typecheck 命令，运行后让 Agent 修复失败项。
 - **语义代码导航** — 使用工作区自己的 TypeScript language service 提供定义、引用、诊断和重命名预览。
 - **终端** — 完整的 PTY 终端，切换标签不中断，和 Agent 的沙箱命令相互独立。
 
 ### 面向真实工作的输入方式
 
-Markdown 输入与预览、`@` 引用工作区文件、拖拽附件、粘贴图片、区域/全屏截图、
-本地 Whisper 语音输入。PDF、Office 文档、表格、图片和音频都在本地解析，只有提取
-出的内容或页面图片会发送给你选择的模型。
+Markdown 所见即所得（输入即格式化）、`@` 引用工作区文件、拖拽附件、粘贴图片、
+区域/全屏截图、本地 Whisper 语音输入。PDF、Office 文档、表格、图片和音频都在本地
+解析，只有提取出的内容或页面图片会发送给你选择的模型。
 
 ### 扩展
 
@@ -181,7 +183,8 @@ xc --scratch "临时问题"                    # 使用 ~/.x-code/workspace 快�
 ## 支持的模型
 
 Anthropic Claude、OpenAI（API Key 或 ChatGPT 登录）、DeepSeek、Google Gemini、
-阿里 Qwen、xAI Grok、智谱 GLM、Moonshot Kimi、本地 Ollama / LM Studio，以及通过
+阿里 Qwen、xAI Grok、智谱 GLM、Moonshot Kimi、OpenCode Zen / OpenCode Go、
+OpenDesign / OpenDesign Go、本地 Ollama / LM Studio，以及通过
 `OPENAI_COMPATIBLE_API_KEY` + `OPENAI_COMPATIBLE_BASE_URL` 接入的任意 OpenAI
 兼容网关（模型 ID 写成 `custom:<id>`）。
 
@@ -208,6 +211,8 @@ Anthropic Claude、OpenAI（API Key 或 ChatGPT 登录）、DeepSeek、Google Ge
 | `Cmd/Ctrl+F`                | 当前会话内查找        |
 | `Cmd/Ctrl+,`                | 设置                  |
 | `Cmd/Ctrl+Shift+D`          | 文档面板              |
+| `Cmd/Ctrl+=` / `-` / `0`    | 放大 / 缩小 / 复位    |
+| `?`                         | 快捷键面板            |
 | `Esc`                       | 关闭 Inspector / 弹窗 |
 
 ## 从源码运行
@@ -232,7 +237,7 @@ pnpm dev             # 从源码构建并运行 CLI
 - [快速开始](./GETTING_STARTED.md) — 安装、连接模型、第一个任务。
 - 应用内手册 — 按 `?` 或输入 `/manual`。
 - [桌面端包说明](./packages/desktop/README.md) — 运行时结构、构建与 smoke 测试。
-- 文档站点：<https://qweijiaq.github.io/x-code/>
+- [发布说明](./CHANGELOG.md) — 各版本变更。
 
 ## 路线图
 

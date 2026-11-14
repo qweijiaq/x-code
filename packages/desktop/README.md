@@ -1,8 +1,7 @@
 # @x-code-cli/desktop
 
-Electron host for X-Code. Phase 1 MVP: `@x-code-cli/core` runs in an Electron `utilityProcess`; a sandboxed
-renderer talks to it over typed IPC. Provider resolution, sessions, approvals, tool cards/diffs, and the PTY
-terminal are wired end to end.
+Electron host for X-Code. `@x-code-cli/core` runs in an Electron `utilityProcess`; a sandboxed renderer talks to it
+over typed IPC. Provider resolution, sessions, approvals, tool cards/diffs, and the PTY terminal are wired end to end.
 
 ## Build and run
 
@@ -67,7 +66,8 @@ diagnostics, and the terminal toggle.
   without a secret service) values fall back to plaintext `0600` and the tab says so; legacy plaintext entries are
   migrated to ciphertext on the next launch. Clearing a stored key restores any environment value that existed before
   the app started. The always-visible
-  `custom` row accepts an OpenAI-compatible **model ID**, Base URL, and API key; saving it activates that model.
+  `custom` row accepts an OpenAI-compatible Base URL and API key, fetches `/models`, and lets you pick a model before
+  saving; the model ID is no longer typed by hand.
   The model menu also has a custom model ID field for any `provider:model` id. `测试连接` sends one minimal streaming
   request through the real provider registry (with an unsaved draft key if present) and reports success/failure plus
   latency.

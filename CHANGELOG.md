@@ -2,6 +2,8 @@
 
 ### Features
 
+- add OpenCode Zen, OpenCode Go, OpenDesign Cloud and OpenDesign Go providers, with model catalogs and context limits
+- let custom OpenAI-compatible endpoints discover models from `/models` so users only provide a base URL and key
 - add `xc watch [paths...] --on-change "<prompt>"` to re-run the agent after debounced file changes, with opt-in `--trust` and per-run sessions
 - add a Project trust settings page that shows and controls project-level hooks and MCP trust in one place, including MCP server previews and revoke
 - add `xc completion bash|zsh|fish` for shell completion of subcommands and global flags
