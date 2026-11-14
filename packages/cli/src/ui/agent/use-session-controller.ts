@@ -7,6 +7,7 @@ import {
   cloneUsageBreakdown,
   createLoopState,
   createUsageBreakdown,
+  disposePersistentShell,
   errorMessage,
   extractText,
   forkSession as forkCoreSession,
@@ -173,6 +174,7 @@ export function useSessionController({
           lease.release()
           return { ok: false as const, reason: disposed.reason, result: disposed.result }
         }
+        disposePersistentShell(previous)
       }
       return { ok: true as const, lease, previous }
     },

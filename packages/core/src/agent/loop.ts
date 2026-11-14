@@ -127,6 +127,29 @@ export function formatQueuedAgentInput(input: QueuedAgentInput): string {
   )
 }
 
+/** 最近一段工具结果之后是否出现过可见的助手文本。部分 OpenAI 兼容
+ *  provider 会在工具执行完后用 `stop` + 空文本收尾，界面就会显示“工具已
+ *  执行，但模型没有继续回复”。这里只判断最后一段，之前轮次说过的话不算
+ *  本轮的有效收尾。 */
+function lastSegmentHasVisibleText(messages: readonly ModelMessage[]): boolean {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!
+    if (message.role === 'tool') return false
+    if (message.role === 'assistant') {
+      const content = message.content
+      if (typeof content === 'string') return content.trim().length > 0
+      if (!Array.isArray(content)) return false
+      return content.some((part) => {
+        const typed = part as { type?: string; text?: string }
+        return typed.type === 'text' && typeof typed.text === 'string' && typed.text.trim().length > 0
+      })
+    }
+    // 命中 user / system 边界：这一段历史里没有助手回复。
+    return false
+  }
+  return false
+}
+
 export async function drainQueuedInputs(
   state: LoopState,
   options: AgentOptions,
@@ -934,6 +957,10 @@ export async function agentLoop(
   // 的回复最终仍会终止。
   const MAX_CONTINUATIONS = 3
   let continuationAttempts = 0
+  // 工具执行后模型空回复的续写次数。单独计数，避免和 length 截断续写
+  // 互相消耗额度；上限保持很小，防止模型持续空转。
+  const MAX_EMPTY_REPLY_CONTINUATIONS = 2
+  let emptyReplyContinuations = 0
   // 记录我们是否以一个干净的 `stop` finish 原因退出循环——这是轮后记忆
   // 提取器唯一应该运行的情形。
   let completedNormally = false
@@ -1301,6 +1328,28 @@ export async function agentLoop(
       invocationPeerTainted ||= queuedInput.peerTainted
       if (queuedInput.injected) {
         continuationAttempts = 0
+        continue
+      }
+      // 部分 OpenAI 兼容 provider 在工具结果之后直接以空文本 stop，用户
+      // 只会看到“工具已执行，但模型没有继续回复”。这里补一次继续指令，
+      // 让模型把结果说完，而不是让整轮看起来无故暂停。
+      if (
+        stepToolCallCount > 0 &&
+        emptyReplyContinuations < MAX_EMPTY_REPLY_CONTINUATIONS &&
+        !lastSegmentHasVisibleText(state.messages)
+      ) {
+        emptyReplyContinuations++
+        debugLog(
+          'turn.empty-reply-continuation',
+          `attempt=${emptyReplyContinuations}/${MAX_EMPTY_REPLY_CONTINUATIONS} turn=${turn}`,
+        )
+        const continuationMessage = {
+          role: 'user',
+          content:
+            'You stopped after the tool call without replying to the user. Continue now with a brief, concrete response based on the tool result. Do not repeat the tool call unless it failed.',
+        } as const
+        state.messages.push(continuationMessage)
+        turnMessages.push(continuationMessage)
         continue
       }
       completedNormally = true

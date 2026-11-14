@@ -1,0 +1,26 @@
+diff --git a/dist/index.js b/dist/index.js
+index 5081eae51ca8502fe2bbff195658322f2967ee68..42e5f7c7d5b58a73a96aca765b6bc7d6b786855a 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -3736,7 +3736,7 @@ var StreamingToolCallTracker = class {
+    */
+   flush() {
+     for (const toolCall of this.toolCalls) {
+-      if (!toolCall.hasFinished) {
++      if (toolCall && !toolCall.hasFinished) {
+         this.finishToolCall(toolCall);
+       }
+     }
+diff --git a/src/streaming-tool-call-tracker.ts b/src/streaming-tool-call-tracker.ts
+index 37cbfc09cce8b2718bacd984ff6d1359a05ec1cb..b87b3d26f6e188a2854c04e9cc11f10b910a49e0 100644
+--- a/src/streaming-tool-call-tracker.ts
++++ b/src/streaming-tool-call-tracker.ts
+@@ -120,7 +120,7 @@ export class StreamingToolCallTracker<
+    */
+   flush(): void {
+     for (const toolCall of this.toolCalls) {
+-      if (!toolCall.hasFinished) {
++      if (toolCall && !toolCall.hasFinished) {
+         this.finishToolCall(toolCall);
+       }
+     }

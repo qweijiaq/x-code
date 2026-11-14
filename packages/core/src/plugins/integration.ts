@@ -97,7 +97,7 @@ export async function buildPluginIntegration(load: LoadResult): Promise<PluginIn
     const contrib = load.contributions.get(plugin.id)
     if (!contrib) continue
 
-    if (contrib.skillsDir) out.skillsDirs.push({ dir: contrib.skillsDir, pluginId: plugin.id })
+    for (const dir of contrib.skillsDirs ?? []) out.skillsDirs.push({ dir, pluginId: plugin.id })
     if (contrib.agentsDir) out.agentsDirs.push({ dir: contrib.agentsDir, pluginId: plugin.id })
     if (contrib.commandsDir) {
       out.commandsDirs.push({ dir: contrib.commandsDir, pluginId: plugin.id, pluginRoot: plugin.rootDir })

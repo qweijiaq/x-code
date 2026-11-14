@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 
 import { resolveWindowsNativeArtifact, resolveWindowsNativeRoot } from '../../../native/windows-native-artifact.js'
 import { debugLog, errorMessage } from '../../../utils.js'
+import { sanitizeShellEnv } from '../../../utils/shell-sandbox.js'
 import type {
   ManagedExitStatus,
   ManagedProcess,
@@ -317,7 +318,7 @@ class WindowsSpawnAttempt implements ManagedSpawnAttempt {
       const helper = spawn(artifact.executablePath, [], {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        env: this.options.env ?? process.env,
+        env: sanitizeShellEnv(this.options.env ?? process.env),
       })
       this.helper = helper
       this.handle.attachHelper(helper)

@@ -27,6 +27,7 @@ import {
   loadUserConfig,
   pickLatestSession,
   providerOf,
+  refreshDynamicProviderModels,
   refreshOpenAIAuthSnapshot,
   refreshOpenAIChatGPTModels,
   renderSessionHtml,
@@ -1266,8 +1267,9 @@ export function App({
       return
     }
 
-    // 无参数 → 交互式选择器。枚举 provider 有活动认证方法的模型，这样列表是
-    // 可操作的，而不是空想。
+    // 无参数 → 交互式选择器。网关 provider 的模型随账号/套餐变化，先拉一次
+    // `/models`，失败时继续用静态 catalog。
+    await refreshDynamicProviderModels({ timeoutMs: 5_000 })
     const availableProviders = new Set(getAvailableProviders())
     const chatGPTCatalog = getOpenAIChatGPTModelCatalogState()
     const openAIUnavailable =

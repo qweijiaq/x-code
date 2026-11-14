@@ -10,6 +10,7 @@ import type {
   SettingsSnapshot,
   TestConnectionResult,
 } from '../shared/protocol.js'
+import { providerDisplayName } from './provider-labels.js'
 import type { ThemeSetting } from './theme.js'
 
 function request<T extends RequestMethod>(method: T, params: RequestMap[T]['params']): Promise<RuntimeResponse> {
@@ -48,6 +49,9 @@ export function Onboarding({
   const [keyDraft, setKeyDraft] = useState('')
   const [modelDraft, setModelDraft] = useState(provider.modelId ?? '')
   const [baseUrlDraft, setBaseUrlDraft] = useState(provider.baseUrl ?? '')
+  const [modelOptions, setModelOptions] = useState<string[]>([])
+  const [modelsBusy, setModelsBusy] = useState(false)
+  const [modelsError, setModelsError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -97,11 +101,39 @@ export function Onboarding({
     }
   }
 
+  const discoverModels = async (): Promise<void> => {
+    if (modelsBusy) return
+    if (!baseUrlDraft.trim()) {
+      setModelsError(t('请填写 Base URL'))
+      return
+    }
+    setModelsBusy(true)
+    setModelsError(null)
+    setError(null)
+    try {
+      const response = await request('settings:discover-custom-models', {
+        baseUrl: baseUrlDraft.trim(),
+        key: keyDraft.trim() || undefined,
+      })
+      if (!response.ok) {
+        setModelsError(response.error.message)
+        return
+      }
+      const models = (response.result as { models: string[] }).models
+      setModelOptions(models)
+      if (!models.includes(modelDraft)) setModelDraft(models[0] ?? '')
+    } catch (error) {
+      setModelsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setModelsBusy(false)
+    }
+  }
+
   const saveProvider = async (): Promise<void> => {
     if (busy !== null) return
     if (provider.name === 'custom') {
       if (!modelDraft.trim()) {
-        setError(t('请填写模型 ID'))
+        setError(t('请先获取模型列表并选择一个模型'))
         return
       }
       if (!baseUrlDraft.trim()) {
@@ -275,10 +307,12 @@ export function Onboarding({
                       setKeyDraft('')
                       setModelDraft(entry.modelId ?? '')
                       setBaseUrlDraft(entry.baseUrl ?? '')
+                      setModelOptions([])
+                      setModelsError(null)
                       setTestResult(null)
                     }}
                   >
-                    <span>{entry.name}</span>
+                    <span>{providerDisplayName(entry.name)}</span>
                     {entry.available ? <span className="onboarding-available">{t('已配置')}</span> : null}
                   </button>
                 ))}
@@ -296,13 +330,30 @@ export function Onboarding({
                   />
                 </div>
                 <div className="onboarding-field">
-                  <span className="onboarding-label">{t('模型 ID')}</span>
-                  <input
-                    className="settings-input"
-                    value={modelDraft}
-                    placeholder="your-model-id"
-                    onChange={(event) => setModelDraft(event.target.value)}
-                  />
+                  <span className="onboarding-label">{t('模型')}</span>
+                  <div className="settings-actions">
+                    <button
+                      className="btn btn-quiet"
+                      disabled={busy !== null || modelsBusy}
+                      onClick={() => void discoverModels()}
+                    >
+                      {modelsBusy ? t('获取中…') : t('获取模型')}
+                    </button>
+                    <select
+                      className="settings-input"
+                      value={modelDraft}
+                      onChange={(event) => setModelDraft(event.target.value)}
+                      disabled={busy !== null || modelsBusy}
+                    >
+                      <option value="">{t('先填写 Base URL 和 Key，再获取模型')}</option>
+                      {[...new Set([provider.modelId, ...modelOptions].filter(Boolean))].map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {modelsError ? <div className="settings-warn">{modelsError}</div> : null}
                 </div>
               </>
             ) : null}

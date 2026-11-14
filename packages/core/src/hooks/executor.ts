@@ -85,7 +85,7 @@ export async function executeHook(
     // Hook 作者依赖继承的环境来获取 PATH 和 locale，但
     // 形如凭证的变量不应泄漏进沙箱化的 hook。插件的
     // 自有 userConfig 值则特意在之后重新加入。
-    const inherited = sandbox ? sanitizeShellEnv(process.env, sandbox) : process.env
+    const inherited = sanitizeShellEnv(process.env, sandbox ?? { ...getShellSandbox(), enabled: false })
     const result = await execa(wrapped?.executable ?? expandedCommand, wrapped?.args ?? [], {
       shell: !wrapped,
       input: stdinPayload,
@@ -94,6 +94,7 @@ export async function executeHook(
       stdio: 'pipe',
       reject: false, // 非零退出在下方显式处理，而不是作为异常抛出。
       cwd: event.session.cwd,
+      extendEnv: false,
       env: { ...inherited, ...pluginEnv },
     })
 

@@ -133,6 +133,8 @@ class PdfWorkerEndpoint {
         execArgv: ['--max-old-space-size=512'],
         serialization: 'advanced',
         stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        // Desktop runtime 的 execPath 是 Electron；只让这个 worker 以 Node 运行。
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       })
       return
     }

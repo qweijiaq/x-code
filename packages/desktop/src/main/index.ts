@@ -17,6 +17,7 @@ import {
   shell,
   systemPreferences,
   utilityProcess,
+  webContents,
 } from 'electron'
 import type { UtilityProcess } from 'electron'
 
@@ -291,6 +292,21 @@ async function renderPdfBase64(html: string): Promise<string> {
   } finally {
     if (timer) clearTimeout(timer)
     window.destroy()
+  }
+}
+
+/** 各窗口上报的「正在执行的会话」，用于侧栏跨窗口显示运行标记。 */
+const runningSessionsByWindow = new Map<number, { workspace: string; sessionIds: string[] }>()
+
+function broadcastRunningSessions(): void {
+  const entries = [...runningSessionsByWindow.entries()]
+    .filter(([id]) => {
+      const contents = webContents.fromId(id)
+      return Boolean(contents && !contents.isDestroyed())
+    })
+    .map(([, value]) => ({ workspace: value.workspace, sessionIds: value.sessionIds }))
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('app:running-sessions', entries)
   }
 }
 
@@ -794,7 +810,7 @@ function createWindow(show = true, search = '', workspacePath?: string): Runtime
     minWidth: 900,
     minHeight: 600,
     show,
-    backgroundColor: '#f6f2e8',
+    backgroundColor: '#fcfbf8',
     title: 'X-Code',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.cjs'),
@@ -1149,6 +1165,33 @@ function installIpc(): void {
           paths: result.canceled ? [] : result.filePaths,
         },
       }
+    }
+    if (request?.method === 'app:save-text') {
+      const params = request.params as { content?: unknown; suggestedName?: unknown }
+      const content = typeof params.content === 'string' ? params.content : ''
+      if (!content) {
+        return { id: request.id, ok: false, error: { code: 'empty-content', message: 'Nothing to save' } }
+      }
+      const suggested = String(params.suggestedName ?? '').trim()
+      const options: Electron.SaveDialogOptions = {
+        title: '导出复盘',
+        defaultPath: path.join(app.getPath('downloads'), path.basename(suggested || 'X-Code-report.md')),
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+      }
+      const result = senderWindow
+        ? await dialog.showSaveDialog(senderWindow, options)
+        : await dialog.showSaveDialog(options)
+      if (result.canceled || !result.filePath) return { id: request.id, ok: true, result: { path: null } }
+      try {
+        await fs.promises.writeFile(result.filePath, content, 'utf8')
+      } catch (err) {
+        return {
+          id: request.id,
+          ok: false,
+          error: { code: 'write-failed', message: err instanceof Error ? err.message : String(err) },
+        }
+      }
+      return { id: request.id, ok: true, result: { path: result.filePath } }
     }
     if (request?.method === 'app:pick-update-path') {
       const suggested = String((request.params as { suggestedName?: string }).suggestedName ?? '').trim()
@@ -1541,6 +1584,7 @@ function installIpc(): void {
         workspacePath?: string
         prompt?: string
         displayPrompt?: string
+        newSession?: boolean
       }
       const rawSessionFilePath =
         typeof params.sessionFilePath === 'string' && params.sessionFilePath.trim()
@@ -1573,6 +1617,9 @@ function installIpc(): void {
             if (existing.window.isMinimized()) existing.window.restore()
             existing.window.show()
             existing.window.focus()
+            if (params.newSession === true) {
+              existing.window.webContents.send('runtime:event', { type: 'app:new-session' } satisfies RuntimeEvent)
+            }
             return { id: request.id, ok: true, result: { created: false, focused: true } }
           }
         }
@@ -1585,6 +1632,7 @@ function installIpc(): void {
         query.set('session', sessionFilePath)
       }
       if (workspacePath) query.set('workspace', workspacePath)
+      if (params.newSession === true) query.set('new', '1')
       if (typeof params.prompt === 'string' && params.prompt.trim() && params.prompt.length <= 100_000) {
         query.set('prompt', params.prompt)
       }
@@ -1632,6 +1680,17 @@ function installIpc(): void {
       broadcastSettingsChange(context)
     }
     return response
+  })
+
+  ipcMain.on('app:running-sessions', (event, payload: unknown) => {
+    const data = payload as { workspace?: unknown; sessionIds?: unknown }
+    const workspace = typeof data.workspace === 'string' ? data.workspace : ''
+    const sessionIds = Array.isArray(data.sessionIds)
+      ? data.sessionIds.filter((id): id is string => typeof id === 'string')
+      : []
+    if (workspace) runningSessionsByWindow.set(event.sender.id, { workspace, sessionIds })
+    else runningSessionsByWindow.delete(event.sender.id)
+    broadcastRunningSessions()
   })
 
   ipcMain.on('app:copy-text', (_event, text: unknown) => {

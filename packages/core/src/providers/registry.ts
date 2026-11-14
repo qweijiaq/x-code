@@ -14,6 +14,8 @@ import type { OpenAIAuthSnapshot } from '../auth/openai-chatgpt/auth-resolver.js
 import { getOpenAIChatGPTTokenManager } from '../auth/openai-chatgpt/token-manager.js'
 import { getProviderOptions, loadUserConfig } from '../config/index.js'
 import { OPENAI_SESSION_ID_HEADER, XAI_PROMPT_CACHE_KEY_HEADER } from './cache-control.js'
+import { gatewayBaseUrl } from './gateways.js'
+import { configureProviderNetwork, providerFetch } from './network.js'
 import { createOpenAIChatGPTFetch } from './openai-chatgpt-fetch.js'
 
 const KIMI_CODING_MODEL_IDS = {
@@ -59,6 +61,7 @@ function createOpenAIAuthFetch(providerSnapshot: OpenAIAuthSnapshot): typeof fet
 }
 
 export function createModelRegistry() {
+  configureProviderNetwork()
   const opts = getProviderOptions()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const providers: Record<string, any> = {}
@@ -131,6 +134,18 @@ export function createModelRegistry() {
         ...(baseURL ? { baseURL } : {}),
       })
     }
+  }
+
+  for (const name of ['opencode', 'opencode-go', 'opendesign', 'opendesign-go'] as const) {
+    const apiKey = opts[name]
+    if (!apiKey) continue
+    providers[name] = createOpenAICompatible({
+      name,
+      apiKey,
+      baseURL: gatewayBaseUrl(name, config.baseUrls?.[name]),
+      fetch: permanentErrorFetch,
+      includeUsage: true,
+    })
   }
 
   // 自定义 OpenAI-compatible provider
@@ -400,7 +415,7 @@ const PERMANENT_ERROR_CATEGORIES: ReadonlyArray<{
  * 被读取，因此 SSE 流不受影响。
  */
 const permanentErrorFetch: typeof fetch = async (input, init) => {
-  const response = await fetch(input, init)
+  const response = await providerFetch(input, init)
   // 流式 / 成功响应是禁区：读取它们的响应体会消耗掉 SDK 即将解析的 SSE 流。
   if (response.status < 400) return response
 

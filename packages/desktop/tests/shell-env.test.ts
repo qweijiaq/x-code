@@ -72,4 +72,14 @@ describe('terminal environment', () => {
 
     expect(ptyEnv()).toMatchObject({ LANG: 'zh_CN.UTF-8', LC_CTYPE: 'zh_CN.UTF-8' })
   })
+
+  it('drops Electron runtime flags so the terminal can launch Electron projects', () => {
+    vi.stubEnv('ELECTRON_RUN_AS_NODE', '1')
+    vi.stubEnv('ELECTRON_NO_ATTACH_CONSOLE', '1')
+
+    const env = ptyEnv()
+
+    expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+    expect(env.ELECTRON_NO_ATTACH_CONSOLE).toBeUndefined()
+  })
 })

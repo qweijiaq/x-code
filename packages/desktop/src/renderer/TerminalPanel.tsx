@@ -5,10 +5,10 @@ import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef } from 'react'
 
 const LIGHT_TERMINAL_THEME = {
-  background: '#fbfaf7',
-  foreground: '#1f1e1c',
-  cursor: '#c0563f',
-  cursorAccent: '#fbfaf7',
+  background: '#fcfbf8',
+  foreground: '#171614',
+  cursor: '#b8482f',
+  cursorAccent: '#fcfbf8',
   selectionBackground: 'rgba(155, 74, 99, 0.22)',
   black: '#1c1a16',
   red: '#b03a2e',
@@ -29,10 +29,10 @@ const LIGHT_TERMINAL_THEME = {
 }
 
 const DARK_TERMINAL_THEME = {
-  background: '#1a1a19',
-  foreground: '#e9e7e1',
-  cursor: '#d97862',
-  cursorAccent: '#1a1a19',
+  background: '#151412',
+  foreground: '#efe9dd',
+  cursor: '#d9695a',
+  cursorAccent: '#151412',
   selectionBackground: 'rgba(180, 167, 200, 0.25)',
   black: '#1c1a16',
   red: '#cc6a5b',

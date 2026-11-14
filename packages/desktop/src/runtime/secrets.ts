@@ -13,7 +13,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { PROVIDERS, WEB_SEARCH_PROVIDERS, acquireFileLock, userXcodeDir } from '@x-code-cli/core'
+import { PROVIDERS, WEB_SEARCH_PROVIDERS, acquireFileLock, debugLog, userXcodeDir } from '@x-code-cli/core'
 
 import { requestMain } from './main-bridge.js'
 
@@ -233,6 +233,22 @@ export async function loadSecrets(): Promise<void> {
   const searchDecoded = await decodeEntries(raw.search, SEARCH_ENV_BY_PROVIDER)
   const search = searchDecoded.values
 
+  // 旧版本可能存入了中文/Markdown/带换行的“Key”。它们会让任何请求的
+  // Authorization header 在 undici 里抛 ByteString 错误；加载时直接忽略，
+  // 让设置页显示未配置，用户重新粘贴有效 Key 即可。
+  const invalid: string[] = []
+  for (const [provider, key] of [...providers]) {
+    if (!apiKeyProblem(key)) continue
+    providers.delete(provider)
+    invalid.push(`provider:${provider}`)
+  }
+  for (const [provider, key] of [...search]) {
+    if (!apiKeyProblem(key, '搜索 API Key')) continue
+    search.delete(provider)
+    invalid.push(`search:${provider}`)
+  }
+  if (invalid.length > 0) debugLog('secrets.invalid-key', invalid.join(','))
+
   cache = { providers, search, baseUrls }
   if (providersDecoded.migrated || searchDecoded.migrated) {
     writeRaw({
@@ -274,11 +290,34 @@ export function searchSecretStatus(provider: string): ProviderSecretStatus {
   return { source: 'none' }
 }
 
+const API_KEY_MAX_LENGTH = 8_192
+
+/** 返回 Key 不适合放进 HTTP header 的原因；null 表示可用。 */
+export function apiKeyProblem(key: string, label = 'API Key'): string | null {
+  const trimmed = key.trim()
+  if (!trimmed) return `${label} 不能为空`
+  if (trimmed.length > API_KEY_MAX_LENGTH) return `${label} 过长（超过 ${API_KEY_MAX_LENGTH} 个字符）`
+  if (trimmed.includes('```')) return `${label} 不能是 Markdown 代码块；请只粘贴服务商提供的 Key`
+  for (let index = 0; index < trimmed.length; index++) {
+    const code = trimmed.charCodeAt(index)
+    if (code >= 0x21 && code <= 0x7e) continue
+    const char = trimmed[index] ?? ''
+    const shown = code >= 0x20 && code < 0x7f ? char : `U+${code.toString(16).toUpperCase().padStart(4, '0')}`
+    return `${label} 只能包含 ASCII 可见字符；第 ${index + 1} 个字符是 ${shown}。请只粘贴服务商提供的 Key，不要带空格、换行、中文或 Markdown`
+  }
+  return null
+}
+
+export function validateApiKey(key: string, label = 'API Key'): string {
+  const problem = apiKeyProblem(key, label)
+  if (problem) throw new Error(problem)
+  return key.trim()
+}
+
 export async function saveSearchKey(provider: string, key: string): Promise<void> {
   const envKey = SEARCH_ENV_BY_PROVIDER.get(provider)
   if (!envKey) throw new Error(`未知的搜索服务: ${provider}`)
-  const trimmed = key.trim()
-  if (!trimmed) throw new Error('API Key 不能为空')
+  const trimmed = validateApiKey(key, '搜索 API Key')
   captureOriginals()
   const loaded = await ensureLoaded()
   await withSecretsLock(async () => {
@@ -334,10 +373,17 @@ export function providerSecretStatus(provider: string): ProviderSecretStatus {
   return { source: 'none', baseUrl: provider === 'custom' ? (baseUrl ?? process.env[CUSTOM_BASE_URL_ENV]) : undefined }
 }
 
+/** 供主进程侧调用（例如模型发现）读取解密后的 key；绝不暴露给 renderer。 */
+export function providerSecretValue(provider: string): string | undefined {
+  const stored = cache?.providers.get(provider)
+  if (stored) return stored
+  const envKey = envKeyFor(provider)
+  return envKey ? process.env[envKey] : undefined
+}
+
 export async function saveProviderKey(provider: string, key: string, baseUrl?: string): Promise<void> {
   if (!envKeyFor(provider)) throw new Error(`未知的 provider: ${provider}`)
-  const trimmed = key.trim()
-  if (!trimmed) throw new Error('API Key 不能为空')
+  const trimmed = validateApiKey(key)
   captureOriginals()
   const loaded = await ensureLoaded()
   await withSecretsLock(async () => {

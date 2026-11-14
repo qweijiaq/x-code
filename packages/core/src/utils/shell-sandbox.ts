@@ -114,14 +114,22 @@ export function wrapShellSpawn(
 
 const SECRET_ENV_PATTERN = /(API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE[_-]?KEY)/i
 
-/** 从子进程环境中移除形似凭据的变量。PATH、HOME、locale 和显示相关变量会被
- *  保留。 */
+/** Electron utilityProcess 用来让内部 worker 以 Node 运行，但它会继承给所有
+ *  子进程。agent shell 如果带着它启动 Electron，Electron 会退化成纯 Node：
+ *  `app` 是 undefined，窗口不会出现。用户命令绝不能拿到这些运行时开关。 */
+const ELECTRON_RUNTIME_ENV_KEYS = ['ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ATTACH_CONSOLE'] as const
+
+/** 从子进程环境中移除形似凭据的变量和 Electron 运行时开关。PATH、HOME、
+ *  locale 和显示相关变量会被保留。 */
 export function sanitizeShellEnv(env: NodeJS.ProcessEnv, config: ShellSandboxConfig = current): NodeJS.ProcessEnv {
-  if (process.platform !== 'darwin' || !config.enabled) return env
-  const sanitized: NodeJS.ProcessEnv = {}
-  for (const [key, value] of Object.entries(env)) {
-    if (SECRET_ENV_PATTERN.test(key)) continue
-    sanitized[key] = value
+  const sandboxed = process.platform === 'darwin' && config.enabled
+  const carriesElectronFlags = ELECTRON_RUNTIME_ENV_KEYS.some((key) => env[key] !== undefined)
+  if (!sandboxed && !carriesElectronFlags) return env
+  const sanitized: NodeJS.ProcessEnv = { ...env }
+  for (const key of ELECTRON_RUNTIME_ENV_KEYS) delete sanitized[key]
+  if (!sandboxed) return sanitized
+  for (const key of Object.keys(sanitized)) {
+    if (SECRET_ENV_PATTERN.test(key)) delete sanitized[key]
   }
   return sanitized
 }

@@ -9,6 +9,7 @@ import { getOpenAIChatGPTTokenManager } from '../auth/openai-chatgpt/token-manag
 import { debugLog, userXcodeDir } from '../utils.js'
 import { PROVIDER_MODELS } from './catalog.js'
 import type { ProviderModel, ReasoningTierOption } from './catalog.js'
+import { getDynamicProviderModels } from './dynamic-models.js'
 
 const CACHE_TTL_MS = 5 * 60 * 1000
 const SHARED_MODEL_REFRESH_TIMEOUT_MS = 8 * 1000
@@ -493,9 +494,24 @@ export async function refreshOpenAIChatGPTModelsAfterNotFound(
   runtimeModels = activeRuntimeModels().filter((model) => model.id !== rejectedModelId)
 }
 
+function mergeDynamicModels(base: Record<string, readonly ProviderModel[]>): Record<string, readonly ProviderModel[]> {
+  const merged: Record<string, readonly ProviderModel[]> = {}
+  for (const [provider, models] of Object.entries(base)) {
+    const dynamic = getDynamicProviderModels(provider)
+    if (dynamic.length === 0) {
+      merged[provider] = models
+      continue
+    }
+    const known = new Set(models.map((model) => model.id))
+    merged[provider] = [...models, ...dynamic.filter((model) => !known.has(model.id))]
+  }
+  return merged
+}
+
 export function getProviderModels(): Record<string, readonly ProviderModel[]> {
-  if (getOpenAIAuthContext().mode !== 'chatgpt') return PROVIDER_MODELS
-  return { ...PROVIDER_MODELS, openai: activeRuntimeModels() }
+  const base =
+    getOpenAIAuthContext().mode === 'chatgpt' ? { ...PROVIDER_MODELS, openai: activeRuntimeModels() } : PROVIDER_MODELS
+  return mergeDynamicModels(base)
 }
 
 export function getOpenAIChatGPTModelCatalogState(): OpenAIChatGPTModelCatalogState | undefined {

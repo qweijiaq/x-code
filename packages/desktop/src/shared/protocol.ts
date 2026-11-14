@@ -110,11 +110,15 @@ export interface GoalVerificationView {
 }
 
 export interface GoalAttemptView {
+  id: string
   turn: number
   inputKind: string
   finish: string
   startedAt: string
   endedAt?: string
+  promptPreview: string
+  durationMs: number
+  tokens: number
 }
 
 export interface GoalView {
@@ -131,10 +135,14 @@ export interface GoalView {
   verifiers: GoalVerifierView[]
   verificationResults: GoalVerificationView[]
   attempts: GoalAttemptView[]
+  totalAttempts: number
+  failedAttempts: number
   finalSummary?: string
   lastBlocker?: string
   requiresUserConfirmation: boolean
   pendingTransition?: string
+  /** 当前正在进行的动作（模型思考、工具参数生成、工具执行）。 */
+  currentActivity?: string
 }
 
 export interface GoalCreateInput {
@@ -750,6 +758,13 @@ export interface WorkspaceList {
   current: string
 }
 
+export interface WorkspaceSessionsView {
+  path: string
+  name: string
+  current: boolean
+  sessions: SessionListItem[]
+}
+
 export interface TempDeliverableMoveResult {
   moved: Array<{ from: string; to: string }>
   errors: Array<{ path: string; error: string }>
@@ -1020,6 +1035,8 @@ export type ApprovalKind = 'permission' | 'authority' | 'question' | 'plan'
 
 export interface ApprovalRequestEvent {
   requestId: string
+  /** 发起审批的会话；后台会话也能弹审批。 */
+  sessionId?: string
   kind: ApprovalKind
   toolCallId?: string
   toolName?: string
@@ -1046,7 +1063,7 @@ export interface RequestMap {
     params: { prompt: string; attachments?: string[] }
     result: { text: string; reason: string; sessionId: string; modelId: string }
   }
-  'agent:abort': { params: Record<string, never>; result: { aborted: boolean } }
+  'agent:abort': { params: { sessionId?: string }; result: { aborted: boolean } }
   'agent:set-thinking': { params: { enabled: boolean }; result: { thinking: boolean } }
   'agent:set-permission-mode': { params: { mode: 'default' | 'plan' }; result: { mode: string } }
   'agent:set-task-mode': {
@@ -1108,6 +1125,19 @@ export interface RequestMap {
   'goal:clear': { params: Record<string, never>; result: null }
   'goal:steer': { params: { instruction: string }; result: GoalView | null }
   'goal:verify': { params: Record<string, never>; result: GoalView | null }
+  'goal:attempt-prompt': {
+    params: { attemptId: string }
+    result: { prompt: string | null; kind: string; admittedAt?: string }
+  }
+  'goal:attempt-prompts': { params: { attemptIds: string[] }; result: Record<string, string> }
+  'goal:search-prompts': {
+    params: { query: string }
+    result: { attemptIds: string[]; verificationKeys: string[] }
+  }
+  'goal:verification-output': {
+    params: { at: string; kind: string; summary: string }
+    result: { output: string | null }
+  }
   'context:search': {
     params: { query: string; scopes?: ContextSearchSourceView[]; limit?: number }
     result: ContextSearchResponse
@@ -1120,7 +1150,13 @@ export interface RequestMap {
   }
   'app:quit': { params: Record<string, never>; result: null }
   'app:new-window': {
-    params: { sessionFilePath?: string; workspacePath?: string; prompt?: string; displayPrompt?: string }
+    params: {
+      sessionFilePath?: string
+      workspacePath?: string
+      prompt?: string
+      displayPrompt?: string
+      newSession?: boolean
+    }
     result: { created: boolean; focused: boolean }
   }
   'app:set-window-sessions': { params: { filePaths: string[] }; result: null }
@@ -1169,6 +1205,7 @@ export interface RequestMap {
   'models:set': { params: { modelId: string }; result: AppState }
   'models:discover': { params: Record<string, never>; result: AppState }
   'session:list': { params: Record<string, never>; result: SessionListItem[] }
+  'session:list-all': { params: Record<string, never>; result: WorkspaceSessionsView[] }
   'session:load': { params: { filePath: string }; result: LoadedSessionView }
   'session:peek': { params: { filePath: string }; result: LoadedSessionView }
   'session:salvage': {
@@ -1176,6 +1213,8 @@ export interface RequestMap {
     result: { sessionId: string; filePath: string; messageCount: number; view: LoadedSessionView }
   }
   'session:new': { params: Record<string, never>; result: { sessionId: string } }
+  'session:activate': { params: { sessionId: string }; result: { activated: boolean } }
+  'session:close': { params: { sessionId: string }; result: { forgotten: boolean } }
   'session:rename': { params: { filePath: string; name: string }; result: { name: string } }
   'session:delete': { params: { filePath: string }; result: { deleted: boolean; resetActive: boolean } }
   'session:set-pinned': { params: { filePath: string; pinned: boolean }; result: { pinned: boolean } }
@@ -1222,6 +1261,10 @@ export interface RequestMap {
   'settings:set-custom-model': {
     params: { modelId: string; key?: string; baseUrl?: string }
     result: SettingsActionResult
+  }
+  'settings:discover-custom-models': {
+    params: { baseUrl?: string; key?: string }
+    result: { models: string[] }
   }
   'settings:clear-api-key': { params: { provider: string }; result: SettingsActionResult }
   'settings:set-search-key': { params: { provider: string; key: string }; result: SettingsActionResult }
@@ -1293,6 +1336,10 @@ export interface RequestMap {
   'app:download-update': {
     params: { feed: string; destPath?: string }
     result: UpdateDownloadView
+  }
+  'app:save-text': {
+    params: { content: string; suggestedName?: string }
+    result: { path: string | null }
   }
   'app:pick-update-path': {
     params: { suggestedName?: string }
@@ -1462,25 +1509,45 @@ export type RuntimeResponse = { id: string; ok: true; result: unknown } | { id: 
 export type RuntimeEvent =
   | { type: 'runtime:ready'; pid: number; versions: Record<string, string> }
   | { type: 'runtime:exit'; code: number }
-  | { type: 'goal:update'; goal: GoalView | null }
+  | { type: 'goal:update'; sessionId: string; goal: GoalView | null }
   | { type: 'auth:login-url'; url: string }
   | { type: 'auth:device-code'; url: string; code: string }
   | { type: 'runtime:log'; level: 'info' | 'warn' | 'error'; message: string }
   | { type: 'app:state'; state: AppState }
   | { type: 'agent:turn-start'; turnId: string; sessionId: string }
-  | { type: 'agent:text-delta'; turnId: string; delta: string }
-  | { type: 'agent:tool-call'; turnId: string; toolCallId: string; toolName: string; input: Record<string, unknown> }
-  | { type: 'agent:tool-progress'; turnId: string; toolCallId: string; message: string }
+  | { type: 'agent:text-delta'; turnId: string; sessionId: string; delta: string }
+  | {
+      type: 'agent:tool-call'
+      turnId: string
+      sessionId: string
+      toolCallId: string
+      toolName: string
+      input: Record<string, unknown>
+    }
+  | { type: 'agent:tool-progress'; turnId: string; sessionId: string; toolCallId: string; message: string }
+  | { type: 'agent:reasoning-progress'; turnId: string; sessionId: string; chars: number }
+  | {
+      type: 'agent:tool-input-progress'
+      turnId: string
+      sessionId: string
+      toolCallId: string
+      toolName: string
+      chars: number
+      bytes: number
+      done: boolean
+    }
   | {
       type: 'agent:tool-result'
       turnId: string
+      sessionId: string
       toolCallId: string
       result: string
       isError: boolean
     }
-  | { type: 'agent:file-edit'; turnId: string; toolCallId: string; payload: FileEditView }
+  | { type: 'agent:file-edit'; turnId: string; sessionId: string; toolCallId: string; payload: FileEditView }
   | {
       type: 'agent:subagent'
+      sessionId: string
       toolCallId: string
       phase: 'start' | 'text' | 'tool' | 'tool-result' | 'end'
       agentName?: string
@@ -1492,18 +1559,41 @@ export type RuntimeEvent =
       turnCount?: number
       aborted?: boolean
     }
-  | { type: 'agent:todos'; todos: TodoView[] }
-  | { type: 'agent:background-task'; phase: 'start' | 'end'; task: BackgroundTaskView }
-  | { type: 'agent:usage'; usage: UsageView }
-  | { type: 'agent:context-compressed'; summary: string }
-  | { type: 'agent:compression-progress'; description: string }
-  | { type: 'agent:ingest-progress'; description: string }
-  | { type: 'agent:attachments'; files: string[]; mediaParts: number; textBytes: number }
-  | { type: 'agent:stream-retry'; attempt: number; maxAttempts: number; delayMs?: number }
-  | { type: 'agent:model-fallback'; turnId: string; fromModelId: string; toModelId: string }
-  | { type: 'agent:permission-mode'; mode: string }
+  | { type: 'agent:todos'; sessionId: string; todos: TodoView[] }
+  | {
+      type: 'agent:background-task'
+      sessionId: string
+      phase: 'start' | 'end'
+      task: BackgroundTaskView
+    }
+  | { type: 'agent:usage'; sessionId: string; usage: UsageView }
+  | { type: 'agent:context-compressed'; sessionId: string; summary: string }
+  | { type: 'agent:compression-progress'; sessionId: string; description: string }
+  | { type: 'agent:ingest-progress'; sessionId: string; description: string }
+  | {
+      type: 'agent:attachments'
+      sessionId: string
+      files: string[]
+      mediaParts: number
+      textBytes: number
+    }
+  | {
+      type: 'agent:stream-retry'
+      sessionId: string
+      attempt: number
+      maxAttempts: number
+      delayMs?: number
+    }
+  | {
+      type: 'agent:model-fallback'
+      turnId: string
+      sessionId: string
+      fromModelId: string
+      toModelId: string
+    }
+  | { type: 'agent:permission-mode'; sessionId: string; mode: string }
   | { type: 'agent:turn-end'; turnId: string; sessionId: string; reason: string; text: string }
-  | { type: 'agent:error'; turnId: string; message: string }
+  | { type: 'agent:error'; turnId: string; sessionId: string; message: string }
   | ({ type: 'approval:request' } & ApprovalRequestEvent)
   | { type: 'session:saved'; item: SessionListItem }
   | { type: 'settings:changed'; settings: SettingsSnapshot }
@@ -1599,6 +1689,8 @@ export interface XcodeBridge {
   /** 通过 Electron 的剪贴板复制文本（file:// 页面没有
    *  可靠的 navigator.clipboard 权限）。 */
   copyText(text: string): void
+  reportRunningSessions(workspace: string, sessionIds: string[]): void
+  onRunningSessions(listener: (entries: Array<{ workspace: string; sessionIds: string[] }>) => void): () => void
   /** 把拖放的 File 解析为其文件系统路径（沙箱化的 renderer
    *  无法读取 `File.path`）。不可用时返回 ''。 */
   pathForFile(file: unknown): string

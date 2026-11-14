@@ -56,6 +56,8 @@ export async function streamChunksToUI(
   const deferredNames = new Set((state.deferredCatalog ?? []).map((entry) => entry.name))
   const suppressedDeferredCallIds = new Set<string>()
   const suppressedMemoryAccessCallIds = new Set<string>()
+  const toolInputProgress = new Map<string, { toolName: string; chars: number; bytes: number }>()
+  let reasoningChars = 0
   const textFilter = new StreamReplayFilter(recoveryText, (text) => {
     tracker.visibleText += text
     callbacks.onTextDelta(text)
@@ -106,6 +108,48 @@ export async function streamChunksToUI(
         setProgressReporter(toolCallId, (message) => callbacks.onToolProgress(toolCallId, message))
       }
       callbacks.onToolCall(toolCallId, toolName, (chunk.input ?? {}) as Record<string, unknown>)
+    } else if (chunk.type === 'reasoning-delta') {
+      const text = (chunk as { text?: string }).text ?? ''
+      if (text) {
+        reasoningChars += text.length
+        callbacks.onReasoningProgress?.(reasoningChars)
+      }
+    } else if (
+      chunk.type === 'tool-input-start' ||
+      chunk.type === 'tool-input-delta' ||
+      chunk.type === 'tool-input-end'
+    ) {
+      const toolCallId = (chunk as { id?: string }).id ?? ''
+      if (!toolCallId) continue
+      if (chunk.type === 'tool-input-start') {
+        const toolName = (chunk as { toolName?: string }).toolName ?? ''
+        toolInputProgress.set(toolCallId, { toolName, chars: 0, bytes: 0 })
+        callbacks.onToolInputProgress?.({ toolCallId, toolName, chars: 0, bytes: 0, done: false })
+        continue
+      }
+      const progress = toolInputProgress.get(toolCallId)
+      if (!progress) continue
+      if (chunk.type === 'tool-input-delta') {
+        const delta = (chunk as { delta?: string }).delta ?? ''
+        progress.chars += delta.length
+        progress.bytes += Buffer.byteLength(delta, 'utf8')
+        callbacks.onToolInputProgress?.({
+          toolCallId,
+          toolName: progress.toolName,
+          chars: progress.chars,
+          bytes: progress.bytes,
+          done: false,
+        })
+      } else {
+        callbacks.onToolInputProgress?.({
+          toolCallId,
+          toolName: progress.toolName,
+          chars: progress.chars,
+          bytes: progress.bytes,
+          done: true,
+        })
+        toolInputProgress.delete(toolCallId)
+      }
     } else if (chunk.type === 'tool-result') {
       markToolActivity()
       const raw = typeof chunk.output === 'string' ? chunk.output : JSON.stringify(chunk.output ?? '')

@@ -50,6 +50,29 @@ describe('buildPluginIntegration', () => {
     expect(out.agentsDirs[0]!.dir).toContain('agents')
   })
 
+  it('keeps every entry of a skills array', async () => {
+    const src = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-int-plugin-src-'))
+    await writeFileAt(
+      path.join(src, 'plugin.json'),
+      JSON.stringify({
+        name: 'demo',
+        version: '1.0.0',
+        skills: ['./skills/tdd', './skills/review'],
+      }),
+    )
+    await fs.mkdir(path.join(src, 'skills', 'tdd'), { recursive: true })
+    await fs.mkdir(path.join(src, 'skills', 'review'), { recursive: true })
+
+    await installPlugin({ source: { kind: 'local', path: src }, marketplace: 'local' })
+
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-int-cwd-'))
+    const load = await loadAllPlugins({ cwd })
+    const out = await buildPluginIntegration(load)
+
+    expect(out.skillsDirs).toHaveLength(2)
+    expect(out.skillsDirs.map((entry) => path.basename(entry.dir)).sort()).toEqual(['review', 'tdd'])
+  })
+
   it('surfaces commandsDirs for any plugin with a commands/ contribution', async () => {
     const src = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-int-plugin-src-'))
     await writeFileAt(

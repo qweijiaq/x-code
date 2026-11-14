@@ -41,6 +41,20 @@ describe('validatePlugin', () => {
     expect(result.format).toBe('native')
   })
 
+  it('accepts a skills array and validates every entry', async () => {
+    const dir = path.join(root, 'array-skills')
+    await writeManifest(dir, {
+      name: 'array-skills',
+      version: '1.0.0',
+      skills: ['skills/tdd', 'skills/missing'],
+    })
+    await fs.mkdir(path.join(dir, 'skills', 'tdd'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'skills', 'tdd', 'SKILL.md'), '# TDD\n', 'utf8')
+
+    const result = await validatePlugin(dir)
+    expect(result.errors).toEqual(['skills path does not exist: skills/missing'])
+  })
+
   it('reports missing contribution paths and duplicate config keys', async () => {
     const dir = path.join(root, 'invalid')
     await writeManifest(dir, {

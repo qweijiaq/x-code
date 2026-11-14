@@ -86,6 +86,16 @@ describe('desktop API-key storage', () => {
     expect(secretStorageKind()).toBe('plain')
   })
 
+  it('rejects non-ASCII, whitespace, and Markdown-looking API keys', async () => {
+    for (const key of ['sk-专业', '```m\n专业 text\n```', 'sk-abc def', 'sk-abc\ndef']) {
+      await expect(saveProviderKey('anthropic', key)).rejects.toThrow(/ASCII|Markdown|不能包含|只能包含/)
+    }
+    await expect(saveSearchKey('tavily', 'tvly-专业')).rejects.toThrow(/ASCII|只能包含/)
+    expect(process.env.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(process.env.TAVILY_API_KEY).toBeUndefined()
+    expect(fs.existsSync(secretsFile())).toBe(false)
+  })
+
   it('clears a stored key and restores the environment', async () => {
     await saveProviderKey('anthropic', 'sk-clear-9999')
     await clearProviderKey('anthropic')

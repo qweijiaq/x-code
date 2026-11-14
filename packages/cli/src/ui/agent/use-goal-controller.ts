@@ -176,7 +176,9 @@ export function useGoalController({
 
   const ensureLoopState = useCallback((): LoopState => {
     if (!loopStateRef.current) {
-      loopStateRef.current = createLoopState(permissionModeRef.current, { projectCwd: process.cwd() })
+      loopStateRef.current = createLoopState(permissionModeRef.current, {
+        projectCwd: process.cwd(),
+      })
       bindShellSessionEvents(loopStateRef.current)
     }
     return loopStateRef.current

@@ -56,6 +56,10 @@ const SESSIONS_SUBDIR = 'sessions'
 const OMITTED_VISUAL_CHECK_IMAGE = '[browserVisualCheck screenshot omitted from session storage]'
 const BINARY_TOOL_OUTPUT_TYPES = new Set(['file', 'file-data', 'image', 'image-data', 'media'])
 
+function persistenceEnabled(state: LoopState): boolean {
+  return state.persistSession !== false
+}
+
 function sessionsDir(cwd: string = process.cwd()): string {
   return path.join(cwd, XCODE_DIR, SESSIONS_SUBDIR)
 }
@@ -926,6 +930,7 @@ export function appendHeader(
   firstPrompt: string,
   cwd: string = process.cwd(),
 ): Promise<void> {
+  if (!persistenceEnabled(state)) return Promise.resolve()
   return enqueueTranscriptOperation(state, () => appendHeaderNow(state, modelId, firstPrompt, cwd))
 }
 
@@ -939,6 +944,7 @@ export function appendHeader(
  *  能正确地在加载时截断，然后再重新追加被裁掉的消息，让边界之后的 jsonl 内容
  *  与新内存状态一致。 */
 export function flushPendingMessages(state: LoopState): Promise<void> {
+  if (!persistenceEnabled(state)) return Promise.resolve()
   return enqueueTranscriptOperation(state, async () => {
     if (state.transcriptIntegrity === 'failed') {
       throw new Error('Transcript integrity failed; automatic permission remains disabled')
@@ -974,6 +980,7 @@ export function flushPendingMessages(state: LoopState): Promise<void> {
  *  对象后由 agent loop 调用。选择器只读最后一条 usage 行（尾部扫描）来显示
  *  每个会话的总量——无需更高效地保留旧快照。 */
 export async function appendUsage(state: LoopState, modelId: string, turn?: ProviderTurnUsage): Promise<void> {
+  if (!persistenceEnabled(state)) return
   const filePath = getSessionFilePath(state)
   // 完整加载会从已持久化的各轮重建单独估算值。这里只保留累计总量，避免在每个
   // 用量快照里复制整段轮次历史，同时为选择器保留廉价的尾部读取。
@@ -993,7 +1000,7 @@ export async function appendUsage(state: LoopState, modelId: string, turn?: Prov
 /** 追加一个每步用量快照。每次用户提交完成后由 agentLoop 调用。跨会话累计
  *  ——loadSession 收集每个条目，以便在恢复时重建完整的步骤历史。 */
 export async function appendStepStats(state: LoopState, step: StepStats): Promise<void> {
-  if (!state.sessionId) return
+  if (!persistenceEnabled(state) || !state.sessionId) return
   const filePath = getSessionFilePath(state)
   const entry: StepStatsEntry = {
     t: 'meta',
@@ -1021,7 +1028,9 @@ export async function markBoundaryAndReflush(
   candidate: readonly TrackedModelMessage[] = state.trackedMessages,
 ): Promise<void> {
   void summary
-  await commitTranscriptSnapshot(state, candidate, { dropCheckpoints: true, dropMemoryRecall: true })
+  if (persistenceEnabled(state)) {
+    await commitTranscriptSnapshot(state, candidate, { dropCheckpoints: true, dropMemoryRecall: true })
+  }
   // 压缩会缩小/重写消息数组——此前每个 checkpoint 的 `messageCount` 现在都指向
   // 末尾之后。清空内存列表以对齐加载器的行为（它在恢复时会丢弃边界之前的
   // checkpoint 行）。
@@ -1062,7 +1071,7 @@ export async function clearPeerContext(state: LoopState): Promise<number> {
  *  相同的回退点。“最后边界之后的所有内容优先”这一加载器规则会自然地丢弃那些
  *  `messageCount` 已被压缩作废的 checkpoint。 */
 export async function appendCheckpoint(state: LoopState, entry: CheckpointEntry): Promise<void> {
-  if (!state.sessionId) return
+  if (!persistenceEnabled(state) || !state.sessionId) return
   const filePath = getSessionFilePath(state)
   const jsonl: CheckpointJsonlEntry = {
     t: 'meta',
@@ -1078,14 +1087,14 @@ export async function appendCheckpoint(state: LoopState, entry: CheckpointEntry)
 /** 追加一个 `interrupted` 标记。纯粹是信息性的——加载器在状态重建时忽略它；
  *  选择器可以在轮次中途结束的会话旁显示“interrupted”，让用户知道恢复的是什么。 */
 export async function appendInterrupted(state: LoopState): Promise<void> {
-  if (!state.sessionId) return
+  if (!persistenceEnabled(state) || !state.sessionId) return
   const filePath = getSessionFilePath(state)
   const entry: InterruptedEntry = { t: 'meta', kind: 'interrupted', ts: new Date().toISOString() }
   await appendLine(filePath, entry)
 }
 
 export async function appendGoalState(state: LoopState): Promise<void> {
-  if (!state.sessionId) return
+  if (!persistenceEnabled(state) || !state.sessionId) return
   const filePath = getSessionFilePath(state)
   const entry: GoalEntry = {
     t: 'meta',
@@ -1097,7 +1106,7 @@ export async function appendGoalState(state: LoopState): Promise<void> {
 }
 
 export async function appendGoalInput(state: LoopState, input: GoalInput): Promise<void> {
-  if (!state.sessionId) return
+  if (!persistenceEnabled(state) || !state.sessionId) return
   const filePath = getSessionFilePath(state)
   const entry: GoalInputEntry = {
     t: 'meta',
@@ -1114,7 +1123,7 @@ export async function appendGoalVerification(
   goalId: string,
   result: GoalVerificationResult,
 ): Promise<void> {
-  if (!state.sessionId) return
+  if (!persistenceEnabled(state) || !state.sessionId) return
   const filePath = getSessionFilePath(state)
   const entry: GoalVerificationEntry = {
     t: 'meta',
@@ -1127,7 +1136,7 @@ export async function appendGoalVerification(
 }
 
 export async function appendMemoryRecall(state: LoopState, attachment: MemoryRecallAttachment): Promise<void> {
-  if (!state.sessionId) return
+  if (!persistenceEnabled(state) || !state.sessionId) return
   const entry: MemoryRecallEntry = {
     t: 'meta',
     kind: 'memory-recall',
@@ -1139,7 +1148,7 @@ export async function appendMemoryRecall(state: LoopState, attachment: MemoryRec
 }
 
 export async function appendMemoryRecallDelete(state: LoopState, tombstone: MemoryRecallTombstone): Promise<void> {
-  if (!state.sessionId) return
+  if (!persistenceEnabled(state) || !state.sessionId) return
   const entry: MemoryRecallDeleteEntry = {
     t: 'meta',
     kind: 'memory-recall-delete',
@@ -1841,12 +1850,22 @@ export async function pickLatestSession(cwd: string = process.cwd()): Promise<Se
  *  向已加载的确切 jsonl 路径追加，包括旧版 slug 前缀文件名。`persistedMessageCount`
  *  被设为已加载的长度，这样下一次用户提交后的第一次刷写只会追加新消息——已加载的
  *  尾部已经在磁盘上了。 */
+export interface HydrateLoopStateOptions {
+  /** 桌面运行时开启；CLI 保持每次独立 shell，以保留 Ctrl+C 后台 shell 语义。 */
+  persistentShell?: boolean
+}
+
 export function hydrateLoopState(
   loaded: LoadedSession,
   initialMode: PermissionMode = 'default',
   projectCwd: string = process.cwd(),
+  options: HydrateLoopStateOptions = {},
 ): LoopState {
-  const state = createLoopState(initialMode, { ownerSessionId: loaded.sessionId, projectCwd })
+  const state = createLoopState(initialMode, {
+    ownerSessionId: loaded.sessionId,
+    projectCwd,
+    persistentShell: options.persistentShell === true,
+  })
   state.sessionFilePath = loaded.filePath
   state.taskSlug = loaded.taskSlug
   state.startedAt = loaded.startedAt

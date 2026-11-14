@@ -120,6 +120,16 @@ function tail(text: string): string {
 async function runOne(root: string, check: ProjectCheck): Promise<CheckResult> {
   const started = Date.now()
   return new Promise<CheckResult>((resolve) => {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      CI: '1',
+      NO_COLOR: '1',
+      FORCE_COLOR: '0',
+      GIT_TERMINAL_PROMPT: '0',
+    }
+    // 项目检查也可能启动 Electron；不能让它继承 utilityProcess 的 Node 模式。
+    delete env.ELECTRON_RUN_AS_NODE
+    delete env.ELECTRON_NO_ATTACH_CONSOLE
     const child = execFile(
       check.command,
       check.args,
@@ -127,13 +137,7 @@ async function runOne(root: string, check: ProjectCheck): Promise<CheckResult> {
         cwd: root,
         timeout: CHECK_TIMEOUT_MS,
         maxBuffer: OUTPUT_BUFFER,
-        env: {
-          ...process.env,
-          CI: '1',
-          NO_COLOR: '1',
-          FORCE_COLOR: '0',
-          GIT_TERMINAL_PROMPT: '0',
-        },
+        env,
       },
       (error, stdout, stderr) => {
         const output = tail(`${stdout ?? ''}${stderr ?? ''}`)

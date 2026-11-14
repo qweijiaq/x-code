@@ -16,13 +16,15 @@ function usage(): {
 
 interface PromptInspection {
   lastUserText: string
+  allUserText: string
   toolResultIds: Set<string>
 }
 
 function inspectPrompt(prompt: unknown): PromptInspection {
   let lastUserText = ''
+  let allUserText = ''
   const toolResultIds = new Set<string>()
-  if (!Array.isArray(prompt)) return { lastUserText, toolResultIds }
+  if (!Array.isArray(prompt)) return { lastUserText, allUserText, toolResultIds }
 
   for (const message of prompt as Array<{ role?: string; content?: unknown }>) {
     if (!Array.isArray(message.content)) continue
@@ -35,9 +37,12 @@ function inspectPrompt(prompt: unknown): PromptInspection {
         toolResultIds.add(part.toolCallId)
       }
     }
-    if (message.role === 'user' && messageText) lastUserText = messageText
+    if (message.role === 'user' && messageText) {
+      lastUserText = messageText
+      allUserText += `${messageText}\n`
+    }
   }
-  return { lastUserText, toolResultIds }
+  return { lastUserText, allUserText, toolResultIds }
 }
 
 function textStream(text: string): { stream: ReadableStream<LanguageModelV3StreamPart> } {
@@ -68,6 +73,9 @@ function textStream(text: string): { stream: ReadableStream<LanguageModelV3Strea
 export function createDemoModel(): MockLanguageModelV3 {
   let pendingCallId: string | null = null
   let overflowRetried = false
+  // [silent-stop-demo] 只用一次工具调用，之后持续空回复：模拟真实 provider
+  // 在工具结果后始终不产出文本，让 core 的续写上限和 UI 兜底提示都能被验证。
+  let silentStopToolDone = false
 
   return new MockLanguageModelV3({
     provider: 'demo',
@@ -81,10 +89,13 @@ export function createDemoModel(): MockLanguageModelV3 {
       warnings: [],
     }),
     doStream: async (options) => {
-      const { lastUserText, toolResultIds } = inspectPrompt((options as { prompt?: unknown } | undefined)?.prompt)
+      const { lastUserText, allUserText, toolResultIds } = inspectPrompt(
+        (options as { prompt?: unknown } | undefined)?.prompt,
+      )
 
-      if (pendingCallId && toolResultIds.has(pendingCallId) && lastUserText.includes('[silent-stop-demo]')) {
+      if (pendingCallId && toolResultIds.has(pendingCallId) && allUserText.includes('[silent-stop-demo]')) {
         pendingCallId = null
+        silentStopToolDone = true
         // 模拟部分模型在工具结果之后直接结束、不再输出文字的场景。
         return textStream('')
       }
@@ -236,7 +247,9 @@ export function createDemoModel(): MockLanguageModelV3 {
         return { stream: convertArrayToReadableStream<LanguageModelV3StreamPart>(parts) }
       }
 
-      if (lastUserText.includes('[silent-stop-demo]') && !pendingCallId) {
+      if (allUserText.includes('[silent-stop-demo]') && !pendingCallId) {
+        // 工具已经执行过：续写提示回来后仍然保持空回复。
+        if (silentStopToolDone) return textStream('')
         pendingCallId = `demo-silent-${Date.now()}`
         const parts: LanguageModelV3StreamPart[] = [
           { type: 'stream-start', warnings: [] },

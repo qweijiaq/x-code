@@ -353,9 +353,7 @@ export class PtyShellProvider implements ManagedShellProvider {
       : ['-c', command]
     const wrapped = isWindows ? { executable, args: rawArgs } : wrapShellSpawn(executable, rawArgs)
     const nodePty = this.options.nodePty ?? loadNodePty()
-    const env = isWindows
-      ? stringEnvironment(options.env)
-      : (sanitizeShellEnv(stringEnvironment(options.env)) as Record<string, string>)
+    const env = sanitizeShellEnv(stringEnvironment(options.env)) as Record<string, string>
     if (isWindows) {
       this.windowsArtifact ??= resolveWindowsSupervisorArtifact()
       return new WindowsPtySpawnAttempt({

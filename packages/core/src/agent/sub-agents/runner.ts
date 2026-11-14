@@ -11,6 +11,7 @@ import { activeMemoryRecallAttachments } from '../../knowledge/memory/recall-sta
 import { tokenizeMemoryText } from '../../knowledge/memory/search-index.js'
 import { propagateExternalContent } from '../../permissions/external-content.js'
 import { capabilitiesOf, modelSupportsVision } from '../../providers/capabilities.js'
+import { disposePersistentShell } from '../../tools/shell-session/persistent-shell.js'
 import type { ShellSessionController } from '../../tools/shell-session/types.js'
 import type { AgentCallbacks, AgentOptions, ExecutionAuthority, TokenUsage } from '../../types/index.js'
 import { debugLog, errorMessage, isAbortError } from '../../utils.js'
@@ -343,8 +344,10 @@ async function runSubAgentUnlocked(
   })
 
   const subState = createLoopState('default', {
+    persistentShell: parentState.persistentShellEnabled,
     projectCwd: parentState.projectCwd,
     agentRole: 'sub-agent',
+    persistSession: false,
   })
   // 父级读过外部内容时，子代理不能借“干净状态”绕过写审批。
   subState.externalContentTainted = parentState.externalContentTainted === true
@@ -517,6 +520,7 @@ async function runSubAgentUnlocked(
       completedResult.externalContentTainted = true
       completedResult.externalContentSources = subState.externalContentSources ?? []
     }
+    disposePersistentShell(subState)
     const cleanupFailure = await cleanupSubAgentShellSessions(
       parentState.shellSessions,
       subState.shellSessions,

@@ -186,7 +186,7 @@ async function cliInfo(args: string[]): Promise<number> {
   if (c) {
     console.log()
     console.log('Contributions:')
-    if (c.skillsDir) console.log(`  skills:     ${c.skillsDir}`)
+    if (c.skillsDirs?.length) console.log(`  skills:     ${c.skillsDirs.join(', ')}`)
     if (c.agentsDir) console.log(`  agents:     ${c.agentsDir}`)
     if (c.commandsDir) console.log(`  commands:   ${c.commandsDir}`)
     if (c.mcpServers) console.log(`  mcpServers: ${c.mcpServers.kind === 'inline' ? '(inline)' : c.mcpServers.path}`)

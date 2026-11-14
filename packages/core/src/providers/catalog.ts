@@ -80,6 +80,99 @@ export interface ProviderInfo {
 // 条目顺序 = /model 选择器中的展示顺序（PROVIDER_MODELS 的键序是可观察的
 // UI）。智能默认检测改用下方的 DETECTION_ORDER。
 
+const OPENDESIGN_MODELS: readonly ProviderModel[] = [
+  {
+    id: 'opendesign:deepseek-v4.1-flash',
+    label: 'DeepSeek V4.1 Flash',
+    description: 'OpenDesign · fast DeepSeek tier, 1M context',
+    vision: true,
+  },
+  {
+    id: 'opendesign:deepseek-v4.1-flash-eco',
+    label: 'DeepSeek V4.1 Flash Eco',
+    description: 'OpenDesign · slower/cheaper DeepSeek tier for batch work',
+    vision: true,
+  },
+  {
+    id: 'opendesign:deepseek-v4-flash',
+    label: 'DeepSeek V4 Flash',
+    description: 'OpenDesign · legacy ID, routed to V4.1 Flash',
+    vision: true,
+  },
+  {
+    id: 'opendesign:deepseek-v4-flash-vision-exp',
+    label: 'DeepSeek V4 Flash Vision Exp',
+    description: 'OpenDesign · legacy vision ID, routed to V4.1 Flash',
+    vision: true,
+  },
+  {
+    id: 'opendesign:deepseek-v4-pro',
+    label: 'DeepSeek V4 Pro',
+    description: 'OpenDesign · DeepSeek reasoning tier',
+    vision: false,
+  },
+  {
+    id: 'opendesign:claude-haiku-5.5',
+    label: 'Claude Haiku 5.5',
+    description: 'OpenDesign · fast Anthropic tier',
+    vision: true,
+  },
+  {
+    id: 'opendesign:gpt-6-luna',
+    label: 'GPT-6 Luna',
+    description: 'OpenDesign · cost-sensitive GPT-6 tier',
+    vision: true,
+  },
+  {
+    id: 'opendesign:glm-5.3-flash',
+    label: 'GLM-5.3 Flash',
+    description: 'OpenDesign · fast Zhipu tier',
+    vision: true,
+  },
+  {
+    id: 'opendesign:glm-5.3-flashx',
+    label: 'GLM-5.3 Flash-X',
+    description: 'OpenDesign · faster Zhipu tier',
+    vision: true,
+  },
+  {
+    id: 'opendesign:kimi-k2.7-code',
+    label: 'Kimi K2.7 Code',
+    description: 'OpenDesign · coding model',
+    vision: true,
+  },
+  {
+    id: 'opendesign:mimo-v2.6-flash',
+    label: 'MiMo V2.6 Flash',
+    description: 'OpenDesign · fast MiMo tier',
+    vision: true,
+  },
+  {
+    id: 'opendesign:mimo-v2.6-pro',
+    label: 'MiMo V2.6 Pro',
+    description: 'OpenDesign · MiMo pro tier',
+    vision: true,
+  },
+  {
+    id: 'opendesign:minimax-m3.1-flash',
+    label: 'MiniMax M3.1 Flash',
+    description: 'OpenDesign · fast MiniMax tier',
+    vision: true,
+  },
+  {
+    id: 'opendesign:hy4-preview',
+    label: 'Hunyuan H4 Preview',
+    description: 'OpenDesign · Hunyuan preview model',
+    vision: false,
+  },
+]
+
+const OPENDESIGN_GO_MODELS: readonly ProviderModel[] = OPENDESIGN_MODELS.map((model) => ({
+  ...model,
+  id: model.id.replace(/^opendesign:/, 'opendesign-go:'),
+  description: model.description.replace('OpenDesign ·', 'OpenDesign Go ·'),
+}))
+
 export const PROVIDERS: readonly ProviderInfo[] = [
   {
     name: 'anthropic',
@@ -721,6 +814,132 @@ export const PROVIDERS: readonly ProviderInfo[] = [
       },
     ],
   },
+  {
+    name: 'opencode',
+    envKey: 'OPENCODE_API_KEY',
+    defaultModel: 'opencode:kimi-k3',
+    keyUrl: 'https://opencode.ai/console',
+    models: [
+      {
+        id: 'opencode:kimi-k3',
+        label: 'Kimi K3',
+        description: 'OpenCode Zen · flagship coding model',
+        vision: true,
+      },
+      {
+        id: 'opencode:qwen3.8-max',
+        label: 'Qwen3.8 Max',
+        description: 'OpenCode Zen · high-capacity Qwen flagship',
+        vision: false,
+      },
+      {
+        id: 'opencode:deepseek-v4-pro',
+        label: 'DeepSeek V4 Pro',
+        description: 'OpenCode Zen · DeepSeek reasoning tier',
+        vision: false,
+      },
+      {
+        id: 'opencode:deepseek-v4.1-flash',
+        label: 'DeepSeek V4.1 Flash',
+        description: 'OpenCode Zen · fast, cheaper DeepSeek tier',
+        vision: false,
+      },
+      {
+        id: 'opencode:glm-5.3',
+        label: 'GLM-5.3',
+        description: 'OpenCode Zen · Zhipu text flagship',
+        vision: false,
+      },
+      {
+        id: 'opencode:minimax-m3',
+        label: 'MiniMax M3',
+        description: 'OpenCode Zen · long-context MiniMax model',
+        vision: false,
+      },
+      {
+        id: 'opencode:kimi-k2.7-code',
+        label: 'Kimi K2.7 Code',
+        description: 'OpenCode Zen · legacy coding model',
+        vision: true,
+      },
+    ],
+  },
+  {
+    name: 'opencode-go',
+    envKey: 'OPENCODE_GO_API_KEY',
+    defaultModel: 'opencode-go:kimi-k3',
+    keyUrl: 'https://opencode.ai/console',
+    models: [
+      {
+        id: 'opencode-go:kimi-k3',
+        label: 'Kimi K3',
+        description: 'OpenCode Go · flagship coding model',
+        vision: true,
+      },
+      {
+        id: 'opencode-go:claude-haiku-5-5',
+        label: 'Claude Haiku 5.5',
+        description: 'OpenCode Go · fast Anthropic tier',
+        vision: true,
+      },
+      {
+        id: 'opencode-go:gemini-4-argon',
+        label: 'Gemini 4 Argon',
+        description: 'OpenCode Go · Google flagship',
+        vision: true,
+      },
+      {
+        id: 'opencode-go:gpt-6-luna',
+        label: 'GPT-6 Luna',
+        description: 'OpenCode Go · cost-sensitive GPT-6 tier',
+        vision: true,
+      },
+      {
+        id: 'opencode-go:grok-4.7',
+        label: 'Grok 4.7',
+        description: 'OpenCode Go · xAI flagship',
+        vision: true,
+      },
+      {
+        id: 'opencode-go:deepseek-v4-pro',
+        label: 'DeepSeek V4 Pro',
+        description: 'OpenCode Go · DeepSeek reasoning tier',
+        vision: false,
+      },
+      {
+        id: 'opencode-go:glm-5.3',
+        label: 'GLM-5.3',
+        description: 'OpenCode Go · Zhipu text flagship',
+        vision: false,
+      },
+      {
+        id: 'opencode-go:minimax-m3.1-flash',
+        label: 'MiniMax M3.1 Flash',
+        description: 'OpenCode Go · fast MiniMax tier',
+        vision: false,
+      },
+      {
+        id: 'opencode-go:qwen3.8-max',
+        label: 'Qwen3.8 Max',
+        description: 'OpenCode Go · high-capacity Qwen flagship',
+        vision: false,
+      },
+    ],
+  },
+  {
+    name: 'opendesign',
+    envKey: 'OPENDESIGN_API_KEY',
+    defaultModel: 'opendesign:deepseek-v4.1-flash',
+    keyUrl: 'https://open-design.ai/cloud/api-keys',
+    models: OPENDESIGN_MODELS,
+  },
+  {
+    name: 'opendesign-go',
+    envKey: 'OPENDESIGN_GO_API_KEY',
+    defaultModel: 'opendesign-go:deepseek-v4.1-flash',
+    keyUrl: 'https://open-design.ai/cloud/api-keys',
+    models: OPENDESIGN_GO_MODELS,
+  },
 ]
 
 // ─── 模型别名 ───
@@ -740,13 +959,30 @@ export const MODEL_ALIASES: Record<string, string> = {
   grok: 'xai:grok-4.7',
   glm: 'zhipu:glm-5.3',
   kimi: 'moonshotai:kimi-k3.1-pro',
+  opencode: 'opencode:kimi-k3',
+  'opencode-go': 'opencode-go:kimi-k3',
+  opendesign: 'opendesign:deepseek-v4.1-flash',
+  'opendesign-go': 'opendesign-go:deepseek-v4.1-flash',
 }
 
 // ─── 派生视图（为既有调用方保留的旧形态）───
 
 /** 智能默认检测顺序：第一个有 key 的 provider 胜出。这不是表格/展示顺序——
  *  deepseek 有意排在探测首位。 */
-const DETECTION_ORDER = ['deepseek', 'anthropic', 'openai', 'alibaba', 'google', 'xai', 'zhipu', 'moonshotai'] as const
+const DETECTION_ORDER = [
+  'deepseek',
+  'anthropic',
+  'openai',
+  'alibaba',
+  'google',
+  'xai',
+  'zhipu',
+  'moonshotai',
+  'opencode',
+  'opencode-go',
+  'opendesign',
+  'opendesign-go',
+] as const
 
 export const PROVIDER_DETECTION_ORDER = DETECTION_ORDER.map((name) => {
   const p = PROVIDERS.find((provider) => provider.name === name)!

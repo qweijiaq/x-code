@@ -26,6 +26,7 @@ import {
   loadAllPlugins,
   loadLocalHookConfigs,
   loadUserConfig,
+  refreshDynamicProviderModels,
   reloadPersistedRules,
   resolveModelId,
   resolveStreamConfig,
@@ -163,6 +164,12 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   // 更早会话中「不再询问」的批准存在项目里。
   reloadPersistedRules(workspace)
   await applyStoredSecrets()
+  const discovery = await refreshDynamicProviderModels({ timeoutMs: 30_000 })
+  console.error(
+    `[provider-models] refreshed=${discovery.refreshed.join(',') || 'none'} errors=${
+      discovery.errors.map((error) => `${error.provider}: ${error.message}`).join(' | ') || 'none'
+    }`,
+  )
   // 拾取应用启动后用户安装的工具。存储的
   // secret 和 .env 值优先于 shell 快照。
   await refreshShellEnvironment()

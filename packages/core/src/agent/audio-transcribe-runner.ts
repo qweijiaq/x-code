@@ -66,6 +66,8 @@ class WhisperProcessClient {
       execArgv: ['--max-old-space-size=256'],
       serialization: 'advanced',
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      // Desktop runtime 的 execPath 是 Electron；只让这个 worker 以 Node 运行。
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     })
     this.child.on('message', (message: WhisperWorkerResponse) => this.handleMessage(message))
     this.child.on('error', (error) => {

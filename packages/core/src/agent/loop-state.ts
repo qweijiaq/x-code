@@ -83,6 +83,12 @@ export interface LoopState {
   /** 生命周期行为的运行时身份，不得从工具过滤推断。hydrated 状态和普通
    *  状态是根；被委派的 agent 在其全新状态创建时显式 opt-in。 */
   agentRole: 'root' | 'sub-agent'
+  /** 是否把该状态写入 `.x-code/sessions`。子代理使用独立上下文，但不需要
+   *  在会话列表里留下一份同级会话，因此显式关闭。 */
+  persistSession: boolean
+  /** POSIX 会话级持久 shell：普通命令保留 cwd/env，像用户自己的终端。
+   *  测试与嵌入方默认关闭。 */
+  persistentShellEnabled: boolean
   /** 精确的转录路径。新会话为 null，直到 appendHeader 钉住仅含时间戳的
    *  路径；hydrated 的旧式会话保留其原始 slug 前缀路径，好让 resume
    *  继续就地追加。 */
@@ -228,6 +234,10 @@ export interface CreateLoopStateOptions {
   ownerSessionId?: string
   projectCwd?: string
   agentRole?: 'root' | 'sub-agent'
+  /** 默认 true；子代理传 false，避免每个 task 都生成一个会话文件。 */
+  persistSession?: boolean
+  /** 启用会话级持久 shell（POSIX）。默认关闭，生产入口显式开启。 */
+  persistentShell?: boolean
   shellProvider?: ManagedShellProvider
 }
 
@@ -258,6 +268,8 @@ export function createLoopState(
     sessionId,
     projectCwd,
     agentRole: options.agentRole ?? 'root',
+    persistSession: options.persistSession !== false,
+    persistentShellEnabled: options.persistentShell === true,
     sessionFilePath: null,
     startedAt: new Date().toISOString(),
     filesModified: new Set(),

@@ -57,9 +57,10 @@ export interface LoadResult {
  *  `hooks` 上的 `path` / `inline` 判别符反映了 manifest 的联合类型——作者
  *  要么指向文件，要么内联配置。 */
 export interface ResolvedContributions {
-  /** 插件的 skills 目录绝对路径（若有）。其下每个子目录都应按既有的
-   *  `<name>/SKILL.md` 布局组织（这样 skill loader 无需改动即可扫描）。 */
-  skillsDir?: string
+  /** 插件的 skills 目录绝对路径列表（若有）。每一项既可以是包含
+   *  `<name>/SKILL.md` 子目录的父目录，也可以直接是一个 skill 目录——
+   *  Claude Code 的 `skills` 数组用的是后一种形式。 */
+  skillsDirs?: string[]
   /** 插件 sub-agent .md 文件目录的绝对路径。 */
   agentsDir?: string
   /** 插件 slash 命令 .md 文件目录的绝对路径。 */
@@ -221,9 +222,11 @@ export async function resolveContributions(plugin: LoadedPlugin): Promise<Resolv
 
   // skills / agents / commands —— 目录类贡献
   if (m.skills) {
-    result.skillsDir = path.resolve(root, m.skills)
+    // 字符串是父目录；数组的每一项是明确的 skill 目录（Claude Code 兼容）。
+    const declared = Array.isArray(m.skills) ? m.skills : [m.skills]
+    result.skillsDirs = declared.map((entry) => path.resolve(root, entry))
   } else if (await isDir(path.join(root, 'skills'))) {
-    result.skillsDir = path.join(root, 'skills')
+    result.skillsDirs = [path.join(root, 'skills')]
   }
   if (m.agents) {
     result.agentsDir = path.resolve(root, m.agents)

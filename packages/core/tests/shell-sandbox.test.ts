@@ -67,6 +67,37 @@ describe('shell environment scrubbing', () => {
       sanitizeShellEnv(env, { enabled: false, workspace: '/tmp', allowNetwork: false, includeExtensions: false }),
     ).toBe(env)
   })
+
+  it('strips Electron runtime flags even when the sandbox is off', () => {
+    const env = {
+      PATH: '/bin',
+      ELECTRON_RUN_AS_NODE: '1',
+      ELECTRON_NO_ATTACH_CONSOLE: '1',
+      KEPT: 'yes',
+    }
+    const sanitized = sanitizeShellEnv(env, {
+      enabled: false,
+      workspace: '/tmp',
+      allowNetwork: false,
+      includeExtensions: false,
+    })
+    expect(sanitized).toEqual({ PATH: '/bin', KEPT: 'yes' })
+    expect(env.ELECTRON_RUN_AS_NODE).toBe('1')
+  })
+
+  it('strips Electron runtime flags together with secrets when the sandbox is on', () => {
+    const sanitized = sanitizeShellEnv(
+      {
+        PATH: '/bin',
+        ELECTRON_RUN_AS_NODE: '1',
+        ELECTRON_NO_ATTACH_CONSOLE: '1',
+        API_KEY: 'secret',
+        KEPT: 'yes',
+      },
+      { enabled: true, workspace: '/tmp', allowNetwork: false, includeExtensions: false },
+    )
+    expect(sanitized).toEqual({ PATH: '/bin', KEPT: 'yes' })
+  })
 })
 
 describe('sandboxed shell execution', () => {

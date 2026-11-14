@@ -70,12 +70,87 @@ export interface Entry {
   subagent?: SubAgentView
   attachments?: string[]
   attachmentViews?: SessionAttachmentView[]
+  /** 本地时间戳，仅实时消息有；用于轮次分隔条显示时间。 */
+  at?: number
   movedDeliverables?: string[]
 }
 
 export type TurnRenderItem =
   | { kind: 'entry'; entry: Entry }
   | { kind: 'toggle'; key: string; count: number; failures: number; collapsed: boolean }
+  | { kind: 'divider'; key: string; turn: number; at?: number }
+
+export interface TurnBuildOptions {
+  sessionKey: string
+  toolDisplayMode: ToolDisplayMode
+  toolOverrides: Map<string, boolean>
+  /** 只渲染最近 N 轮；省略时渲染全部。 */
+  maxTurns?: number
+}
+
+export interface TurnBuild {
+  items: TurnRenderItem[]
+  hiddenTurns: number
+  totalTurns: number
+  shownEntries: Entry[]
+}
+
+/** 把条目切成用户轮次，并为每轮生成工具折叠块与分隔条。
+ *  拆分窗口只作用于渲染，不影响会话数据本身。 */
+export function buildTurnItems(entries: Entry[], options: TurnBuildOptions): TurnBuild {
+  const groups: Entry[][] = []
+  let current: Entry[] | undefined
+  let currentTurnId: string | undefined
+  for (const entry of entries) {
+    const startsTurn =
+      !current ||
+      entry.role === 'user' ||
+      (entry.turnId !== undefined && currentTurnId !== undefined && entry.turnId !== currentTurnId)
+    if (startsTurn) {
+      const group: Entry[] = []
+      groups.push(group)
+      current = group
+      currentTurnId = undefined
+    }
+    if (!current) continue
+    current.push(entry)
+    if (entry.turnId) currentTurnId = entry.turnId
+  }
+
+  const limit = options.maxTurns === undefined ? groups.length : Math.max(1, options.maxTurns)
+  const hiddenTurns = Math.max(0, groups.length - limit)
+  const shown = groups.slice(hiddenTurns)
+  const items: TurnRenderItem[] = []
+  const shownEntries: Entry[] = []
+  const showDivider = groups.length > 1
+
+  shown.forEach((group, index) => {
+    const absoluteTurn = hiddenTurns + index + 1
+    const entryKey = group.find((entry) => entry.role === 'user')?.id ?? group[0]?.id ?? 'turn'
+    const key = `${options.sessionKey}:${entryKey}`
+    if (showDivider) {
+      const at = group.find((entry) => entry.role === 'user')?.at
+      items.push({ kind: 'divider', key: `divider-${key}`, turn: absoluteTurn, ...(at ? { at } : {}) })
+    }
+    const tools = group.filter((entry) => entry.role === 'tool')
+    const collapsed = !(options.toolOverrides.get(key) ?? options.toolDisplayMode !== 'minimal')
+    const failures = tools.filter((entry) => entry.toolStatus === 'error' || entry.toolStatus === 'denied').length
+    let toggleAdded = false
+    for (const entry of group) {
+      shownEntries.push(entry)
+      if (entry.role === 'tool') {
+        if (!toggleAdded) {
+          items.push({ kind: 'toggle', key, count: tools.length, failures, collapsed })
+          toggleAdded = true
+        }
+        if (collapsed) continue
+      }
+      items.push({ kind: 'entry', entry })
+    }
+  })
+
+  return { items, hiddenTurns, totalTurns: groups.length, shownEntries }
+}
 
 export const TOOL_DISPLAY_MODES = ['minimal', 'balanced', 'full'] as const
 export type ToolDisplayMode = (typeof TOOL_DISPLAY_MODES)[number]
@@ -198,6 +273,26 @@ export function sessionTime(item: SessionListItem): string {
   } catch {
     return ''
   }
+}
+
+export type SessionDayGroup = 'pinned' | 'today' | 'yesterday' | 'week' | 'earlier'
+
+function startOfDay(time: number): number {
+  const date = new Date(time)
+  date.setHours(0, 0, 0, 0)
+  return date.getTime()
+}
+
+/** 侧栏按最近活动给会话分组；置顶会话单独成组，不按日期拆散。 */
+export function sessionDayGroup(mtime: number, now = Date.now(), pinned = false): SessionDayGroup {
+  if (pinned) return 'pinned'
+  const day = startOfDay(now)
+  const target = startOfDay(mtime)
+  const diff = Math.round((day - target) / 86_400_000)
+  if (diff <= 0) return 'today'
+  if (diff === 1) return 'yesterday'
+  if (diff < 7) return 'week'
+  return 'earlier'
 }
 
 export function extractSourceUrls(text: string): string[] {

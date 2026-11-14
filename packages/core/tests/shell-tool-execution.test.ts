@@ -1,4 +1,6 @@
 import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 import type { ModelMessage } from 'ai'
 
@@ -7,6 +9,7 @@ import { processToolCalls as dispatchToolCalls } from '../src/agent/tool-executi
 import { appendTrackedMessage } from '../src/agent/tracked-messages.js'
 import { HookBus, type ToolHookSnapshot } from '../src/hooks/bus.js'
 import { HookRegistry } from '../src/hooks/registry.js'
+import { disposePersistentShell } from '../src/tools/shell-session/persistent-shell.js'
 import type {
   ManagedProcess,
   ManagedProcessFrame,
@@ -515,5 +518,37 @@ describe('background shell pauses the foreground turn', () => {
     )
 
     expect(execution.stopTurn).toBe(false)
+  })
+})
+
+describe.skipIf(process.platform === 'win32')('persistent shell execution', () => {
+  it('keeps cwd between sequential shell tool calls', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'xcode-persistent-tool-'))
+    try {
+      const state = createLoopState('default', { projectCwd: dir, persistentShell: true })
+      const options: AgentOptions = { modelId: 'test-model', trustMode: true, printMode: false }
+      const callbacks = makeCallbacks()
+
+      await processToolCalls(
+        [{ toolName: 'shell', toolCallId: 'call-cd', input: { command: 'mkdir sub && cd sub && pwd' } }],
+        state,
+        options,
+        callbacks,
+        stubModel,
+      )
+      await processToolCalls(
+        [{ toolName: 'shell', toolCallId: 'call-pwd', input: { command: 'pwd' } }],
+        state,
+        options,
+        callbacks,
+        stubModel,
+      )
+
+      const output = JSON.stringify(resultPart(state, 'call-pwd')?.output ?? '')
+      expect(output).toContain('/sub')
+      disposePersistentShell(state)
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
+    }
   })
 })

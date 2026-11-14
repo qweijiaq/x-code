@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import enManual from '../../../../docs/desktop-manual.en.md?raw'
-import zhManual from '../../../../docs/desktop-manual.md?raw'
 import { MarkdownView } from './MarkdownView.js'
 import i18n from './i18n.js'
 import { isImeEvent } from './ime.js'
@@ -19,7 +17,7 @@ interface ManualPanelProps {
 
 const shots = import.meta.glob('./manual-assets/*.{png,jpg,jpeg}', {
   eager: true,
-  query: '?inline',
+  query: '?url',
   import: 'default',
 }) as Record<string, string>
 
@@ -61,11 +59,33 @@ function parseManual(markdown: string): { title: string; sections: Section[] } {
 export function ManualPanel({ onClose }: ManualPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const english = i18n.language === 'en'
-  const { title, sections } = useMemo(() => parseManual(english ? enManual : zhManual), [english])
+  const [doc, setDoc] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [activeId, setActiveId] = useState(sections[0]?.id ?? '')
+  const [activeId, setActiveId] = useState('')
   const contentRef = useRef<HTMLDivElement | null>(null)
   const searchRef = useRef<HTMLInputElement | null>(null)
+
+  // 手册正文按语言动态加载：两种语言和截图不进入主包，面板打开才取当前语言。
+  useEffect(() => {
+    let cancelled = false
+    setDoc(null)
+    const loader = english
+      ? import('../../../../docs/desktop-manual.en.md?raw')
+      : import('../../../../docs/desktop-manual.md?raw')
+    void loader.then((module) => {
+      if (!cancelled) setDoc(module.default)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [english])
+
+  const { title, sections } = useMemo(() => parseManual(doc ?? ''), [doc])
+  const localAssets = useMemo(() => Object.values(shots), [])
+
+  useEffect(() => {
+    if (!activeId && sections.length > 0) setActiveId(sections[0].id)
+  }, [sections, activeId])
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -138,7 +158,11 @@ export function ManualPanel({ onClose }: ManualPanelProps): React.JSX.Element {
             {filtered.length === 0 ? <div className="settings-empty">{t('没有匹配的章节')}</div> : null}
           </nav>
           <div className="manual-content" ref={contentRef}>
-            {active ? <MarkdownView text={withShots(`## ${active.title}\n\n${active.body}`)} /> : null}
+            {doc === null ? (
+              <div className="settings-empty">{t('加载手册…')}</div>
+            ) : active ? (
+              <MarkdownView text={withShots(`## ${active.title}\n\n${active.body}`)} localAssets={localAssets} />
+            ) : null}
           </div>
         </div>
       </div>

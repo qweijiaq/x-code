@@ -101,10 +101,14 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
   // 适中模式只保留卡片头部；全面模式默认展开全部内容。
   // 手动展开/收起只对当前模式生效，切换模式后回到该模式的默认值。
   const [cardOverride, setCardOverride] = useState<{ mode: ToolDisplayMode; open: boolean } | null>(null)
+  const [longExpanded, setLongExpanded] = useState(false)
+  const longUserMessage = entry.role === 'user' && (entry.text.length > 900 || entry.text.split('\n').length > 12)
   const cardOpen =
     cardOverride && cardOverride.mode === toolDisplayMode ? cardOverride.open : toolDisplayMode === 'full'
   const toggleCard = (): void => setCardOverride({ mode: toolDisplayMode, open: !cardOpen })
-  const hasBody = entry.role === 'tool' && Boolean(entry.diff || entry.toolOutput || entry.subagent)
+  const shellCommand =
+    entry.toolName === 'shell' && typeof entry.toolInput?.command === 'string' ? entry.toolInput.command : ''
+  const hasBody = entry.role === 'tool' && Boolean(entry.diff || entry.toolOutput || entry.subagent || shellCommand)
   return entry.role === 'tool' ? (
     <article key={entry.id} className={`tool-card ${entry.toolStatus ?? 'running'}`}>
       <div className="tool-head">
@@ -114,7 +118,10 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
           {runningSeconds !== null ? ` · ${formatDuration(runningSeconds)}` : ''}
         </span>
         <span className="spacer" />
-        <span className="tool-target">{summarizeInput(entry.toolInput)}</span>
+        <span className="tool-target" title={summarizeInput(entry.toolInput) || undefined}>
+          {summarizeInput(entry.toolInput)}
+        </span>
+        {entry.toolOutput ? <CopyButton text={entry.toolOutput} label="复制输出" /> : null}
         {entry.toolName === 'readDocument' && typeof entry.toolInput?.filePath === 'string' ? (
           <button className="session-action" onClick={() => void onOpenDocument(String(entry.toolInput?.filePath))}>
             {t('预览')}
@@ -133,6 +140,11 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
         ) : null}
       </div>
       {entry.toolProgress ? <div className="tool-progress">{entry.toolProgress}</div> : null}
+      {cardOpen && shellCommand ? (
+        <div className="tool-command" data-testid="tool-command">
+          <pre>{shellCommand}</pre>
+        </div>
+      ) : null}
       {cardOpen && entry.subagent ? (
         <SubAgentBlock agent={entry.subagent} expanded={toolDisplayMode === 'full'} />
       ) : null}
@@ -170,10 +182,10 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
                     : t('命令没能联网。Shell 沙箱当前禁止网络访问；如果本机网络正常，允许网络后重试。')
                   : toolGuidance === 'write'
                     ? t('命令被 Shell 沙箱拦截：只能写入工作区和临时目录。可以在终端里运行，终端不受沙箱限制。')
-                    : t('命令找不到。如果刚在电脑终端安装了它，刷新登录 shell 环境后重试。')}
+                    : t('命令找不到。PATH 会在下一轮自动刷新；直接让 Agent 重试即可，不必手动在终端执行。')}
           </span>
           <span className="spacer" />
-          {toolCommand ? (
+          {toolCommand && toolGuidance !== 'command' ? (
             <button
               className="btn btn-quiet"
               data-testid="tool-run-in-terminal"
@@ -242,10 +254,17 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
     >
       <span className="role">{t(ROLE_LABEL[entry.role])}</span>
       {entry.role === 'assistant' || entry.role === 'user' ? (
-        <MarkdownView text={entry.text} streaming={activeStreaming} />
+        <div className={longUserMessage && !longExpanded ? 'message-clamp' : undefined}>
+          <MarkdownView text={entry.text} streaming={activeStreaming} />
+        </div>
       ) : (
         <span className="message-text">{entry.text}</span>
       )}
+      {longUserMessage ? (
+        <button type="button" className="message-expand" onClick={() => setLongExpanded((value) => !value)}>
+          {longExpanded ? t('收起长消息') : t('展开全文')}
+        </button>
+      ) : null}
       {entry.attachments?.length ? (
         <div className="message-attachments">
           {entry.attachments.map((file) =>
@@ -296,7 +315,9 @@ export function TranscriptEntry({ entry }: { entry: Entry }): React.JSX.Element 
       ) : null}
       {entry.text ? (
         <span className="message-actions">
-          {entry.role === 'assistant' || entry.role === 'user' ? <CopyButton text={entry.text} /> : null}
+          {entry.role === 'assistant' || entry.role === 'user' || entry.role === 'error' ? (
+            <CopyButton text={entry.text} label={entry.role === 'error' ? '复制错误' : '复制'} />
+          ) : null}
           {entry.role === 'assistant' && entry.id === lastAssistantId && !busy ? (
             <button type="button" className="copy-btn" onClick={() => void onRegenerate()}>
               {t('重新生成')}

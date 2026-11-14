@@ -35,6 +35,10 @@ export function ptyEnv(): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === 'string') env[key] = value
   }
+  // 交互式终端是用户自己的 shell，不应该继承 Electron utilityProcess 的
+  // 运行时开关；否则在终端里跑 Electron 项目会变成纯 Node（没有窗口）。
+  delete env.ELECTRON_RUN_AS_NODE
+  delete env.ELECTRON_NO_ATTACH_CONSOLE
   env.TERM = 'xterm-256color'
   env.COLORTERM ??= 'truecolor'
   env.PYTHONIOENCODING ??= 'utf-8'

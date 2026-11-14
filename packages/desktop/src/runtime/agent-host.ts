@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -35,6 +36,7 @@ import {
   createGoal,
   createLoopState,
   createModelRegistry,
+  disposePersistentShell,
   ensureDefaultWorkspace,
   estimateContextBreakdown,
   expandCommandBody,
@@ -54,6 +56,7 @@ import {
   indexCode as indexCodeAtPath,
   initializeOpenAIAuthContext,
   isProjectTrusted,
+  listOpenAICompatibleModels,
   listSessions,
   loadSession as loadCoreSession,
   loadLocalHookConfigs,
@@ -181,6 +184,7 @@ import type {
   UserConfigValues,
   WorkspaceInsightsView,
   WorkspaceList,
+  WorkspaceSessionsView,
   WorktreeOpenResult,
 } from '../shared/protocol.js'
 import {
@@ -233,6 +237,7 @@ import {
   clearProviderKey,
   clearSearchKey as clearStoredSearchKey,
   providerSecretStatus,
+  providerSecretValue,
   saveCustomBaseUrl,
   saveProviderKey,
   saveSearchKey,
@@ -240,6 +245,7 @@ import {
 } from './secrets.js'
 import { createSessionController } from './session-controller.js'
 import { exportSessionFile } from './session-export.js'
+import { SessionRuntime } from './session-runtime.js'
 import { cleanSessionTitle } from './session-title.js'
 import { listSessionItems, loadSessionView, toSessionMessages, usageView } from './sessions.js'
 import { buildSettingsSnapshot } from './settings-snapshot.js'
@@ -271,7 +277,7 @@ export class AgentHost {
   private readonly library = createLibraryController({ send: (event) => this.send(event) })
   private readonly storage = createStorageController({
     workspace: () => this.requireBootstrap().workspace,
-    isBusy: () => this.activeTurn !== null,
+    isBusy: () => this.anyRuntimeBusy(),
     activeSessionPath: () => this.loopState?.sessionFilePath ?? null,
   })
   private readonly sessions = createSessionController({
@@ -288,15 +294,12 @@ export class AgentHost {
 
   private bootstrap: RuntimeBootstrap | null = null
   private state: AppState | null = null
-  private loopState: LoopState | null = null
-  private model: LanguageModel | null = null
-  private modelId = DEMO_MODEL_ID
-  private demo = true
-  private activeTurn: ActiveTurn | null = null
-  private controller: AbortController | null = null
+  private readonly primaryRuntime = new SessionRuntime()
+  private activeRuntime: SessionRuntime = this.primaryRuntime
+  private readonly sessionRuntimes = new Map<string, SessionRuntime>()
+  private readonly sessionContext = new AsyncLocalStorage<SessionRuntime>()
   private backgroundTasks = new BackgroundTaskRegistry()
   private backgroundPublishTimer: ReturnType<typeof setInterval> | null = null
-  private approvals = new Map<string, PendingApproval>()
   private mcp: McpService | null = null
   private disabledTools = new Set<string>()
   private autoAllowedTools = new Set<string>()
@@ -318,13 +321,93 @@ export class AgentHost {
     string,
     { filePath: string; beforeContent?: string; afterContent?: string; isCreate: boolean }
   >()
-  private shellUnsubscribe: (() => void) | null = null
-  private turnSeq = 0
   private approvalSeq = 0
   private skillPollTimer: ReturnType<typeof setInterval> | null = null
   private codeIndexWatcher: CodeIndexWatcher | null = null
   private skillSignature = ''
   private titleGenerating = new Set<string>()
+
+  private currentRuntime(): SessionRuntime {
+    return this.sessionContext.getStore() ?? this.activeRuntime
+  }
+
+  private anyRuntimeBusy(): boolean {
+    return this.primaryRuntime.busy || [...this.sessionRuntimes.values()].some((runtime) => runtime.busy)
+  }
+
+  private get loopState(): LoopState | null {
+    return this.currentRuntime().loopState
+  }
+  private set loopState(value: LoopState | null) {
+    const runtime = this.currentRuntime()
+    runtime.loopState = value
+    // 让 abort/activate 能按 sessionId 找回主 runtime，而不只依赖 Map 注册。
+    if (value) this.registerSession(runtime, value)
+  }
+
+  private registerSession(runtime: SessionRuntime, state: LoopState): void {
+    for (const [id, existing] of this.sessionRuntimes) {
+      if (existing === runtime && id !== state.sessionId) this.sessionRuntimes.delete(id)
+    }
+    this.sessionRuntimes.set(state.sessionId, runtime)
+  }
+  private get model(): LanguageModel | null {
+    return this.currentRuntime().model
+  }
+  private set model(value: LanguageModel | null) {
+    this.currentRuntime().model = value
+  }
+  private get modelId(): string {
+    return this.currentRuntime().modelId
+  }
+  private set modelId(value: string) {
+    this.currentRuntime().modelId = value
+  }
+  private get demo(): boolean {
+    return this.currentRuntime().demo
+  }
+  private set demo(value: boolean) {
+    this.currentRuntime().demo = value
+  }
+  private get activeTurn(): ActiveTurn | null {
+    return this.currentRuntime().activeTurn
+  }
+  private set activeTurn(value: ActiveTurn | null) {
+    this.currentRuntime().activeTurn = value
+  }
+  private get controller(): AbortController | null {
+    return this.currentRuntime().controller
+  }
+  private set controller(value: AbortController | null) {
+    this.currentRuntime().controller = value
+  }
+  private get approvals(): Map<string, PendingApproval> {
+    return this.currentRuntime().approvals
+  }
+  private get turnSeq(): number {
+    return this.currentRuntime().turnSeq
+  }
+  private set turnSeq(value: number) {
+    this.currentRuntime().turnSeq = value
+  }
+  private get goalActivity(): string | null {
+    return this.currentRuntime().goalActivity
+  }
+  private set goalActivity(value: string | null) {
+    this.currentRuntime().goalActivity = value
+  }
+  private get goalEmitAt(): number {
+    return this.currentRuntime().goalEmitAt
+  }
+  private set goalEmitAt(value: number) {
+    this.currentRuntime().goalEmitAt = value
+  }
+  private get shellUnsubscribe(): (() => void) | null {
+    return this.currentRuntime().shellUnsubscribe
+  }
+  private set shellUnsubscribe(value: (() => void) | null) {
+    this.currentRuntime().shellUnsubscribe = value
+  }
 
   constructor(
     private readonly send: (event: RuntimeEvent) => void,
@@ -412,6 +495,40 @@ export class AgentHost {
       models: [...this.state.models],
       providers: [...this.state.providers],
     }
+  }
+
+  /** 侧栏目录树：按工作区分组列出会话，当前工作区之外只取最近 12 条。 */
+  async listWorkspaceSessions(): Promise<WorkspaceSessionsView[]> {
+    const settings = loadDesktopSettings()
+    const current = this.requireBootstrap().workspace
+    const titles = settings.sessionTitles ?? {}
+    const pinned = new Set(settings.pinnedSessions ?? [])
+    const recent = settings.recentProjects ?? []
+    const workspaces = [current, ...recent.filter((entry) => path.resolve(entry) !== path.resolve(current))].slice(
+      0,
+      12,
+    )
+    const result: WorkspaceSessionsView[] = []
+    for (const workspace of workspaces) {
+      let sessions: SessionListItem[] = []
+      try {
+        const items = await listSessionItems(workspace)
+        sessions = items.slice(0, 12).map((item) => ({
+          ...item,
+          ...(titles[item.sessionId] ? { title: titles[item.sessionId] } : {}),
+          pinned: pinned.has(item.filePath),
+        }))
+      } catch {
+        sessions = []
+      }
+      result.push({
+        path: workspace,
+        name: path.basename(workspace) || workspace,
+        current: path.resolve(workspace) === path.resolve(current),
+        sessions,
+      })
+    }
+    return result
   }
 
   async listSessions(): Promise<SessionListItem[]> {
@@ -531,6 +648,7 @@ export class AgentHost {
     this.cancelAllApprovals()
     this.stopCodeIndexWatcher()
     this.workspaceOverride = resolved
+    if (this.loopState) disposePersistentShell(this.loopState)
     this.shellUnsubscribe?.()
     this.shellUnsubscribe = null
     this.loopState = null
@@ -570,15 +688,47 @@ export class AgentHost {
     return loaded.view
   }
 
+  /** 标签关闭后释放不再需要的会话运行时；运行中的会话保留到结束。 */
+  forgetSession(sessionId: string): { forgotten: boolean } {
+    const runtime = this.sessionRuntimes.get(sessionId)
+    if (!runtime || runtime === this.activeRuntime || runtime.busy) return { forgotten: false }
+    this.sessionRuntimes.delete(sessionId)
+    if (runtime.loopState) disposePersistentShell(runtime.loopState)
+    runtime.shellUnsubscribe?.()
+    runtime.shellUnsubscribe = null
+    return { forgotten: true }
+  }
+
+  /** 把窗口当前活动会话切到已在内存中的会话；不重新读盘。 */
+  activateSession(sessionId: string): { activated: boolean } {
+    const runtime = this.sessionRuntimes.get(sessionId)
+    if (!runtime) return { activated: false }
+    this.activeRuntime = runtime
+    return { activated: true }
+  }
+
   async loadSession(filePath: string): Promise<LoadedSessionView> {
-    if (this.activeTurn) throw new Error('turn-busy')
-    this.cancelAllApprovals()
+    // 并行会话各自独立：切换标签不能取消另一会话仍在等待的审批。
     const loaded = await loadSessionView(filePath)
     if (!loaded) throw new Error(`session-not-found: ${filePath}`)
     if (loaded.loaded.transcriptIntegrity === 'failed') {
       throw new Error('该会话的 transcript 完整性校验失败，可能已损坏，已拒绝加载。')
     }
 
+    const state = hydrateLoopState(loaded.loaded, 'default', this.requireBootstrap().workspace, {
+      persistentShell: true,
+    })
+    const existingRuntime = this.sessionRuntimes.get(state.sessionId)
+    // 同一会话正在运行时不能重新 hydrate；并行会话请用 session:activate。
+    if (existingRuntime?.busy) throw new Error('turn-busy')
+    if (existingRuntime?.loopState) disposePersistentShell(existingRuntime.loopState)
+    const runtime = existingRuntime ?? new SessionRuntime()
+    runtime.loopState = state
+    runtime.model = this.model
+    runtime.modelId = this.modelId
+    runtime.demo = this.demo
+    this.sessionRuntimes.set(state.sessionId, runtime)
+    this.activeRuntime = runtime
     let modelChanged = false
     if (loaded.view.modelId && loaded.view.modelId !== this.modelId) {
       try {
@@ -588,9 +738,7 @@ export class AgentHost {
         // 当保存的模型不再可用时，保留当前模型。
       }
     }
-
-    this.loopState = hydrateLoopState(loaded.loaded, 'default', this.requireBootstrap().workspace)
-    this.watchShellSessions(this.loopState)
+    this.watchShellSessions(state)
     this.clearGitCheckpoints()
     if (modelChanged) this.send({ type: 'app:state', state: this.getState() })
     return loaded.view
@@ -615,7 +763,9 @@ export class AgentHost {
       }
     }
     this.cancelAllApprovals()
-    this.loopState = hydrateLoopState(loaded.loaded, 'default', this.requireBootstrap().workspace)
+    this.loopState = hydrateLoopState(loaded.loaded, 'default', this.requireBootstrap().workspace, {
+      persistentShell: true,
+    })
     this.watchShellSessions(this.loopState)
     this.clearGitCheckpoints()
     if (modelChanged) this.send({ type: 'app:state', state: this.getState() })
@@ -628,12 +778,18 @@ export class AgentHost {
   }
 
   newSession(): { sessionId: string } {
-    if (this.activeTurn) throw new Error('turn-busy')
-    this.cancelAllApprovals()
-    this.loopState = createLoopState('default', { projectCwd: this.requireBootstrap().workspace })
-    this.watchShellSessions(this.loopState)
+    // 新会话不再打断其他会话：创建独立 runtime，并切换当前活动会话。
+    const state = createLoopState('default', { projectCwd: this.requireBootstrap().workspace, persistentShell: true })
+    const runtime = new SessionRuntime()
+    runtime.loopState = state
+    runtime.model = this.model
+    runtime.modelId = this.modelId
+    runtime.demo = this.demo
+    this.sessionRuntimes.set(state.sessionId, runtime)
+    this.activeRuntime = runtime
+    this.watchShellSessions(state)
     this.clearGitCheckpoints()
-    return { sessionId: this.loopState.sessionId }
+    return { sessionId: state.sessionId }
   }
 
   /** 订阅后台 shell 生命周期，以便 renderer 的任务面板能够
@@ -759,7 +915,9 @@ export class AgentHost {
     const loaded = await loadSessionView(forked.filePath)
     if (!loaded) throw new Error('派生会话写入后无法读取')
     this.cancelAllApprovals()
-    this.loopState = hydrateLoopState(loaded.loaded, 'default', this.requireBootstrap().workspace)
+    this.loopState = hydrateLoopState(loaded.loaded, 'default', this.requireBootstrap().workspace, {
+      persistentShell: true,
+    })
     this.watchShellSessions(this.loopState)
     this.clearGitCheckpoints()
     return { sessionId: loaded.view.sessionId, filePath: loaded.view.filePath, view: loaded.view }
@@ -1547,6 +1705,15 @@ export class AgentHost {
   }
 
   async submit(prompt: string, attachments: string[] = [], options: { autoFix?: boolean } = {}): Promise<TurnResult> {
+    const runtime = this.activeRuntime
+    return this.sessionContext.run(runtime, () => this.submitInRuntime(prompt, attachments, options))
+  }
+
+  private async submitInRuntime(
+    prompt: string,
+    attachments: string[] = [],
+    options: { autoFix?: boolean } = {},
+  ): Promise<TurnResult> {
     if (this.activeTurn) throw new Error('turn-busy')
     const autoFixTurn = options.autoFix === true
     // 缓存 30 秒：使其他终端安装的工具在下一轮可见，
@@ -1556,7 +1723,7 @@ export class AgentHost {
     const promptWithBackground = backgroundContext ? `${backgroundContext}\n\n[User message]\n${prompt}` : prompt
     const bootstrap = this.requireBootstrap()
     const existing = this.loopState
-    const state = existing ?? createLoopState('default', { projectCwd: bootstrap.workspace })
+    const state = existing ?? createLoopState('default', { projectCwd: bootstrap.workspace, persistentShell: true })
     this.loopState = state
     if (!existing) this.watchShellSessions(state)
 
@@ -1566,6 +1733,7 @@ export class AgentHost {
     const turnId = `turn-${++this.turnSeq}`
     const turn: ActiveTurn = { id: turnId, text: '', startedAt: Date.now() }
     this.activeTurn = turn
+    this.goalActivity = '正在执行目标'
     const controller = new AbortController()
     this.controller = controller
 
@@ -1607,11 +1775,12 @@ export class AgentHost {
       const message = controller.signal.aborted
         ? 'Turn aborted'
         : classifyApiError(error).message || (error instanceof Error ? error.message : String(error))
-      this.send({ type: 'agent:error', turnId, message })
+      this.send({ type: 'agent:error', turnId, sessionId: this.loopState?.sessionId ?? '', message })
       throw error
     } finally {
       this.activeTurn = null
       this.controller = null
+      this.goalActivity = null
       if (this.loopState && this.loopState.messages.length > 0) {
         try {
           await saveSession(this.loopState, model)
@@ -1670,7 +1839,7 @@ export class AgentHost {
     const content = await buildUserContent(
       text,
       modelSupportsVision(this.modelId) ? capabilities : { ...capabilities, image: false },
-      (description) => this.send({ type: 'agent:ingest-progress', description }),
+      (description) => this.send({ type: 'agent:ingest-progress', sessionId: state.sessionId, description }),
       signal,
       undefined,
       this.modelId,
@@ -1680,6 +1849,7 @@ export class AgentHost {
     if (paths.length > 0) {
       this.send({
         type: 'agent:attachments',
+        sessionId: state.sessionId,
         files: paths,
         mediaParts: parts.filter((part) => part.type !== 'text').length,
         textBytes: parts.reduce((total, part) => total + (part.type === 'text' ? part.text.length : 0), 0),
@@ -1688,10 +1858,16 @@ export class AgentHost {
     return content
   }
 
-  abort(): { aborted: boolean } {
-    const controller = this.controller
-    if (!controller) return { aborted: false }
-    this.cancelAllApprovals()
+  abort(sessionId?: string): { aborted: boolean } {
+    const runtime = sessionId
+      ? this.sessionRuntimes.get(sessionId)
+      : (this.sessionContext.getStore() ?? this.activeRuntime)
+    const controller = runtime?.controller
+    if (!runtime || !controller) return { aborted: false }
+    for (const pending of runtime.approvals.values()) {
+      pending.resolve({ kind: 'deny', feedback: 'Aborted by user' })
+    }
+    runtime.approvals.clear()
     controller.abort()
     return { aborted: true }
   }
@@ -1712,7 +1888,7 @@ export class AgentHost {
     }
     this.requireBootstrap().baseOptions.permissionMode = mode
     if (this.state) this.state.permissionMode = mode
-    this.send({ type: 'agent:permission-mode', mode })
+    this.send({ type: 'agent:permission-mode', sessionId: this.loopState?.sessionId ?? '', mode })
     this.send({ type: 'app:state', state: this.getState() })
     return { mode }
   }
@@ -2379,13 +2555,56 @@ export class AgentHost {
       tokensUsed,
       ...(remaining !== undefined ? { remainingTokens: remaining } : {}),
       verifiers: goal.verifiers.map((verifier) => toGoalVerifierView(verifier)),
-      verificationResults: goal.verificationResults.slice(-8).map((result) => toGoalVerificationView(result)),
-      attempts: goal.attempts.slice(-10).map((attempt) => toGoalAttemptView(attempt)),
+      verificationResults: goal.verificationResults.slice(-40).map((result) => toGoalVerificationView(result)),
+      attempts: goal.attempts.slice(-100).map((attempt) => toGoalAttemptView(attempt)),
+      totalAttempts: goal.attempts.length,
+      failedAttempts: goal.attempts.filter((attempt) => FAILED_FINISHES.has(attempt.finish)).length,
       ...(goal.finalSummary ? { finalSummary: goal.finalSummary } : {}),
       ...(goal.lastBlocker ? { lastBlocker: goal.lastBlocker } : {}),
       requiresUserConfirmation: goal.requiresUserConfirmation === true,
       ...(goal.pendingTransition ? { pendingTransition: goal.pendingTransition.kind } : {}),
+      ...(this.goalActivity ? { currentActivity: this.goalActivity } : {}),
     }
+  }
+
+  /** 按需读取某一轮目标的完整输入，避免 goal:update 事件携带大段文本。 */
+  goalAttemptPrompt(attemptId: string): { prompt: string | null; kind: string; admittedAt?: string } {
+    const goalInput = this.loopState?.goalInputs.find((input) => input.id === attemptId)
+    if (!goalInput) return { prompt: null, kind: '' }
+    return { prompt: goalInput.content, kind: goalInput.kind, admittedAt: goalInput.admittedAt }
+  }
+
+  /** 批量读取多轮完整输入，导出复盘时一次取回，避免上百次往返。 */
+  goalAttemptPrompts(attemptIds: string[]): Record<string, string> {
+    const wanted = new Set(attemptIds)
+    const prompts: Record<string, string> = {}
+    for (const input of this.loopState?.goalInputs ?? []) {
+      if (wanted.has(input.id)) prompts[input.id] = input.content
+    }
+    return prompts
+  }
+
+  /** 搜索仍是会话中的目标输入原文与验证日志，命中后前端再按需展开与高亮。 */
+  searchGoalPrompts(query: string): { attemptIds: string[]; verificationKeys: string[] } {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return { attemptIds: [], verificationKeys: [] }
+    const attemptIds = (this.loopState?.goalInputs ?? [])
+      .filter((input) => input.content.toLowerCase().includes(needle))
+      .map((input) => input.id)
+    const verificationKeys = (this.loopState?.goal?.verificationResults ?? [])
+      .filter((item) => `${item.summary}\n${item.stderr ?? ''}\n${item.stdout ?? ''}`.toLowerCase().includes(needle))
+      .map((item) => `${item.ts}|${item.verifier.kind}|${item.summary}`)
+    return { attemptIds, verificationKeys }
+  }
+
+  /** 按验证结果取原始输出；导出时才调用，避免 goal:update 事件携带大段日志。 */
+  goalVerificationOutput(ref: { at: string; kind: string; summary: string }): { output: string | null } {
+    const result = this.loopState?.goal?.verificationResults.find(
+      (item) => item.ts === ref.at && item.verifier.kind === ref.kind && item.summary === ref.summary,
+    )
+    if (!result) return { output: null }
+    const text = result.stderr?.trim() || result.stdout?.trim() || ''
+    return { output: text }
   }
 
   async searchContext(
@@ -2396,7 +2615,8 @@ export class AgentHost {
     const trimmed = query.trim()
     if (!trimmed) return { query, results: [], notes: ['Enter a search query.'] }
     const bootstrap = this.requireBootstrap()
-    const state = this.loopState ?? createLoopState('default', { projectCwd: bootstrap.workspace })
+    const state =
+      this.loopState ?? createLoopState('default', { projectCwd: bootstrap.workspace, persistentShell: true })
     const result = await collectContextResults(
       {
         projectCwd: bootstrap.workspace,
@@ -2525,7 +2745,7 @@ export class AgentHost {
       if (bootstrap) void saveSession(state, model).catch(() => undefined)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      this.send({ type: 'agent:error', turnId, message })
+      this.send({ type: 'agent:error', turnId, sessionId: this.loopState?.sessionId ?? '', message })
       this.send({ type: 'agent:turn-end', turnId, sessionId: state.sessionId, reason: 'failed', text: message })
       throw error
     } finally {
@@ -2538,13 +2758,23 @@ export class AgentHost {
   /** 目标循环的外层 turn：所有内层 agentLoop 共用同一个 turnId，
    *  这样 UI 的 busy 状态不会在每个 attempt 之间闪断。 */
   private async runGoal(goalId: string): Promise<void> {
+    const runtime = this.activeRuntime
+    return this.sessionContext.run(runtime, () => this.runGoalInRuntime(goalId))
+  }
+
+  private async runGoalInRuntime(goalId: string): Promise<void> {
     if (this.activeTurn) return
     const state = this.goalLoopState()
     const goal = state.goal
     if (!goal || goal.id !== goalId) return
     const model = this.demo ? createDemoModel() : this.model
     if (!model) {
-      this.send({ type: 'agent:error', turnId: `goal-${goalId}`, message: 'no-model-configured' })
+      this.send({
+        type: 'agent:error',
+        turnId: `goal-${goalId}`,
+        sessionId: this.loopState?.sessionId ?? '',
+        message: 'no-model-configured',
+      })
       return
     }
     const turnId = `goal-${++this.turnSeq}`
@@ -2580,7 +2810,7 @@ export class AgentHost {
       const message = controller.signal.aborted
         ? 'Turn aborted'
         : classifyApiError(error).message || (error instanceof Error ? error.message : String(error))
-      this.send({ type: 'agent:error', turnId, message })
+      this.send({ type: 'agent:error', turnId, sessionId: this.loopState?.sessionId ?? '', message })
     } finally {
       this.activeTurn = null
       this.controller = null
@@ -2610,8 +2840,14 @@ export class AgentHost {
   private goalLoopState(): LoopState {
     const existing = this.loopState
     if (existing) return existing
-    const state = createLoopState('default', { projectCwd: this.requireBootstrap().workspace })
-    this.loopState = state
+    const state = createLoopState('default', { projectCwd: this.requireBootstrap().workspace, persistentShell: true })
+    const runtime = new SessionRuntime()
+    runtime.loopState = state
+    runtime.model = this.model
+    runtime.modelId = this.modelId
+    runtime.demo = this.demo
+    this.sessionRuntimes.set(state.sessionId, runtime)
+    this.activeRuntime = runtime
     this.watchShellSessions(state)
     return state
   }
@@ -2628,8 +2864,29 @@ export class AgentHost {
     }
   }
 
-  private emitGoal(): void {
-    this.send({ type: 'goal:update', goal: this.goalState() })
+  private emitGoal(force = true): void {
+    const now = Date.now()
+    if (!force && now - this.goalEmitAt < 1_000) return
+    this.goalEmitAt = now
+    this.send({ type: 'goal:update', sessionId: this.loopState?.sessionId ?? '', goal: this.goalState() })
+  }
+
+  /** 审批可能属于后台会话；按 requestId 在所有运行时里查找。 */
+  private takeApproval(requestId: string): PendingApproval | undefined {
+    const active = this.currentRuntime()
+    const fromActive = active.approvals.get(requestId)
+    if (fromActive) {
+      active.approvals.delete(requestId)
+      return fromActive
+    }
+    for (const runtime of [this.primaryRuntime, ...this.sessionRuntimes.values()]) {
+      const pending = runtime.approvals.get(requestId)
+      if (pending) {
+        runtime.approvals.delete(requestId)
+        return pending
+      }
+    }
+    return undefined
   }
 
   respondApproval(
@@ -2637,9 +2894,8 @@ export class AgentHost {
     kind: ApprovalKind,
     payload: { decision?: 'yes' | 'always' | 'no'; answer?: string; approved?: boolean },
   ): void {
-    const pending = this.approvals.get(requestId)
+    const pending = this.takeApproval(requestId)
     if (!pending || pending.kind !== kind) return
-    this.approvals.delete(requestId)
 
     if (kind === 'permission') {
       const decision: PermissionDecision =
@@ -2737,6 +2993,15 @@ export class AgentHost {
     this.send({ type: 'app:state', state: this.getState() })
     void this.emitSettings()
     return this.settingsResult()
+  }
+
+  async discoverCustomModels(baseUrl?: string, key?: string): Promise<{ models: string[] }> {
+    this.assertIdle()
+    const status = providerSecretStatus('custom')
+    const resolvedBaseUrl = (baseUrl?.trim() || status.baseUrl || '').trim()
+    if (!resolvedBaseUrl) throw new Error('请填写 Base URL')
+    const resolvedKey = key?.trim() || providerSecretValue('custom')
+    return { models: await listOpenAICompatibleModels({ baseUrl: resolvedBaseUrl, apiKey: resolvedKey }) }
   }
 
   async setProviderBaseUrl(provider: string, url: string): Promise<SettingsActionResult> {
@@ -3004,8 +3269,12 @@ export class AgentHost {
   /** 重新读取登录 shell 环境，然后重建插件/MCP/技能，
    *  使新导出的变量和新安装的 CLI 立即生效。 */
   async refreshEnvironment(): Promise<EnvironmentRefreshResult> {
-    this.assertIdle()
     const environment = await refreshShellEnvironment({ force: true })
+    // 正在运行的 turn 不应因为刷新 PATH 被拒绝；此时只更新环境变量，
+    // 等下一轮结束后的 reload 再重建 MCP/插件注册表。
+    if (this.activeTurn) {
+      return { ...(await this.settingsResult()), environment }
+    }
     await this.reloadExtensions(this.modelId)
     return { ...(await this.settingsResult()), environment }
   }
@@ -3717,11 +3986,14 @@ export class AgentHost {
   }
 
   private assertIdle(): void {
-    if (this.activeTurn) throw new Error('turn-busy')
+    if (this.anyRuntimeBusy()) throw new Error('turn-busy')
   }
 
   async shutdown(): Promise<void> {
-    this.abort()
+    for (const runtime of [this.primaryRuntime, ...this.sessionRuntimes.values()]) {
+      this.sessionContext.run(runtime, () => this.abort())
+      if (runtime.loopState) disposePersistentShell(runtime.loopState)
+    }
     this.stopCodeIndexWatcher()
     if (this.skillPollTimer) {
       clearInterval(this.skillPollTimer)
@@ -3745,20 +4017,49 @@ export class AgentHost {
 
   private buildCallbacks(turnId: string, turn: ActiveTurn): AgentCallbacks {
     const send = this.send
+    const sessionId = this.loopState?.sessionId ?? ''
+    const toolInputEmitAt = new Map<string, number>()
+    let reasoningEmitAt = 0
     return {
       onTextDelta: (delta) => {
         if (!delta) return
         turn.text += delta
-        send({ type: 'agent:text-delta', turnId, delta })
+        this.goalActivity = '正在生成回复'
+        this.emitGoal(false)
+        send({ type: 'agent:text-delta', turnId, sessionId, delta })
       },
       onToolCall: (toolCallId, toolName, input) => {
-        send({ type: 'agent:tool-call', turnId, toolCallId, toolName, input })
+        this.goalActivity = `正在运行 ${toolName}`
+        this.emitGoal(false)
+        send({ type: 'agent:tool-call', turnId, sessionId, toolCallId, toolName, input })
       },
       onToolProgress: (toolCallId, message) => {
-        send({ type: 'agent:tool-progress', turnId, toolCallId, message })
+        send({ type: 'agent:tool-progress', turnId, sessionId, toolCallId, message })
+      },
+      onReasoningProgress: (chars) => {
+        // reasoning 增量很密，250ms 推一次即可。
+        const now = Date.now()
+        if (now - reasoningEmitAt < 250) return
+        reasoningEmitAt = now
+        this.goalActivity = `模型思考中 · ${chars.toLocaleString()} 字符`
+        this.emitGoal(false)
+        send({ type: 'agent:reasoning-progress', turnId, sessionId, chars })
+      },
+      onToolInputProgress: (progress) => {
+        // 工具参数流可能每秒几十次；250ms 或完成时推一次即可。
+        const now = Date.now()
+        const last = toolInputEmitAt.get(progress.toolCallId) ?? 0
+        if (!progress.done && now - last < 250) return
+        toolInputEmitAt.set(progress.toolCallId, now)
+        if (progress.done) toolInputEmitAt.delete(progress.toolCallId)
+        this.goalActivity = `正在生成 ${progress.toolName || '工具'} 参数 · ${progress.chars.toLocaleString()} 字符`
+        this.emitGoal(false)
+        send({ type: 'agent:tool-input-progress', turnId, sessionId, ...progress })
       },
       onToolResult: (toolCallId, result, isError) => {
-        send({ type: 'agent:tool-result', turnId, toolCallId, result, isError: isError === true })
+        this.goalActivity = '等待模型继续'
+        this.emitGoal(false)
+        send({ type: 'agent:tool-result', turnId, sessionId, toolCallId, result, isError: isError === true })
       },
       onFileEdit: (toolCallId, payload) => {
         this.editHistory.set(toolCallId, {
@@ -3772,7 +4073,7 @@ export class AgentHost {
           if (oldest === undefined) break
           this.editHistory.delete(oldest)
         }
-        send({ type: 'agent:file-edit', turnId, toolCallId, payload: toFileEditView(payload) })
+        send({ type: 'agent:file-edit', turnId, sessionId, toolCallId, payload: toFileEditView(payload) })
       },
       onAskPermission: async (toolCall) => {
         // taint 批准必须真正弹窗；否则桌面端的自动允许会绕过外部内容策略。
@@ -3816,28 +4117,30 @@ export class AgentHost {
         return approved === true
       },
       onPlanModeChange: (mode) => {
-        send({ type: 'agent:permission-mode', mode })
+        send({ type: 'agent:permission-mode', sessionId, mode })
       },
       onTodosUpdate: (todos) => {
-        send({ type: 'agent:todos', todos: toTodoViews(todos) })
+        send({ type: 'agent:todos', sessionId, todos: toTodoViews(todos) })
       },
       onShellOutput: () => {},
       onUsageUpdate: (usage) => {
         send({
           type: 'agent:usage',
+          sessionId,
           usage: toUsageView(usage, this.modelId, this.loopState?.usageBreakdown),
         })
       },
       onContextCompressed: (summary) => {
-        send({ type: 'agent:context-compressed', summary })
+        send({ type: 'agent:context-compressed', sessionId, summary })
       },
       onCompressionProgress: (description) => {
-        send({ type: 'agent:compression-progress', description })
+        send({ type: 'agent:compression-progress', sessionId, description })
       },
       onStreamRetry: (event: StreamRetryEvent | null) => {
         if (event) {
           send({
             type: 'agent:stream-retry',
+            sessionId,
             attempt: event.attempt,
             maxAttempts: event.maxAttempts,
             delayMs: event.delayMs,
@@ -3848,6 +4151,7 @@ export class AgentHost {
         send({
           type: 'agent:model-fallback',
           turnId,
+          sessionId,
           fromModelId: event.fromModelId,
           toModelId: event.toModelId,
         })
@@ -3857,6 +4161,7 @@ export class AgentHost {
           case 'start':
             send({
               type: 'agent:subagent',
+              sessionId,
               toolCallId: event.toolCallId,
               phase: 'start',
               agentName: event.agentName,
@@ -3864,7 +4169,13 @@ export class AgentHost {
             })
             break
           case 'text-delta':
-            send({ type: 'agent:subagent', toolCallId: event.toolCallId, phase: 'text', text: event.delta })
+            send({
+              type: 'agent:subagent',
+              sessionId,
+              toolCallId: event.toolCallId,
+              phase: 'text',
+              text: event.delta,
+            })
             break
           case 'tool-call': {
             let input = ''
@@ -3875,6 +4186,7 @@ export class AgentHost {
             }
             send({
               type: 'agent:subagent',
+              sessionId,
               toolCallId: event.toolCallId,
               phase: 'tool',
               subToolName: event.subToolName,
@@ -3885,6 +4197,7 @@ export class AgentHost {
           case 'tool-result':
             send({
               type: 'agent:subagent',
+              sessionId,
               toolCallId: event.toolCallId,
               phase: 'tool-result',
               subToolName: event.subToolName,
@@ -3896,6 +4209,7 @@ export class AgentHost {
           case 'end':
             send({
               type: 'agent:subagent',
+              sessionId,
               toolCallId: event.toolCallId,
               phase: 'end',
               text: event.finalText.slice(0, 2000),
@@ -3909,7 +4223,7 @@ export class AgentHost {
       onBackgroundTaskEvent: (event) => {
         const task = this.backgroundTaskList().find((entry) => entry.id === event.task.id)
         if (!task) return
-        send({ type: 'agent:background-task', phase: event.kind, task })
+        send({ type: 'agent:background-task', sessionId, phase: event.kind, task })
         send({ type: 'background:changed' })
         this.publishBackgroundState()
         if (event.kind === 'end') {
@@ -3921,7 +4235,7 @@ export class AgentHost {
         }
       },
       onError: (error) => {
-        send({ type: 'agent:error', turnId, message: error.message })
+        send({ type: 'agent:error', turnId, sessionId, message: error.message })
       },
     }
   }
@@ -3941,6 +4255,7 @@ export class AgentHost {
       this.send({
         type: 'approval:request',
         requestId,
+        sessionId: this.loopState?.sessionId ?? '',
         kind: request.kind,
         toolCallId: request.toolCallId,
         toolName: request.toolName,
@@ -4071,13 +4386,23 @@ export function toGoalVerificationView(result: GoalVerificationResult): GoalVeri
   }
 }
 
+const FAILED_FINISHES = new Set<GoalAttempt['finish']>(['error', 'aborted', 'verification_failed', 'blocked'])
+
 export function toGoalAttemptView(attempt: GoalAttempt): GoalAttemptView {
+  const startedAt = Date.parse(attempt.startedAt)
+  const endedAt = attempt.endedAt ? Date.parse(attempt.endedAt) : NaN
+  const before = attempt.tokenUsageBefore.totalTokens
+  const after = attempt.tokenUsageAfter?.totalTokens ?? before
   return {
+    id: attempt.id,
     turn: attempt.turn,
     inputKind: attempt.inputKind,
     finish: attempt.finish,
     startedAt: attempt.startedAt,
     ...(attempt.endedAt ? { endedAt: attempt.endedAt } : {}),
+    promptPreview: attempt.promptPreview,
+    durationMs: Number.isFinite(endedAt) && Number.isFinite(startedAt) ? Math.max(0, endedAt - startedAt) : 0,
+    tokens: Math.max(0, after - before),
   }
 }
 

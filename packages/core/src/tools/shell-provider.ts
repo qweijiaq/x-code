@@ -44,6 +44,9 @@ function baseSpawnOptions(opts: ShellSpawnOptions) {
     cwd: opts.cwd,
     reject: false,
     cancelSignal: opts.signal,
+    // execa 默认会把 process.env 合并回来；那会把 sanitizeShellEnv 刚删掉的
+    // Electron 运行时开关重新带进子进程。这里使用完整的环境对象，禁止再合并。
+    extendEnv: false,
     env: { ...sanitizeShellEnv(opts.env ?? process.env), PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
   } as const
 }

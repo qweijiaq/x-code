@@ -256,7 +256,7 @@ describe('loadAllPlugins', () => {
     expect(list[0]!.enabled).toBe(true) // 默认启用
 
     const contrib = result.contributions.get('demo@local')
-    expect(contrib?.skillsDir).toBe(path.resolve(list[0]!.rootDir, './skills'))
+    expect(contrib?.skillsDirs).toEqual([path.resolve(list[0]!.rootDir, './skills')])
   })
 
   it('loads project-local plugins from <cwd>/.x-code/plugins/<name>/', async () => {
@@ -344,9 +344,33 @@ describe('resolveContributions', () => {
       enabled: true,
     }
     const c = await resolveContributions(plugin)
-    expect(c.skillsDir).toBe(path.resolve('/abs/root', './skills'))
+    expect(c.skillsDirs).toEqual([path.resolve('/abs/root', './skills')])
     expect(c.agentsDir).toBe(path.resolve('/abs/root', './agents'))
     expect(c.mcpServers).toEqual({ kind: 'path', path: path.resolve('/abs/root', './mcp.json') })
+  })
+
+  it('resolves a skills array to one directory per entry', async () => {
+    const plugin = {
+      id: 'demo@local',
+      manifest: {
+        schemaVersion: '1',
+        name: 'demo',
+        version: '1.0.0',
+        skills: ['./skills/engineering/tdd', './skills/productivity/grill-me'],
+      },
+      rootDir: '/abs/root',
+      manifestPath: '/abs/root/plugin.json',
+      manifestFormat: 'claude' as const,
+      source: undefined,
+      marketplace: 'local',
+      scope: 'project' as const,
+      enabled: true,
+    }
+    const c = await resolveContributions(plugin)
+    expect(c.skillsDirs).toEqual([
+      path.resolve('/abs/root', './skills/engineering/tdd'),
+      path.resolve('/abs/root', './skills/productivity/grill-me'),
+    ])
   })
 
   it('auto-discovers commands/ agents/ skills/ when manifest omits them (Claude Code convention)', async () => {
@@ -371,7 +395,7 @@ describe('resolveContributions', () => {
     const c = await resolveContributions(plugin)
     expect(c.commandsDir).toBe(path.join(root, 'commands'))
     expect(c.agentsDir).toBe(path.join(root, 'agents'))
-    expect(c.skillsDir).toBeUndefined() // 无 skills/ 目录 → undefined
+    expect(c.skillsDirs).toBeUndefined() // 无 skills/ 目录 → undefined
     expect(c.mcpServers).toEqual({ kind: 'path', path: path.join(root, '.mcp.json') })
   })
 })

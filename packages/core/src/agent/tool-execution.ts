@@ -1,4 +1,5 @@
 // @x-code-cli/core — 工具执行与分发
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -22,6 +23,12 @@ import { MAX_TOOL_RESULT_BYTES, truncateToolResult } from '../tools/index.js'
 import { clearProgressReporter, reportProgress } from '../tools/progress.js'
 import { applySedSubstitution, parseSedEditCommand } from '../tools/sed-edit-parser.js'
 import { formatShellExecutionResult } from '../tools/shell-session/format.js'
+import {
+  PersistentShellBusyError,
+  persistentShellFor,
+  persistentShellTimeout,
+  shouldUsePersistentShell,
+} from '../tools/shell-session/persistent-shell.js'
 import {
   normalizeHardTimeout,
   normalizeInitialWait,
@@ -968,6 +975,68 @@ async function executeWriteOrShell(ctx: HandlerCtx): Promise<{
       }
 
       reportProgress(toolCallId, 'Running command...')
+
+      // POSIX: 普通命令走会话级持久 shell，保留 cd/export。长驻命令、TTY 和
+      // yieldTimeMs: 0 仍走受管 shell，避免占住终端或破坏并行。
+      const persistentEnabled =
+        (state.persistentShellEnabled || process.env.X_CODE_PERSISTENT_SHELL === '1') &&
+        process.env.X_CODE_PERSISTENT_SHELL !== '0'
+      if (persistentEnabled && shouldUsePersistentShell(ctx.preparedShell)) {
+        const shell = persistentShellFor(state)
+        if (!shell.busy) {
+          const startedAt = Date.now()
+          try {
+            const result = await shell.run({
+              command,
+              cwd: ctx.preparedShell.requestedCwd ? ctx.preparedShell.effectiveCwd : shell.currentCwd,
+              timeoutMs: persistentShellTimeout(ctx.preparedShell),
+              signal: options.abortSignal,
+              maxOutputBytes: ctx.preparedShell.maxOutputBytes,
+            })
+            const wallTimeMs = Date.now() - startedAt
+            const isError = result.timedOut || result.aborted || result.shellExited || (result.exitCode ?? 0) !== 0
+            const note = result.timedOut
+              ? '\n\n[Persistent shell] Command timed out and the shell was restarted. For long-running commands use yieldTimeMs: 0.'
+              : result.aborted
+                ? '\n\n[Persistent shell] Command interrupted; the shell was restarted.'
+                : result.shellExited
+                  ? '\n\n[Persistent shell] Shell exited; the next command starts a new shell.'
+                  : ''
+            const formatted = formatShellExecutionResult({
+              chunkId: randomUUID(),
+              wallTimeMs,
+              output: result.output,
+              isError,
+              originalBytes: Buffer.byteLength(result.output, 'utf8'),
+              omittedBytes: 0,
+              running: false,
+              rootExited: true,
+              treeConfirmedExited: true,
+              cleanupResidual: false,
+              lifecycle: 'exited',
+              timedOut: result.timedOut,
+              waitInterrupted: false,
+              managerDraining: false,
+              ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+              ...(result.signal ? { signal: result.signal } : {}),
+            })
+            const tempNote = isError ? '' : await noteForRecentTempFiles(command, wallTimeMs, state.projectCwd)
+            return { output: `${formatted}${tempNote}${note}`, isError }
+          } catch (error) {
+            if (!(error instanceof PersistentShellBusyError)) throw error
+            // 另一个并行 shell 调用占着持久终端；回退到独立受管 shell。
+          }
+        }
+        const fallbackCwd = shell.currentCwd
+        const shellObservation = await state.shellSessions.start({
+          prepared: { ...ctx.preparedShell, requestedCwd: fallbackCwd, effectiveCwd: fallbackCwd },
+          originToolCallId: toolCallId,
+          hookOrigin: createShellHookOrigin(ctx),
+          turnAbortSignal: options.abortSignal,
+        })
+        return { output: '', isError: shellObservation.result.isError, shellObservation }
+      }
+
       const shellObservation = await state.shellSessions.start({
         prepared: ctx.preparedShell,
         originToolCallId: toolCallId,

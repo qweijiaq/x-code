@@ -24,6 +24,19 @@ const bridge: XcodeBridge = {
     // 拥有它。
     ipcRenderer.send('app:copy-text', text)
   },
+  reportRunningSessions(workspace: string, sessionIds: string[]): void {
+    ipcRenderer.send('app:running-sessions', { workspace, sessionIds })
+  },
+  onRunningSessions(listener: (entries: Array<{ workspace: string; sessionIds: string[] }>) => void): () => void {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      entries: Array<{ workspace: string; sessionIds: string[] }>,
+    ): void => listener(entries)
+    ipcRenderer.on('app:running-sessions', handler)
+    return () => {
+      ipcRenderer.removeListener('app:running-sessions', handler)
+    }
+  },
   pathForFile(file: unknown): string {
     try {
       return webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0])

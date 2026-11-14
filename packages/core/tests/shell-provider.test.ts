@@ -73,6 +73,48 @@ describe.skipIf(!isPowerShell)('PowerShell provider', () => {
   })
 })
 
+describe('shell environment hygiene', () => {
+  // 桌面 runtime 的 utilityProcess 会设置 ELECTRON_RUN_AS_NODE 给内部 worker。
+  // 如果它泄漏给 shell 命令，用户从对话里启动的 Electron 项目会变成纯 Node，
+  // app 为 undefined，窗口不会出现。
+  it('does not leak Electron runtime flags into shell commands', async () => {
+    const r = await provider.spawn(
+      `node -e "console.log(process.env.ELECTRON_RUN_AS_NODE ?? 'unset', process.env.ELECTRON_NO_ATTACH_CONSOLE ?? 'unset', process.env.XCODE_ENV_PROBE_KEEP ?? 'missing')"`,
+      {
+        timeout: 20_000,
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: '1',
+          ELECTRON_NO_ATTACH_CONSOLE: '1',
+          XCODE_ENV_PROBE_KEEP: 'kept',
+        },
+      },
+    )
+    expect(r.exitCode).toBe(0)
+    expect((r.stdout ?? '').toString().trim()).toBe('unset unset kept')
+  })
+
+  it('does not inherit Electron runtime flags from the parent process', async () => {
+    const previousRunAsNode = process.env.ELECTRON_RUN_AS_NODE
+    const previousNoAttach = process.env.ELECTRON_NO_ATTACH_CONSOLE
+    process.env.ELECTRON_RUN_AS_NODE = '1'
+    process.env.ELECTRON_NO_ATTACH_CONSOLE = '1'
+    try {
+      const r = await provider.spawn(
+        `node -e "console.log(process.env.ELECTRON_RUN_AS_NODE ?? 'unset', process.env.ELECTRON_NO_ATTACH_CONSOLE ?? 'unset')"`,
+        { timeout: 20_000 },
+      )
+      expect(r.exitCode).toBe(0)
+      expect((r.stdout ?? '').toString().trim()).toBe('unset unset')
+    } finally {
+      if (previousRunAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE
+      else process.env.ELECTRON_RUN_AS_NODE = previousRunAsNode
+      if (previousNoAttach === undefined) delete process.env.ELECTRON_NO_ATTACH_CONSOLE
+      else process.env.ELECTRON_NO_ATTACH_CONSOLE = previousNoAttach
+    }
+  })
+})
+
 describe.skipIf(!isPosix)('POSIX provider (bash/zsh)', () => {
   it('runs commands with escaped double quotes', async () => {
     const r = await run(`echo "hello \\"world\\""`)

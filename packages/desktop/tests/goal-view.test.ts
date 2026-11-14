@@ -97,11 +97,15 @@ describe('desktop goal view mapping', () => {
       finish: 'verification_failed',
     }
     expect(toGoalAttemptView(attempt)).toEqual({
+      id: 'a1',
       turn: 2,
       inputKind: 'verifier_failure',
       finish: 'verification_failed',
       startedAt: '2026-01-01T00:00:00.000Z',
       endedAt: '2026-01-01T00:00:01.000Z',
+      promptPreview: 'fix it',
+      durationMs: 1000,
+      tokens: 0,
     })
   })
 })

@@ -86,9 +86,11 @@ export interface PluginManifest {
   license?: string
 
   // ── 贡献（全部可选，全部相对插件根） ─────────
-  /** 指向 skills 目录的路径，每个都采用 `<name>/SKILL.md` 形式（与
-   *  `~/.x-code/skills/` 布局相同）。或单个文件路径。 */
-  skills?: string
+  /** 指向 skills 的路径。字符串形式指向一个目录，其下每个子目录采用
+   *  `<name>/SKILL.md` 布局（与 `~/.x-code/skills/` 相同），也可以直接指向
+   *  单个 skill 目录。数组形式与 Claude Code 一致：每一项是一个明确的
+   *  skill 目录（例如 `./skills/engineering/tdd`）。 */
+  skills?: string | string[]
   /** 指向 sub-agent `.md` 文件目录的路径（与 `~/.x-code/agents/` 布局
    *  相同）。 */
   agents?: string

@@ -28,20 +28,38 @@ const ENV_ALIASES: Record<string, readonly string[]> = {
   ALIBABA_API_KEY: ['DASHSCOPE_API_KEY'],
   ZHIPU_API_KEY: ['ZHIPUAI_API_KEY', 'ZAI_API_KEY'],
   MOONSHOT_API_KEY: ['KIMI_API_KEY'],
+  OPENCODE_API_KEY: ['OPENCODE_ZEN_API_KEY'],
+  OPENCODE_GO_API_KEY: ['OPENCODE_API_KEY'],
+  OPENDESIGN_API_KEY: ['OPEN_DESIGN_API_KEY'],
+  OPENDESIGN_GO_API_KEY: ['OPENDESIGN_API_KEY', 'OPEN_DESIGN_API_KEY'],
 }
 
 function envKeyValues(primary: string): readonly string[] {
   return [primary, ...(ENV_ALIASES[primary] ?? [])]
 }
 
+/** HTTP header 只能放 Latin-1；API Key 还必须是可见 ASCII（不能有空格、换行、
+ *  Markdown 代码块或中文）。旧版本/错误的 shell 环境可能把一整段文本塞进
+ *  *_API_KEY，这里直接忽略，避免 undici 在 Authorization header 上抛
+ *  ByteString 错误。 */
+function isHeaderSafeApiKey(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return false
+  for (let index = 0; index < trimmed.length; index++) {
+    const code = trimmed.charCodeAt(index)
+    if (code < 0x21 || code > 0x7e) return false
+  }
+  return true
+}
+
 function hasEnvKey(primary: string): boolean {
-  return envKeyValues(primary).some((key) => Boolean(process.env[key]))
+  return Boolean(readEnvKey(primary))
 }
 
 function readEnvKey(primary: string): string | undefined {
   for (const key of envKeyValues(primary)) {
     const value = process.env[key]
-    if (value) return value
+    if (value && isHeaderSafeApiKey(value)) return value.trim()
   }
   return undefined
 }
@@ -50,7 +68,7 @@ function readEnvKey(primary: string): string | undefined {
 function getApiKey(provider: string): string | undefined {
   if (provider === 'openai') {
     const auth = getOpenAIAuthContext()
-    return auth.mode === 'api-key' ? auth.apiKey : undefined
+    return auth.mode === 'api-key' && auth.apiKey && isHeaderSafeApiKey(auth.apiKey) ? auth.apiKey.trim() : undefined
   }
   const envKey = ENV_MAP[provider]
   return envKey ? readEnvKey(envKey) : undefined
@@ -67,7 +85,11 @@ export function getAvailableProviders(): string[] {
   const providers = Object.keys(ENV_MAP).filter((provider) =>
     provider === 'openai' ? openAIAuth.mode !== 'none' : !!getApiKey(provider),
   )
-  if (process.env.OPENAI_COMPATIBLE_API_KEY && process.env.OPENAI_COMPATIBLE_BASE_URL) {
+  if (
+    process.env.OPENAI_COMPATIBLE_API_KEY &&
+    isHeaderSafeApiKey(process.env.OPENAI_COMPATIBLE_API_KEY) &&
+    process.env.OPENAI_COMPATIBLE_BASE_URL
+  ) {
     providers.push('custom')
   }
   return providers
@@ -480,6 +502,10 @@ export function getProviderOptions() {
     alibaba: getApiKey('alibaba'),
     zhipu: getApiKey('zhipu'),
     moonshotai: getApiKey('moonshotai'),
+    opencode: getApiKey('opencode'),
+    'opencode-go': getApiKey('opencode-go'),
+    opendesign: getApiKey('opendesign'),
+    'opendesign-go': getApiKey('opendesign-go'),
     custom: {
       apiKey: process.env.OPENAI_COMPATIBLE_API_KEY,
       baseURL: process.env.OPENAI_COMPATIBLE_BASE_URL,

@@ -1,7 +1,6 @@
-import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 
-import { memo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
@@ -99,16 +98,35 @@ const components: Components = {
 export const MarkdownView = memo(function MarkdownView({
   text,
   streaming = false,
+  localAssets,
 }: {
   text: string
   streaming?: boolean
+  /** 允许渲染的本地资源 URL（如手册截图）；markdown 默认会过滤 file: 协议。 */
+  localAssets?: readonly string[]
 }): JSX.Element {
+  // 高亮器较重，放到首屏之后异步加载，避免拖慢启动解析。
+  const [highlight, setHighlight] = useState<typeof import('rehype-highlight').default | null>(null)
+
+  useEffect(() => {
+    if (streaming || highlight) return
+    let cancelled = false
+    void import('rehype-highlight').then((module) => {
+      if (!cancelled) setHighlight(() => module.default)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [streaming, highlight])
+
   return (
     <div className="markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={streaming ? [] : [[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
-        urlTransform={(url) => (url.startsWith('data:image/') ? url : defaultUrlTransform(url))}
+        rehypePlugins={streaming || !highlight ? [] : [[highlight, { detect: true, ignoreMissing: true }] as never]}
+        urlTransform={(url) =>
+          url.startsWith('data:image/') || localAssets?.includes(url) ? url : defaultUrlTransform(url)
+        }
         components={components}
       >
         {text}

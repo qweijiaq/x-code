@@ -85,6 +85,15 @@ async function listSkillFiles(skillDir: string): Promise<string[]> {
  *  使用的嵌套 `skills/@scope/<name>/SKILL.md` 布局。包含 SKILL.md 的目录被
  *  视为技能根目录，不再向下递归。 */
 async function findSkillDirs(root: string): Promise<string[]> {
+  // 路径本身可能就是 skill 目录——Claude Code 的 manifest `skills` 数组
+  // 每一项都是明确的 skill 目录，而不是共同父目录。此时直接加载它。
+  try {
+    await fs.access(path.join(root, SKILL_FILENAME))
+    return [root]
+  } catch {
+    /* 不是 skill 目录，继续按父目录扫描 */
+  }
+
   const out: string[] = []
   async function walk(dir: string, depth: number): Promise<void> {
     if (depth > 3) return

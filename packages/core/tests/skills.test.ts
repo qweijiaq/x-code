@@ -102,6 +102,29 @@ describe('loadSkills', () => {
     expect(names).toEqual(['flat-skill', 'nested-skill'])
   })
 
+  it('loads skill directories passed directly as extra dirs (Claude Code manifest array)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-skills-extra-'))
+    const emptyOverride = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-skills-override-'))
+    const dirs: string[] = []
+    for (const name of ['tdd', 'code-review']) {
+      const dir = path.join(root, name)
+      await fs.mkdir(dir, { recursive: true })
+      await fs.writeFile(
+        path.join(dir, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: ${name} skill\n---\nbody`,
+        'utf-8',
+      )
+      dirs.push(dir)
+    }
+    process.env.XC_SKILLS_DIR = emptyOverride
+
+    const skills = await loadSkills({
+      extraDirs: dirs.map((dir) => ({ dir, pluginId: 'demo@local' })),
+    })
+    expect(skills.map((skill) => skill.name).sort()).toEqual(['code-review', 'tdd'])
+    expect(skills.every((skill) => skill.pluginId === 'demo@local')).toBe(true)
+  })
+
   it('skips skill dirs without SKILL.md', async () => {
     const dir = await makeTempSkillsDir([
       {

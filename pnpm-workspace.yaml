@@ -1,23 +1,5 @@
 packages:
-  - 'packages/*'
-
-# pnpm 10.28 no longer reads the "pnpm" field in package.json. Keep these here so
-# the security pins, native build allowlist, and the eslint 10 peer rule stay in
-# effect on the next dependency re-resolution.
-overrides:
-  '@hono/node-server': 2.1.3
-  '@xmldom/xmldom': 0.8.15
-  body-parser: 2.4.0
-  fast-uri: 3.1.9
-  hono: 4.13.11
-  ip-address: 10.7.4
-  proxy-addr: 2.0.8
-  qs: 6.16.1
-  'minimatch@10>brace-expansion': 5.0.12
-  'minimatch@9>brace-expansion': 2.1.7
-  undici: 7.30.1
-  uuid: 11.1.1
-  zod: 4.6.7
+  - packages/*
 
 onlyBuiltDependencies:
   - esbuild
@@ -25,6 +7,24 @@ onlyBuiltDependencies:
   - '@fugood/whisper.node'
   - fs-ext-extra-prebuilt
   - node-pty
+
+overrides:
+  '@hono/node-server': 2.1.3
+  '@xmldom/xmldom': 0.8.15
+  body-parser: 2.4.0
+  fast-uri: 3.1.9
+  hono: 4.13.11
+  ip-address: 10.7.4
+  minimatch@10>brace-expansion: 5.0.12
+  minimatch@9>brace-expansion: 2.1.7
+  proxy-addr: 2.0.8
+  qs: 6.16.1
+  undici: 7.30.1
+  uuid: 11.1.1
+  zod: 4.6.7
+
+patchedDependencies:
+  '@ai-sdk/provider-utils@5.0.16': patches/@ai-sdk__provider-utils@5.0.16.patch
 
 peerDependencyRules:
   allowedVersions:

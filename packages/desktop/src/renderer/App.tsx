@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react'
+import { Fragment, Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -35,7 +35,9 @@ import type {
   WorkspaceInsightsView,
   WorkspaceList,
   WorkspaceListItem,
+  WorkspaceSessionsView,
 } from '../shared/protocol.js'
+import { ApprovalCard } from './ApprovalCard.js'
 import { BackgroundPanel } from './BackgroundPanel.js'
 import { ChecksPanel } from './ChecksPanel.js'
 import { CommandPalette } from './CommandPalette.js'
@@ -58,11 +60,16 @@ import { GitPanel } from './GitPanel.js'
 import { GoalPanel } from './GoalPanel.js'
 import { Inspector } from './Inspector.js'
 import type { InspectorTab } from './Inspector.js'
+import { NextSteps } from './NextSteps.js'
 import { OutlinePanel } from './OutlinePanel.js'
+import { PromptRail } from './PromptRail.js'
 import { RewindPanel } from './RewindPanel.js'
 import type { RewindMode } from './RewindPanel.js'
+import { ChatSkeleton, SettingsSkeleton } from './Skeleton.js'
 import { TranscriptEntry, TranscriptEntryProvider } from './TranscriptEntry.js'
+import { UsageChecklist } from './UsageChecklist.js'
 import { UsageFooter } from './UsageFooter.js'
+import { WorkspaceTree } from './WorkspaceTree.js'
 import { TOOL_MENU_ACTION_IDS, createAppActions } from './actions.js'
 import {
   BranchIcon,
@@ -78,6 +85,7 @@ import {
 import { isImeEnter, isImeEvent } from './ime.js'
 import { base64FromBuffer } from './media.js'
 import { detectMention } from './mention.js'
+import { buildNextSteps } from './next-steps.js'
 import {
   USAGE_DISMISSED_KEY,
   draftStorageKey,
@@ -88,6 +96,7 @@ import {
   writeUsage,
 } from './preferences.js'
 import type { UsageKey } from './preferences.js'
+import { providerDisplayName } from './provider-labels.js'
 import { createSlashCommands } from './slash-commands.js'
 import type { SlashCommand } from './slash-commands.js'
 import { applyTheme, storedTheme, watchSystemTheme } from './theme.js'
@@ -101,6 +110,7 @@ import {
   TOOL_DISPLAY_HINT,
   TOOL_DISPLAY_LABEL,
   TOOL_DISPLAY_MODES,
+  buildTurnItems,
   formatContextTokens,
   normalizeTaskMode,
   normalizeToolDisplayMode,
@@ -133,7 +143,35 @@ if (isUiSmoke) {
 const wantsSettings = new URLSearchParams(window.location.search).has('settings')
 const wantsSlashDemo = new URLSearchParams(window.location.search).has('slash')
 
-type TurnActivityKind = 'model' | 'streaming' | 'tool' | 'approval' | 'retry'
+const SIDEBAR_WIDTH_KEY = 'xcode.sidebar.width.v1'
+const EXPANDED_WORKSPACES_KEY = 'xcode.workspaces.expanded.v1'
+const SIDEBAR_MIN_WIDTH = 220
+const SIDEBAR_MAX_WIDTH = 440
+
+function storedSidebarWidth(): number {
+  try {
+    const raw = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY))
+    if (Number.isFinite(raw) && raw >= SIDEBAR_MIN_WIDTH && raw <= SIDEBAR_MAX_WIDTH) return Math.round(raw)
+  } catch {
+    // 忽略存储异常，回落到默认宽度。
+  }
+  return 280
+}
+
+function storedExpandedWorkspaces(): Set<string> {
+  try {
+    const raw = localStorage.getItem(EXPANDED_WORKSPACES_KEY)
+    const parsed = raw ? (JSON.parse(raw) as unknown) : []
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter((item): item is string => typeof item === 'string'))
+    }
+  } catch {
+    // 忽略损坏的持久化数据。
+  }
+  return new Set()
+}
+
+type TurnActivityKind = 'model' | 'reasoning' | 'streaming' | 'tool' | 'tool-input' | 'approval' | 'retry'
 
 interface TurnActivity {
   kind: TurnActivityKind
@@ -141,12 +179,14 @@ interface TurnActivity {
   startedAt: number
 }
 
-/** 另一个标签正在运行、当前看的却是别的会话时，运行会话的实时状态暂存在这里。 */
-interface BackgroundSession {
+/** 每个会话独立的 transcript 缓冲；同窗口切标签时整块换入/换出。 */
+interface SessionBuffer {
   sessionId: string
   entries: Entry[]
   usage: UsageView | null
   todos: TodoView[]
+  activeTurnId: string | null
+  textEntryId: string | null
 }
 
 export function App(): React.JSX.Element {
@@ -233,6 +273,10 @@ export function App(): React.JSX.Element {
       return false
     }
   })
+  const [usageOpen, setUsageOpen] = useState(false)
+  const [sessionsLoaded, setSessionsLoaded] = useState(false)
+  const [workspaceSessionsLoaded, setWorkspaceSessionsLoaded] = useState(false)
+  const [sessionLoading, setSessionLoading] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [manualOpen, setManualOpen] = useState(false)
   const [shortcutSheetOpen, setShortcutSheetOpen] = useState(false)
@@ -256,22 +300,37 @@ export function App(): React.JSX.Element {
   const [fileInitialPath, setFileInitialPath] = useState<string | null>(null)
   const sessionSearchRef = useRef<HTMLInputElement | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth)
   const [workspaces, setWorkspaces] = useState<WorkspaceListItem[]>([])
+  const [workspaceSessions, setWorkspaceSessions] = useState<WorkspaceSessionsView[]>([])
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(storedExpandedWorkspaces)
+  const [runningOther, setRunningOther] = useState<Record<string, string[]>>({})
   const [workspaceInsights, setWorkspaceInsights] = useState<WorkspaceInsightsView | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const activeSessionIdRef = useRef<string | null>(null)
-  // 正在执行的会话与当前浏览的会话可能不同：执行中的标签在后台继续收事件。
-  const [runningSessionId, setRunningSessionId] = useState<string | null>(null)
-  const runningSessionIdRef = useRef<string | null>(null)
+  // 同一窗口多个会话并行：运行中的标签各自保留一份 transcript 缓冲。
+  const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(new Set())
+  const runningSessionIdsRef = useRef<Set<string>>(new Set())
+  const turnSessionRef = useRef<Map<string, string>>(new Map())
   const hostSessionIdRef = useRef<string | null>(null)
-  const [backgroundSession, setBackgroundSession] = useState<BackgroundSession | null>(null)
-  const backgroundSessionRef = useRef<BackgroundSession | null>(null)
+  const sessionBuffersRef = useRef<Map<string, SessionBuffer>>(new Map())
   const [toolDisplayMode, setToolDisplayMode] = useState<ToolDisplayMode>(() =>
     normalizeToolDisplayMode(localStorage.getItem('xcode.toolDisplay')),
   )
   // 记录用户对某一轮工具组的显式展开/收起，优先级高于模式默认值。
   const [turnToolOverrides, setTurnToolOverrides] = useState<Map<string, boolean>>(new Map())
+  const [turnWindow, setTurnWindow] = useState(40)
+  const turnWindowAnchorRef = useRef<{ height: number; top: number } | null>(null)
+
+  // 展开更早轮次时保持当前阅读位置，避免内容突然向下跳。
+  useLayoutEffect(() => {
+    const anchor = turnWindowAnchorRef.current
+    const node = scrollRef.current
+    if (!anchor || !node) return
+    turnWindowAnchorRef.current = null
+    node.scrollTop = node.scrollHeight - anchor.height + anchor.top
+  }, [turnWindow])
   const [tabs, setTabs] = useState<string[]>([])
   const [tabTitles, setTabTitles] = useState<Record<string, string>>({})
   const [pendingSession, setPendingSession] = useState<{ sessionId: string; at: number } | null>(null)
@@ -313,6 +372,7 @@ export function App(): React.JSX.Element {
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
   const [customModelInput, setCustomModelInput] = useState('')
   const [modelQuery, setModelQuery] = useState('')
+  const [modelKeyIndex, setModelKeyIndex] = useState(-1)
   const [modelScan, setModelScan] = useState<string | null>(null)
   const [appState, setAppState] = useState<AppState | null>(null)
   // 多个工作区同时打开时，保持窗口标题可区分。
@@ -320,7 +380,8 @@ export function App(): React.JSX.Element {
     const name = appState?.workspace?.split(/[\\/]/).filter(Boolean).pop()
     document.title = name ? `X-Code · ${name}` : 'X-Code'
   }, [appState?.workspace])
-  const [approval, setApproval] = useState<ApprovalRequestEvent | null>(null)
+  const [approvals, setApprovals] = useState<ApprovalRequestEvent[]>([])
+  const approval = approvals[0] ?? null
   const [questionDraft, setQuestionDraft] = useState('')
   useEffect(() => {
     setQuestionDraft('')
@@ -335,6 +396,7 @@ export function App(): React.JSX.Element {
   const [notice, setNotice] = useState<string | null>(null)
   const [movingTempEntry, setMovingTempEntry] = useState<string | null>(null)
   const [queued, setQueued] = useState(0)
+  const [nextStepsHidden, setNextStepsHidden] = useState(false)
   const [queuedItems, setQueuedItems] = useState<Array<{ prompt: string; attachments: string[] }>>([])
   const [editArmed, setEditArmed] = useState(false)
   const [recording, setRecording] = useState(false)
@@ -344,9 +406,8 @@ export function App(): React.JSX.Element {
   const [captureMenuOpen, setCaptureMenuOpen] = useState(false)
   const [captureScreens, setCaptureScreens] = useState<CaptureScreenView[]>([])
   const [paletteIndex, setPaletteIndex] = useState(0)
-  const activeTurn = useRef<string | null>(null)
   const activeTextEntryId = useRef<string | null>(null)
-  const pendingTextRef = useRef<{ entryId: string; text: string } | null>(null)
+  const pendingTextRef = useRef<Map<string, { entryId: string; text: string }>>(new Map())
   const streamFrameRef = useRef<number | null>(null)
   const lastTextFlushRef = useRef(0)
   const busyRef = useRef(false)
@@ -354,6 +415,8 @@ export function App(): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const nearBottomRef = useRef(true)
   const [showScrollBottom, setShowScrollBottom] = useState(false)
+  const [unseenEntries, setUnseenEntries] = useState(0)
+  const seenEntryCountRef = useRef(0)
   const uiSmokeRan = useRef(false)
   const promptAutoSubmitRef = useRef(false)
   const submitRef = useRef<
@@ -375,76 +438,130 @@ export function App(): React.JSX.Element {
   const skipDraftSaveRef = useRef<string | null>(null)
   const restoredSessionRef = useRef(false)
   const restoredWindowSessionRef = useRef(false)
+  const newWindowSessionRef = useRef(false)
   const draftKey = draftStorageKey(activeSessionId)
 
-  const append = (entry: Omit<Entry, 'id'> & { id?: string }): void => {
-    setEntries((prev) => [...prev, { id: entry.id ?? crypto.randomUUID(), ...entry }])
+  const bufferKey = (): string => activeSessionIdRef.current ?? hostSessionIdRef.current ?? ''
+
+  const createBuffer = (sessionId: string): SessionBuffer => ({
+    sessionId,
+    entries: [],
+    usage: null,
+    todos: [],
+    activeTurnId: null,
+    textEntryId: null,
+  })
+
+  const bufferFor = (sessionId: string): SessionBuffer => {
+    let buffer = sessionBuffersRef.current.get(sessionId)
+    if (!buffer) {
+      buffer = createBuffer(sessionId)
+      sessionBuffersRef.current.set(sessionId, buffer)
+    }
+    return buffer
   }
 
-  useEffect(() => {
-    activeSessionIdRef.current = activeSessionId
-  }, [activeSessionId])
+  const isVisibleSession = (sessionId: string): boolean => sessionId === activeSessionIdRef.current
 
-  const storeBackgroundSession = (next: BackgroundSession | null): void => {
-    backgroundSessionRef.current = next
-    setBackgroundSession(next)
-  }
-  /** 当前浏览的不是执行中的会话时，把事件写进后台缓冲而不是界面。 */
-  const isBackgroundEvent = (): boolean =>
-    runningSessionIdRef.current !== null && activeSessionIdRef.current !== runningSessionIdRef.current
-  const appendRouted = (entry: Omit<Entry, 'id'> & { id?: string }): void => {
-    if (isBackgroundEvent()) {
-      const current = backgroundSessionRef.current
-      if (!current) return
-      storeBackgroundSession({
-        ...current,
-        entries: [...current.entries, { id: entry.id ?? crypto.randomUUID(), ...entry }],
-      })
-      return
+  /** 事件只会写进它所属会话的缓冲，只有可见会话才同步到 React 状态。 */
+  const commitEntries = (sessionId: string, updater: (previous: Entry[]) => Entry[]): void => {
+    const buffer = bufferFor(sessionId)
+    buffer.entries = updater(buffer.entries)
+    if (isVisibleSession(sessionId)) {
+      activeTextEntryId.current = buffer.textEntryId
+      setEntries(buffer.entries)
     }
-    append(entry)
-  }
-  const updateEntriesRouted = (updater: (previous: Entry[]) => Entry[]): void => {
-    if (isBackgroundEvent()) {
-      const current = backgroundSessionRef.current
-      if (!current) return
-      storeBackgroundSession({ ...current, entries: updater(current.entries) })
-      return
-    }
-    setEntries(updater)
-  }
-  const setUsageRouted = (usage: UsageView): void => {
-    if (isBackgroundEvent()) {
-      const current = backgroundSessionRef.current
-      if (current) storeBackgroundSession({ ...current, usage })
-      return
-    }
-    setUsage(usage)
-  }
-  const setTodosRouted = (todos: TodoView[]): void => {
-    if (isBackgroundEvent()) {
-      const current = backgroundSessionRef.current
-      if (current) storeBackgroundSession({ ...current, todos })
-      return
-    }
-    setTodos(todos)
-  }
-  const setNoticeRouted = (notice: string | null): void => {
-    if (isBackgroundEvent()) return
-    setNotice(notice)
   }
 
-  /** 回到仍在执行的会话时，把后台缓冲换回界面。 */
-  const restoreBackgroundSession = (sessionId: string): boolean => {
-    const background = backgroundSessionRef.current
-    if (!background || background.sessionId !== sessionId) return false
+  const appendTo = (sessionId: string, entry: Omit<Entry, 'id'> & { id?: string }): void => {
+    const next = { id: entry.id ?? crypto.randomUUID(), ...entry }
+    commitEntries(sessionId, (previous) => [...previous, next])
+  }
+
+  const replaceEntries = (sessionId: string, entries: Entry[]): void => {
+    const buffer = bufferFor(sessionId)
+    buffer.entries = entries
+    buffer.textEntryId = null
+    if (isVisibleSession(sessionId)) {
+      activeTextEntryId.current = null
+      setEntries(entries)
+    }
+  }
+
+  const setUsageFor = (sessionId: string, usage: UsageView | null): void => {
+    const buffer = bufferFor(sessionId)
+    buffer.usage = usage
+    if (isVisibleSession(sessionId)) setUsage(usage)
+  }
+
+  const setTodosFor = (sessionId: string, todos: TodoView[]): void => {
+    const buffer = bufferFor(sessionId)
+    buffer.todos = todos
+    if (isVisibleSession(sessionId)) setTodos(todos)
+  }
+
+  /** 把会话缓冲整块换到界面上（切标签时使用）。 */
+  const showSessionBuffer = (sessionId: string): void => {
+    const buffer = bufferFor(sessionId)
     activeSessionIdRef.current = sessionId
-    setEntries(background.entries)
-    setUsage(background.usage)
-    setTodos(background.todos)
     setActiveSessionId(sessionId)
-    storeBackgroundSession(null)
-    return true
+    setTurnWindow(40)
+    activeTextEntryId.current = buffer.textEntryId
+    setEntries(buffer.entries)
+    setUsage(buffer.usage)
+    setTodos(buffer.todos)
+    const running = buffer.activeTurnId !== null
+    busyRef.current = running
+    setBusy(running)
+    if (!running) clearTurnActivity()
+  }
+
+  /** 当活动会话还没绑定 sessionId（全新窗口）时，把临时缓冲迁移到真实会话。 */
+  const adoptSession = (sessionId: string): void => {
+    const previousKey = activeSessionIdRef.current ?? hostSessionIdRef.current ?? ''
+    if (previousKey !== sessionId) {
+      const source = sessionBuffersRef.current.get(previousKey)
+      if (source && source.entries.length > 0 && !sessionBuffersRef.current.has(sessionId)) {
+        sessionBuffersRef.current.delete(previousKey)
+        source.sessionId = sessionId
+        sessionBuffersRef.current.set(sessionId, source)
+      }
+    }
+    if (activeSessionIdRef.current === null) {
+      activeSessionIdRef.current = sessionId
+      setActiveSessionId(sessionId)
+    }
+  }
+
+  const append = (entry: Omit<Entry, 'id'> & { id?: string }): void => {
+    appendTo(bufferKey(), entry)
+  }
+
+  const markSessionRunning = (sessionId: string, running: boolean): void => {
+    const next = new Set(runningSessionIdsRef.current)
+    if (running) next.add(sessionId)
+    else next.delete(sessionId)
+    runningSessionIdsRef.current = next
+    setRunningSessionIds(next)
+  }
+
+  /** busy 只代表当前可见会话是否在运行，避免切标签或后台结束时卡在“停止”状态。 */
+  const syncBusyFromRunning = (): void => {
+    const active = activeSessionIdRef.current
+    const running = active !== null && runningSessionIdsRef.current.has(active)
+    busyRef.current = running
+    setBusy(running)
+    if (!running) clearTurnActivity()
+  }
+
+  /** 事件属于哪个会话：优先显式 sessionId，其次按 turnId 反查。 */
+  const sessionOf = (event: RuntimeEvent): string => {
+    if ('sessionId' in event && typeof event.sessionId === 'string' && event.sessionId) return event.sessionId
+    if ('turnId' in event && typeof event.turnId === 'string') {
+      const mapped = turnSessionRef.current.get(event.turnId)
+      if (mapped) return mapped
+    }
+    return bufferKey()
   }
 
   /** 记录当前轮次正在做什么；相同阶段不重置起始时间，只刷新最后活动时间。 */
@@ -454,7 +571,9 @@ export function App(): React.JSX.Element {
     setTurnNow(now)
     const current = turnActivityRef.current
     if (current?.kind === kind && current.detail === detail) return
-    const next: TurnActivity = { kind, detail, startedAt: now }
+    // 同一阶段内 detail 可能持续变化（例如工具参数已生成的字符数），
+    // 保留阶段开始时间，避免“已等待”被每次进度更新重置。
+    const next: TurnActivity = current?.kind === kind ? { ...current, detail } : { kind, detail, startedAt: now }
     turnActivityRef.current = next
     setTurnActivity(next)
   }
@@ -489,11 +608,15 @@ export function App(): React.JSX.Element {
 
   /** 显示一个尚未写入磁盘的会话标签页（还没有发送任何消息）。 */
   const activateEmptyTab = (sessionId: string): void => {
+    sessionBuffersRef.current.set(sessionId, createBuffer(sessionId))
     activeSessionIdRef.current = sessionId
     setActiveSessionId(sessionId)
     setEntries([])
     setUsage(null)
     setTodos([])
+    busyRef.current = false
+    setBusy(false)
+    clearTurnActivity()
     setQueued(0)
     queueRef.current = []
     setQueuedItems([])
@@ -504,12 +627,16 @@ export function App(): React.JSX.Element {
   }
 
   const refreshSessions = async (): Promise<void> => {
-    const response = await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'session:list',
-      params: {},
-    })
-    if (response.ok) setSessions(response.result as SessionListItem[])
+    try {
+      const response = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'session:list',
+        params: {},
+      })
+      if (response.ok) setSessions(response.result as SessionListItem[])
+    } finally {
+      setSessionsLoaded(true)
+    }
   }
 
   const refreshWorkspaces = async (): Promise<void> => {
@@ -519,6 +646,19 @@ export function App(): React.JSX.Element {
       params: {},
     })
     if (response.ok) setWorkspaces((response.result as WorkspaceList).projects)
+  }
+
+  const refreshWorkspaceSessions = async (): Promise<void> => {
+    try {
+      const response = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'session:list-all',
+        params: {},
+      })
+      if (response.ok) setWorkspaceSessions(response.result as WorkspaceSessionsView[])
+    } finally {
+      setWorkspaceSessionsLoaded(true)
+    }
   }
 
   const refreshWorkspaceInsights = async (): Promise<void> => {
@@ -660,6 +800,35 @@ export function App(): React.JSX.Element {
   }, [appState?.workspace])
 
   useEffect(() => {
+    void refreshWorkspaceSessions()
+  }, [])
+
+  useEffect(() => {
+    if (activeSessionId) void refreshWorkspaceSessions()
+  }, [activeSessionId])
+
+  useEffect(() => {
+    const current = appState?.workspace ?? settings?.workspace
+    if (!current) return
+    setExpandedWorkspaces((prev) => (prev.has(current) ? prev : new Set(prev).add(current)))
+  }, [appState?.workspace, settings?.workspace])
+
+  // 当前窗口的执行状态上报给主进程，让其它窗口的目录树也能看到运行标记。
+  useEffect(() => {
+    const workspace = appState?.workspace ?? settings?.workspace
+    if (!workspace) return
+    window.xcode.reportRunningSessions(workspace, [...runningSessionIds])
+  }, [runningSessionIds, appState?.workspace, settings?.workspace])
+
+  useEffect(() => {
+    return window.xcode.onRunningSessions((entries) => {
+      const map: Record<string, string[]> = {}
+      for (const entry of entries) map[entry.workspace] = entry.sessionIds
+      setRunningOther(map)
+    })
+  }, [])
+
+  useEffect(() => {
     const onOpenFile = (event: Event): void => {
       const path = (event as CustomEvent<string>).detail
       if (typeof path === 'string' && path.trim()) {
@@ -784,20 +953,22 @@ export function App(): React.JSX.Element {
   }, [sessionQuery])
 
   useEffect(() => {
-    // 流式增量每秒到达多次；把它们合并成每帧一次渲染，
-    // 避免长对话对每个 token 重新解析 Markdown。
+    // 流式增量每秒到达多次；按会话合并成每帧一次渲染，避免长对话对每个
+    // token 重新解析 Markdown。
     const flushPendingText = (): void => {
       if (streamFrameRef.current !== null) {
         cancelAnimationFrame(streamFrameRef.current)
         streamFrameRef.current = null
       }
       lastTextFlushRef.current = performance.now()
-      const pending = pendingTextRef.current
-      pendingTextRef.current = null
-      if (!pending) return
-      updateEntriesRouted((prev) =>
-        prev.map((entry) => (entry.id === pending.entryId ? { ...entry, text: entry.text + pending.text } : entry)),
-      )
+      if (pendingTextRef.current.size === 0) return
+      const pending = [...pendingTextRef.current.entries()]
+      pendingTextRef.current.clear()
+      for (const [sessionId, item] of pending) {
+        commitEntries(sessionId, (prev) =>
+          prev.map((entry) => (entry.id === item.entryId ? { ...entry, text: entry.text + item.text } : entry)),
+        )
+      }
     }
 
     const scheduleTextFlush = (): void => {
@@ -806,7 +977,7 @@ export function App(): React.JSX.Element {
         streamFrameRef.current = null
         // 对一个不断增长的答案以 60fps 渲染 Markdown 大多是浪费；
         // ~30fps 让流保持流畅，同时不必每帧重新解析。
-        if (performance.now() - lastTextFlushRef.current < 32 && pendingTextRef.current) {
+        if (performance.now() - lastTextFlushRef.current < 32 && pendingTextRef.current.size > 0) {
           scheduleTextFlush()
           return
         }
@@ -815,14 +986,24 @@ export function App(): React.JSX.Element {
     }
 
     const off = window.xcode.onEvent((event: RuntimeEvent) => {
-      lastAgentEventAtRef.current = Date.now()
-      if (event.type !== 'agent:text-delta' && event.type !== 'agent:usage' && event.type !== 'agent:tool-progress') {
+      const sessionId = sessionOf(event)
+      const visible = isVisibleSession(sessionId)
+      if (visible) {
+        lastAgentEventAtRef.current = Date.now()
+      }
+      if (
+        event.type !== 'agent:text-delta' &&
+        event.type !== 'agent:usage' &&
+        event.type !== 'agent:tool-progress' &&
+        event.type !== 'agent:tool-input-progress' &&
+        event.type !== 'agent:reasoning-progress'
+      ) {
         flushPendingText()
       }
       switch (event.type) {
         case 'runtime:ready':
           setStatus('ready')
-          appendRouted({
+          appendTo(bufferKey(), {
             role: 'system',
             text: i18n.t('运行时已连接 · Node {{node}} · Electron {{electron}}', {
               node: event.versions.node ?? '?',
@@ -832,68 +1013,77 @@ export function App(): React.JSX.Element {
           break
         case 'runtime:exit':
           setStatus('offline')
-          appendRouted({
+          appendTo(bufferKey(), {
             role: 'error',
             text: i18n.t('运行时已退出（code {{code}}）。下次发送消息时会自动重启。', { code: event.code }),
           })
           break
         case 'goal:update':
-          setGoal(event.goal)
+          // goal 属于会话；后台会话的目标不能覆盖当前可见会话的面板。
+          if (visible) setGoal(event.goal)
           break
         case 'app:state':
           setAppState(event.state)
           break
+        case 'approval:request':
+          // 审批可能来自后台会话；始终弹出，避免并行会话卡死。
+          setApprovals((prev) => (prev.some((item) => item.requestId === event.requestId) ? prev : [...prev, event]))
+          if (visible) markTurnActivity('approval', event.toolName)
+          break
         case 'agent:turn-start': {
-          activeTurn.current = event.turnId
-          activeTextEntryId.current = null
-          busyRef.current = true
-          setBusy(true)
-          runningSessionIdRef.current = event.sessionId
-          setRunningSessionId(event.sessionId)
-          hostSessionIdRef.current = event.sessionId
-          markTurnActivity('model')
-          addTab(event.sessionId)
-          if (activeSessionIdRef.current === null || activeSessionIdRef.current === event.sessionId) {
-            // 还没有活动会话，或这一轮就属于当前标签：直接显示。
-            activeSessionIdRef.current = event.sessionId
-            setActiveSessionId(event.sessionId)
-          } else if (backgroundSessionRef.current?.sessionId !== event.sessionId) {
-            // 后台会话开始新一轮：确保它有独立的界面缓冲。
-            storeBackgroundSession({ sessionId: event.sessionId, entries: [], usage: null, todos: [] })
+          const onActive = activeSessionIdRef.current === null || activeSessionIdRef.current === sessionId
+          // 先迁移临时缓冲，再取目标会话缓冲，避免丢掉用户刚发出的一条消息。
+          if (onActive) adoptSession(sessionId)
+          const buffer = bufferFor(sessionId)
+          turnSessionRef.current.set(event.turnId, sessionId)
+          markSessionRunning(sessionId, true)
+          addTab(sessionId)
+          buffer.activeTurnId = event.turnId
+          buffer.textEntryId = null
+          pendingTextRef.current.delete(sessionId)
+          if (onActive) {
+            busyRef.current = true
+            setBusy(true)
+            hostSessionIdRef.current = sessionId
+            activeTextEntryId.current = null
+            markTurnActivity('model')
+            setActiveSessionId(sessionId)
           }
-          setNoticeRouted(null)
+          setNotice(null)
           break
         }
         case 'agent:text-delta': {
-          markTurnActivity('streaming')
-          const textEntryId = activeTextEntryId.current
+          const buffer = bufferFor(sessionId)
+          if (visible) markTurnActivity('streaming')
+          const textEntryId = buffer.textEntryId
           if (!textEntryId) {
             const id = crypto.randomUUID()
-            activeTextEntryId.current = id
-            appendRouted({ id, role: 'assistant', text: event.delta, turnId: activeTurn.current ?? undefined })
+            buffer.textEntryId = id
+            if (visible) activeTextEntryId.current = id
+            appendTo(sessionId, { id, role: 'assistant', text: event.delta, turnId: buffer.activeTurnId ?? undefined })
           } else {
-            const pending = pendingTextRef.current
-            pendingTextRef.current = {
+            const pending = pendingTextRef.current.get(sessionId)
+            pendingTextRef.current.set(sessionId, {
               entryId: textEntryId,
               text: (pending?.entryId === textEntryId ? pending.text : '') + event.delta,
-            }
+            })
             if (streamFrameRef.current === null) scheduleTextFlush()
           }
           break
         }
-        case 'agent:tool-call':
-          // toolSearch 是内部的延迟工具加载器；CLI 会隐藏它，
-          // 桌面记录也应该隐藏。
+        case 'agent:tool-call': {
+          // toolSearch 是内部的延迟工具加载器；CLI 会隐藏它，桌面记录也应该隐藏。
           if (event.toolName === 'toolSearch') break
-          markTurnActivity('tool', event.toolName)
-          // 工具之后的文本属于这张卡片之后，而不是工具运行前
-          // 创建的那个更早的助手气泡。
-          activeTextEntryId.current = null
-          appendRouted({
+          const buffer = bufferFor(sessionId)
+          if (visible) markTurnActivity('tool', event.toolName)
+          // 工具之后的文本属于这张卡片之后，而不是工具运行前创建的那个更早的助手气泡。
+          buffer.textEntryId = null
+          if (visible) activeTextEntryId.current = null
+          appendTo(sessionId, {
             id: event.toolCallId,
             role: 'tool',
             text: '',
-            turnId: activeTurn.current ?? undefined,
+            turnId: buffer.activeTurnId ?? undefined,
             toolCallId: event.toolCallId,
             toolName: event.toolName,
             toolInput: event.input,
@@ -901,16 +1091,28 @@ export function App(): React.JSX.Element {
             toolStartedAt: Date.now(),
           })
           break
+        }
+        case 'agent:reasoning-progress':
+          if (visible) markTurnActivity('reasoning', `${event.chars.toLocaleString()} ${t('字符')}`)
+          break
+        case 'agent:tool-input-progress':
+          if (visible) {
+            markTurnActivity(
+              'tool-input',
+              `${event.toolName || t('工具')} · ${event.chars.toLocaleString()} ${t('字符')}`,
+            )
+          }
+          break
         case 'agent:tool-progress':
-          updateEntriesRouted((prev) =>
+          commitEntries(sessionId, (prev) =>
             prev.map((entry) =>
               entry.toolCallId === event.toolCallId ? { ...entry, toolProgress: event.message } : entry,
             ),
           )
           break
         case 'agent:tool-result':
-          markTurnActivity('model')
-          updateEntriesRouted((prev) =>
+          if (visible) markTurnActivity('model')
+          commitEntries(sessionId, (prev) =>
             prev.map((entry) =>
               entry.toolCallId === event.toolCallId
                 ? {
@@ -924,13 +1126,13 @@ export function App(): React.JSX.Element {
           )
           break
         case 'agent:file-edit':
-          updateEntriesRouted((prev) =>
+          commitEntries(sessionId, (prev) =>
             prev.map((entry) => (entry.toolCallId === event.toolCallId ? { ...entry, diff: event.payload } : entry)),
           )
           break
         case 'agent:background-task':
           if (event.phase === 'end') {
-            appendRouted({
+            appendTo(sessionId, {
               role: event.task.status === 'completed' ? 'system' : 'error',
               text: t('后台任务结束：{{agent}} — {{description}}（{{status}}）', {
                 agent: event.task.agentName,
@@ -941,7 +1143,7 @@ export function App(): React.JSX.Element {
           }
           break
         case 'agent:subagent':
-          updateEntriesRouted((prev) =>
+          commitEntries(sessionId, (prev) =>
             prev.map((entry) => {
               if (entry.toolCallId !== event.toolCallId) return entry
               const current: SubAgentView = entry.subagent ?? {
@@ -1010,62 +1212,66 @@ export function App(): React.JSX.Element {
           )
           break
         case 'agent:todos':
-          setTodosRouted(event.todos)
+          setTodosFor(sessionId, event.todos)
           break
         case 'agent:usage':
-          setUsageRouted(event.usage)
+          setUsageFor(sessionId, event.usage)
           break
         case 'agent:permission-mode':
-          setNoticeRouted(event.mode === 'plan' ? i18n.t('计划模式') : null)
+          if (visible) setNotice(event.mode === 'plan' ? i18n.t('计划模式') : null)
           break
-        case 'agent:context-compressed':
-          activeTextEntryId.current = null
-          appendRouted({
+        case 'agent:context-compressed': {
+          const buffer = bufferFor(sessionId)
+          buffer.textEntryId = null
+          if (visible) activeTextEntryId.current = null
+          appendTo(sessionId, {
             role: 'system',
             text: i18n.t('上下文已压缩：{{summary}}', { summary: event.summary.slice(0, 160) }),
-            turnId: activeTurn.current ?? undefined,
+            turnId: buffer.activeTurnId ?? undefined,
           })
-          setNoticeRouted(null)
+          if (visible) setNotice(null)
           break
+        }
         case 'agent:compression-progress':
-          setNoticeRouted(event.description)
+          if (visible) setNotice(event.description)
           break
         case 'agent:ingest-progress':
-          setNoticeRouted(event.description)
+          if (visible) setNotice(event.description)
           break
         case 'agent:attachments':
-          setNoticeRouted(
-            i18n.t('附件已读取：{{files}} 个文件，{{chars}} 字符', {
-              files: event.files.length,
-              chars: event.textBytes,
-            }),
-          )
+          if (visible) {
+            setNotice(
+              i18n.t('附件已读取：{{files}} 个文件，{{chars}} 字符', {
+                files: event.files.length,
+                chars: event.textBytes,
+              }),
+            )
+          }
           break
         case 'agent:stream-retry':
-          markTurnActivity('retry', `${event.attempt}/${event.maxAttempts}`)
-          setNoticeRouted(
-            i18n.t('连接波动，重试 {{attempt}}/{{max}}…', {
-              attempt: event.attempt,
-              max: event.maxAttempts,
-            }),
-          )
+          if (visible) {
+            markTurnActivity('retry', `${event.attempt}/${event.maxAttempts}`)
+            setNotice(
+              i18n.t('连接波动，重试 {{attempt}}/{{max}}…', {
+                attempt: event.attempt,
+                max: event.maxAttempts,
+              }),
+            )
+          }
           break
-        case 'agent:model-fallback':
-          appendRouted({
+        case 'agent:model-fallback': {
+          const buffer = bufferFor(sessionId)
+          appendTo(sessionId, {
             role: 'system',
             text: i18n.t('主模型不可用，已切换到 {{model}}', { model: event.toModelId }),
-            turnId: activeTurn.current ?? undefined,
+            turnId: buffer.activeTurnId ?? undefined,
           })
-          setNoticeRouted(null)
+          if (visible) setNotice(null)
           break
-        case 'agent:turn-end':
-          activeTurn.current = null
-          activeTextEntryId.current = null
-          busyRef.current = false
-          setBusy(false)
-          clearTurnActivity()
-          setNoticeRouted(null)
-          updateEntriesRouted((prev) => {
+        }
+        case 'agent:turn-end': {
+          const buffer = bufferFor(sessionId)
+          commitEntries(sessionId, (prev) => {
             const next: Entry[] = prev.map((entry) =>
               entry.subagent?.status === 'running'
                 ? {
@@ -1078,43 +1284,48 @@ export function App(): React.JSX.Element {
             // 补一条说明，提示用户可以继续或重新生成。
             const last = next[next.length - 1]
             if (event.reason === 'completed' && last?.role === 'tool') {
-              const notice: Entry = {
+              next.push({
                 id: crypto.randomUUID(),
                 role: 'system',
                 text: i18n.t('工具已执行，但模型没有继续回复。可以继续提问，或重新生成。'),
                 turnId: event.turnId,
-              }
-              next.push(notice)
+              })
             }
             return next
           })
-          runningSessionIdRef.current = null
-          setRunningSessionId(null)
-          setQueued(queueRef.current.length)
-          if (queueRef.current.length > 0) {
-            const next = queueRef.current.shift()
+          buffer.activeTurnId = null
+          buffer.textEntryId = null
+          turnSessionRef.current.delete(event.turnId)
+          markSessionRunning(sessionId, false)
+          syncBusyFromRunning()
+          if (visible) {
+            activeTextEntryId.current = null
+            setNotice(null)
             setQueued(queueRef.current.length)
-            setQueuedItems([...queueRef.current])
-            if (next) setTimeout(() => submitRef.current(next.prompt, true, next.attachments), 0)
+            if (queueRef.current.length > 0) {
+              const next = queueRef.current.shift()
+              setQueued(queueRef.current.length)
+              setQueuedItems([...queueRef.current])
+              if (next) setTimeout(() => submitRef.current(next.prompt, true, next.attachments), 0)
+            }
           }
           void refreshSessions()
           break
-        case 'agent:error':
-          activeTextEntryId.current = null
-          appendRouted({ role: 'error', text: event.message, turnId: activeTurn.current ?? undefined })
-          busyRef.current = false
-          setBusy(false)
-          runningSessionIdRef.current = null
-          setRunningSessionId(null)
-          clearTurnActivity()
+        }
+        case 'agent:error': {
+          if (visible) {
+            const buffer = bufferFor(sessionId)
+            buffer.textEntryId = null
+            activeTextEntryId.current = null
+            appendTo(sessionId, { role: 'error', text: event.message, turnId: buffer.activeTurnId ?? undefined })
+          }
+          markSessionRunning(sessionId, false)
+          syncBusyFromRunning()
           break
-        case 'approval:request':
-          markTurnActivity('approval', event.toolName)
-          setApproval(event)
-          break
+        }
         case 'session:saved':
           setSessions((prev) => [event.item, ...prev.filter((item) => item.sessionId !== event.item.sessionId)])
-          if (!isBackgroundEvent()) setActiveSessionId(event.item.sessionId)
+          if (activeSessionIdRef.current === null) setActiveSessionId(event.item.sessionId)
           setTabTitles((prev) => {
             const title = (event.item.name || event.item.title || event.item.firstPrompt || '').trim()
             return title ? { ...prev, [event.item.sessionId]: title.slice(0, 80) } : prev
@@ -1137,12 +1348,12 @@ export function App(): React.JSX.Element {
             (result) => result.status === 'failed' || result.status === 'timeout',
           ).length
           if (event.auto) {
-            appendRouted({
+            appendTo(bufferKey(), {
               role: 'system',
               text:
                 failed > 0 ? i18n.t('自动项目检查失败：{{count}} 项', { count: failed }) : i18n.t('自动项目检查通过'),
             })
-            setNoticeRouted(failed > 0 ? i18n.t('自动项目检查失败，可在“检查”面板查看') : i18n.t('自动项目检查通过'))
+            setNotice(failed > 0 ? i18n.t('自动项目检查失败，可在“检查”面板查看') : i18n.t('自动项目检查通过'))
           }
           break
         }
@@ -1155,8 +1366,11 @@ export function App(): React.JSX.Element {
                 : event.status === 'exhausted'
                   ? i18n.t('自动修复已用尽 {{max}} 轮，项目检查仍未通过', { max: event.maxRounds })
                   : i18n.t('自动修复中止：{{message}}', { message: event.message ?? '' })
-          appendRouted({ role: event.status === 'failed' || event.status === 'exhausted' ? 'error' : 'system', text })
-          setNoticeRouted(text)
+          appendTo(bufferKey(), {
+            role: event.status === 'failed' || event.status === 'exhausted' ? 'error' : 'system',
+            text,
+          })
+          setNotice(text)
           break
         }
         case 'settings:changed':
@@ -1186,7 +1400,7 @@ export function App(): React.JSX.Element {
           void refreshCommands()
           break
         case 'audio:progress':
-          setNoticeRouted(event.message)
+          setNotice(event.message)
           break
         case 'app:open-session':
           void openSessionById(event.sessionId)
@@ -1207,13 +1421,46 @@ export function App(): React.JSX.Element {
         cancelAnimationFrame(streamFrameRef.current)
         streamFrameRef.current = null
       }
-      pendingTextRef.current = null
+      pendingTextRef.current.clear()
       if (settingsSyncTimerRef.current) {
         clearTimeout(settingsSyncTimerRef.current)
         settingsSyncTimerRef.current = null
       }
     }
   }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(EXPANDED_WORKSPACES_KEY, JSON.stringify([...expandedWorkspaces]))
+    } catch {
+      // 忽略存储异常。
+    }
+  }, [expandedWorkspaces])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth))
+    } catch {
+      // 忽略存储异常。
+    }
+  }, [sidebarWidth])
+
+  useEffect(() => {
+    const previous = seenEntryCountRef.current
+    seenEntryCountRef.current = entries.length
+    if (nearBottomRef.current) {
+      setUnseenEntries((count) => (count === 0 ? count : 0))
+      return
+    }
+    if (entries.length > previous) setUnseenEntries((count) => count + (entries.length - previous))
+  }, [entries])
+
+  // 键盘或点击切到被滚出视野的标签后，把激活标签带回可见区域。
+  useEffect(() => {
+    document
+      .querySelector<HTMLElement>('[data-testid="session-tab"].active')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeSessionId])
 
   useEffect(() => {
     if (!nearBottomRef.current) return
@@ -1226,12 +1473,34 @@ export function App(): React.JSX.Element {
     return () => cancelAnimationFrame(frame)
   }, [entries])
 
+  // 切换标签时必须回到新会话的底部。浏览器会保留上一个会话的 scrollTop，
+  // 当新会话内容更短时就会停在中间。重置跟随状态，并在布局完成后滚到底；
+  // 双帧是为了等 Markdown / 代码块替换完高度。
+  useEffect(() => {
+    nearBottomRef.current = true
+    setShowScrollBottom(false)
+    setUnseenEntries(0)
+    seenEntryCountRef.current = 0
+    let second = 0
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        const node = scrollRef.current
+        if (node) node.scrollTop = node.scrollHeight
+      })
+    })
+    return () => {
+      cancelAnimationFrame(first)
+      cancelAnimationFrame(second)
+    }
+  }, [activeSessionId])
+
   const handleChatScroll = (): void => {
     const node = scrollRef.current
     if (!node) return
     const near = node.scrollHeight - node.scrollTop - node.clientHeight < 120
     nearBottomRef.current = near
     setShowScrollBottom(!near)
+    if (near) setUnseenEntries(0)
   }
 
   const jumpToEntry = (entryId: string): void => {
@@ -1400,10 +1669,6 @@ export function App(): React.JSX.Element {
   ): Promise<void> => {
     const prompt = promptText.trim() || (files.length > 0 ? t('请阅读并分析这些附件。') : '')
     if (!prompt) return
-    if (!alreadyShown && busyRef.current && runningSessionIdRef.current !== activeSessionIdRef.current) {
-      setReport(t('另一个标签的回复仍在运行；请在对应标签停止或等待结束后再发送。'))
-      return
-    }
     const display = displayText?.trim() || prompt
     if (!alreadyShown && !busyRef.current && !workspaceGuardOff && !workspaceGuardBypassRef.current) {
       const external = detectExternalWorkspacePaths(prompt, appState?.workspace ?? settings?.workspace ?? '')
@@ -1422,28 +1687,32 @@ export function App(): React.JSX.Element {
         prev[activeSessionId] ? prev : { ...prev, [activeSessionId]: display.replace(/\s+/g, ' ').slice(0, 80) },
       )
     }
-    // 之前在其他会话运行期间浏览了别的标签：发送前先把运行时切回当前会话。
-    if (
-      !alreadyShown &&
-      !busyRef.current &&
-      activeSessionIdRef.current &&
-      hostSessionIdRef.current !== activeSessionIdRef.current
-    ) {
-      const target = sessions.find((session) => session.sessionId === activeSessionIdRef.current)
-      if (!target) {
-        setReport(t('该标签还没有可发送的会话，请新建会话。'))
-        return
-      }
-      const loaded = await window.xcode.request({
+    // 之前浏览了别的标签：发送前把主机活动 runtime 切回当前会话。
+    if (!alreadyShown && activeSessionIdRef.current && hostSessionIdRef.current !== activeSessionIdRef.current) {
+      const sid = activeSessionIdRef.current
+      const activation = await window.xcode.request({
         id: crypto.randomUUID(),
-        method: 'session:load',
-        params: { filePath: target.filePath },
+        method: 'session:activate',
+        params: { sessionId: sid },
       })
-      if (!loaded.ok) {
-        setReport(t('恢复会话失败：{{message}}', { message: loaded.error.message }))
-        return
+      const activated = activation.ok && (activation.result as { activated: boolean }).activated === true
+      if (!activated) {
+        const target = sessions.find((session) => session.sessionId === sid)
+        if (!target) {
+          setReport(t('该标签还没有可发送的会话，请新建会话。'))
+          return
+        }
+        const loaded = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'session:load',
+          params: { filePath: target.filePath },
+        })
+        if (!loaded.ok) {
+          setReport(t('恢复会话失败：{{message}}', { message: loaded.error.message }))
+          return
+        }
       }
-      hostSessionIdRef.current = target.sessionId
+      hostSessionIdRef.current = sid
     }
     if (editArmed && !alreadyShown && !busyRef.current) {
       const rewound = await rewindConversation()
@@ -1452,7 +1721,7 @@ export function App(): React.JSX.Element {
     }
     setReport(null)
     if (!alreadyShown) {
-      append({ role: 'user', text: display, attachments: files })
+      append({ role: 'user', text: display, attachments: files, at: Date.now() })
     }
     if (busyRef.current) {
       queueRef.current.push({ prompt, attachments: files })
@@ -1493,8 +1762,12 @@ export function App(): React.JSX.Element {
     setWorkspaceGuard(null)
   }
 
-  const abort = async (): Promise<void> => {
-    await window.xcode.request({ id: crypto.randomUUID(), method: 'agent:abort', params: {} })
+  const abort = async (sessionId?: string): Promise<void> => {
+    await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'agent:abort',
+      params: sessionId ? { sessionId } : {},
+    })
   }
 
   const runDiagnostics = async (): Promise<void> => {
@@ -1589,11 +1862,106 @@ export function App(): React.JSX.Element {
     setSidebarOpen(false)
   }
 
+  const openWorkspaceWindow = async (workspacePath: string): Promise<void> => {
+    const response = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'app:new-window',
+      params: { workspacePath },
+    })
+    if (!response.ok) {
+      setNotice(t('打开新窗口失败：{{message}}', { message: response.error.message }))
+      return
+    }
+    const outcome = response.result as { created: boolean; focused: boolean }
+    setNotice(outcome.focused ? t('该工作区已在另一个窗口打开') : t('已在新窗口打开该工作区'))
+    setTimeout(() => setNotice(null), 2_400)
+  }
+
+  const newWorkspaceSession = async (workspacePath: string): Promise<void> => {
+    const response = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'app:new-window',
+      params: { workspacePath, newSession: true },
+    })
+    if (!response.ok) {
+      setNotice(t('在该工作区新建会话失败：{{message}}', { message: response.error.message }))
+      return
+    }
+    const outcome = response.result as { created: boolean; focused: boolean }
+    setNotice(outcome.created ? t('已在新窗口为该工作区新建会话') : t('已在已打开的工作区窗口中新建会话'))
+    setTimeout(() => setNotice(null), 2_400)
+  }
+
+  const openWorkspaceSession = async (workspacePath: string, filePath: string): Promise<void> => {
+    const response = await window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'app:new-window',
+      params: { workspacePath, sessionFilePath: filePath },
+    })
+    if (!response.ok) {
+      setNotice(t('打开会话失败：{{message}}', { message: response.error.message }))
+      return
+    }
+    setNotice(t('已在新窗口打开该会话'))
+    setTimeout(() => setNotice(null), 2_400)
+  }
+
+  const toggleWorkspace = (workspacePath: string): void => {
+    setExpandedWorkspaces((prev) => {
+      const next = new Set(prev)
+      if (next.has(workspacePath)) next.delete(workspacePath)
+      else next.add(workspacePath)
+      return next
+    })
+  }
+
+  const startSidebarResize = (event: { clientX: number; preventDefault: () => void }): void => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+    const onMove = (move: PointerEvent): void => {
+      setSidebarWidth(
+        Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(startWidth + move.clientX - startX))),
+      )
+    }
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   const switchProject = async (nextPath: string): Promise<void> => {
     if (switchingProject) return
     if (nextPath === (appState?.workspace ?? settings?.workspace)) return
-    if (busyRef.current) {
-      setNotice(t('当前回复仍在运行，请先停止或等待结束后再切换工作区。'))
+    // 本窗口还有回复在跑时不能原地换工作区：那样会拆掉正在用的 loopState
+    // 和后台任务。改为在新窗口打开目标工作区，两边各自跑，互不打断。
+    if (busyRef.current || runningSessionIdsRef.current.size > 0) {
+      setSwitchingProject(nextPath)
+      try {
+        const opened = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'app:new-window',
+          params: { workspacePath: nextPath },
+        })
+        if (!opened.ok) {
+          setNotice(t('打开新窗口失败：{{message}}', { message: opened.error.message }))
+          return
+        }
+        const outcome = opened.result as { created: boolean; focused: boolean }
+        setNotice(
+          outcome.focused
+            ? t('该工作区已在另一个窗口打开，本窗口继续运行')
+            : t('本窗口继续运行，目标工作区已在新窗口打开'),
+        )
+        setTimeout(() => setNotice(null), 2_400)
+        void refreshWorkspaces()
+      } catch (error) {
+        setNotice(t('打开新窗口失败：{{message}}', { message: String(error) }))
+      } finally {
+        setSwitchingProject(null)
+      }
       return
     }
     setSwitchingProject(nextPath)
@@ -1612,9 +1980,14 @@ export function App(): React.JSX.Element {
       const result = response.result as SettingsActionResult
       setAppState(result.state)
       setSettings(result.settings)
+      sessionBuffersRef.current.clear()
+      runningSessionIdsRef.current = new Set()
+      setRunningSessionIds(new Set())
       setEntries([])
       setTodos([])
       setUsage(null)
+      setBusy(false)
+      busyRef.current = false
       setReport(null)
       setQueued(0)
       queueRef.current = []
@@ -2104,7 +2477,7 @@ export function App(): React.JSX.Element {
       }
       const result = response.result as TempDeliverableMoveResult
       if (result.moved.length > 0) {
-        setEntries((prev) =>
+        commitEntries(bufferKey(), (prev) =>
           prev.map((entry) => {
             if (entry.id !== entryId) return entry
             let output = entry.toolOutput
@@ -2133,90 +2506,71 @@ export function App(): React.JSX.Element {
   }
 
   const loadSession = async (item: SessionListItem): Promise<void> => {
-    if (restoreBackgroundSession(item.sessionId)) return
-    const busy = busyRef.current
-    if (busy) {
-      // 把正在显示的运行会话转入后台缓冲，再用只读接口打开另一份历史。
-      if (activeSessionIdRef.current === runningSessionIdRef.current) {
-        const running = runningSessionIdRef.current
-        if (running) storeBackgroundSession({ sessionId: running, entries, usage, todos })
+    setSessionLoading(true)
+    try {
+      // 运行中的会话不读盘：切回它在主机里的 runtime 和实时缓冲。
+      if (runningSessionIdsRef.current.has(item.sessionId)) {
+        const activation = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'session:activate',
+          params: { sessionId: item.sessionId },
+        })
+        if (activation.ok && (activation.result as { activated: boolean }).activated) {
+          hostSessionIdRef.current = item.sessionId
+          emptyTabsRef.current.delete(item.sessionId)
+          addTab(item.sessionId)
+          showSessionBuffer(item.sessionId)
+          return
+        }
       }
-      const peek = await window.xcode.request({
+      const response = await window.xcode.request({
         id: crypto.randomUUID(),
-        method: 'session:peek',
+        method: 'session:load',
         params: { filePath: item.filePath },
       })
-      if (!peek.ok) {
-        if (peek.error.message.includes('完整性')) {
+      if (!response.ok) {
+        if (response.error.message.includes('完整性')) {
           setSalvageTarget(item)
           return
         }
-        setReport(t('查看会话失败：{{message}}', { message: peek.error.message }))
+        append({ role: 'error', text: t('恢复会话失败：{{message}}', { message: response.error.message }) })
         return
       }
-      const view = peek.result as {
+      const view = response.result as {
         sessionId: string
         modelId: string
         messages: Entry[]
         usage: UsageView
       }
-      activeSessionIdRef.current = item.sessionId
-      setEntries(view.messages.map((message) => ({ ...message })))
-      setUsage(view.usage)
-      setTodos([])
-      setActiveSessionId(item.sessionId)
+      hostSessionIdRef.current = view.sessionId
       emptyTabsRef.current.delete(item.sessionId)
       addTab(item.sessionId)
+      activeSessionIdRef.current = item.sessionId
+      replaceEntries(
+        item.sessionId,
+        view.messages.map((message) => ({ ...message })),
+      )
+      setUsageFor(item.sessionId, view.usage)
+      setTodosFor(item.sessionId, [])
+      setActiveSessionId(item.sessionId)
+      setQueued(0)
+      queueRef.current = []
+      setQueuedItems([])
+      setAttachments([])
       pendingSessionRef.current = null
       setPendingSession(null)
+      busyRef.current = false
+      setBusy(false)
+      clearTurnActivity()
       try {
         localStorage.setItem('xcode.lastSession', item.filePath)
       } catch {
         // 恢复上次会话是尽力而为。
       }
-      // 运行时里正在跑的会话没有变，因此不调用 refreshState。
-      return
+      await refreshState()
+    } finally {
+      setSessionLoading(false)
     }
-    storeBackgroundSession(null)
-    const response = await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'session:load',
-      params: { filePath: item.filePath },
-    })
-    if (!response.ok) {
-      if (response.error.message.includes('完整性')) {
-        setSalvageTarget(item)
-        return
-      }
-      append({ role: 'error', text: t('恢复会话失败：{{message}}', { message: response.error.message }) })
-      return
-    }
-    const view = response.result as {
-      sessionId: string
-      modelId: string
-      messages: Entry[]
-      usage: UsageView
-    }
-    hostSessionIdRef.current = view.sessionId
-    activeSessionIdRef.current = item.sessionId
-    setEntries(view.messages.map((message) => ({ ...message })))
-    setUsage(view.usage)
-    setTodos([])
-    setQueued(0)
-    queueRef.current = []
-    setQueuedItems([])
-    setAttachments([])
-    setActiveSessionId(item.sessionId)
-    emptyTabsRef.current.delete(item.sessionId)
-    addTab(item.sessionId)
-    pendingSessionRef.current = null
-    setPendingSession(null)
-    try {
-      localStorage.setItem('xcode.lastSession', item.filePath)
-    } catch {
-      // 恢复上次会话是尽力而为。
-    }
-    await refreshState()
   }
 
   useEffect(() => {
@@ -2318,10 +2672,6 @@ export function App(): React.JSX.Element {
   }
 
   const newSession = async (): Promise<void> => {
-    if (busyRef.current) {
-      setReport(t('另一个标签的回复仍在运行。可以打开新窗口并行处理，或等当前回复结束后再新建会话。'))
-      return
-    }
     const response = await window.xcode.request({
       id: crypto.randomUUID(),
       method: 'session:new',
@@ -2330,7 +2680,7 @@ export function App(): React.JSX.Element {
     if (response.ok) {
       const { sessionId } = response.result as { sessionId: string }
       hostSessionIdRef.current = sessionId
-      storeBackgroundSession(null)
+      sessionBuffersRef.current.set(sessionId, createBuffer(sessionId))
       emptyTabsRef.current.add(sessionId)
       addTab(sessionId)
       activateEmptyTab(sessionId)
@@ -2338,8 +2688,30 @@ export function App(): React.JSX.Element {
     }
   }
 
+  useEffect(() => {
+    if (newWindowSessionRef.current) return
+    if (appState === null) return
+    if (!new URLSearchParams(window.location.search).has('new')) return
+    newWindowSessionRef.current = true
+    void newSession()
+  }, [appState, newSession])
+
   const activateTab = async (sessionId: string): Promise<void> => {
     if (sessionId === activeSessionId) return
+    if (runningSessionIdsRef.current.has(sessionId)) {
+      const activation = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'session:activate',
+        params: { sessionId },
+      })
+      if (activation.ok && (activation.result as { activated: boolean }).activated) {
+        hostSessionIdRef.current = sessionId
+        showSessionBuffer(sessionId)
+        addTab(sessionId)
+        markTurnActivity('model')
+        return
+      }
+    }
     const item = sessions.find((session) => session.sessionId === sessionId)
     if (item) {
       emptyTabsRef.current.delete(sessionId)
@@ -2347,9 +2719,13 @@ export function App(): React.JSX.Element {
       return
     }
     if (emptyTabsRef.current.has(sessionId)) {
-      if (busyRef.current && activeSessionIdRef.current === runningSessionIdRef.current) {
-        const running = runningSessionIdRef.current
-        if (running) storeBackgroundSession({ sessionId: running, entries, usage, todos })
+      const activation = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'session:activate',
+        params: { sessionId },
+      })
+      if (activation.ok && (activation.result as { activated: boolean }).activated) {
+        hostSessionIdRef.current = sessionId
       }
       activateEmptyTab(sessionId)
       return
@@ -2358,13 +2734,38 @@ export function App(): React.JSX.Element {
     setReport(t('该标签页的会话已不存在。'))
   }
 
+  const switchTabByOffset = (offset: number): void => {
+    if (tabs.length < 2) return
+    const current = activeSessionId ? tabs.indexOf(activeSessionId) : -1
+    const next = tabs[(current + offset + tabs.length) % tabs.length]
+    if (next) void activateTab(next)
+  }
+
+  const copyLastReply = (): void => {
+    const reply = [...entries].reverse().find((entry) => entry.role === 'assistant' && entry.text.trim())
+    if (!reply) {
+      setNotice(t('当前会话还没有可复制的回复'))
+      setTimeout(() => setNotice(null), 1_800)
+      return
+    }
+    window.xcode.copyText(reply.text)
+    setNotice(t('已复制上一条回复'))
+    setTimeout(() => setNotice(null), 1_800)
+  }
+
   const closeTab = async (sessionId: string): Promise<void> => {
-    if (busyRef.current && sessionId === runningSessionIdRef.current) {
+    if (runningSessionIdsRef.current.has(sessionId)) {
       setReport(t('该标签的回复仍在运行，请先停止后再关闭。'))
       return
     }
     const remaining = tabs.filter((id) => id !== sessionId)
     emptyTabsRef.current.delete(sessionId)
+    sessionBuffersRef.current.delete(sessionId)
+    void window.xcode.request({
+      id: crypto.randomUUID(),
+      method: 'session:close',
+      params: { sessionId },
+    })
     setTabs(remaining)
     if (sessionId !== activeSessionId) return
     let next: SessionListItem | undefined
@@ -2621,6 +3022,24 @@ export function App(): React.JSX.Element {
         setPaletteOpen((open) => !open)
         return
       }
+      if (mod && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+        const target = tabs[Number(event.key) - 1]
+        if (target) {
+          event.preventDefault()
+          void activateTab(target)
+        }
+        return
+      }
+      if (mod && event.shiftKey && (event.key === '[' || event.key === ']')) {
+        event.preventDefault()
+        switchTabByOffset(event.key === '[' ? -1 : 1)
+        return
+      }
+      if (mod && event.shiftKey && event.key.toLowerCase() === 'e') {
+        event.preventDefault()
+        copyLastReply()
+        return
+      }
       if (mod && event.key.toLowerCase() === 'n' && event.shiftKey) {
         event.preventDefault()
         void openInNewWindow(false)
@@ -2713,12 +3132,23 @@ export function App(): React.JSX.Element {
     openDocumentPanel,
     changeZoom,
     openInNewWindow,
+    tabs,
+    activeSessionId,
+    activateTab,
+    switchTabByOffset,
+    copyLastReply,
   ])
 
   const applySessionView = (view: LoadedSessionView): void => {
-    setEntries(view.messages.map((message) => ({ ...message })))
-    setUsage(view.usage)
-    setTodos([])
+    hostSessionIdRef.current = view.sessionId
+    activeSessionIdRef.current = view.sessionId
+    setTurnWindow(40)
+    replaceEntries(
+      view.sessionId,
+      view.messages.map((message) => ({ ...message })),
+    )
+    setUsageFor(view.sessionId, view.usage)
+    setTodosFor(view.sessionId, [])
     setQueued(0)
     queueRef.current = []
     setQueuedItems([])
@@ -2881,7 +3311,9 @@ export function App(): React.JSX.Element {
       return
     }
     const result = response.result as { message: string; filePath: string }
-    setEntries((prev) => prev.map((entry) => (entry.id === entryId ? { ...entry, reverted: true } : entry)))
+    commitEntries(bufferKey(), (prev) =>
+      prev.map((entry) => (entry.id === entryId ? { ...entry, reverted: true } : entry)),
+    )
     setReport(t('{{message}}：{{path}}', { message: result.message, path: result.filePath }))
   }
 
@@ -3147,10 +3579,14 @@ export function App(): React.JSX.Element {
     const { resetActive } = response.result as { resetActive: boolean }
     setTabs((prev) => prev.filter((sessionId) => sessionId !== item.sessionId))
     emptyTabsRef.current.delete(item.sessionId)
+    sessionBuffersRef.current.delete(item.sessionId)
     if (resetActive) {
       setEntries([])
       setUsage(null)
       setTodos([])
+      busyRef.current = false
+      setBusy(false)
+      clearTurnActivity()
       setQueued(0)
       queueRef.current = []
       setQueuedItems([])
@@ -3211,7 +3647,7 @@ export function App(): React.JSX.Element {
     request: ApprovalRequestEvent,
     decision: 'yes' | 'always' | 'no' | boolean | string,
   ): Promise<void> => {
-    setApproval(null)
+    setApprovals((prev) => prev.filter((item) => item.requestId !== request.requestId))
     markTurnActivity(request.toolName ? 'tool' : 'model', request.toolName)
     const payload: {
       requestId: string
@@ -3470,16 +3906,114 @@ export function App(): React.JSX.Element {
   )
   const isLocalModel = (model: ModelOption): boolean =>
     model.id.startsWith('ollama:') || model.id.startsWith('lmstudio:')
-  const localModelOptions = filteredModels.filter(isLocalModel)
-  const remoteModelOptions = filteredModels.filter((model) => !isLocalModel(model))
+  // 当前模型固定置顶；其余模型按 provider 分组，避免模型多时翻很久。
+  const visibleModels = filteredModels.filter((model) => model.id !== appState?.activeModelId)
+  const localModelOptions = visibleModels.filter(isLocalModel)
+  const remoteModelOptions = visibleModels.filter((model) => !isLocalModel(model))
+  const providerGroups: Array<{ provider: string; models: ModelOption[] }> = []
+  for (const model of remoteModelOptions) {
+    const group = providerGroups.find((entry) => entry.provider === model.provider)
+    if (group) group.models.push(model)
+    else providerGroups.push({ provider: model.provider, models: [model] })
+  }
+  const keyboardModels = [...localModelOptions, ...remoteModelOptions]
+  useEffect(() => {
+    if (modelKeyIndex < 0) return
+    document.querySelector<HTMLElement>('.model-list .model-item.is-keyboard')?.scrollIntoView({ block: 'nearest' })
+  }, [modelKeyIndex])
+  const renderModelItem = (model: ModelOption, showProvider = false): React.JSX.Element => {
+    const keyboardIndex = keyboardModels.findIndex((item) => item.id === model.id)
+    return (
+      <button
+        key={model.id}
+        className={`model-item ${model.id === appState?.activeModelId ? 'active' : ''} ${
+          keyboardIndex >= 0 && keyboardIndex === modelKeyIndex ? 'is-keyboard' : ''
+        }`}
+        onClick={() => void chooseModel(model)}
+      >
+        <span className="model-item-label">{model.label}</span>
+        <span className="model-item-meta">
+          {showProvider ? <span>{providerDisplayName(model.provider)}</span> : null}
+          {model.contextWindow ? (
+            <span
+              className="model-item-context"
+              title={t('上下文上限 {{tokens}} tokens', {
+                tokens: model.contextWindow.toLocaleString(),
+              })}
+            >
+              {formatContextTokens(model.contextWindow)} {t('上下文')}
+            </span>
+          ) : null}
+        </span>
+        <span className="model-item-desc">{model.description}</span>
+      </button>
+    )
+  }
   const canSend = !busy && (input.trim().length > 0 || attachments.length > 0)
-  const busyForActive = busy && runningSessionId !== null && runningSessionId === activeSessionId
-  const backgroundRunning = busy && runningSessionId !== null && runningSessionId !== activeSessionId
-  const backgroundTitle = backgroundRunning
-    ? tabTitles[runningSessionId] ||
-      sessions.find((item) => item.sessionId === runningSessionId)?.firstPrompt?.slice(0, 40) ||
-      t('另一个会话')
-    : ''
+  useEffect(() => {
+    setNextStepsHidden(false)
+  }, [activeSessionId])
+
+  const busyForActive = busy && activeSessionId !== null && runningSessionIds.has(activeSessionId)
+  const backgroundRunning = runningSessionIds.size > (busyForActive ? 1 : 0)
+
+  const nextSteps = busy ? [] : buildNextSteps({ entries, todos, goal })
+
+  // 侧栏目录树：当前工作区在前，其余来自 session:list-all 的最近会话。
+  const currentWorkspacePath = appState?.workspace ?? settings?.workspace ?? ''
+  const autoExpandedWorkspaceRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!currentWorkspacePath) return
+    if (autoExpandedWorkspaceRef.current === currentWorkspacePath) return
+    autoExpandedWorkspaceRef.current = currentWorkspacePath
+    setExpandedWorkspaces((previous) => {
+      if (previous.has(currentWorkspacePath)) return previous
+      const next = new Set(previous)
+      next.add(currentWorkspacePath)
+      return next
+    })
+  }, [currentWorkspacePath])
+  const sidebarTreeGroups: Array<{
+    path: string
+    name: string
+    current: boolean
+    sessions: SessionListItem[]
+  }> = []
+  if (currentWorkspacePath) {
+    const currentName =
+      workspaces.find((project) => project.current)?.name ??
+      currentWorkspacePath.split(/[\\/]/).filter(Boolean).pop() ??
+      currentWorkspacePath
+    sidebarTreeGroups.push({ path: currentWorkspacePath, name: currentName, current: true, sessions: [] })
+  }
+  for (const project of workspaces) {
+    if (project.current || project.path === currentWorkspacePath) continue
+    const known = workspaceSessions.find((entry) => entry.path === project.path)
+    sidebarTreeGroups.push({
+      path: project.path,
+      name: project.name,
+      current: false,
+      sessions: known?.sessions ?? [],
+    })
+  }
+  const expandAllWorkspaces = (): void => {
+    setExpandedWorkspaces(new Set(sidebarTreeGroups.map((group) => group.path)))
+  }
+
+  const collapseAllWorkspaces = (): void => {
+    setExpandedWorkspaces(new Set())
+  }
+
+  const backgroundSessionId = [...runningSessionIds].find((sessionId) => sessionId !== activeSessionId)
+  const runningIndicatorId =
+    activeSessionId && runningSessionIds.has(activeSessionId) ? activeSessionId : ([...runningSessionIds][0] ?? '')
+  const backgroundTitle =
+    backgroundRunning && backgroundSessionId
+      ? tabTitles[backgroundSessionId] ||
+        sessions.find((item) => item.sessionId === backgroundSessionId)?.firstPrompt?.slice(0, 40) ||
+        t('另一个会话')
+      : ''
   // composer 的键盘逻辑与输入框解耦，供 ComposerBox 复用。
   const handleComposerKeyDown = useComposerKeyDown({
     mention,
@@ -3545,43 +4079,13 @@ export function App(): React.JSX.Element {
   const visibleBranches = (branchView?.branches ?? []).filter(
     (branch) => !branchNeedle || branch.name.toLowerCase().includes(branchNeedle),
   )
-  const turnGroups: Entry[][] = []
-  let currentTurn: Entry[] | undefined
-  let currentTurnId: string | undefined
-  for (const entry of entries) {
-    const startsTurn =
-      !currentTurn ||
-      entry.role === 'user' ||
-      (entry.turnId !== undefined && currentTurnId !== undefined && entry.turnId !== currentTurnId)
-    if (startsTurn) {
-      const group: Entry[] = []
-      turnGroups.push(group)
-      currentTurn = group
-      currentTurnId = undefined
-    }
-    if (!currentTurn) continue
-    currentTurn.push(entry)
-    if (entry.turnId) currentTurnId = entry.turnId
-  }
-  const turnItems: TurnRenderItem[] = []
-  for (const group of turnGroups) {
-    const entryKey = group.find((entry) => entry.role === 'user')?.id ?? group[0]?.id ?? 'turn'
-    const key = `${activeSessionId ?? 'current'}:${entryKey}`
-    const tools = group.filter((entry) => entry.role === 'tool')
-    const collapsed = !(turnToolOverrides.get(key) ?? toolDisplayMode !== 'minimal')
-    const failures = tools.filter((entry) => entry.toolStatus === 'error' || entry.toolStatus === 'denied').length
-    let toggleAdded = false
-    for (const entry of group) {
-      if (entry.role === 'tool') {
-        if (!toggleAdded) {
-          turnItems.push({ kind: 'toggle', key, count: tools.length, failures, collapsed })
-          toggleAdded = true
-        }
-        if (collapsed) continue
-      }
-      turnItems.push({ kind: 'entry', entry })
-    }
-  }
+  const turnBuild = buildTurnItems(entries, {
+    sessionKey: activeSessionId ?? 'current',
+    toolDisplayMode,
+    toolOverrides: turnToolOverrides,
+    ...(findOpen ? {} : { maxTurns: turnWindow }),
+  })
+  const turnItems: TurnRenderItem[] = turnBuild.items
   const toggleTurnTools = (key: string): void => {
     setTurnToolOverrides((previous) => {
       const current = previous.get(key) ?? toolDisplayMode !== 'minimal'
@@ -3599,6 +4103,21 @@ export function App(): React.JSX.Element {
     queueRef.current.splice(index, 1)
     setQueued(queueRef.current.length)
     setQueuedItems([...queueRef.current])
+  }
+
+  const moveQueued = (index: number, delta: number): void => {
+    const target = index + delta
+    if (target < 0 || target >= queueRef.current.length) return
+    const [item] = queueRef.current.splice(index, 1)
+    if (!item) return
+    queueRef.current.splice(target, 0, item)
+    setQueuedItems([...queueRef.current])
+  }
+
+  const clearQueued = (): void => {
+    queueRef.current = []
+    setQueued(0)
+    setQueuedItems([])
   }
 
   const openQueuedInNewWindow = async (index: number): Promise<void> => {
@@ -3638,7 +4157,7 @@ export function App(): React.JSX.Element {
   return (
     <div
       className="app"
-      data-running-session={runningSessionId ?? ''}
+      data-running-session={runningIndicatorId}
       onPaste={handlePaste}
       onDragOver={(event) => {
         if (event.dataTransfer.types.includes('Files')) {
@@ -3660,10 +4179,29 @@ export function App(): React.JSX.Element {
     >
       {dragActive ? <div className="drop-overlay">{t('松开以添加附件')}</div> : null}
       {sidebarOpen ? (
-        <aside className="sidebar" data-testid="sidebar">
+        <aside className="sidebar" data-testid="sidebar" style={{ width: sidebarWidth }}>
           <div className="sidebar-section">
             <div className="sidebar-head">
-              <span className="sidebar-title">{t('项目')}</span>
+              <span className="sidebar-title">{t('工作区与会话')}</span>
+              <span className="sidebar-count" title={t('当前工作区 {{count}} 个会话', { count: sessions.length })}>
+                {sessions.length}
+              </span>
+              <button
+                className="sidebar-add"
+                title={t('展开全部工作区')}
+                aria-label={t('展开全部工作区')}
+                onClick={expandAllWorkspaces}
+              >
+                ⊞
+              </button>
+              <button
+                className="sidebar-add"
+                title={t('收起全部工作区')}
+                aria-label={t('收起全部工作区')}
+                onClick={collapseAllWorkspaces}
+              >
+                ⊟
+              </button>
               <button
                 className="sidebar-add"
                 data-testid="branch-window-button"
@@ -3695,220 +4233,77 @@ export function App(): React.JSX.Element {
                 ＋
               </button>
             </div>
-            <div className="sidebar-projects">
-              {workspaces.map((project) => (
-                <button
-                  key={project.path}
-                  className={`sidebar-project ${project.current ? 'active' : ''} ${
-                    switchingProject === project.path ? 'switching' : ''
-                  }`}
-                  title={project.path}
-                  disabled={switchingProject !== null}
-                  aria-busy={switchingProject === project.path}
-                  onClick={() => void switchProject(project.path)}
-                >
-                  <span className="sidebar-project-name">
-                    {switchingProject === project.path ? <span className="project-spinner" aria-hidden="true" /> : null}
-                    {project.name}
-                  </span>
-                  <span className="sidebar-project-path">{project.path}</span>
-                </button>
-              ))}
-            </div>
+            <WorkspaceTree
+              sidebarTreeGroups={sidebarTreeGroups}
+              expandedWorkspaces={expandedWorkspaces}
+              runningSessionIds={runningSessionIds}
+              runningOther={runningOther}
+              switchingProject={switchingProject}
+              activeSessionId={activeSessionId}
+              pendingSession={pendingSession}
+              showPendingSession={showPendingSession}
+              visibleSessions={visibleSessions}
+              extraSearchResults={extraSearchResults}
+              searchResults={searchResults}
+              searchingSessions={searchingSessions}
+              loading={!sessionsLoaded}
+              othersLoading={!workspaceSessionsLoaded}
+              sessionQuery={sessionQuery}
+              showArchived={showArchived}
+              tabTitles={tabTitles}
+              renaming={renaming}
+              deletingSession={deletingSession}
+              sessionSearchRef={sessionSearchRef}
+              renameCancelRef={renameCancelRef}
+              setSessionQuery={setSessionQuery}
+              setShowArchived={setShowArchived}
+              setRenaming={setRenaming}
+              setDeletingSession={setDeletingSession}
+              setSessionMenu={setSessionMenu}
+              toggleWorkspace={toggleWorkspace}
+              switchProject={switchProject}
+              newSession={newSession}
+              openWorkspaceWindow={openWorkspaceWindow}
+              newWorkspaceSession={newWorkspaceSession}
+              openWorkspaceSession={openWorkspaceSession}
+              loadSession={loadSession}
+              commitRename={commitRename}
+              confirmDeleteSession={confirmDeleteSession}
+            />
           </div>
           {!usageDismissed && usageDone < 5 ? (
-            <div className="sidebar-section usage-checklist" data-testid="usage-checklist">
-              <div className="sidebar-head">
-                <span className="sidebar-title">{t('上手清单')}</span>
-                <span className="usage-progress">
-                  {usageDone}/{5}
-                </span>
-                <button
-                  className="sidebar-add"
-                  data-testid="usage-dismiss"
-                  title={t('收起上手清单')}
-                  aria-label={t('收起上手清单')}
-                  onClick={() => {
-                    setUsageDismissed(true)
-                    try {
-                      localStorage.setItem(USAGE_DISMISSED_KEY, '1')
-                    } catch {
-                      // 忽略。
-                    }
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-              {(
-                [
-                  ['attach', t('附加一个文件或图片'), () => void pickDocument()],
-                  ['screenshot', t('截一张图'), () => setCaptureMenuOpen(true)],
-                  ['document', t('打开文档面板'), () => void openDocumentPanel()],
-                  [
-                    'palette',
-                    t('用 {{key}} 搜索能力', {
-                      key: window.xcode.platform === 'darwin' ? '⌘K' : 'Ctrl+K',
-                    }),
-                    () => setPaletteOpen(true),
-                  ],
-                  ['skill', t('从技能市场安装技能'), () => void openSettings('skillmarket')],
-                ] as Array<[UsageKey, string, () => void]>
-              ).map(([key, label, run]) => (
-                <button
-                  key={key}
-                  className={`usage-item ${usageProgress[key] ? 'done' : ''}`}
-                  data-testid={`usage-item-${key}`}
-                  onClick={run}
-                >
-                  <span className="usage-check" aria-hidden="true">
-                    {usageProgress[key] ? '✓' : '○'}
-                  </span>
-                  <span>{label}</span>
-                </button>
-              ))}
-            </div>
+            <UsageChecklist
+              progress={usageProgress}
+              open={usageOpen}
+              onToggle={() => setUsageOpen((value) => !value)}
+              onDismiss={() => {
+                setUsageDismissed(true)
+                setUsageOpen(false)
+                try {
+                  localStorage.setItem(USAGE_DISMISSED_KEY, '1')
+                } catch {
+                  // 忽略。
+                }
+              }}
+              onRun={(key) => {
+                setUsageOpen(false)
+                if (key === 'attach') void pickDocument()
+                else if (key === 'screenshot') setCaptureMenuOpen(true)
+                else if (key === 'document') void openDocumentPanel()
+                else if (key === 'palette') setPaletteOpen(true)
+                else void openSettings('skillmarket')
+              }}
+            />
           ) : null}
-          <div className="sidebar-section sidebar-sessions-section">
-            <div className="sidebar-head">
-              <span className="sidebar-title">{t('会话')}</span>
-              <button className="sidebar-add" title={t('新建会话')} onClick={() => void newSession()}>
-                ＋
-              </button>
-            </div>
-            <div className="sidebar-search">
-              <input
-                ref={sessionSearchRef}
-                value={sessionQuery}
-                placeholder={t('搜索会话')}
-                onChange={(event) => setSessionQuery(event.target.value)}
-              />
-            </div>
-            <button
-              className={`sidebar-archived-toggle ${showArchived ? 'active' : ''}`}
-              onClick={() => setShowArchived((value) => !value)}
-            >
-              {showArchived ? t('隐藏归档') : t('显示归档')}
-            </button>
-            <div className="sidebar-sessions">
-              {showPendingSession ? (
-                <div className="sidebar-session sidebar-session-placeholder active">
-                  <span className="sidebar-session-title">
-                    {tabTitles[pendingSession?.sessionId ?? ''] || t('新会话')}
-                  </span>
-                  <span className="sidebar-session-meta">{t('刚刚')}</span>
-                </div>
-              ) : null}
-              {visibleSessions.length === 0 && !showPendingSession ? (
-                <div className="sidebar-empty">{sessionQuery.trim() ? t('没有匹配的会话') : t('暂无会话')}</div>
-              ) : null}
-              {visibleSessions.slice(0, 100).map((item) => (
-                <div
-                  key={item.sessionId}
-                  className={`sidebar-session-row ${activeSessionId === item.sessionId ? 'active' : ''}`}
-                  data-session-id={item.sessionId}
-                >
-                  {renaming?.filePath === item.filePath ? (
-                    <input
-                      className="sidebar-rename"
-                      autoFocus
-                      value={renaming.value}
-                      onChange={(event) => setRenaming({ filePath: item.filePath, value: event.target.value })}
-                      onKeyDown={(event) => {
-                        if (isImeEvent(event)) return
-                        if (event.key === 'Enter') {
-                          if (isImeEnter(event)) return
-                          event.preventDefault()
-                          void commitRename()
-                        }
-                        if (event.key === 'Escape') {
-                          event.preventDefault()
-                          renameCancelRef.current = true
-                          setRenaming(null)
-                          renameCancelRef.current = false
-                        }
-                      }}
-                      onBlur={() => {
-                        if (renaming) void commitRename()
-                      }}
-                    />
-                  ) : (
-                    <>
-                      <button
-                        className="sidebar-session"
-                        title={sessionTitle(item)}
-                        onClick={() => void loadSession(item)}
-                      >
-                        <span className="sidebar-session-title">
-                          {item.pinned ? '★ ' : ''}
-                          {sessionTitle(item)}
-                        </span>
-                        <span className="sidebar-session-meta">{sessionTime(item)}</span>
-                      </button>
-                      <span className="sidebar-session-actions">
-                        {deletingSession === item.filePath ? (
-                          <>
-                            <button className="session-action danger" onClick={() => void confirmDeleteSession(item)}>
-                              {t('确认')}
-                            </button>
-                            <button className="session-action" onClick={() => setDeletingSession(null)}>
-                              {t('取消')}
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            className="session-action session-menu-toggle"
-                            data-testid="session-menu-toggle"
-                            title={t('更多操作')}
-                            aria-label={t('更多操作')}
-                            onClick={(event) => {
-                              const rect = event.currentTarget.getBoundingClientRect()
-                              setSessionMenu({
-                                filePath: item.filePath,
-                                x: Math.max(8, Math.min(window.innerWidth - 188, rect.right - 180)),
-                                y: Math.max(8, Math.min(window.innerHeight - 190, rect.bottom + 4)),
-                              })
-                            }}
-                          >
-                            ⋯
-                          </button>
-                        )}
-                      </span>
-                    </>
-                  )}
-                </div>
-              ))}
-              {sessionQuery.trim().length >= 2 ? (
-                <div className="sidebar-search-results" data-testid="session-search-results">
-                  <div className="sidebar-search-head">
-                    {searchingSessions ? t('全文搜索中…') : t('全文匹配 {{count}}', { count: searchResults.length })}
-                  </div>
-                  {extraSearchResults.map((result) => (
-                    <button
-                      key={result.filePath}
-                      className="sidebar-search-hit"
-                      onClick={() =>
-                        void loadSession({
-                          filePath: result.filePath,
-                          sessionId: result.sessionId,
-                          ...(result.name ? { name: result.name } : {}),
-                          firstPrompt: result.firstPrompt,
-                          startedAt: new Date(result.mtime).toISOString(),
-                          modelId: '',
-                          mtime: result.mtime,
-                        })
-                      }
-                    >
-                      <span className="sidebar-search-name">
-                        {result.name || result.firstPrompt || result.sessionId}
-                      </span>
-                      <span className="sidebar-search-snippet">{result.snippet}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
+          <div
+            className="sidebar-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('调整侧栏宽度')}
+            title={t('拖动调整宽度，双击恢复默认')}
+            onPointerDown={startSidebarResize}
+            onDoubleClick={() => setSidebarWidth(280)}
+          />
         </aside>
       ) : null}
       <div className="main">
@@ -3930,7 +4325,10 @@ export function App(): React.JSX.Element {
                 setTaskModeMenuOpen(false)
                 setToolsMenuOpen(false)
                 setModelMenuOpen((open) => {
-                  if (!open) setModelQuery('')
+                  if (!open) {
+                    setModelQuery('')
+                    setModelKeyIndex(-1)
+                  }
                   return !open
                 })
               }}
@@ -3957,13 +4355,28 @@ export function App(): React.JSX.Element {
                       data-testid="model-search"
                       placeholder={t('搜索模型')}
                       value={modelQuery}
-                      onChange={(event) => setModelQuery(event.target.value)}
+                      onChange={(event) => {
+                        setModelQuery(event.target.value)
+                        setModelKeyIndex(-1)
+                      }}
                       onKeyDown={(event) => {
                         if (isImeEvent(event)) return
-                        if (event.key === 'Enter' && filteredModels.length > 0) {
+                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                          event.preventDefault()
+                          if (keyboardModels.length === 0) return
+                          const delta = event.key === 'ArrowDown' ? 1 : -1
+                          setModelKeyIndex((current) => {
+                            const next = current + delta
+                            if (next < 0) return keyboardModels.length - 1
+                            if (next >= keyboardModels.length) return 0
+                            return next
+                          })
+                          return
+                        }
+                        if (event.key === 'Enter' && keyboardModels.length > 0) {
                           if (isImeEnter(event)) return
                           event.preventDefault()
-                          void chooseModel(filteredModels[0])
+                          void chooseModel(keyboardModels[modelKeyIndex] ?? keyboardModels[0]!)
                         } else if (event.key === 'Escape') {
                           event.preventDefault()
                           setModelMenuOpen(false)
@@ -3972,62 +4385,30 @@ export function App(): React.JSX.Element {
                     />
                   </div>
                   <div className="model-list">
+                    {activeModel ? (
+                      <>
+                        <div className="model-group pinned">{t('当前模型')}</div>
+                        {renderModelItem(activeModel, true)}
+                      </>
+                    ) : null}
                     {localModelOptions.length > 0 ? (
                       <>
-                        <div className="model-group">{t('本地模型')}</div>
-                        {localModelOptions.map((model) => (
-                          <button
-                            key={model.id}
-                            className={`model-item ${model.id === appState?.activeModelId ? 'active' : ''}`}
-                            onClick={() => void chooseModel(model)}
-                          >
-                            <span className="model-item-label">{model.label}</span>
-                            <span className="model-item-meta">
-                              {model.provider}
-                              {model.contextWindow ? (
-                                <span
-                                  className="model-item-context"
-                                  title={t('上下文上限 {{tokens}} tokens', {
-                                    tokens: model.contextWindow.toLocaleString(),
-                                  })}
-                                >
-                                  {formatContextTokens(model.contextWindow)} {t('上下文')}
-                                </span>
-                              ) : null}
-                            </span>
-                            <span className="model-item-desc">{model.description}</span>
-                          </button>
-                        ))}
+                        <div className="model-group">
+                          <span>{t('本地模型')}</span>
+                          <span className="model-group-count">{localModelOptions.length}</span>
+                        </div>
+                        {localModelOptions.map((model) => renderModelItem(model, true))}
                       </>
                     ) : null}
-                    {remoteModelOptions.length > 0 ? (
-                      <>
-                        <div className="model-group">{t('云端 / 内置')}</div>
-                        {remoteModelOptions.map((model) => (
-                          <button
-                            key={model.id}
-                            className={`model-item ${model.id === appState?.activeModelId ? 'active' : ''}`}
-                            onClick={() => void chooseModel(model)}
-                          >
-                            <span className="model-item-label">{model.label}</span>
-                            <span className="model-item-meta">
-                              {model.provider}
-                              {model.contextWindow ? (
-                                <span
-                                  className="model-item-context"
-                                  title={t('上下文上限 {{tokens}} tokens', {
-                                    tokens: model.contextWindow.toLocaleString(),
-                                  })}
-                                >
-                                  {formatContextTokens(model.contextWindow)} {t('上下文')}
-                                </span>
-                              ) : null}
-                            </span>
-                            <span className="model-item-desc">{model.description}</span>
-                          </button>
-                        ))}
-                      </>
-                    ) : null}
+                    {providerGroups.map((group) => (
+                      <Fragment key={group.provider}>
+                        <div className="model-group">
+                          <span>{providerDisplayName(group.provider)}</span>
+                          <span className="model-group-count">{group.models.length}</span>
+                        </div>
+                        {group.models.map((model) => renderModelItem(model))}
+                      </Fragment>
+                    ))}
                     {filteredModels.length === 0 ? <div className="menu-hint">{t('没有匹配的模型')}</div> : null}
                   </div>
                   {appState?.demo ? (
@@ -4257,13 +4638,18 @@ export function App(): React.JSX.Element {
                   className={`tab-item ${sessionId === activeSessionId ? 'active' : ''}`}
                   data-testid="session-tab"
                   data-session-id={sessionId}
+                  onAuxClick={(event) => {
+                    if (event.button !== 1) return
+                    event.preventDefault()
+                    void closeTab(sessionId)
+                  }}
                 >
                   <button
                     className="tab-label"
                     title={item?.filePath ?? item?.firstPrompt ?? t('新会话')}
                     onClick={() => void activateTab(sessionId)}
                   >
-                    {busy && sessionId === runningSessionId ? <span className="tab-busy" aria-hidden="true" /> : null}
+                    {runningSessionIds.has(sessionId) ? <span className="tab-busy" aria-hidden="true" /> : null}
                     <span className="tab-title">{item ? sessionTitle(item) : tabTitles[sessionId] || t('新会话')}</span>
                   </button>
                   <button
@@ -4335,73 +4721,144 @@ export function App(): React.JSX.Element {
               </div>
             ) : null}
 
-            <main className="chat" ref={scrollRef} onScroll={handleChatScroll}>
-              {entries.length === 0 ? (
-                <div className="empty">
-                  <p className="empty-title">{t('静候一问')}</p>
-                  <p className="empty-sub" data-testid="starter-hint">
-                    {starterHint}
-                  </p>
-                  <div className="mode-suggestions" data-testid="workspace-starters">
-                    {starterSuggestions.map((suggestion) => (
-                      <button key={suggestion} className="mode-suggestion" onClick={() => setInput(suggestion)}>
-                        {suggestion}
-                      </button>
-                    ))}
+            <div className="chat-wrap">
+              <main className="chat" ref={scrollRef} onScroll={handleChatScroll}>
+                {turnBuild.hiddenTurns > 0 ? (
+                  <div className="turn-window">
+                    <button
+                      className="btn btn-quiet"
+                      data-testid="load-earlier-turns"
+                      onClick={() => {
+                        const node = scrollRef.current
+                        if (node) turnWindowAnchorRef.current = { height: node.scrollHeight, top: node.scrollTop }
+                        setTurnWindow((value) => value + 40)
+                      }}
+                    >
+                      {t('显示更早的 {{count}} 轮', { count: Math.min(40, turnBuild.hiddenTurns) })}
+                    </button>
                   </div>
-                </div>
-              ) : null}
-              <TranscriptEntryProvider
-                value={{
-                  busy,
-                  now: turnNow,
-                  toolDisplayMode,
-                  movingTempEntry,
-                  shellSandboxEnabled: settings?.shellSandbox.enabled === true,
-                  shellSandboxAllowNetwork: settings?.shellSandbox.allowNetwork === true,
-                  activeTextEntryId: activeTextEntryId.current,
-                  findMatchIds,
-                  findActiveId,
-                  lastAssistantId,
-                  lastUserId,
-                  onOpenDocument: (path) => void openDocument(path),
-                  onOpenEditor: (path, line) => openInEditor(path, line),
-                  onRevertEdit: (toolCallId, entryId) => void revertEdit(toolCallId, entryId),
-                  onAllowSandboxNetwork: () => void allowSandboxNetwork(),
-                  onRefreshEnvironment: () => void refreshAgentEnvironment(),
-                  onOpenToolsSettings: () => void openSettings('tools'),
-                  onMoveTempDeliverables: (entryId, files) => void moveTempDeliverables(entryId, files),
-                  onOpenImage: (src, name) => setImageLightbox({ src, name }),
-                  onRunInTerminal: runInTerminal,
-                  onRegenerate: () => void regenerateLast(),
-                  onEditLast: beginEditLast,
-                }}
-              >
-                {turnItems.map((item) => {
-                  if (item.kind === 'toggle') {
-                    return (
-                      <div className="turn-tool-toggle" data-testid="turn-tool-toggle" key={`turn-toggle-${item.key}`}>
-                        <span>{t('工具调用 {{count}} 次', { count: item.count })}</span>
-                        {item.failures > 0 ? (
-                          <span className="tool-failure">{t('{{count}} 个失败', { count: item.failures })}</span>
-                        ) : null}
-                        <span className="spacer" />
-                        <button
-                          type="button"
-                          className="btn btn-quiet"
-                          data-testid="turn-tool-toggle-button"
-                          onClick={() => toggleTurnTools(item.key)}
-                        >
-                          {item.collapsed ? t('展开') : t('收起')}
+                ) : null}
+                {entries.length === 0 && (sessionLoading || appState === null) ? <ChatSkeleton /> : null}
+                {entries.length === 0 && !sessionLoading && appState !== null ? (
+                  <div className="empty">
+                    <p className="empty-title">{t('静候一问')}</p>
+                    <p className="empty-sub" data-testid="starter-hint">
+                      {starterHint}
+                    </p>
+                    <div className="mode-suggestions" data-testid="workspace-starters">
+                      {starterSuggestions.map((suggestion) => (
+                        <button key={suggestion} className="mode-suggestion" onClick={() => setInput(suggestion)}>
+                          {suggestion}
                         </button>
+                      ))}
+                    </div>
+                    <div className="empty-actions" data-testid="empty-actions">
+                      <button className="btn" onClick={() => setGoalOpen(true)}>
+                        {t('新建目标')}
+                      </button>
+                      <button className="btn" onClick={() => void pickProject()}>
+                        {t('选择项目文件夹')}
+                      </button>
+                      <button className="btn" onClick={() => setManualOpen(true)}>
+                        {t('打开用户手册')}
+                      </button>
+                    </div>
+                    {visibleSessions.length > 0 ? (
+                      <div className="empty-recent" data-testid="empty-recent">
+                        <div className="empty-recent-head">{t('最近会话')}</div>
+                        {visibleSessions.slice(0, 3).map((item) => (
+                          <button
+                            key={item.sessionId}
+                            className="empty-recent-item"
+                            title={item.filePath}
+                            onClick={() => void loadSession(item)}
+                          >
+                            <span>{sessionTitle(item)}</span>
+                            <span className="empty-recent-meta">{sessionTime(item)}</span>
+                          </button>
+                        ))}
                       </div>
-                    )
-                  }
-                  const entry = item.entry
-                  return <TranscriptEntry key={entry.id} entry={entry} />
-                })}
-              </TranscriptEntryProvider>
-            </main>
+                    ) : null}
+                  </div>
+                ) : null}
+                {sessionLoading && entries.length > 0 ? (
+                  <div className="chat-loading">
+                    <ChatSkeleton turns={1} />
+                  </div>
+                ) : null}
+                <TranscriptEntryProvider
+                  value={{
+                    busy,
+                    now: turnNow,
+                    toolDisplayMode,
+                    movingTempEntry,
+                    shellSandboxEnabled: settings?.shellSandbox.enabled === true,
+                    shellSandboxAllowNetwork: settings?.shellSandbox.allowNetwork === true,
+                    activeTextEntryId: activeTextEntryId.current,
+                    findMatchIds,
+                    findActiveId,
+                    lastAssistantId,
+                    lastUserId,
+                    onOpenDocument: (path) => void openDocument(path),
+                    onOpenEditor: (path, line) => openInEditor(path, line),
+                    onRevertEdit: (toolCallId, entryId) => void revertEdit(toolCallId, entryId),
+                    onAllowSandboxNetwork: () => void allowSandboxNetwork(),
+                    onRefreshEnvironment: () => void refreshAgentEnvironment(),
+                    onOpenToolsSettings: () => void openSettings('tools'),
+                    onMoveTempDeliverables: (entryId, files) => void moveTempDeliverables(entryId, files),
+                    onOpenImage: (src, name) => setImageLightbox({ src, name }),
+                    onRunInTerminal: runInTerminal,
+                    onRegenerate: () => void regenerateLast(),
+                    onEditLast: beginEditLast,
+                  }}
+                >
+                  {turnItems.map((item) => {
+                    if (item.kind === 'divider') {
+                      const clock = item.at
+                        ? (() => {
+                            const date = new Date(item.at)
+                            return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+                          })()
+                        : ''
+                      return (
+                        <div className="turn-divider" data-testid="turn-divider" key={item.key}>
+                          <span className="turn-divider-label">
+                            {t('第 {{turn}} 轮', { turn: item.turn })}
+                            {clock ? ` · ${clock}` : ''}
+                          </span>
+                        </div>
+                      )
+                    }
+                    if (item.kind === 'toggle') {
+                      return (
+                        <div
+                          className="turn-tool-toggle"
+                          data-testid="turn-tool-toggle"
+                          key={`turn-toggle-${item.key}`}
+                        >
+                          <span>{t('工具调用 {{count}} 次', { count: item.count })}</span>
+                          {item.failures > 0 ? (
+                            <span className="tool-failure">{t('{{count}} 个失败', { count: item.failures })}</span>
+                          ) : null}
+                          <span className="spacer" />
+                          <button
+                            type="button"
+                            className="btn btn-quiet"
+                            data-testid="turn-tool-toggle-button"
+                            onClick={() => toggleTurnTools(item.key)}
+                          >
+                            {item.collapsed ? t('展开') : t('收起')}
+                          </button>
+                        </div>
+                      )
+                    }
+                    const entry = item.entry
+                    return <TranscriptEntry key={entry.id} entry={entry} />
+                  })}
+                </TranscriptEntryProvider>
+              </main>
+              <PromptRail entries={turnBuild.shownEntries} scrollRef={scrollRef} />
+            </div>
             {showScrollBottom ? (
               <button
                 className="scroll-bottom"
@@ -4412,9 +4869,10 @@ export function App(): React.JSX.Element {
                   if (node) node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
                   nearBottomRef.current = true
                   setShowScrollBottom(false)
+                  setUnseenEntries(0)
                 }}
               >
-                ↓
+                ↓{unseenEntries > 0 ? ` ${unseenEntries}` : ''}
               </button>
             ) : null}
 
@@ -4439,15 +4897,20 @@ export function App(): React.JSX.Element {
                 <pre className="report" aria-label={t('诊断结果')}>
                   {report}
                 </pre>
-                <button
-                  className="report-close"
-                  data-testid="report-close"
-                  aria-label={t('关闭结果')}
-                  title={t('关闭结果')}
-                  onClick={() => setReport(null)}
-                >
-                  ×
-                </button>
+                <div className="report-actions">
+                  <button className="btn btn-quiet" onClick={() => window.xcode.copyText(report)}>
+                    {t('复制诊断')}
+                  </button>
+                  <button
+                    className="report-close"
+                    data-testid="report-close"
+                    aria-label={t('关闭结果')}
+                    title={t('关闭结果')}
+                    onClick={() => setReport(null)}
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
             ) : null}
 
@@ -4468,13 +4931,13 @@ export function App(): React.JSX.Element {
                   }}
                 />
               ) : null}
-              {backgroundRunning && runningSessionId ? (
+              {backgroundRunning && backgroundSessionId ? (
                 <div className="background-wait" data-testid="background-session">
                   <span>{t('“{{title}}”正在后台运行。', { title: backgroundTitle })}</span>
-                  <button className="btn btn-quiet" onClick={() => void activateTab(runningSessionId)}>
+                  <button className="btn btn-quiet" onClick={() => void activateTab(backgroundSessionId)}>
                     {t('查看')}
                   </button>
-                  <button className="btn btn-quiet" onClick={() => void abort()}>
+                  <button className="btn btn-quiet" onClick={() => void abort(backgroundSessionId)}>
                     {t('停止')}
                   </button>
                 </div>
@@ -4486,6 +4949,8 @@ export function App(): React.JSX.Element {
                 items={queuedItems}
                 onOpenInNewWindow={(index) => void openQueuedInNewWindow(index)}
                 onRemove={removeQueued}
+                onMove={moveQueued}
+                onClear={clearQueued}
               />
               {recording || voiceBusy ? (
                 <RecordingBar
@@ -4500,8 +4965,16 @@ export function App(): React.JSX.Element {
               <AttachmentsStrip
                 files={attachments}
                 onRemove={(file) => setAttachments((current) => current.filter((entry) => entry !== file))}
+                onClear={() => setAttachments([])}
                 onOpenImage={(src, name) => setImageLightbox({ src, name })}
               />
+              {!busy && nextSteps.length > 0 && !nextStepsHidden ? (
+                <NextSteps
+                  steps={nextSteps}
+                  onRun={(prompt) => void submit(prompt)}
+                  onDismiss={() => setNextStepsHidden(true)}
+                />
+              ) : null}
               <ComposerBox
                 value={input}
                 editorRef={composerRef}
@@ -4687,127 +5160,18 @@ export function App(): React.JSX.Element {
       </div>
 
       {approval ? (
-        <div className="modal-scrim">
-          <div className="approval-card" data-testid="approval-modal">
-            <div className="approval-head">
-              <span className="drawer-seal" aria-hidden="true">
-                {approval.kind === 'plan' ? '策' : approval.kind === 'question' ? '问' : '准'}
-              </span>
-              <div>
-                <div className="approval-title">
-                  {approval.kind === 'plan'
-                    ? t('计划确认')
-                    : approval.kind === 'question'
-                      ? t('需要你的选择')
-                      : approval.kind === 'authority'
-                        ? t('外部影响确认')
-                        : t('权限请求')}
-                </div>
-                <div className="approval-sub">{approval.toolName ?? approval.kind}</div>
-              </div>
-            </div>
-
-            {approval.kind === 'permission' ? (
-              <>
-                {approval.taint ? (
-                  <div className="approval-reason">
-                    {t('本轮读取过外部内容（{{sources}}），写操作需要重新确认。', {
-                      sources: approval.taint.sources.join(', '),
-                    })}
-                  </div>
-                ) : null}
-                <pre className="approval-body">{JSON.stringify(approval.input ?? {}, null, 2)}</pre>
-              </>
-            ) : null}
-            {approval.kind === 'authority' ? (
-              <div className="approval-body text">
-                <div>{approval.preview?.summary}</div>
-                {approval.preview?.paths?.length ? (
-                  <div className="approval-paths">{approval.preview.paths.join('\n')}</div>
-                ) : null}
-                {approval.preview?.reason ? <div className="approval-reason">{approval.preview.reason}</div> : null}
-              </div>
-            ) : null}
-            {backgroundRunning ? <div className="approval-reason">{t('该请求来自正在后台运行的会话。')}</div> : null}
-            {approval.kind === 'question' ? <div className="approval-body text">{approval.question}</div> : null}
-            {approval.kind === 'plan' ? <pre className="approval-body">{approval.planText ?? ''}</pre> : null}
-
-            {approval.kind === 'question' ? (
-              <div className="approval-answer">
-                <input
-                  className="settings-input"
-                  data-testid="approval-answer-input"
-                  value={questionDraft}
-                  placeholder={t('选项都不合适？直接输入你的回答…')}
-                  onChange={(event) => setQuestionDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (isImeEvent(event)) return
-                    if (event.key === 'Enter') {
-                      if (isImeEnter(event)) return
-                      event.preventDefault()
-                      if (questionDraft.trim()) void respondApproval(approval, questionDraft.trim())
-                    }
-                  }}
-                />
-                <button
-                  className="btn solid"
-                  data-testid="approval-answer-send"
-                  disabled={!questionDraft.trim()}
-                  onClick={() => void respondApproval(approval, questionDraft.trim())}
-                >
-                  {t('发送回答')}
-                </button>
-              </div>
-            ) : null}
-
-            <div className="approval-actions">
-              {approval.kind === 'question' ? (
-                <>
-                  <button className="btn" onClick={() => void respondApproval(approval, '')}>
-                    {t('取消')}
-                  </button>
-                  {approval.options?.map((option) => (
-                    <button
-                      key={option.label}
-                      className="btn solid"
-                      title={option.description}
-                      onClick={() => void respondApproval(approval, option.label)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </>
-              ) : approval.kind === 'plan' ? (
-                <>
-                  <button className="btn" onClick={() => void respondApproval(approval, false)}>
-                    {t('继续修改')}
-                  </button>
-                  <button className="btn solid" onClick={() => void respondApproval(approval, true)}>
-                    {t('批准计划')}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button className="btn" onClick={() => void respondApproval(approval, 'no')}>
-                    {t('拒绝')}
-                  </button>
-                  {approval.kind === 'permission' ? (
-                    <button className="btn" onClick={() => void respondApproval(approval, 'always')}>
-                      {t('始终允许')}
-                    </button>
-                  ) : null}
-                  <button className="btn solid" onClick={() => void respondApproval(approval, 'yes')}>
-                    {t('允许一次')}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+        <ApprovalCard
+          approval={approval}
+          queueCount={approvals.length}
+          backgroundRunning={backgroundRunning}
+          questionDraft={questionDraft}
+          onQuestionDraft={setQuestionDraft}
+          onRespond={(request, decision) => void respondApproval(request, decision)}
+        />
       ) : null}
 
       {settingsOpen && settings ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={<SettingsSkeleton />}>
           <SettingsPanel
             settings={settings}
             onSettings={setSettings}
@@ -4901,6 +5265,30 @@ export function App(): React.JSX.Element {
               }}
             >
               {t('重命名')}
+            </button>
+            <button
+              type="button"
+              data-testid="session-menu-copy-path"
+              onClick={() => {
+                setSessionMenu(null)
+                window.xcode.copyText(sessionMenuItem.filePath)
+                setNotice(t('已复制会话路径'))
+                setTimeout(() => setNotice(null), 1_800)
+              }}
+            >
+              {t('复制会话路径')}
+            </button>
+            <button
+              type="button"
+              data-testid="session-menu-copy-id"
+              onClick={() => {
+                setSessionMenu(null)
+                window.xcode.copyText(sessionMenuItem.sessionId)
+                setNotice(t('已复制会话 ID'))
+                setTimeout(() => setNotice(null), 1_800)
+              }}
+            >
+              {t('复制会话 ID')}
             </button>
             <button
               type="button"
@@ -5260,6 +5648,10 @@ export function App(): React.JSX.Element {
                   ['K', t('命令面板')],
                   ['N', t('新建会话')],
                   ['T', t('新建标签页')],
+                  ['1–9', t('切换到第 N 个标签')],
+                  ['⇧[', t('上一个标签')],
+                  ['⇧]', t('下一个标签')],
+                  ['⇧E', t('复制上一条回复')],
                   ['⇧N', t('新建窗口')],
                   ['⇧F', t('搜索会话')],
                   ['⇧D', t('文档面板')],

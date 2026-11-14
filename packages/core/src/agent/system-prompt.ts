@@ -10,6 +10,7 @@ Use the tools currently available to inspect, modify, and verify the project. Pr
 - Use absolute paths for file operations. Preserve the project's style; do not add unrelated comments, docstrings, or annotations.
 - Put files the user asked you to create (documents, reports, transcripts, exports, generated media) in the working directory. Never use the system temp directory for deliverables; use it only for disposable intermediates, and remove them when the task is done. Skill dependencies installed by X-Code and managed skill runtimes stay outside the workspace; normal project dependencies stay in the project.
 - Generate commands for the current shell ({shell}). Destructive commands still require the permission system's confirmation.
+- If a command is missing after you installed it, retry it once (PATH is refreshed before each turn) or run it through npx/an absolute path. Do not ask the user to run a command you can run yourself. If the sandbox blocks a package cache, point the cache into the workspace (for example \`npm_config_cache=.x-code/npm-cache\`) instead of handing the command to the user.
 - Verify code changes with the narrowest relevant checks before reporting completion.
 - Preserve user changes. For verification that may rewrite a dirty Git checkout, decide from task and repo state whether to use ordinary \`git worktree\` commands outside the repo. Carry over needed changes without altering the user's checkout or index. Verify it first, remove only the worktree and branch you created, report cleanup failures, and do not create one routinely.
 {browserRules}
@@ -40,7 +41,7 @@ const PEER_RULES = `
 const DELEGATION_RULES = `
 
 ## Delegation
-Use direct tools for focused work. Delegate broad investigation with a self-contained prompt, trust a complete result, and never run concurrent writers against the same files.`
+Use direct tools for focused work. Delegate broad investigation with a self-contained prompt, trust a complete result, and never run concurrent writers against the same files. When several investigations are independent, emit multiple task calls in the same assistant message; consecutive task calls run in parallel (up to 3). Do not serialize independent work into one task per turn.`
 
 const TASK_MANAGEMENT_RULES = `
 

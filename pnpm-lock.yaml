@@ -11,13 +11,18 @@ overrides:
   fast-uri: 3.1.9
   hono: 4.13.11
   ip-address: 10.7.4
-  proxy-addr: 2.0.8
-  qs: 6.16.1
   minimatch@10>brace-expansion: 5.0.12
   minimatch@9>brace-expansion: 2.1.7
+  proxy-addr: 2.0.8
+  qs: 6.16.1
   undici: 7.30.1
   uuid: 11.1.1
   zod: 4.6.7
+
+patchedDependencies:
+  '@ai-sdk/provider-utils@5.0.16':
+    hash: 33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70
+    path: patches/@ai-sdk__provider-utils@5.0.16.patch
 
 importers:
 
@@ -171,7 +176,7 @@ importers:
         version: 4.0.4
       '@ai-sdk/provider-utils':
         specifier: ^5.0.0
-        version: 5.0.16(zod@4.6.7)
+        version: 5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)
       '@ai-sdk/xai':
         specifier: ^4.0.0
         version: 4.0.23(zod@4.6.7)
@@ -3308,10 +3313,6 @@ packages:
   eventemitter3@5.0.4:
     resolution: {integrity: sha512-mlsTRyGaPBjPedk6Bvw+aqbsXDtoAyAzm5MO7JgU+yVRyMQ5O8bD4Kcci7BS85f93veegeCPkL8R4GLClnjLFw==}
 
-  eventsource-parser@3.1.0:
-    resolution: {integrity: sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==}
-    engines: {node: '>=18.0.0'}
-
   eventsource-parser@3.1.1:
     resolution: {integrity: sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ==}
     engines: {node: '>=18.0.0'}
@@ -5997,13 +5998,13 @@ snapshots:
     dependencies:
       '@ai-sdk/openai-compatible': 3.0.18(zod@4.6.7)
       '@ai-sdk/provider': 4.0.4
-      '@ai-sdk/provider-utils': 5.0.16(zod@4.6.7)
+      '@ai-sdk/provider-utils': 5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)
       zod: 4.6.7
 
   '@ai-sdk/anthropic@4.0.25(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.4
-      '@ai-sdk/provider-utils': 5.0.16(zod@4.6.7)
+      '@ai-sdk/provider-utils': 5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)
       zod: 4.6.7
 
   '@ai-sdk/deepseek@3.0.45(zod@4.6.7)':
@@ -6015,41 +6016,41 @@ snapshots:
   '@ai-sdk/gateway@4.0.33(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.4
-      '@ai-sdk/provider-utils': 5.0.16(zod@4.6.7)
+      '@ai-sdk/provider-utils': 5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)
       '@vercel/oidc': 3.2.0
       zod: 4.6.7
 
   '@ai-sdk/google@4.0.29(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.4
-      '@ai-sdk/provider-utils': 5.0.16(zod@4.6.7)
+      '@ai-sdk/provider-utils': 5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)
       zod: 4.6.7
 
   '@ai-sdk/moonshotai@3.0.21(zod@4.6.7)':
     dependencies:
       '@ai-sdk/openai-compatible': 3.0.18(zod@4.6.7)
       '@ai-sdk/provider': 4.0.4
-      '@ai-sdk/provider-utils': 5.0.16(zod@4.6.7)
+      '@ai-sdk/provider-utils': 5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)
       zod: 4.6.7
 
   '@ai-sdk/openai-compatible@3.0.18(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.4
-      '@ai-sdk/provider-utils': 5.0.16(zod@4.6.7)
+      '@ai-sdk/provider-utils': 5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)
       zod: 4.6.7
 
   '@ai-sdk/openai@4.0.25(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.4
-      '@ai-sdk/provider-utils': 5.0.16(zod@4.6.7)
+      '@ai-sdk/provider-utils': 5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)
       zod: 4.6.7
 
-  '@ai-sdk/provider-utils@5.0.16(zod@4.6.7)':
+  '@ai-sdk/provider-utils@5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.4
       '@standard-schema/spec': 1.1.0
       '@workflow/serde': 4.1.0
-      eventsource-parser: 3.1.0
+      eventsource-parser: 3.1.1
       undici: 7.30.1
       zod: 4.6.7
 
@@ -6074,7 +6075,7 @@ snapshots:
     dependencies:
       '@ai-sdk/openai-compatible': 3.0.18(zod@4.6.7)
       '@ai-sdk/provider': 4.0.4
-      '@ai-sdk/provider-utils': 5.0.16(zod@4.6.7)
+      '@ai-sdk/provider-utils': 5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)
       zod: 4.6.7
 
   '@algolia/abtesting@1.27.0':
@@ -8147,7 +8148,7 @@ snapshots:
     dependencies:
       '@ai-sdk/gateway': 4.0.33(zod@4.6.7)
       '@ai-sdk/provider': 4.0.4
-      '@ai-sdk/provider-utils': 5.0.16(zod@4.6.7)
+      '@ai-sdk/provider-utils': 5.0.16(patch_hash=33eec5bf97ab3f436d0a90a0f501e60d2eb4a618dba4d6ffd0aac05eb394cf70)(zod@4.6.7)
       zod: 4.6.7
 
   ajv-formats@3.0.1(ajv@8.18.0):
@@ -9277,8 +9278,6 @@ snapshots:
   etag@1.8.1: {}
 
   eventemitter3@5.0.4: {}
-
-  eventsource-parser@3.1.0: {}
 
   eventsource-parser@3.1.1: {}
 

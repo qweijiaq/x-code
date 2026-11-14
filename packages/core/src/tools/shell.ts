@@ -9,6 +9,9 @@ export const shell = tool({
 Use glob, grep, listDir, readFile, edit, and writeFile for their matching file operations. Use shell when no dedicated tool fits.
 
 Instructions:
+- On POSIX, one persistent shell is kept per session: cd, exported variables and shell functions persist between calls. These commands wait for completion; set yieldTimeMs: 0 (or runInBackground) for dev servers and other long-running commands so they return a shell id immediately.
+- tty: true starts a separate managed PTY and does not share the persistent shell state. Use shellOutput to continue it.
+- On Windows, each call starts a fresh shell; chain dependent steps or pass cwd.
 - Before a shell command creates files or directories, verify the parent with listDir.
 - Write deliverables the user will keep (reports, transcripts, exports, generated media) inside the working directory. Use the system temp directory only for disposable intermediates and delete them when the task is done.
 - Always quote file paths that contain spaces with double quotes.

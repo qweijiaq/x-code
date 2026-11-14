@@ -44,6 +44,11 @@ const userConfigItemSchema = z.object({
  *  hooks 子系统的事，它们已有自己的 schema。 */
 const pathOrInline = z.union([z.string().min(1), z.record(z.string(), z.unknown())])
 
+/** 贡献路径既接受单个 string，也接受 string 数组。Claude Code 的
+ *  `skills` 就是这种形式：数组里每一项都是一个明确的 skill 目录（例如
+ *  `./skills/engineering/tdd`），而不是共同的父目录。 */
+const pathOrPathList = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)])
+
 /** 插件名：小写字母、数字、短横线；必须以字母或数字开头。与 Claude Code /
  *  Codex / Gemini 一致，并保证名字在 Windows 上可用作文件系统路径组件。 */
 const NAME_RE = /^[a-z0-9][a-z0-9-]*$/
@@ -70,7 +75,7 @@ const manifestSchema = z.object({
   homepage: z.string().optional(),
   license: z.string().optional(),
 
-  skills: z.string().min(1).optional(),
+  skills: pathOrPathList.optional(),
   agents: z.string().min(1).optional(),
   commands: z.string().min(1).optional(),
   mcpServers: pathOrInline.optional(),

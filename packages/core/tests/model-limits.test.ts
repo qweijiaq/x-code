@@ -4,6 +4,11 @@ import { PROVIDERS } from '../src/providers/catalog.js'
 import { DEFAULT_MAX_OUTPUT_TOKENS, MODEL_LIMITS } from '../src/providers/model-limits.js'
 
 describe('model limits table', () => {
+  it('registers the OpenCode and OpenDesign gateway providers', () => {
+    const names = PROVIDERS.map((provider) => provider.name)
+    expect(names).toEqual(expect.arrayContaining(['opencode', 'opencode-go', 'opendesign', 'opendesign-go']))
+  })
+
   it('has an explicit context window for every model in the picker catalog', () => {
     const missing = PROVIDERS.flatMap((provider) =>
       provider.models

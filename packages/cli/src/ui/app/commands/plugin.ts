@@ -149,8 +149,8 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
 
     lines.push('', '**Contributions:**')
     let any = false
-    if (c.skillsDir) {
-      lines.push(`- skills:     ${c.skillsDir}`)
+    if (c.skillsDirs?.length) {
+      lines.push(`- skills:     ${c.skillsDirs.join(', ')}`)
       any = true
     }
     if (c.agentsDir) {

@@ -39,7 +39,20 @@ interface Row {
   group: string
   label: string
   hint: string
+  actionId?: string
   run: () => void | Promise<void>
+}
+
+const PALETTE_RECENT_KEY = 'xcode.palette.recent.v1'
+
+function readRecentActions(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PALETTE_RECENT_KEY) ?? '[]') as unknown
+    if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === 'string').slice(0, 6)
+  } catch {
+    // 忽略损坏的最近记录。
+  }
+  return []
 }
 
 async function searchFiles(query: string): Promise<WorkspaceFileItem[]> {
@@ -66,6 +79,7 @@ export function CommandPalette({
   const [files, setFiles] = useState<WorkspaceFileItem[]>([])
   const inputRef = useRef<HTMLInputElement | null>(null)
   const listRef = useRef<HTMLDivElement | null>(null)
+  const [recentActions, setRecentActions] = useState<string[]>(readRecentActions)
 
   useEffect(() => {
     if (!open) return
@@ -106,8 +120,15 @@ export function CommandPalette({
       group: t('操作'),
       label: action.label,
       hint: action.hint ?? '',
+      actionId: action.id,
       run: action.run,
     }))
+    .sort((left, right) => {
+      if (trimmed) return 0
+      const leftRank = recentActions.indexOf(left.actionId ?? '')
+      const rightRank = recentActions.indexOf(right.actionId ?? '')
+      return (leftRank < 0 ? 99 : leftRank) - (rightRank < 0 ? 99 : rightRank)
+    })
   const commandRows: Row[] = commands
     .filter((command) => matches(command.name) || matches(command.description))
     .map((command) => ({
@@ -143,6 +164,18 @@ export function CommandPalette({
   const active = rows[Math.min(index, Math.max(0, rows.length - 1))]
 
   const runRow = (row: Row): void => {
+    const actionId = row.actionId
+    if (actionId) {
+      setRecentActions((previous) => {
+        const next = [actionId, ...previous.filter((id) => id !== actionId)].slice(0, 6)
+        try {
+          localStorage.setItem(PALETTE_RECENT_KEY, JSON.stringify(next))
+        } catch {
+          // 忽略存储异常。
+        }
+        return next
+      })
+    }
     onClose()
     setTimeout(() => void row.run(), 0)
   }

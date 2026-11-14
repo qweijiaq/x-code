@@ -40,10 +40,9 @@ if (!parentPort) {
 }
 const port: ParentPortLike = parentPort
 
-// core 的音频 runner 使用 child_process.fork()，否则会启动
-// 另一个 Electron 应用而不是 Node worker。子进程继承这个
-// 标志并以 Node 运行。
-process.env.ELECTRON_RUN_AS_NODE = '1'
+// 注意：不要在这里全局设置 ELECTRON_RUN_AS_NODE。它会让 agent shell
+// 启动的 Electron 项目退化成纯 Node（app 为 undefined，窗口不出现）。
+// 需要 Node 语义的内部子进程（音频/PDF worker、tsserver）各自显式传入。
 
 function sendEvent(event: RuntimeEvent): void {
   port.postMessage({ kind: 'event', event })
@@ -107,7 +106,7 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         return ok(request.id, await host.submit(request.params.prompt, request.params.attachments))
       }
       case 'agent:abort':
-        return ok(request.id, host.abort())
+        return ok(request.id, host.abort(request.params.sessionId))
       case 'agent:set-task-mode': {
         await ensureInitialized()
         return ok(request.id, host.setTaskMode(request.params.mode))
@@ -284,6 +283,22 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.verifyGoalRun())
       }
+      case 'goal:attempt-prompt': {
+        await ensureInitialized()
+        return ok(request.id, host.goalAttemptPrompt(request.params.attemptId))
+      }
+      case 'goal:attempt-prompts': {
+        await ensureInitialized()
+        return ok(request.id, host.goalAttemptPrompts(request.params.attemptIds))
+      }
+      case 'goal:search-prompts': {
+        await ensureInitialized()
+        return ok(request.id, host.searchGoalPrompts(request.params.query))
+      }
+      case 'goal:verification-output': {
+        await ensureInitialized()
+        return ok(request.id, host.goalVerificationOutput(request.params))
+      }
       case 'context:search': {
         await ensureInitialized()
         return ok(
@@ -332,6 +347,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
         await ensureInitialized()
         return ok(request.id, await host.listSessions())
       }
+      case 'session:list-all': {
+        await ensureInitialized()
+        return ok(request.id, await host.listWorkspaceSessions())
+      }
       case 'session:load': {
         await ensureInitialized()
         return ok(request.id, await host.loadSession(request.params.filePath))
@@ -347,6 +366,14 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       case 'session:new': {
         await ensureInitialized()
         return ok(request.id, host.newSession())
+      }
+      case 'session:activate': {
+        await ensureInitialized()
+        return ok(request.id, host.activateSession(request.params.sessionId))
+      }
+      case 'session:close': {
+        await ensureInitialized()
+        return ok(request.id, host.forgetSession(request.params.sessionId))
       }
       case 'session:rename': {
         await ensureInitialized()
@@ -614,6 +641,10 @@ async function handleRequest(request: RuntimeRequest): Promise<RuntimeResponse> 
       case 'settings:test-search-key': {
         await ensureInitialized()
         return ok(request.id, await host.testSearchKey(request.params.provider, request.params.key))
+      }
+      case 'settings:discover-custom-models': {
+        await ensureInitialized()
+        return ok(request.id, await host.discoverCustomModels(request.params.baseUrl, request.params.key))
       }
       case 'settings:set-custom-model': {
         await ensureInitialized()

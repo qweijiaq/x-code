@@ -289,6 +289,70 @@ describe('agent loop', () => {
     expect(state.messages.at(-1)).toEqual({ role: 'assistant', content: 'prefix-rest' })
   })
 
+  it('nudges the model when it stops with an empty reply after a tool call', async () => {
+    const toolCallInput = { todos: [{ content: 'finish the task', status: 'in_progress' }] }
+    vi.mocked(streamText)
+      .mockReturnValueOnce({
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: 'tool-call', toolCallId: 'todo-1', toolName: 'todoWrite', input: toolCallInput }
+          },
+        },
+        response: Promise.resolve({
+          messages: [
+            {
+              role: 'assistant',
+              content: [{ type: 'tool-call', toolCallId: 'todo-1', toolName: 'todoWrite', input: toolCallInput }],
+            },
+          ],
+        }),
+        usage: Promise.resolve({ inputTokens: 10, outputTokens: 5 }),
+        finishReason: Promise.resolve('tool-calls'),
+        toolCalls: Promise.resolve([{ toolCallId: 'todo-1', toolName: 'todoWrite', input: toolCallInput }]),
+      } as any)
+      // 模拟部分 OpenAI 兼容 provider：工具结果之后直接空文本 stop。
+      .mockReturnValueOnce({
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            // 空响应
+          },
+        },
+        response: Promise.resolve({ messages: [] }),
+        usage: Promise.resolve({ inputTokens: 10, outputTokens: 0 }),
+        finishReason: Promise.resolve('stop'),
+        toolCalls: Promise.resolve([]),
+      } as any)
+      .mockReturnValueOnce({
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: 'text-delta', text: 'done' }
+          },
+        },
+        response: Promise.resolve({ messages: [{ role: 'assistant', content: 'done' }] }),
+        usage: Promise.resolve({ inputTokens: 10, outputTokens: 2 }),
+        finishReason: Promise.resolve('stop'),
+        toolCalls: Promise.resolve([]),
+      } as any)
+
+    const { state } = await agentLoop(
+      'finish the task',
+      {} as any,
+      {
+        modelId: 'test:model',
+        trustMode: false,
+        maxTurns: 5,
+        printMode: false,
+        streamMaxRetries: 0,
+        streamIdleTimeoutMs: 0,
+      },
+      mockCallbacks,
+    )
+
+    expect(streamText).toHaveBeenCalledTimes(3)
+    expect(state.messages.at(-1)).toEqual({ role: 'assistant', content: 'done' })
+    expect(mockCallbacks.onTextDelta).toHaveBeenCalledWith('done')
+  })
+
   it('does not reconnect after tool activity makes replay unsafe', async () => {
     const interrupted = new Error('terminated')
     vi.mocked(streamText).mockReturnValue({

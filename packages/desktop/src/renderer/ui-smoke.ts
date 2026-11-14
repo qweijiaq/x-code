@@ -2857,7 +2857,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       })
       setComposer('')
       continuityOk = userAdded && turnSettled && editBadge && editPrefill && regenerateButton && draftSaved
-      continuityDetail = `user=${userAdded} settled=${turnSettled} edit=${editBadge}/${editPrefill} regen=${regenerateButton} draft=${draftSaved}`
+      continuityDetail = `user=${userAdded} settled=${turnSettled} edit=${editBadge}/${editPrefill} regen=${regenerateButton} draft=${draftSaved} running=${document.querySelector('.app')?.getAttribute('data-running-session')} active=${document.querySelector('.tab-item.active')?.getAttribute('data-session-id')} stop=${Boolean(document.querySelector('.send.stop'))}`
     }
     checks.continuity = { ok: continuityOk, detail: continuityDetail }
 

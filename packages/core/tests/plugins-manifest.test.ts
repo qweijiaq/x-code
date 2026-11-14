@@ -90,6 +90,19 @@ describe('parseManifest', () => {
     expect(manifest.author).toEqual({ name: 'Some Author' })
   })
 
+  it('accepts a Claude Code skills array', async () => {
+    const root = await makeTempPluginDir()
+    const skills = ['./skills/engineering/tdd', './skills/productivity/grill-me']
+    const file = await writeManifest(root, '.claude-plugin/plugin.json', {
+      name: 'mattpocock-skills',
+      version: '1.3.2',
+      skills,
+    })
+
+    const manifest = await parseManifest(file)
+    expect(manifest.skills).toEqual(skills)
+  })
+
   it('silently strips unknown top-level fields (forward compat)', async () => {
     const root = await makeTempPluginDir()
     const file = await writeManifest(root, 'plugin.json', {

@@ -50,18 +50,21 @@ async function exists(target: string): Promise<boolean> {
 async function checkContribution(
   rootDir: string,
   field: string,
-  value: string | undefined,
+  value: string | string[] | undefined,
   errors: string[],
 ): Promise<void> {
   if (!value) return
-  const absolute = path.resolve(rootDir, value)
-  const relative = path.relative(rootDir, absolute)
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    errors.push(`${field} must stay inside the plugin root: ${value}`)
-    return
-  }
-  if (!(await exists(absolute))) {
-    errors.push(`${field} path does not exist: ${value}`)
+  const entries = Array.isArray(value) ? value : [value]
+  for (const entry of entries) {
+    const absolute = path.resolve(rootDir, entry)
+    const relative = path.relative(rootDir, absolute)
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      errors.push(`${field} must stay inside the plugin root: ${entry}`)
+      continue
+    }
+    if (!(await exists(absolute))) {
+      errors.push(`${field} path does not exist: ${entry}`)
+    }
   }
 }
 

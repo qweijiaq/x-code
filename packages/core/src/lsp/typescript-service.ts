@@ -139,7 +139,8 @@ export class TypeScriptService {
       {
         cwd: root,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: process.env,
+        // tsserver 是 Node 脚本；桌面 runtime 的 execPath 是 Electron。
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         windowsHide: true,
       },
     )

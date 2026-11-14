@@ -128,19 +128,27 @@ export function TurnActivityBar({
   const label =
     activity.kind === 'model'
       ? t('正在等待模型响应…')
-      : activity.kind === 'streaming'
-        ? t('正在生成回复…')
-        : activity.kind === 'tool'
-          ? activity.detail
-            ? t('正在运行 {{tool}}…', { tool: activity.detail })
-            : t('正在执行工具…')
-          : activity.kind === 'approval'
+      : activity.kind === 'reasoning'
+        ? activity.detail
+          ? t('模型思考中 · {{detail}}…', { detail: activity.detail })
+          : t('模型思考中…')
+        : activity.kind === 'streaming'
+          ? t('正在生成回复…')
+          : activity.kind === 'tool-input'
             ? activity.detail
-              ? t('等待你的批准：{{tool}}', { tool: activity.detail })
-              : t('等待你的批准…')
-            : activity.kind === 'retry'
-              ? t('连接波动，正在重试…')
-              : t('运行中…')
+              ? t('正在生成工具参数：{{detail}}…', { detail: activity.detail })
+              : t('正在生成工具参数…')
+            : activity.kind === 'tool'
+              ? activity.detail
+                ? t('正在运行 {{tool}}…', { tool: activity.detail })
+                : t('正在执行工具…')
+              : activity.kind === 'approval'
+                ? activity.detail
+                  ? t('等待你的批准：{{tool}}', { tool: activity.detail })
+                  : t('等待你的批准…')
+                : activity.kind === 'retry'
+                  ? t('连接波动，正在重试…')
+                  : t('运行中…')
   // 阶段开始之后又有过进度事件，才额外提示“多久没有新输出”；
   // 单纯等模型时两个数字相同，再提示一遍只会显得吵。
   const showIdle = idleSeconds >= 10 && idleSeconds < seconds - 2
@@ -166,17 +174,47 @@ export function QueuedList({
   items,
   onOpenInNewWindow,
   onRemove,
+  onMove,
+  onClear,
 }: {
   items: Array<{ prompt: string; attachments: string[] }>
   onOpenInNewWindow: (index: number) => void
   onRemove: (index: number) => void
+  onMove: (index: number, delta: number) => void
+  onClear: () => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <div className="queued-list" data-testid="queued-list">
+      {items.length > 0 ? (
+        <div className="queued-head">
+          <span>{t('排队中 {{count}} 条', { count: items.length })}</span>
+          <button className="btn btn-quiet queued-clear" onClick={onClear}>
+            {t('全部移除')}
+          </button>
+        </div>
+      ) : null}
       {items.map((item, index) => (
         <div className="queued-item" key={`${index}-${item.prompt.slice(0, 24)}`}>
           <span className="queued-text">{item.prompt}</span>
+          <button
+            className="queued-move"
+            title={t('上移')}
+            aria-label={t('上移')}
+            disabled={index === 0}
+            onClick={() => onMove(index, -1)}
+          >
+            ↑
+          </button>
+          <button
+            className="queued-move"
+            title={t('下移')}
+            aria-label={t('下移')}
+            disabled={index === items.length - 1}
+            onClick={() => onMove(index, 1)}
+          >
+            ↓
+          </button>
           {item.attachments.length === 0 ? (
             <button
               className="queued-background"
@@ -239,15 +277,22 @@ export function RecordingBar({
 export function AttachmentsStrip({
   files,
   onRemove,
+  onClear,
   onOpenImage,
 }: {
   files: string[]
   onRemove: (file: string) => void
+  onClear: () => void
   onOpenImage: (src: string, name: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <div className="composer-attachments" data-testid="attachments" hidden={files.length === 0}>
+      {files.length > 1 ? (
+        <button className="attachment-clear" title={t('清空附件')} onClick={onClear}>
+          {t('清空 {{count}}', { count: files.length })}
+        </button>
+      ) : null}
       {files.map((file) => (
         <span className="attachment-chip" key={file} title={file}>
           {isImageAttachment(file) ? <AttachmentImage file={file} variant="chip" onOpen={onOpenImage} /> : null}

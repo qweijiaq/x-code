@@ -45,6 +45,77 @@ describe('stream retry timing', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('reports reasoning progress before the first visible output', async () => {
+    const progress = vi.fn()
+    const stream = (async function* () {
+      yield { type: 'reasoning-start', id: 'r-1' }
+      yield { type: 'reasoning-delta', id: 'r-1', text: 'thinking' }
+      yield { type: 'reasoning-delta', id: 'r-1', text: ' more' }
+      yield { type: 'reasoning-end', id: 'r-1' }
+    })()
+    const callbacks = {
+      onTextDelta: vi.fn(),
+      onToolCall: vi.fn(),
+      onToolProgress: vi.fn(),
+      onReasoningProgress: progress,
+      onToolResult: vi.fn(),
+    } as unknown as AgentCallbacks
+    const control = createStreamAttemptControl(undefined, 300_000)
+
+    await streamChunksToUI(
+      { stream } as never,
+      callbacks,
+      createLoopState(),
+      {} as AgentOptions,
+      { visibleText: '', toolActivity: false, receivedData: false, suppressedReplay: false },
+      control,
+      '',
+      false,
+    )
+
+    expect(progress).toHaveBeenNthCalledWith(1, 8)
+    expect(progress).toHaveBeenLastCalledWith(13)
+    control.dispose()
+  })
+
+  it('reports tool input progress while arguments stream', async () => {
+    const progress = vi.fn()
+    const stream = (async function* () {
+      yield { type: 'tool-input-start', id: 'tc-1', toolName: 'writeFile' }
+      yield { type: 'tool-input-delta', id: 'tc-1', delta: 'abc' }
+      yield { type: 'tool-input-delta', id: 'tc-1', delta: 'def' }
+      yield { type: 'tool-input-end', id: 'tc-1' }
+    })()
+    const callbacks = {
+      onTextDelta: vi.fn(),
+      onToolCall: vi.fn(),
+      onToolProgress: vi.fn(),
+      onToolInputProgress: progress,
+      onToolResult: vi.fn(),
+    } as unknown as AgentCallbacks
+    const control = createStreamAttemptControl(undefined, 300_000)
+
+    await streamChunksToUI(
+      { stream } as never,
+      callbacks,
+      createLoopState(),
+      {} as AgentOptions,
+      { visibleText: '', toolActivity: false, receivedData: false, suppressedReplay: false },
+      control,
+      '',
+      false,
+    )
+
+    expect(progress).toHaveBeenLastCalledWith({
+      toolCallId: 'tc-1',
+      toolName: 'writeFile',
+      chars: 6,
+      bytes: 6,
+      done: true,
+    })
+    control.dispose()
+  })
+
   it('keeps the idle watchdog active after a tool event', async () => {
     vi.useFakeTimers()
     const control = createStreamAttemptControl(undefined, 100)

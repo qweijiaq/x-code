@@ -43,6 +43,7 @@ import { StorageSettings } from './StorageSettings.js'
 import { TrustSettings } from './TrustSettings.js'
 import i18n from './i18n.js'
 import { isImeEnter } from './ime.js'
+import { providerDisplayName } from './provider-labels.js'
 
 const MIN_CONTEXT_WINDOW = 32_768
 
@@ -176,6 +177,11 @@ export function SettingsPanel({
     onTabChange?.(next)
     if (next === 'market' && !market) void loadMarketplace(false)
   }
+  const [tabQuery, setTabQuery] = useState('')
+  const tabNeedle = tabQuery.trim().toLowerCase()
+  const visibleTabs = TABS.filter(
+    (item) => !tabNeedle || t(item.label).toLowerCase().includes(tabNeedle) || item.id.includes(tabNeedle),
+  )
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({})
@@ -183,6 +189,9 @@ export function SettingsPanel({
   const [searchTestResults, setSearchTestResults] = useState<Record<string, SearchTestResult | { testing: true }>>({})
   const [baseUrlDrafts, setBaseUrlDrafts] = useState<Record<string, string>>({})
   const [customModelDraft, setCustomModelDraft] = useState('')
+  const [customModelOptions, setCustomModelOptions] = useState<string[]>([])
+  const [customModelsBusy, setCustomModelsBusy] = useState(false)
+  const [customModelsError, setCustomModelsError] = useState<string | null>(null)
   const [contextWindowDraft, setContextWindowDraft] = useState(
     settings.contextWindowOverride ? String(settings.contextWindowOverride) : '',
   )
@@ -543,6 +552,36 @@ export function SettingsPanel({
           : t('连接失败：{{message}}', { message: result.message })}
       </div>
     )
+  }
+
+  const discoverCustomModels = async (): Promise<void> => {
+    const provider = settings.providers.find((entry) => entry.name === 'custom')
+    const baseUrl = (baseUrlDrafts.custom ?? provider?.baseUrl ?? '').trim()
+    if (!baseUrl) {
+      setError(t('请填写 Base URL'))
+      return
+    }
+    setCustomModelsBusy(true)
+    setCustomModelsError(null)
+    setError(null)
+    try {
+      const response = await request('settings:discover-custom-models', {
+        baseUrl,
+        key: keyDrafts.custom?.trim() || undefined,
+      })
+      if (!response.ok) {
+        setCustomModelsError(response.error.message)
+        return
+      }
+      const models = (response.result as { models: string[] }).models
+      setCustomModelOptions(models)
+      const current = (customModelDraft || provider?.modelId || '').trim()
+      if (!current || !models.includes(current)) setCustomModelDraft(models[0] ?? '')
+    } catch (error) {
+      setCustomModelsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setCustomModelsBusy(false)
+    }
   }
 
   const saveCustomModel = async (): Promise<void> => {
@@ -1487,8 +1526,31 @@ export function SettingsPanel({
             </div>
           </div>
         </div>
+        <div className="settings-tab-tools">
+          <input
+            className="settings-input settings-tab-search"
+            value={tabQuery}
+            placeholder={t('搜索设置项')}
+            aria-label={t('搜索设置项')}
+            onChange={(event) => setTabQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setTabQuery('')
+                return
+              }
+              if (event.key === 'Enter' && visibleTabs[0]) {
+                event.preventDefault()
+                selectTab(visibleTabs[0].id)
+              }
+            }}
+          />
+          {tabNeedle ? (
+            <span className="settings-tab-count">{t('{{count}} 项', { count: visibleTabs.length })}</span>
+          ) : null}
+        </div>
         <nav className="settings-tabs">
-          {TABS.map((item) => (
+          {visibleTabs.map((item) => (
             <button
               key={item.id}
               className={`settings-tab ${tab === item.id ? 'active' : ''}`}
@@ -1497,6 +1559,7 @@ export function SettingsPanel({
               {t(item.label)}
             </button>
           ))}
+          {visibleTabs.length === 0 ? <span className="settings-tab-empty">{t('没有匹配的设置项')}</span> : null}
         </nav>
 
         {error ? <div className="settings-error">{error}</div> : null}
@@ -1584,7 +1647,7 @@ export function SettingsPanel({
                 return (
                   <div className="provider-row" key={provider.name}>
                     <div className="provider-head">
-                      <span className="provider-name">{provider.name}</span>
+                      <span className="provider-name">{providerDisplayName(provider.name)}</span>
                       <span className={`settings-badge ${provider.source === 'none' ? '' : 'on'}`}>{badge}</span>
                       {provider.hint ? <span className="provider-hint">{provider.hint}</span> : null}
                       {provider.keyUrl.startsWith('https://') ? (
@@ -1621,16 +1684,39 @@ export function SettingsPanel({
                       <div className="provider-fields" data-testid="provider-fields">
                         <input
                           className="settings-input"
-                          placeholder={t('模型 ID，如 gpt-4o-mini')}
-                          value={customModelDraft || provider.modelId || ''}
-                          onChange={(event) => setCustomModelDraft(event.target.value)}
-                        />
-                        <input
-                          className="settings-input"
                           placeholder={t('Base URL，例如 https://api.example.com/v1')}
                           value={baseUrlDrafts.custom ?? provider.baseUrl ?? ''}
-                          onChange={(event) => setBaseUrlDrafts((prev) => ({ ...prev, custom: event.target.value }))}
+                          onChange={(event) => {
+                            setBaseUrlDrafts((prev) => ({ ...prev, custom: event.target.value }))
+                            setCustomModelOptions([])
+                            setCustomModelsError(null)
+                          }}
                         />
+                        <div className="settings-actions">
+                          <button
+                            className="btn"
+                            data-testid="discover-custom-models"
+                            disabled={busy !== null || customModelsBusy}
+                            onClick={() => void discoverCustomModels()}
+                          >
+                            {customModelsBusy ? t('获取中…') : t('获取模型')}
+                          </button>
+                          <select
+                            className="settings-input"
+                            data-testid="custom-model-select"
+                            value={customModelDraft || provider.modelId || ''}
+                            onChange={(event) => setCustomModelDraft(event.target.value)}
+                            disabled={busy !== null || customModelsBusy}
+                          >
+                            <option value="">{t('先填写 Base URL 和 Key，再获取模型')}</option>
+                            {[...new Set([provider.modelId, ...customModelOptions].filter(Boolean))].map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {customModelsError ? <div className="settings-error">{customModelsError}</div> : null}
                       </div>
                     ) : null}
                     <div className="provider-actions">

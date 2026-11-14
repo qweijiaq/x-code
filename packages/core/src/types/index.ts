@@ -268,6 +268,17 @@ export interface AgentCallbacks {
    *  "Searching: query" → "Found 5 results"）。实时 UI 中只显示最新
    *  一条消息；最终摘要经 onToolResult 传递。 */
   onToolProgress: (toolCallId: string, message: string) => void
+  /** 工具调用参数仍在流式生成时触发（例如 writeFile 的大段 content）。
+   *  只在参数生成阶段有用，工具真正开始执行后由 onToolCall/onToolProgress 接管。 */
+  /** 模型在生成 reasoning（思考）内容时触发，用于显示“仍在思考”的进度。 */
+  onReasoningProgress?: (chars: number) => void
+  onToolInputProgress?: (progress: {
+    toolCallId: string
+    toolName: string
+    chars: number
+    bytes: number
+    done: boolean
+  }) => void
   onToolResult: (toolCallId: string, result: string, isError?: boolean) => void
   /** 可选。在成功的 writeFile / edit 的 `onToolResult` 之前触发，
    *  携带结构化补丁 + 行数，这样 UI 能在工具条目下方渲染 diff 块。

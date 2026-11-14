@@ -89,6 +89,15 @@ export type {
 
 // 提供商注册表
 export { createModelRegistry, setZhipuReasoningEffort } from './providers/registry.js'
+export { listOpenAICompatibleModels, normalizeModelsUrl } from './providers/model-discovery.js'
+export {
+  clearDynamicProviderModels,
+  getDynamicProviderModels,
+  refreshDynamicProviderModels,
+  setDynamicProviderModels,
+} from './providers/dynamic-models.js'
+export type { RefreshDynamicModelsOptions, RefreshDynamicModelsResult } from './providers/dynamic-models.js'
+export type { ModelDiscoveryOptions } from './providers/model-discovery.js'
 export { createLocalOpenAICompatibleModel } from './providers/local.js'
 export {
   getOpenAIChatGPTModelCatalogState,
@@ -231,6 +240,7 @@ export {
   wrapShellSpawn,
 } from './utils/shell-sandbox.js'
 export type { ShellSandboxConfig } from './utils/shell-sandbox.js'
+export { disposePersistentShell } from './tools/shell-session/persistent-shell.js'
 export { setDocumentRenderers } from './tools/document-export.js'
 export type { DocumentRenderer } from './tools/document-export.js'
 export type { TranscribeAudioResult, TranscribeSegment } from './agent/audio-transcribe.js'

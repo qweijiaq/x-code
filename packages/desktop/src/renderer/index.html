@@ -8,9 +8,69 @@
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'"
     />
     <title>X-Code · 水墨</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #f6f2e8; }
+      .boot { display: flex; height: 100vh; color: #1c1a16; font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif; }
+      .boot-side { display: flex; flex: none; flex-direction: column; gap: 12px; width: 260px; padding: 62px 14px 18px; box-sizing: border-box; border-right: 1px solid rgba(28,26,22,.12); background: #efe7d7; }
+      .boot-main { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+      .boot-top { flex: none; height: 54px; border-bottom: 1px solid rgba(28,26,22,.08); }
+      .boot-chat { display: flex; flex: 1; flex-direction: column; gap: 14px; padding: 42px 14% 28px; overflow: hidden; }
+      .boot-bar, .boot-row { border-radius: 6px; background: linear-gradient(90deg, rgba(28,26,22,.06) 25%, rgba(28,26,22,.14) 37%, rgba(28,26,22,.06) 63%); background-size: 400% 100%; animation: boot-shimmer 1.4s ease infinite; }
+      .boot-row { height: 12px; }
+      .boot-brand { width: 66px; height: 12px; margin-bottom: 10px; border-radius: 4px; background: rgba(28,26,22,.16); }
+      .boot-turn { align-self: flex-end; width: 42%; height: 34px; border-radius: 12px; background: linear-gradient(90deg, rgba(28,26,22,.05) 25%, rgba(28,26,22,.11) 37%, rgba(28,26,22,.05) 63%); background-size: 400% 100%; animation: boot-shimmer 1.4s ease infinite; }
+      .boot-line { height: 10px; }
+      .boot-w90 { width: 90%; }
+      .boot-w80 { width: 80%; }
+      .boot-w55 { width: 55%; }
+      .boot-w60 { width: 60%; }
+      .boot-w40 { width: 40%; }
+      @keyframes boot-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+      @media (prefers-reduced-motion: reduce) { .boot-bar, .boot-row, .boot-turn { animation: none; } }
+      @media (prefers-color-scheme: dark) {
+        html, body { background: #171613; }
+        .boot { color: #ede7da; }
+        .boot-side { background: #1d1b17; border-right-color: rgba(237,231,218,.12); }
+        .boot-top { border-bottom-color: rgba(237,231,218,.08); }
+        .boot-bar, .boot-row, .boot-turn { background: linear-gradient(90deg, rgba(237,231,218,.05) 25%, rgba(237,231,218,.12) 37%, rgba(237,231,218,.05) 63%); background-size: 400% 100%; }
+        .boot-brand { background: rgba(237,231,218,.18); }
+      }
+      html[data-theme='dark'],
+      html[data-theme='dark'] body { background: #171613; }
+      html[data-theme='dark'] .boot-side { background: #1d1b17; border-right-color: rgba(237,231,218,.12); }
+      html[data-theme='dark'] .boot-top { border-bottom-color: rgba(237,231,218,.08); }
+      html[data-theme='dark'] .boot-bar,
+      html[data-theme='dark'] .boot-row,
+      html[data-theme='dark'] .boot-turn { background: linear-gradient(90deg, rgba(237,231,218,.05) 25%, rgba(237,231,218,.12) 37%, rgba(237,231,218,.05) 63%); background-size: 400% 100%; }
+      html[data-theme='dark'] .boot-brand { background: rgba(237,231,218,.18); }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot" aria-busy="true">
+        <aside class="boot-side">
+          <div class="boot-brand"></div>
+          <div class="boot-row boot-w60"></div>
+          <div class="boot-row boot-w80"></div>
+          <div class="boot-row boot-w55"></div>
+          <div class="boot-row boot-w90"></div>
+          <div class="boot-row boot-w40"></div>
+          <div class="boot-row boot-w60"></div>
+        </aside>
+        <div class="boot-main">
+          <div class="boot-top"></div>
+          <div class="boot-chat">
+            <div class="boot-turn"></div>
+            <div class="boot-line boot-w90"></div>
+            <div class="boot-line boot-w80"></div>
+            <div class="boot-line boot-w55"></div>
+            <div class="boot-turn"></div>
+            <div class="boot-line boot-w90"></div>
+            <div class="boot-line boot-w55"></div>
+          </div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

@@ -212,6 +212,14 @@ describe('getAvailableProviders', () => {
     expect(providers).toContain('openai')
   })
 
+  it('ignores non-ASCII or markdown-looking API keys from the environment', () => {
+    process.env.OPENDESIGN_GO_API_KEY = '```m\n专业 text\n```'
+    expect(getAvailableProviders()).not.toContain('opendesign-go')
+
+    process.env.OPENDESIGN_GO_API_KEY = 'valid-ascii-key'
+    expect(getAvailableProviders()).toContain('opendesign-go')
+  })
+
   it('keeps OpenAI available through ChatGPT auth while the API key stays inactive', async () => {
     process.env.OPENAI_API_KEY = 'platform-key'
     await writeOpenAIChatGPTCredentials({
