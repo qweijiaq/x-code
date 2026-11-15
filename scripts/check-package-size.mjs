@@ -6,8 +6,9 @@ const MIB = 1024 * 1024
 const limits = {
   packed: 3.5 * MIB,
   unpacked: 12.75 * MIB,
-  // 发布暂存会给本地检查的包加上 LICENSE 和两个 README 文件。
-  files: 45,
+  // 发布暂存会给本地检查的包加上 LICENSE 和两个 README 文件（+3）。
+  // 音频转写与媒体解码依赖把 dist 拆成 45 个 chunk，留 56 的上限。
+  files: 56,
 }
 const cliPackage = JSON.parse(readFileSync(resolve('packages/cli/package.json'), 'utf8'))
 const requiredRuntimeDependencies = ['@vscode/ripgrep', 'fs-ext-extra-prebuilt', 'undici']
