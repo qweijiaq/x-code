@@ -174,6 +174,14 @@ jobs:
             echo "::error::NPM_TOKEN is not configured. Add a granular npm access token with publish rights as the NPM_TOKEN repository secret."
             exit 1
           fi
+          # 从 npm 网页复制 token 时经常带换行或首尾空格；npm 会把它原样放进
+          # Authorization header，从而报 "not a legal HTTP header value"。
+          NODE_AUTH_TOKEN="$(printf '%s' "$NODE_AUTH_TOKEN" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+          export NODE_AUTH_TOKEN
+          if ! printf '%s' "$NODE_AUTH_TOKEN" | LC_ALL=C grep -qE '^[!-~]+$'; then
+            echo "::error::NPM_TOKEN contains whitespace, non-ASCII characters, or a Markdown wrapper. Re-add only the token text."
+            exit 1
+          fi
           VERSION="$(node -p "require('./packages/cli/package.json').version")"
           for package in core cli; do
             name="@x-code-cli/${package}"
