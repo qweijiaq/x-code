@@ -12030,14 +12030,6 @@ body {
   background: var(--ink-08);
 }
 
-.sidebar-count {
-  padding: 1px 6px;
-  border: 1px solid var(--ink-20);
-  color: var(--ink-45);
-  font-family: var(--mono);
-  font-size: 10px;
-}
-
 .sidebar-search-row {
   display: flex;
   align-items: center;
@@ -12262,4 +12254,331 @@ body {
 .model-item.is-keyboard {
   outline: 1px solid var(--cinnabar);
   outline-offset: -1px;
+}
+
+/* ── 与官网同源：冷纸、石墨、单一朱砂，硬边、无投影 ─────────────────── */
+/* 覆盖前面叠加的多套配色与装饰，只保留一套：可读的字阶、一条内容准线、
+   颜色只用于标记状态。顺带补齐若干未定义的颜色变量，避免样式静默失效。 */
+
+:root {
+  --paper: #f2f2ee;
+  --paper-2: #fafaf7;
+  --paper-3: #e6e6df;
+  --ink: #1c1d1a;
+  --ink-70: rgba(28, 29, 26, 0.7);
+  --ink-60: rgba(28, 29, 26, 0.6);
+  --ink-55: rgba(28, 29, 26, 0.55);
+  --ink-50: rgba(28, 29, 26, 0.5);
+  --ink-45: rgba(28, 29, 26, 0.46);
+  --ink-40: rgba(28, 29, 26, 0.4);
+  --ink-35: rgba(28, 29, 26, 0.35);
+  --ink-20: rgba(28, 29, 26, 0.16);
+  --ink-08: rgba(28, 29, 26, 0.07);
+  --ink-04: rgba(28, 29, 26, 0.04);
+  --ink-90: rgba(28, 29, 26, 0.9);
+  --cinnabar: #9e3b2f;
+  --cinnabar-deep: #7d2a21;
+  --dai: #4a4d47;
+  --indigo: #3f5a6e;
+  --mineral: #4f6b4f;
+  --ochre: #8a6a33;
+  --rouge: #8f4a4a;
+  --sky: #56727a;
+  --gamboge: #8a7620;
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+  --elev-1: none;
+  --elev-2: none;
+  /* 正文、输入区与提示条共用同一条 800px 准线，避免左右边缘错位。 */
+  --column: max(24px, calc((100% - 800px) / 2));
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --paper: #131411;
+  --paper-2: #1b1c18;
+  --paper-3: #262722;
+  --ink: #e9e8e2;
+  --ink-70: rgba(233, 232, 226, 0.7);
+  --ink-60: rgba(233, 232, 226, 0.6);
+  --ink-55: rgba(233, 232, 226, 0.55);
+  --ink-50: rgba(233, 232, 226, 0.5);
+  --ink-45: rgba(233, 232, 226, 0.46);
+  --ink-40: rgba(233, 232, 226, 0.4);
+  --ink-35: rgba(233, 232, 226, 0.35);
+  --ink-20: rgba(233, 232, 226, 0.16);
+  --ink-08: rgba(233, 232, 226, 0.075);
+  --ink-04: rgba(233, 232, 226, 0.04);
+  --ink-90: rgba(233, 232, 226, 0.9);
+  --cinnabar: #c46355;
+  --cinnabar-deep: #d97f70;
+  --dai: #8f8d94;
+  --indigo: #86a3b8;
+  --mineral: #83a083;
+  --ochre: #b3925f;
+  --rouge: #b5787a;
+  --sky: #86a4ab;
+  --gamboge: #b09a45;
+}
+
+/* 清掉残留的纸纹、渐变与柔光。 */
+body,
+.topbar,
+.composer,
+.chat,
+.sidebar,
+.inspector,
+.report,
+.approval-card,
+.settings-drawer,
+.document-drawer,
+.git-drawer,
+.checks-drawer,
+.background-drawer {
+  background-image: none;
+}
+
+/* 会话操作条的渐变是遮罩而非装饰，换成与底层纸色一致的中性淡出。 */
+.sidebar-session-actions {
+  background: linear-gradient(90deg, transparent, var(--paper-2) 28%);
+}
+
+.sidebar-session-row.active .sidebar-session-actions {
+  background: linear-gradient(90deg, transparent, var(--paper) 28%);
+}
+
+.settings-drawer::before {
+  content: none;
+}
+
+.modal-scrim,
+.drawer-scrim,
+.image-lightbox-scrim {
+  backdrop-filter: none;
+}
+
+.settings-drawer,
+.document-drawer,
+.git-drawer,
+.checks-drawer,
+.background-drawer,
+.approval-card {
+  box-shadow: none;
+}
+
+/* 统一硬边：胶囊与气泡回到方角，圆角只做 1–2px 的收口。 */
+.model-chip,
+.mode-chip,
+.notice,
+.mode-suggestion,
+.attachment-chip,
+.copy-btn,
+.chat > .message.system,
+.chat > .turn-tool-toggle .btn,
+.chat > .message.user,
+.tool-progress {
+  border-radius: 2px;
+}
+
+.chat > .message.user {
+  padding: 11px 16px 12px;
+  border: 1px solid var(--ink-08);
+  background: color-mix(in srgb, var(--ink) 5%, var(--paper-2));
+}
+
+:root[data-theme='dark'] .chat > .message.user {
+  border: 1px solid var(--ink-08);
+  background: color-mix(in srgb, var(--ink) 7%, var(--paper-2));
+}
+
+.chat > .message.assistant::before {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--ink-20);
+  border-radius: 1px;
+  background: transparent;
+  color: var(--ink-45);
+  font-family: var(--sans);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+/* 输入区：一条实的下边线代替浮起的卡片与光圈。 */
+.composer-box {
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+.composer-box:focus-within {
+  border-color: var(--ink-45);
+  box-shadow: none;
+}
+
+/* 发送键：去掉为首字设计的字距与缩进，避免图标被推偏；停止键放宽到容得下文字。 */
+.composer-box .send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  letter-spacing: 0;
+  text-indent: 0;
+}
+
+.composer-box .send.stop {
+  width: auto;
+  padding: 0 10px;
+  letter-spacing: 0.08em;
+}
+
+/* 浮层靠描边分层，不再靠阴影。 */
+.model-menu,
+.mode-menu,
+.palette-card {
+  border-color: var(--ink-20);
+  background: var(--paper-2);
+  box-shadow: none;
+}
+
+/* 中文断行：不在词中硬断，避免长词被切开；标题与短句避免行尾孤字。 */
+.message-text,
+.markdown {
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-break: strict;
+}
+
+.markdown p,
+.markdown li,
+.message-text,
+.empty-sub,
+.settings-note,
+.tool-guidance,
+.approval-body.text {
+  text-wrap: pretty;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.empty-title,
+.settings-section-title,
+.approval-title {
+  text-wrap: balance;
+}
+
+.crash-path,
+.onboarding-path {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+/* ── 细节收口：搜索清除、更新模块压高 ───────────────────────────────── */
+
+.sidebar-search {
+  position: relative;
+}
+
+.sidebar-search input {
+  padding-right: 28px;
+}
+
+.sidebar-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 1px;
+  background: transparent;
+  color: var(--ink-45);
+  font-size: 13px;
+  line-height: 1;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.sidebar-search-clear:hover {
+  background: var(--ink-08);
+  color: var(--ink);
+}
+
+.sidebar-search-clear:focus-visible {
+  outline: 1px solid var(--cinnabar);
+  outline-offset: 1px;
+}
+
+/* 更新模块：状态与操作压到两行，给下方设置内容让出高度。 */
+.setting-row[data-testid='update-check'] {
+  gap: 6px;
+  padding-block: 10px;
+}
+
+/* 该行是纵向布局，继承来的 flex-basis: 260px 会被当成高度，撑出大片空白。 */
+.setting-row[data-testid='update-check'] .setting-main {
+  flex: 0 0 auto;
+}
+
+.update-version {
+  padding: 1px 5px;
+  border: 1px solid var(--ink-20);
+  color: var(--ink-45);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.update-version.is-new {
+  border-color: var(--cinnabar);
+  color: var(--cinnabar);
+}
+
+.update-desc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  margin-top: 3px;
+}
+
+.update-path {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink-45);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.update-path:hover {
+  color: var(--cinnabar);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.update-note {
+  margin: 2px 0 0;
+}
+
+.setting-row[data-testid='update-check'] .update-controls,
+.setting-row[data-testid='update-check'] .update-buttons {
+  gap: 6px;
+}
+
+.setting-row[data-testid='update-check'] .update-feed {
+  flex: 1 1 240px;
+  min-width: 180px;
 }

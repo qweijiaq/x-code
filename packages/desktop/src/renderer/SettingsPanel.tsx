@@ -1401,38 +1401,49 @@ export function SettingsPanel({
           </div>
           <div className="setting-row" data-testid="update-check">
             <div className="setting-main">
-              <div className="setting-name">{t('桌面端更新')}</div>
-              <div className="setting-desc">
-                {t(
-                  '默认使用官方 GitHub Release 的 RELEASE.json 检查新版本，也可以填入自建发布目录的 HTTPS 地址。可下载匹配当前平台的安装包并校验 sha256，下载后手动安装；自动安装仍需要签名后的应用。',
-                )}
+              <div className="setting-name">
+                {t('桌面端更新')}
+                {updateResult ? (
+                  <span
+                    className={`update-version ${
+                      updateResult.latestVersion &&
+                      newerVersion(updateResult.latestVersion, updateResult.currentVersion)
+                        ? 'is-new'
+                        : ''
+                    }`}
+                    role="status"
+                  >
+                    {updateResult.error
+                      ? t('检查失败')
+                      : !updateResult.configured
+                        ? t('v{{version}}', { version: updateResult.currentVersion })
+                        : t('v{{current}} → v{{latest}}', {
+                            current: updateResult.currentVersion,
+                            latest: updateResult.latestVersion ?? '?',
+                          })}
+                  </span>
+                ) : null}
               </div>
-              {updateResult ? (
-                <div className="settings-note">
-                  {updateResult.error
-                    ? t('检查失败：{{message}}', { message: updateResult.error })
-                    : !updateResult.configured
-                      ? t('未配置更新源（当前 v{{version}}）', { version: updateResult.currentVersion })
-                      : t('当前 v{{current}} · 最新 v{{latest}}', {
-                          current: updateResult.currentVersion,
-                          latest: updateResult.latestVersion ?? '?',
-                        })}
-                  {updateResult.latestVersion && newerVersion(updateResult.latestVersion, updateResult.currentVersion)
-                    ? ` · ${t('有新版本')}`
-                    : ''}
-                  {updateResult.notes ? ` · ${updateResult.notes}` : ''}
-                </div>
-              ) : null}
-              <div className="update-destination">
-                <span className="provider-meta">
-                  {t('下载位置：{{path}}', {
+              <div className="setting-desc update-desc">
+                <span>{t('默认使用官方 Release 检查更新，也可填自建 HTTPS 发布地址。')}</span>
+                <button
+                  className="update-path"
+                  type="button"
+                  disabled={updateBusy}
+                  title={t('下载到 {{path}}（点击更换）', {
                     path: updateDestPath || t('系统下载文件夹'),
                   })}
-                </span>
-                <button className="btn btn-quiet" disabled={updateBusy} onClick={() => void pickUpdateDestination()}>
-                  {t('选择位置')}
+                  onClick={() => void pickUpdateDestination()}
+                >
+                  {t('下载到 {{path}}', { path: updateDestPath || t('系统下载文件夹') })}
                 </button>
               </div>
+              {updateResult?.error ? (
+                <div className="settings-note update-note">
+                  {t('检查失败：{{message}}', { message: updateResult.error })}
+                </div>
+              ) : null}
+              {updateResult?.notes ? <div className="settings-note update-note">{updateResult.notes}</div> : null}
               {updateBusy && updateProgress ? (
                 <div className="update-progress-wrap" data-testid="update-progress">
                   <div className="update-progress">
@@ -1473,13 +1484,23 @@ export function SettingsPanel({
               ) : null}
             </div>
             <div className="update-controls">
-              <input
-                className="settings-input"
-                placeholder="https://example.com/x-code/RELEASE.json"
-                value={updateFeedDraft}
-                onChange={(event) => setUpdateFeedDraft(event.target.value)}
-              />
               <div className="update-buttons">
+                <input
+                  className="settings-input update-feed"
+                  type="url"
+                  inputMode="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="https://example.com/x-code/RELEASE.json"
+                  value={updateFeedDraft}
+                  onChange={(event) => setUpdateFeedDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !updateBusy) {
+                      event.preventDefault()
+                      void checkUpdate()
+                    }
+                  }}
+                />
                 <button className="btn" disabled={updateBusy} onClick={() => void checkUpdate()}>
                   {updateBusy ? t('检查中…') : t('保存并检查')}
                 </button>

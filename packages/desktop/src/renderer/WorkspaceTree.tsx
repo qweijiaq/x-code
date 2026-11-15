@@ -162,6 +162,8 @@ export function WorkspaceTree({
                         ref={sessionSearchRef}
                         value={sessionQuery}
                         placeholder={t('搜索会话')}
+                        autoComplete="off"
+                        spellCheck={false}
                         onChange={(event) => setSessionQuery(event.target.value)}
                         onKeyDown={(event) => {
                           if (isImeEvent(event)) return
@@ -187,6 +189,20 @@ export function WorkspaceTree({
                           }
                         }}
                       />
+                      {sessionQuery ? (
+                        <button
+                          className="sidebar-search-clear"
+                          type="button"
+                          aria-label={t('清除搜索')}
+                          title={t('清除搜索')}
+                          onClick={() => {
+                            setSessionQuery('')
+                            sessionSearchRef.current?.focus()
+                          }}
+                        >
+                          ×
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                   <button

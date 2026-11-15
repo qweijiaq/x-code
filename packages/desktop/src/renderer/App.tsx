@@ -4183,9 +4183,6 @@ export function App(): React.JSX.Element {
           <div className="sidebar-section">
             <div className="sidebar-head">
               <span className="sidebar-title">{t('工作区与会话')}</span>
-              <span className="sidebar-count" title={t('当前工作区 {{count}} 个会话', { count: sessions.length })}>
-                {sessions.length}
-              </span>
               <button
                 className="sidebar-add"
                 title={t('展开全部工作区')}
