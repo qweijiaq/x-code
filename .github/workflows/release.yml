@@ -183,7 +183,13 @@ jobs:
             fi
             tgz="$(find "$GITHUB_WORKSPACE/release-packages" -name "x-code-cli-${package}-*.tgz" -print -quit)"
             test -n "$tgz"
-            npx --yes --package npm@11 npm publish "$tgz" --provenance --access public
+            if ! publish_output="$(npx --yes --package npm@11 npm publish "$tgz" --provenance --access public 2>&1)"; then
+              printf '%s\n' "$publish_output"
+              detail="$(printf '%s\n' "$publish_output" | tail -12 | tr '\n' ' ' | sed 's/%/%25/g; s/\r//g')"
+              echo "::error::npm publish failed for ${name}@${VERSION}: ${detail}"
+              exit 1
+            fi
+            printf '%s\n' "$publish_output"
           done
 
       - name: Verify npm publication and registry install
