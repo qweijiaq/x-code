@@ -143,7 +143,7 @@ jobs:
       - name: Smoke test CLI package
         shell: bash
         run: |
-          cli_tgz="$(find "$GITHUB_WORKSPACE/release-packages" -name 'x-code-cli-cli-*.tgz' -print -quit)"
+          cli_tgz="$(find "$GITHUB_WORKSPACE/release-packages" -name 'qweijiaq-x-code-cli-*.tgz' -print -quit)"
           core_tgz="$(find "$GITHUB_WORKSPACE/release-packages" -name 'x-code-cli-core-*.tgz' -print -quit)"
           test -n "$cli_tgz"
           test -n "$core_tgz"
@@ -183,13 +183,12 @@ jobs:
             exit 1
           fi
           VERSION="$(node -p "require('./packages/cli/package.json').version")"
-          for package in core cli; do
-            name="@x-code-cli/${package}"
-            if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
-              echo "${name}@${VERSION} is already published; skipping."
-              continue
-            fi
-            tgz="$(find "$GITHUB_WORKSPACE/release-packages" -name "x-code-cli-${package}-*.tgz" -print -quit)"
+          name="@qweijiaq/x-code-cli"
+          if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+            echo "${name}@${VERSION} is already published; skipping."
+          else
+            # core 已被 esbuild 打进 CLI 产物，因此只发布 CLI 包。
+            tgz="$(find "$GITHUB_WORKSPACE/release-packages" -name 'qweijiaq-x-code-cli-*.tgz' -print -quit)"
             test -n "$tgz"
             if ! publish_output="$(npx --yes --package npm@11 npm publish "$tgz" --provenance --access public 2>&1)"; then
               printf '%s\n' "$publish_output"
@@ -198,30 +197,28 @@ jobs:
               exit 1
             fi
             printf '%s\n' "$publish_output"
-          done
+          fi
 
       - name: Verify npm publication and registry install
         shell: bash
         run: |
           VERSION="$(node -p "require('./packages/cli/package.json').version")"
-          for package in core cli; do
-            name="@x-code-cli/${package}"
-            published=""
-            for attempt in 1 2 3 4 5; do
-              published="$(npm view "${name}@${VERSION}" version 2>/dev/null || true)"
-              if [ "$published" = "$VERSION" ]; then break; fi
-              echo "Waiting for ${name}@${VERSION} to appear on npm (attempt ${attempt}/5)..."
-              sleep 10
-            done
-            if [ "$published" != "$VERSION" ]; then
-              echo "::error::${name}@${VERSION} was not found on npm after publish."
-              exit 1
-            fi
+          name="@qweijiaq/x-code-cli"
+          published=""
+          for attempt in 1 2 3 4 5; do
+            published="$(npm view "${name}@${VERSION}" version 2>/dev/null || true)"
+            if [ "$published" = "$VERSION" ]; then break; fi
+            echo "Waiting for ${name}@${VERSION} to appear on npm (attempt ${attempt}/5)..."
+            sleep 10
           done
+          if [ "$published" != "$VERSION" ]; then
+            echo "::error::${name}@${VERSION} was not found on npm after publish."
+            exit 1
+          fi
 
           smoke_dir="$(mktemp -d)"
           trap 'rm -rf "$smoke_dir"' EXIT
-          npm install --prefix "$smoke_dir" "@x-code-cli/cli@${VERSION}"
+          npm install --prefix "$smoke_dir" "@qweijiaq/x-code-cli@${VERSION}"
           installed="$("$smoke_dir/node_modules/.bin/xc" --version)"
           echo "Registry install reports: $installed"
           if [ "$installed" != "$VERSION" ]; then

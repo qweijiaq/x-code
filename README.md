@@ -33,7 +33,7 @@ ad-hoc signed, not notarized, so macOS asks for approval once — see the
 **CLI from npm** (Node 22+):
 
 ```bash
-npm install -g @x-code-cli/cli@latest
+npm install -g @qweijiaq/x-code-cli@latest
 xc --version
 ```
 
@@ -179,7 +179,7 @@ The CLI is the same agent without the window — useful for SSH, scripts,
 
 ```bash
 pnpm build
-pnpm --filter @x-code-cli/cli link --global   # exposes xc / x-code
+pnpm --filter @qweijiaq/x-code-cli link --global   # exposes xc / x-code
 
 cd your-project
 xc                                      # interactive session

@@ -24,6 +24,10 @@
 - compact the composer: remove the separate Markdown toolbar (native Markdown input and shortcuts replace it), center the action icons, align the input with the 840px chat column, show turn activity and idle background tasks in the hint row, and reduce the footer padding
 - load Git status when the Inspector Git tab is opened and leave the error state instead of staying on 加载中 after a failed request
 
+### Build
+
+- publish the CLI as `@qweijiaq/x-code-cli` and publish only that package, since core is bundled into the CLI
+
 ## v1.0.11 (2026-11-15)
 
 ### Bug Fixes

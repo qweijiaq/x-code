@@ -12,7 +12,7 @@ surface are especially welcome.
 | 1.0.x   | Yes       |
 | < 1.0   | No        |
 
-Only the latest published `@x-code-cli/cli` and desktop release receive fixes.
+Only the latest published `@qweijiaq/x-code-cli` and desktop release receive fixes.
 Pre-release tags, local builds and unreleased branches are supported on a
 best-effort basis only.
 

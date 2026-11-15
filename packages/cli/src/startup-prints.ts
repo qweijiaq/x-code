@@ -91,7 +91,7 @@ export function printResumeHint(): void {
 // ── 启动更新检查 ────────────────────────────────────────────────────────
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
-const NPM_REGISTRY_URL = 'https://registry.npmjs.org/@x-code-cli/cli/latest'
+const NPM_REGISTRY_URL = 'https://registry.npmjs.org/@qweijiaq/x-code-cli/latest'
 
 function updateCheckCachePath(): string {
   return path.join(userXcodeDir(), 'cache', 'update-check.json')
@@ -182,7 +182,7 @@ function printUpdateHint(current: string, latest: string): void {
     ` ${chalk.gray('\u2192')}` +
     ` ${chalk.green(latest)}` +
     chalk.gray('  Run ') +
-    chalk.cyan('npm install -g @x-code-cli/cli') +
+    chalk.cyan('npm install -g @qweijiaq/x-code-cli') +
     chalk.gray(' to update.')
   if (onUpdateHint) {
     onUpdateHint(msg)

@@ -31,7 +31,7 @@
 **从 npm 安装 CLI**（Node 22+）：
 
 ```bash
-npm install -g @x-code-cli/cli@latest
+npm install -g @qweijiaq/x-code-cli@latest
 xc --version
 ```
 
@@ -152,7 +152,7 @@ CLI 是同一个 Agent 的命令行界面，适合 SSH、脚本、`--print` 自�
 
 ```bash
 pnpm build
-pnpm --filter @x-code-cli/cli link --global   # 提供 xc / x-code 命令
+pnpm --filter @qweijiaq/x-code-cli link --global   # 提供 xc / x-code 命令
 
 cd your-project
 xc                                      # 交互式会话

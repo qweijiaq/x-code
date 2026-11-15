@@ -21,7 +21,7 @@ function resolveVersion(): string {
       const pkgPath = join(dir, 'package.json')
       if (existsSync(pkgPath)) {
         const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { name?: string; version?: string }
-        if (pkg.name === '@x-code-cli/cli' && pkg.version) {
+        if ((pkg.name === '@qweijiaq/x-code-cli' || pkg.name === '@x-code-cli/cli') && pkg.version) {
           return pkg.version
         }
       }

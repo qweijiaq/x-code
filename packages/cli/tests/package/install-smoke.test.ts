@@ -139,7 +139,7 @@ beforeAll(async () => {
     },
   )
   if (installed.exitCode !== 0) throw new Error(`npm install failed\n${installed.stdout}\n${installed.stderr}`)
-  installedCliJs = path.join(installPrefix, 'node_modules', '@x-code-cli', 'cli', 'dist', 'cli.js')
+  installedCliJs = path.join(installPrefix, 'node_modules', '@qweijiaq', 'x-code-cli', 'dist', 'cli.js')
 })
 
 afterAll(async () => {
