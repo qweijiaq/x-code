@@ -35,7 +35,7 @@ Without an API key the app uses the demo model, which only exercises the UI and 
 - **Rewind**: `/rewind` or the palette; choose code only, conversation only, or both.
 - **Fork**: `/fork` copies the current session into an independent conversation.
 - **Keep working while busy**: pressing Enter during a reply queues the prompt. A text-only queued item offers **Open in new window**, which forks the last saved session, prepends a hidden fork-time status snapshot of the parent (current turn, partial reply, background shells/sub-agents, changed files), and submits the question there while the original reply keeps running. The new window can answer "where was it at fork time", and it also sees live background shell/sub-agent status from all windows through the shared view; it cannot see the parent's in-flight model reasoning. Prompts with attachments do not offer this action yet.
-- **Switch sessions while running**: while a reply is running you can switch to another tab and browse its history; the running session keeps receiving output in the background, and a banner above the composer offers View and Stop. Creating a session, switching workspaces and closing the running tab still ask you to wait. Memory topics, custom commands, task mode and auto-check settings can also be edited during a turn and apply from the next turn.
+- **Switch sessions while running**: while a reply is running you can switch to another tab and browse its history; the running session keeps receiving output in the background, and a banner above the composer offers View and Stop. You can also create a new session immediately; multiple sessions in the same window run in parallel. Switching workspaces opens the target workspace in a new window and keeps this one running. Closing a running tab still asks you to stop it first. Memory topics, custom commands, task mode and auto-check settings can also be edited during a turn and apply from the next turn.
 - **Outline folding**: the Inspector's Outline tab groups entries by question and collapses answers by default; click Answer N next to a question to expand that turn's answers, and use Expand all answers / Collapse all answers at the top to handle every turn.
 - **Recover a damaged session**: when transcript integrity fails, the app offers to salvage parseable messages into a new session without modifying the original file.
 
@@ -102,7 +102,7 @@ The **Outline** tab in the right-hand inspector (also the top-bar outline button
 
 ![Settings](shot:settings)
 
-- **Model picker**: search, local models (Ollama / LM Studio) grouped separately, with each model's ceiling.
+- **Model picker**: the active model is pinned at the top; the rest are grouped by provider with per-group counts. Search, local models (Ollama / LM Studio) grouping, and each model's ceiling are still available.
 - **Providers**: Settings → Models & keys. Anthropic, OpenAI, DeepSeek, Gemini, Qwen, xAI, Zhipu, Moonshot, Kimi, OpenCode Zen, OpenCode Go, OpenDesign, OpenDesign Go and any OpenAI-compatible endpoint.
 - **Test connection**: sends a real request and reports latency and model id.
 - **Custom model**: custom model id and base URL; keys stay local.
