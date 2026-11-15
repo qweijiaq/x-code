@@ -167,7 +167,13 @@ jobs:
         run: node scripts/check-release-version.mjs "$GITHUB_REF_NAME"
 
       - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::NPM_TOKEN is not configured. Add a granular npm access token with publish rights as the NPM_TOKEN repository secret."
+            exit 1
+          fi
           VERSION="$(node -p "require('./packages/cli/package.json').version")"
           for package in core cli; do
             name="@x-code-cli/${package}"
