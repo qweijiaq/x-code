@@ -205,11 +205,12 @@ jobs:
           VERSION="$(node -p "require('./packages/cli/package.json').version")"
           name="@qweijiaq/x-code-cli"
           published=""
-          for attempt in 1 2 3 4 5; do
+          # 新包首次发布后 registry 传播可能要几分钟，给足 5 分钟窗口。
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
             published="$(npm view "${name}@${VERSION}" version 2>/dev/null || true)"
             if [ "$published" = "$VERSION" ]; then break; fi
-            echo "Waiting for ${name}@${VERSION} to appear on npm (attempt ${attempt}/5)..."
-            sleep 10
+            echo "Waiting for ${name}@${VERSION} to appear on npm (attempt ${attempt}/10)..."
+            sleep 30
           done
           if [ "$published" != "$VERSION" ]; then
             echo "::error::${name}@${VERSION} was not found on npm after publish."
