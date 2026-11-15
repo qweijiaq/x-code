@@ -24,6 +24,12 @@
 - compact the composer: remove the separate Markdown toolbar (native Markdown input and shortcuts replace it), center the action icons, align the input with the 840px chat column, show turn activity and idle background tasks in the hint row, and reduce the footer padding
 - load Git status when the Inspector Git tab is opened and leave the error state instead of staying on 加载中 after a failed request
 
+## v1.0.9 (2026-11-15)
+
+### Bug Fixes
+
+- scope the shell-sandbox secret scrubbing assertion to macOS so the Linux release gate passes
+
 ## v1.0.8 (2026-11-04)
 
 ### Features
