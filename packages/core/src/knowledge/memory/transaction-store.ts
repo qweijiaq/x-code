@@ -26,6 +26,8 @@ export class MemoryTransactionStore {
   readonly locksDir: string
   readonly schemaPath: string
   readonly memoryPath: string
+  /** 同一实例的写入先在本进程排队；文件锁只负责跨进程互斥。 */
+  private writerTail: Promise<unknown> = Promise.resolve()
 
   constructor(memoryRoot: string) {
     this.memoryRoot = memoryRoot
@@ -70,16 +72,22 @@ export class MemoryTransactionStore {
   }
 
   async withWriterLock<T>(fn: () => Promise<T>): Promise<T> {
-    const lease = await acquireFileLock(path.join(this.locksDir, 'writer.lock'), {
-      waitMs: 10_000,
-      timeoutError: 'Timed out waiting for memory writer lock',
+    // 同一进程里的两个 flock 句柄在 Linux 上可能一直互相等待；先在实例内
+    // 串行化，文件锁继续保护跨进程写入。
+    const run = this.writerTail.then(async () => {
+      const lease = await acquireFileLock(path.join(this.locksDir, 'writer.lock'), {
+        waitMs: 10_000,
+        timeoutError: 'Timed out waiting for memory writer lock',
+      })
+      try {
+        await this.recoverCommittedTransactionsLocked()
+        return await fn()
+      } finally {
+        await lease?.release()
+      }
     })
-    try {
-      await this.recoverCommittedTransactionsLocked()
-      return await fn()
-    } finally {
-      await lease?.release()
-    }
+    this.writerTail = run.catch(() => undefined)
+    return run
   }
 
   async recover(): Promise<void> {
