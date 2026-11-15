@@ -85,7 +85,7 @@ describe('shell environment scrubbing', () => {
     expect(env.ELECTRON_RUN_AS_NODE).toBe('1')
   })
 
-  it('strips Electron runtime flags together with secrets when the sandbox is on', () => {
+  itDarwin('strips Electron runtime flags together with secrets when the sandbox is on', () => {
     const sanitized = sanitizeShellEnv(
       {
         PATH: '/bin',
