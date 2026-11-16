@@ -11,15 +11,16 @@ import {
   PROVIDER_DETECTION_ORDER,
   buildPluginIntegration,
   createCommandRegistry,
-  createModelRegistry,
   createOAuthProviderFactory,
   createSkillRegistry,
   createSubAgentRegistry,
   debugLog,
   debugLogIntegrationDiagnostics,
+  discoverLocalModels,
   emptyHookBus,
   ensureDefaultMarketplaces,
   ensureDefaultWorkspace,
+  errorMessage,
   flushToolAudit,
   flushTurnTrace,
   forceTerminateManagedShellsSync,
@@ -57,6 +58,7 @@ import { startChatGPTModelPreload } from './chatgpt-model-preload.js'
 import { getCleanupController } from './cleanup-controller.js'
 import { parseCliArgs } from './cli-args.js'
 import { restoreInvocationCwd } from './launch-cwd.js'
+import { createCliModelRegistry } from './model-registry.js'
 import { startCliPeerService } from './peer-lifecycle.js'
 import { runPluginCli } from './plugins/cli.js'
 import { abortPrintMode } from './print-signals.js'
@@ -315,6 +317,16 @@ async function main() {
   }
 
   const availableProviders = getAvailableProviders()
+  // 本地 Ollama / LM Studio 不在 catalog 的 env-key 检测里，单独发现一次；
+  // 失败（未运行 / 超时）视为没有本地模型，不阻塞启动。print 模式只在明确
+  // 请求本地模型时探测，避免每次脚本调用都多等一次本地 HTTP 超时。
+  const requestedModelForDiscovery = argv.model ?? loadUserConfig().model ?? process.env.X_CODE_MODEL
+  const wantsLocalModel =
+    requestedModelForDiscovery?.startsWith('ollama:') || requestedModelForDiscovery?.startsWith('lmstudio:')
+  const localModels = printMode && !wantsLocalModel ? [] : await discoverLocalModels()
+  for (const provider of new Set(localModels.map((model) => model.provider))) {
+    if (!availableProviders.includes(provider)) availableProviders.push(provider)
+  }
 
   // 如果没有配置任何 provider，显示有帮助的消息并退出
   if (availableProviders.length === 0) {
@@ -327,6 +339,10 @@ async function main() {
 
   // 解析模型
   let modelId = resolveModelId(argv.model)
+  // 没有任何远程 provider 时，把第一个本地模型作为默认，和桌面端一致。
+  if (!modelId && localModels.length > 0) {
+    modelId = localModels[0]!.id
+  }
   if (!modelId) {
     // 用户指定了一个其 provider 没有密钥的模型
     const requested = argv.model
@@ -348,7 +364,8 @@ async function main() {
   // `--model` 我们仍然硬性失败（用户意图明确）；对于持久化 / 智能默认 id，
   // 则回退到第一个可用 provider，让 CLI 保持可用。
   const requestedProvider = modelId.split(':')[0]
-  if (!availableProviders.includes(requestedProvider)) {
+  const isLocalProvider = requestedProvider === 'ollama' || requestedProvider === 'lmstudio'
+  if (!isLocalProvider && !availableProviders.includes(requestedProvider)) {
     const envVar = getEnvVarName(requestedProvider) ?? `${requestedProvider.toUpperCase()}_API_KEY`
     if (argv.model) {
       console.error(`Error: ${envVar} is not set. Please set this environment variable to use ${argv.model}.`)
@@ -391,13 +408,20 @@ async function main() {
   // 所有高亮入口都回退到自研的正则高亮器，因此这绝不阻塞启动或渲染。
   warmShikiEngine()
 
-  // 创建 registry 并获取模型
-  const providerRegistry = createModelRegistry()
-  const model = providerRegistry.languageModel(modelId as `${string}:${string}`)
+  // 创建 registry 并获取模型。本地模型在发现后被删除 / 服务器关闭时给出
+  // 明确错误，而不是让 NoSuchProviderError 在 UI 挂载前裸奔。
+  const providerRegistry = createCliModelRegistry()
+  let model: ReturnType<typeof providerRegistry.languageModel>
+  try {
+    model = providerRegistry.languageModel(modelId as `${string}:${string}`)
+  } catch (error) {
+    console.error(chalk.red(`Error: could not load model '${modelId}': ${errorMessage(error)}`))
+    process.exit(1)
+  }
   const memoryService = new MemoryService({
     // 认证状态可能在运行中的产品里通过 /login 或 /logout 改变，因此当内存
     // worker 启动后续后台任务时，要针对一个全新的 provider registry 解析。
-    resolveModel: (id) => createModelRegistry().languageModel(id as `${string}:${string}`),
+    resolveModel: (id) => createCliModelRegistry().languageModel(id as `${string}:${string}`),
   })
   memoryServiceForShutdown = memoryService
   memoryService.setActiveModelId(modelId)

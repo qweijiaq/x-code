@@ -72,12 +72,12 @@ describe('TUI resize behavior', () => {
       [],
       async ({ harness }) => {
         await typeInput(harness, '/')
-        await harness.waitForScreen((screen) => screen.includes('/help'), 'slash completion menu')
+        await harness.waitForScreen((screen) => screen.includes('/login'), 'slash completion menu')
         harness.resize(70, 24)
-        await harness.waitForScreen((screen) => screen.includes('/help'), 'slash menu after shrinking')
+        await harness.waitForScreen((screen) => screen.includes('/login'), 'slash menu after shrinking')
 
         harness.key('backspace')
-        await harness.waitForScreen((screen) => !screen.includes('/help'), 'slash menu closed')
+        await harness.waitForScreen((screen) => !screen.includes('/login'), 'slash menu closed')
         await typeInput(harness, '@resize')
         await harness.waitForScreen((screen) => screen.includes('@resize 菜单[1].txt'), 'file completion menu')
         harness.resize(136, 46)

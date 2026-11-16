@@ -3,6 +3,8 @@ import { resetScrollbackSpacing, writeMessageToStdout } from '../src/ui/render/s
 const { originalNoColor } = vi.hoisted(() => {
   const originalNoColor = process.env.NO_COLOR
   delete process.env.NO_COLOR
+  // 颜色断言需要确定的 truecolor 输出；tokens.ts 在导入时读取 chalk 级别。
+  process.env.FORCE_COLOR = '3'
   return { originalNoColor }
 })
 

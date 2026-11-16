@@ -81,8 +81,8 @@ export function isolatedCliEnv(
     INIT_CWD: workspace.cwd,
     X_CODE_HOME: workspace.xcodeHome,
     NODE_ENV: 'test',
-    NO_COLOR: '1',
-    FORCE_COLOR: '0',
+    // PTY 断言需要确定的 truecolor 输出；真实终端由 chalk 自己检测能力。
+    FORCE_COLOR: '3',
     TERM: env.TERM ?? 'xterm-256color',
     ...overrides,
   })

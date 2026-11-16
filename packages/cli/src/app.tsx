@@ -29,7 +29,7 @@ export function startApp(
   startOpts: StartAppOptions = {},
 ) {
   // 在 Ink 启动前只打印一次页头——避免 Static 重复渲染
-  printHeader(options.modelId)
+  printHeader()
 
   const { waitUntilExit } = render(
     <App

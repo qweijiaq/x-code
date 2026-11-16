@@ -15,6 +15,8 @@ The desktop app is the recommended path if you want the Inspector, diffs, checks
 
 ## CLI (Node 22+)
 
+Install from [npm](https://www.npmjs.com/package/@qweijiaq/x-code-cli):
+
 ```bash
 npm install -g @qweijiaq/x-code-cli@latest
 xc --version

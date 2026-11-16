@@ -42,18 +42,18 @@ describe('TUI /clear behavior', () => {
         const lines = harness.screen()
         expect(harness.text()).not.toContain('LINE-01')
         expect(harness.text()).not.toContain('done')
-        // 保留的 /clear 回声作为新视口的第一个内容渲染 — 与其它命令回声
-        // 相同的填充卡片：空行、全宽 bg 填充行、文本行、bg 填充行 —
-        // 其下方紧挨着新的输入框。
+        // 保留的 /clear 回声作为新视口的第一个内容渲染：空行、填充行、
+        // 文本行、填充行，其下方紧挨着新的输入框。
         const echoRow = lines.findIndex((line) => /[›>] \/clear/.test(line))
         expect(echoRow).toBeGreaterThanOrEqual(2)
         expect((lines[echoRow - 1] ?? 'x').trim()).toBe('')
         expect((lines[echoRow + 1] ?? 'x').trim()).toBe('')
         expect(lines[echoRow + 2] ?? '').toMatch(/^╭/)
-        // 卡片的 bg 行必须真的在 clear 的 home 光标跳转之后发出
-        //（过去它们被推入 scrollback，而有些终端会从历史中丢弃仅 bg 的行）。
+        // /clear 的回显必须真的在 clear 的 home 光标跳转之后发出，
+        // 并且不再携带任何整行背景色。
         const postClear = harness.raw().slice(harness.raw().lastIndexOf('\x1b[H'))
-        expect(postClear.split('\x1b[48;2;60;56;54m').length - 1).toBeGreaterThanOrEqual(3)
+        expect(postClear).toContain('/clear')
+        expect(postClear).not.toContain('\x1b[48;2')
       },
       { columns: 80, rows: 40 },
     )

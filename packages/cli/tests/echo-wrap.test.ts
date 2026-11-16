@@ -9,10 +9,9 @@ const { originalNoColor } = vi.hoisted(() => {
   return { originalNoColor }
 })
 
-// 回归修复：过宽的 echo 行过去交给终端自动换行 — 换行后的剩余行保留了文字
-// 背后的背景色，却没有尾部填充，撕裂了卡片右边缘。现在 echo 在 cols-3 处
-// 硬换行，并用 span 内的 `\x1b[K`（BCE 擦除）把背景色带到右边缘，而不是
-// 全宽空格填充，这样终端变窄回流时就没有旧宽度的填充格可拆成幽灵空行。
+// 回归修复：过宽的 echo 行过去交给终端自动换行，换行后的剩余行会破坏滚动区
+// 几何。现在 echo 在 cols-3 处硬换行，并用行尾的 `\x1b[K` 擦掉上一帧残留，
+// 不做全宽空格填充，这样终端变窄回流时就没有旧宽度的填充格可拆成幽灵空行。
 
 const COLS = 80
 // eslint-disable-next-line no-control-regex
@@ -36,7 +35,7 @@ function physicalRows(out: string): string[] {
   return rows
 }
 
-describe('user echo card wrapping', () => {
+describe('user echo wrapping', () => {
   let originalColumns: number | undefined
 
   afterAll(() => {
@@ -63,15 +62,14 @@ describe('user echo card wrapping', () => {
     expect(rows.filter((r) => r.trim().length > 0).length).toBeGreaterThanOrEqual(3)
     for (const row of rows) {
       // 任何可打印格都不得落在最后一列（延迟换行防护）——
-      // 行也不带全宽空格填充 —— span 内的 \x1b[K（此处已剥离）把背景色带到右边缘。
+      // 行也不带全宽空格填充 —— 行尾的 \x1b[K（此处已剥离）负责擦掉上一帧残留。
       expect(visualWidth(row)).toBeLessThanOrEqual(COLS - 1)
     }
     // 帧几何使用的行计数必须与实际相符。
     expect(countContentRows(out, COLS)).toBe(rows.length)
-    // 背景色已应用（深色卡片 #3c3836 → 48;2;60;56;54），擦除到行尾的序列
-    // 位于 bg span 内，使行尾拾取到卡片颜色。
-    expect(out).toContain('\x1b[48;2;60;56;54m')
-    expect(out).toContain('\x1b[K\x1b[49m')
+    // 不再铺整行背景；只保留行尾擦除，且使用终端默认背景。
+    expect(out).not.toContain('\x1b[48;2')
+    expect(out).toContain('\x1b[K')
   })
 
   it('does not pad continuation rows of an explicit multi-line message', () => {
@@ -95,7 +93,7 @@ describe('user echo card wrapping', () => {
   it('anchors vertical padding rows without padding them to the old terminal width', () => {
     const out = echo('hello')
     const rawRows = out.replace(/\r\n/g, '\n').split('\n')
-    const anchoredPadRow = '\x1b[48;2;60;56;54m \x1b[K\x1b[49m'
+    const anchoredPadRow = ' \x1b[K'
     expect(rawRows[1]).toBe(anchoredPadRow)
     expect(rawRows[3]).toBe(anchoredPadRow)
 

@@ -35,6 +35,7 @@ export function printNoApiKeyMessage(): void {
   console.error(
     `\n  ${envName('OPENAI_COMPATIBLE_API_KEY'.padEnd(32))} ${chalk.dim('(custom OpenAI-compatible endpoint)')}`,
   )
+  console.error(`\n  Or run Ollama / LM Studio locally, then use ${code('/model')} to pick a local model.`)
 
   const shell = detectShell()
   const restartHint: Record<ShellType, string> = {

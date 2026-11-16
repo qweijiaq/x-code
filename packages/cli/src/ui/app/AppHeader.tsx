@@ -3,80 +3,36 @@
 // printHeader() 在 Ink 启动之前直接把横幅写到 stdout。这避免了 Ink <Static>
 // 的重渲染 bug——动态区域高度变化时 header 会重复出现。
 import { VERSION } from '../../version.js'
-import { GLYPH_HEADER_PIPE } from '../render/terminal-glyphs.js'
-import { chalk as c, paint } from '../render/tokens.js'
-
-// ── 不同终端宽度下的 ASCII logo ──
-
-const LOGO_WIDE = `
-  ██╗  ██╗       ██████╗ ██████╗ ██████╗ ███████╗
-  ╚██╗██╔╝      ██╔════╝██╔═══██╗██╔══██╗██╔════╝
-   ╚███╔╝ █████╗██║     ██║   ██║██║  ██║█████╗  
-   ██╔██╗ ╚════╝██║     ██║   ██║██║  ██║██╔══╝  
-  ██╔╝ ██╗      ╚██████╗╚██████╔╝██████╔╝███████╗
-  ╚═╝  ╚═╝       ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝`
-
-const LOGO_NARROW = '  ╳ X-Code CLI'
+import { paint } from '../render/tokens.js'
 
 /**
  * 返回启动横幅占用的终端行数。ChatInput 需要它来正确初始化
  * blank-rows-above-frame 追踪器（否则补全菜单 / 对话框第一次长高时，它会预滚动
  * 实际是空白的行，浪费 viewport 空间，并把横幅不必要地推进真正的 scrollback）。
  */
-export function getHeaderRowCount(modelId: string): number {
-  return renderHeader(modelId).split('\n').length - 1 // 最后的 '\n' 会多出一个空 split
+export function getHeaderRowCount(): number {
+  return renderHeader().split('\n').length - 1 // 最后的 '\n' 会多出一个空 split
 }
 
 /**
  * 把启动横幅构建成一个字符串。
+ *
+ * 只保留一行 wordmark + 版本：用户明确要求简洁，把纵向空间留给对话本身。
+ * 模型名和上下文用量在输入框下方的 footer 里常驻显示，不需要在这里重复。
  */
-function renderHeader(modelId: string): string {
-  const cols = process.stdout.columns ?? 80
-
-  const isWide = cols >= 52
-  const logo = isWide ? LOGO_WIDE : LOGO_NARROW
-
-  // 从 "provider:model-name" 中提取 provider 与 model
-  const [provider, ...modelParts] = modelId.split(':')
-  const modelName = modelParts.join(':') || modelId
-
-  // Newline 快捷键提示：
-  //   - 结尾的 `\` + Enter 是通用回退（在每个终端都有效——ConHost、
-  //     Terminal.app、整个 xterm 家族）。
-  //   - Alt/Option+Enter 在多数现代终端有效（Windows Terminal、带 Esc+
-  //     Option 的 iTerm2、GNOME Terminal、kitty、WezTerm）。在 macOS
-  //     Terminal.app 上，用户必须在 profile 设置里开启 "Use Option as Meta
-  //     key"——否则只有 `\` 形式有效。
-  // 为什么没有 Ctrl/Cmd+Enter：原装终端对普通 Enter 和 Ctrl+Enter 发送同一个
-  // 字节，所以我们无法区分。modifyOtherKeys / kitty CSI-u 形式是接受的（见
-  // use-prompt-input.ts），但它们需要终端特定的 opt-in，这里就不展示了。
-  const isMac = process.platform === 'darwin'
-  const abortKey = isMac ? '⌃C' : 'Ctrl+C'
-  const newlineKey = isMac ? '⌥⏎ or \\⏎' : 'Alt+Enter or \\+Enter'
-
+function renderHeader(): string {
   const primary = paint('primary')
-  // Meta 文本（版本、模型标签、提示）使用提亮的 textDim token，而不是 chalk 的
-  // dim ATTRIBUTE：该属性会渲染成终端自身默认前景色加深一档的效果，在许多暗色
-  // 主题上显得过于暗淡。textDim 会根据活动主题解析，所以 `/theme` 切换能让横幅
-  // 保持一致。
-  const dim = paint('textDim')
-
-  const lines = [
-    primary(c.bold(logo)),
-    '', // logo 与状态信息之间的呼吸空间
-    `  ${dim(`v${VERSION}`)} ${dim(GLYPH_HEADER_PIPE)} ${dim('model:')} ${primary(`${provider}/${modelName}`)}`,
-    `  ${dim(`/help commands · ${abortKey} abort · ${newlineKey} newline`)}`,
-    '', // header 之后的空行
-  ]
-
-  return lines.join('\n') + '\n'
+  const strong = paint('textStrong')
+  const muted = paint('textMuted')
+  const line = `  ${primary('◆')} ${strong('X-Code')}  ${muted(`v${VERSION}`)}`
+  return `\n${line}\n\n`
 }
 
 /**
  * 把启动 header 横幅直接打印到 stdout。
  * 在 Ink 的 render() 之前调用一次，这样它就永远不会被重绘。
  */
-export function printHeader(modelId: string): void {
+export function printHeader(): void {
   // 在写入之前，把终端 viewport 里既有的内容推进 scrollback，并把光标停在 (1,1)。
   // 没有这一步，当启动发生在嘈杂的前奏之后（pnpm dev 构建日志、用户的命令回显
   // 等）时，光标会停在 viewport 底部附近——横幅也落在那儿，而 ChatInput 的
@@ -100,5 +56,5 @@ export function printHeader(modelId: string): void {
   if (process.stdout.isTTY && rows > 1) {
     process.stdout.write('\n'.repeat(rows - 1) + '\x1b[H')
   }
-  process.stdout.write(renderHeader(modelId))
+  process.stdout.write('\x1b[0m' + renderHeader())
 }

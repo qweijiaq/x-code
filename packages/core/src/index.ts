@@ -100,6 +100,14 @@ export type { RefreshDynamicModelsOptions, RefreshDynamicModelsResult } from './
 export type { ModelDiscoveryOptions } from './providers/model-discovery.js'
 export { createLocalOpenAICompatibleModel } from './providers/local.js'
 export {
+  discoverLocalModels,
+  isLocalModelId,
+  localModelInfos,
+  localProviderOf,
+  withLocalModels,
+} from './providers/local-models.js'
+export type { LocalModelInfo, LocalProvider } from './providers/local-models.js'
+export {
   getOpenAIChatGPTModelCatalogState,
   getProviderModels,
   refreshOpenAIChatGPTModels,

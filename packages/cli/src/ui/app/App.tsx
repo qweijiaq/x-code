@@ -9,7 +9,7 @@ import { useApp } from 'ink'
 import {
   PROVIDER_BASE_URLS,
   analyzeChangeImpact,
-  createModelRegistry,
+  discoverLocalModels,
   errorMessage,
   estimateTokenCount,
   explainPermission,
@@ -25,6 +25,7 @@ import {
   listSessions,
   loadSession,
   loadUserConfig,
+  localModelInfos,
   pickLatestSession,
   providerOf,
   refreshDynamicProviderModels,
@@ -42,6 +43,7 @@ import type { SessionHtmlEntry, SkillDefinition, StepStats, TokenUsage, UsageBre
 
 import { formatOpenAIAuthStatus, loginChatGPT, logoutChatGPT } from '../../auth-cli.js'
 import type { CliCleanupController } from '../../cleanup-controller.js'
+import { createCliModelRegistry } from '../../model-registry.js'
 import { drainPendingUpdateHint, registerUpdateHintHandler } from '../../startup-prints.js'
 import { VERSION } from '../../version.js'
 import { visibleBackgroundTerminals } from '../agent/shell-session-ui.js'
@@ -85,6 +87,7 @@ import {
   openAIModelEntitlementKey,
   planOpenAIModelReconciliation,
 } from './openai-auth-transition.js'
+import { providerDisplayName } from './provider-labels.js'
 import type { SessionExitInfo } from './session-exit.js'
 import {
   canResumeGoalStatus,
@@ -799,6 +802,8 @@ export function App({
     for (const models of Object.values(getProviderModels())) {
       for (const m of models) if (m.id === modelId) return m.label
     }
+    const local = localModelInfos().find((model) => model.id === modelId)
+    if (local) return `${local.label} · ${local.provider}`
     return modelId
   }
 
@@ -918,7 +923,7 @@ export function App({
       'The active ChatGPT credentials cannot provide a usable model. Run /login again or configure another provider.',
       renderModelLabel,
     )
-    const registry = createModelRegistry()
+    const registry = createCliModelRegistry()
     const nextModel = plan.modelId ? registry.languageModel(plan.modelId as `${string}:${string}`) : undefined
     const notice =
       plan.modelId !== currentModelId || plan.blockedMessage
@@ -1028,7 +1033,7 @@ export function App({
       notice += plan.note
     }
 
-    const registry = createModelRegistry()
+    const registry = createCliModelRegistry()
     const nextModel = plan.modelId ? registry.languageModel(plan.modelId as `${string}:${string}`) : undefined
     return {
       ...(nextModel && plan.modelId ? { model: nextModel, modelId: plan.modelId } : {}),
@@ -1104,7 +1109,7 @@ export function App({
       let modelNote = 'The model catalog has not been refreshed yet. Run /model refresh to retry.'
       try {
         if (state.modelId.startsWith('openai:')) activateModel(state.modelId)
-        else options.modelRegistry = createModelRegistry()
+        else options.modelRegistry = createCliModelRegistry()
         resetVisionModelProviders()
         commitOpenAIAuthTransition(openAIAuthTransitionRef.current, getOpenAIAuthSnapshot())
 
@@ -1121,7 +1126,7 @@ export function App({
             )
           }
         } else {
-          options.modelRegistry = createModelRegistry()
+          options.modelRegistry = createCliModelRegistry()
           const catalog = getOpenAIChatGPTModelCatalogState()
           const candidates =
             catalog?.errorCode === 'login-required' || catalog?.errorCode === 'credentials-invalid'
@@ -1177,7 +1182,7 @@ export function App({
       const snapshot = getOpenAIAuthSnapshot()
       let modelNote = ''
       try {
-        options.modelRegistry = createModelRegistry()
+        options.modelRegistry = createCliModelRegistry()
         resetVisionModelProviders()
         if (state.modelId.startsWith('openai:')) {
           const availableProviders = new Set(getAvailableProviders())
@@ -1242,7 +1247,7 @@ export function App({
           signal: AbortSignal.timeout(8_000),
           force: true,
         })
-        options.modelRegistry = createModelRegistry()
+        options.modelRegistry = createCliModelRegistry()
         const catalog = getOpenAIChatGPTModelCatalogState()
         const candidates =
           catalog?.errorCode === 'login-required' || catalog?.errorCode === 'credentials-invalid' ? [] : models
@@ -1270,22 +1275,41 @@ export function App({
     // 无参数 → 交互式选择器。网关 provider 的模型随账号/套餐变化，先拉一次
     // `/models`，失败时继续用静态 catalog。
     await refreshDynamicProviderModels({ timeoutMs: 5_000 })
+    // 本地 Ollama / LM Studio 和桌面端一样在选择器打开时发现一次；未运行
+    // 时返回空数组，不影响远程模型。
+    const localModels = await discoverLocalModels()
     const availableProviders = new Set(getAvailableProviders())
     const chatGPTCatalog = getOpenAIChatGPTModelCatalogState()
     const openAIUnavailable =
       chatGPTCatalog?.errorCode === 'login-required' || chatGPTCatalog?.errorCode === 'credentials-invalid'
     const choices: { id: string; label: string; description: string }[] = []
+    const pushModel = (provider: string, id: string, label: string, description: string): void => {
+      const marker = id === state.modelId ? `${GLYPH_BULLET} ` : '  '
+      const ctx = formatTokenCount(getContextWindow(id))
+      choices.push({
+        id,
+        label: `${marker}${providerDisplayName(provider)} · ${label}`,
+        description: `${id} · ${ctx} ctx — ${description}`,
+      })
+    }
     for (const [provider, models] of Object.entries(getProviderModels())) {
       if (!availableProviders.has(provider)) continue
       if (provider === 'openai' && openAIUnavailable) continue
-      for (const m of models) {
-        const marker = m.id === state.modelId ? `${GLYPH_BULLET} ` : '  '
-        choices.push({ id: m.id, label: `${marker}${m.label}`, description: `${m.id} — ${m.description}` })
-      }
+      for (const m of models) pushModel(provider, m.id, m.label, m.description)
+    }
+    for (const m of localModels) pushModel(m.provider, m.id, m.label, m.description)
+    // 当前模型置顶，和桌面端一致；其余保持 catalog 顺序（已按 provider 分组）。
+    const activeIndex = choices.findIndex((choice) => choice.id === state.modelId)
+    if (activeIndex > 0) {
+      const [active] = choices.splice(activeIndex, 1)
+      choices.unshift(active!)
     }
 
     if (choices.length === 0) {
-      addCommandMessage(commandText, 'No models available — run `/login` for ChatGPT or configure a provider API key.')
+      addCommandMessage(
+        commandText,
+        'No models available — run `/login` for ChatGPT, configure a provider API key, or start Ollama / LM Studio.',
+      )
       return
     }
 
@@ -1480,11 +1504,11 @@ export function App({
   /**
    * `/theme`——挑选 UI 主题。驱动 diff 背景色以及关联的语法高亮调色板。
    *
-   * 无参数 → 交互式选择器，展示全部六个主题，当前选择标 `●`，并带一个实时预览，
-   *   用户用方向键浏览时预览会重新着色。与 `/model` 和 `/thinking` 相同的 UX。
-   * `<theme-name>` → 直接切换。接受规范的 kebab-case 名称（`dark`、`light`、
-   *   `dark-daltonized`、`light-daltonized`、`dark-ansi`、`light-ansi`）以及别名
-   *   （`colorblind`、`ansi` 等）——见 `parseThemeName`。
+   * 无参数 → 交互式选择器，展示深色和浅色两套主题，当前选择标 `●`，并带一个
+   *   实时预览，用户用方向键浏览时预览会重新着色。与 `/model` 和 `/thinking`
+   *   相同的 UX。
+   * `<theme-name>` → 直接切换。接受 `dark`、`light`，以及旧主题名的别名
+   *   （`dark-ansi`、`colorblind` 等）——见 `parseThemeName`。
    *
    * 持久化到 ~/.x-code/config.json，让选择在重启后仍保留。
    */
@@ -2204,7 +2228,7 @@ export function App({
   return (
     <ChatInput
       messages={state.messages}
-      initialContentRows={getHeaderRowCount(state.modelId)}
+      initialContentRows={getHeaderRowCount()}
       onSubmit={handleSubmit}
       onInterrupt={handleCtrlC}
       onEscapeCancel={cancelActiveOperation}

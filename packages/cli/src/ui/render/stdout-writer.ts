@@ -34,7 +34,7 @@ import { renderInlineMarkdown, renderMarkdown } from './render-markdown.js'
 import { highlightShellCommand } from './shiki-highlight.js'
 import { GLYPH_ELLIPSIS, GLYPH_PROMPT_ARROW, GLYPH_RESULT_BRACKET, GLYPH_TOOL_BULLET } from './terminal-glyphs.js'
 import { sliceByWidth, visualWidth } from './text-width.js'
-import { chalk as c, paint, paintEchoArrow, paintEchoBg, paintEchoFg } from './tokens.js'
+import { chalk as c, paint } from './tokens.js'
 
 /** 通过 Ink 的 log-update 协同写 stdout 的函数。 */
 export type InkWrite = (data: string) => void
@@ -67,7 +67,7 @@ function formatToolCall(tc: DisplayToolCall): string {
   const isFailure = isDenied || isError
   const durationStr = tc.durationMs != null ? formatDuration(tc.durationMs) : null
 
-  const dotStyle = paint(isFailure ? 'error' : 'success')
+  const dotStyle = paint(isFailure ? 'error' : 'textMuted')
   // Shell 命令获得 codex 风格的语法高亮（它们的 `Ran …` 行把命令走一遍
   // syntect 的 bash 语法）：字符串、选项标志和变量获得语法色，命令词保持
   // 终端默认前景色。其他工具保持扁平的 primary 蓝色预览。两种情况括号都
@@ -219,13 +219,13 @@ function writeToolRow(write: InkWrite, tc: DisplayToolCall): void {
 
 /** 渲染折叠组摘要行，例如
  *    ` ● Read 3 files (foo.ts, bar.ts, baz.ts)`
- *  格式对标常规工具行以保持视觉节奏：绿色符号（所有成员都已完成）、粗体标签、
+ *  格式对标常规工具行以保持视觉节奏：中性灰符号（所有成员都已完成）、粗体标签、
  *  primary 色带括号的详情。没有 `⎿` 结果体——折叠的全部意义就是丢掉每调用的
  *  结果行。 */
 function writeCollapsedGroup(write: InkWrite, tools: readonly DisplayToolCall[]): void {
   const { label, detail } = formatReadGroupSummary(tools)
   const detailSuffix = detail ? paint('primary')(`(${authorityVisibleText(detail)})`) : ''
-  const line = ` ${paint('success')(GLYPH_TOOL_BULLET)} ${c.bold(authorityVisibleText(label))}${detailSuffix}`
+  const line = ` ${paint('textMuted')(GLYPH_TOOL_BULLET)} ${c.bold(authorityVisibleText(label))}${detailSuffix}`
   const lead = prevWriteEndedWithBlankRow ? '' : '\n'
   write(toCRLF(lead + line + '\n'))
   prevWriteEndedWithBlankRow = false
@@ -417,64 +417,39 @@ export function writeMessageToStdout(write: InkWrite, msg: DisplayMessage): void
  * 完整回显一条用户消息。多行内容时，我们缩进续行，让它们对齐到第一行 `›`
  * 提示符后的文本下方。假定 `content` 已经规范化使用 `\n` 行分隔符。
  *
- * 每行都有一个细腻的整行背景（内边距画在 bg span 内部），让问题在 assistant
- * markdown 旁读起来是实心块——codex-rs 通过 `user_message_style` 做同样的事。
- * 块在文本之外留有呼吸空间：上下各一行全宽背景作为垂直内边距，外加 `›` 左侧
- * 一个单元格的内缩。在 *-ansi 主题和 NO_COLOR 下，`paintEchoBg()` 返回 null，
- * 我们回退到粗体文本，而不是把 hex 背景强加到终端自己的调色板上。
+ * 只使用一个品牌色箭头 + 主题正文色，不再铺整行背景：用户要求界面简洁，
+ * 背景块在浅色终端里尤其容易显得脏。上下各留一行空白作为呼吸空间。
  *
  * `compact` 用于斜杠命令回显：我们去掉尾随空行，让紧随其后的 `  ⎿  result`
  * 行直接贴在回显底部内边距行之下，与 Claude Code 的 2 行命令块一致。
  */
 function writeUserMessage(write: InkWrite, content: string, compact = false): void {
-  const bg = paintEchoBg()
   const cols = process.stdout.columns ?? 0
-  const arrow = paint('border')(GLYPH_PROMPT_ARROW)
-  const lines = content.split('\n')
-  const [first = '', ...rest] = lines
-  if (!bg) {
-    const body = [`${arrow} ${c.bold(first)}`, ...rest.map((line) => `  ${c.bold(line)}`)].join('\n')
-    const trailing = compact ? '\n' : '\n\n'
-    write(toCRLF('\n' + body + trailing))
-    return
-  }
-  // 卡片与主题无关，其内容也一样：固定的浅色箭头 + 文本（见 tokens.ts 里的
-  // paintEchoArrow/paintEchoFg）——浅色主题下终端默认前景是深色，会在深色
-  // 卡片上消失。
-  const bgArrow = paintEchoArrow()(GLYPH_PROMPT_ARROW)
-  const echoText = paintEchoFg()
+  const arrow = paint('primary')(GLYPH_PROMPT_ARROW)
+  const text = paint('textStrong')
   // 两个前缀都是 3 单元格宽（` › ` / 三个空格），所以折行的续行会对齐到第一行
   // 文本下方。
   const PREFIX_CELLS = 3
-  // 卡片的背景带通过 bg span 内部发出的 `\x1b[K` 到达右边缘：在支持 BCE 的
-  // 终端（xterm.js、WT、conhost）上，擦除会用卡片色填充。我们有意不用背景色
-  // 空格填充——被填充的行可打印到旧终端宽度，所以终端之后变窄时，其滚动区
-  // 重排会把每个填充行拆成内容 + 一行游离的背景色空行（每张卡片行一条幽灵
-  // 行）。在不支持 BCE 的终端上，卡片就在文本之后结束。
-  //
-  // 我们仍然绝不让可打印单元格落到终端最后一列：一行恰好 `cols` 宽会进入延迟
-  // 换行状态，conhost / Windows Terminal 在某些配置下会把它算作一次真正的换行，
-  // 插入一条滚动区几何（countContentRows）不知道的幽灵行——实时帧随之漂移并
-  // 撕裂成上方重复的输入框（render-diff.ts 为其 diff 行也预留了同样的 1 单元格
-  // 边距）。
+  // 绝不让可打印单元格落到终端最后一列：一行恰好 `cols` 宽会进入延迟换行
+  // 状态，conhost / Windows Terminal 在某些配置下会把它算作一次真正的换行，
+  // 插入一条滚动区几何（countContentRows）不知道的幽灵行。行尾的 `\x1b[K`
+  // 负责擦掉上一帧残留，且使用终端默认背景。
   const paintRow = (chunk: string, isFirst: boolean): string => {
-    const visible = isFirst ? ` ${bgArrow} ${echoText(chunk)}` : `   ${echoText(chunk)}`
-    return cols > 0 ? bg(visible + '\x1b[K') : bg(visible)
+    const visible = isFirst ? ` ${arrow} ${text(chunk)}` : `   ${text(chunk)}`
+    return cols > 0 ? `${visible}\x1b[K` : visible
   }
   // 自己硬折行超宽的行，而不是交给终端的自动换行：在已知预算处拆分能保持
   // countContentRows 的滚动区记账精确——不依赖终端在我们以为的位置换行。含
   // 制表符的行完全跳过折行：charWidth 把 `\t` 算作 1 单元格，但终端会跳到
   // 下一个 8 列制表位，所以任何计算出的折点都是错的。
-  const renderLine = (text: string, isFirst: boolean): string[] => {
-    if (cols <= 0 || text.includes('\t')) return [paintRow(text, isFirst)]
+  const renderLine = (textLine: string, isFirst: boolean): string[] => {
+    if (cols <= 0 || textLine.includes('\t')) return [paintRow(textLine, isFirst)]
     const budget = Math.max(1, cols - 1 - PREFIX_CELLS)
-    if (visualWidth(text) <= budget) return [paintRow(text, isFirst)]
+    if (visualWidth(textLine) <= budget) return [paintRow(textLine, isFirst)]
     const chunks: string[] = []
-    let remaining = text
+    let remaining = textLine
     while (visualWidth(remaining) > budget) {
       const head = sliceByWidth(remaining, budget)
-      // budget >= 1 时非空输入不可能产生空 head；这个 break 纯粹是防止死循环
-      // 的保险。
       if (head.length === 0) break
       chunks.push(head)
       remaining = remaining.slice(head.length)
@@ -482,12 +457,9 @@ function writeUserMessage(write: InkWrite, content: string, compact = false): vo
     chunks.push(remaining)
     return chunks.map((chunk, i) => paintRow(chunk, isFirst && i === 0))
   }
-  // 全宽空白背景行作为垂直内边距。在 BCE 擦除前于 bg span 内保留一个可打印
-  // 空格：终端在调整大小/重排时可能丢弃纯擦除行的背景属性，导致卡片上下内边距
-  // 消失。一个单元格即可锚定该行，而不必恢复旧宽度的空格填充（及其幽灵换行）。
-  // 终端宽度未知（管道输出）时跳过。
-  const padRow = cols > 0 ? bg(' \x1b[K') : null
-  const rows = lines.flatMap((line, i) => renderLine(line, i === 0))
+  // 上下各一行空白作为垂直内边距。终端宽度未知（管道输出）时跳过。
+  const padRow = cols > 0 ? ' \x1b[K' : null
+  const rows = content.split('\n').flatMap((line, i) => renderLine(line, i === 0))
   if (padRow !== null) rows.unshift(padRow)
   if (padRow !== null) rows.push(padRow)
   const body = rows.join('\n')

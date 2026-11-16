@@ -70,7 +70,7 @@ const THEMES: Record<SyntaxThemeName, Palette> = {
   },
   // GitHub Light——值逐字节对齐 CC 的 GITHUB_SCOPES（native-ts/color-diff/
   // index.ts:218-243）。为浅色终端调校：在白色上清晰可读的深饱和色。
-  // 与 light / light-daltonized 的 /theme 模式捆绑。
+  // 与 light 主题捆绑。
   'github-light': {
     keyword: '#a71d5d', // 深品红——控制关键字
     storage: '#a71d5d', // 深品红——GitHub 把 storage 与 keyword 归为一组

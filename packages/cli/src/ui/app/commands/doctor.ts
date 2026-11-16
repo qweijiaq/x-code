@@ -3,7 +3,14 @@
 // 一次性环境诊断：检查 API 密钥、Node 版本、shell 可用性、MCP 服务器健康、
 // 插件加载错误、自定义代理解析状态，以及知识文件大小。以 Claude Code 的
 // /doctor 为模板，但范围限定在 x-code-cli 实际需要的内容。
-import { getAvailableProviders, getEnvVarName, getOpenAIAuthStatus, getShellSandbox } from '@x-code-cli/core'
+import {
+  PROVIDERS,
+  WEB_SEARCH_PROVIDERS,
+  getAvailableProviders,
+  getOpenAIAuthStatus,
+  getShellSandbox,
+  localModelInfos,
+} from '@x-code-cli/core'
 import type { AgentOptions } from '@x-code-cli/core'
 
 import { VERSION } from '../../../version.js'
@@ -14,9 +21,6 @@ export interface DoctorCommandDeps {
   addInfoMessage: (content: string) => void
   echoCommand: (text: string) => void
 }
-
-/** 所有已知供应商键——顺序与 PROVIDER_DETECTION_ORDER 一致。 */
-const ALL_PROVIDERS = ['anthropic', 'openai', 'deepseek', 'google', 'alibaba', 'xai', 'zhipu', 'moonshotai'] as const
 
 export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
   const { options, modelId, addInfoMessage, echoCommand } = deps
@@ -61,25 +65,54 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       const available = new Set(getAvailableProviders())
       const openAIAuth = getOpenAIAuthStatus()
       const lines = ['**Providers**', '']
-      for (const p of ALL_PROVIDERS) {
-        const envVar = getEnvVarName(p)
-        const ok = available.has(p)
-        if (p === 'openai' && openAIAuth.mode === 'chatgpt') {
+      // 直接遍历 core catalog，新增 provider 时 /doctor 自动跟上，不再维护
+      // 一份容易过期的硬编码列表。
+      for (const provider of PROVIDERS) {
+        const ok = available.has(provider.name)
+        if (provider.name === 'openai' && openAIAuth.mode === 'chatgpt') {
           const suffix = openAIAuth.apiKeyConfigured ? '; OPENAI_API_KEY inactive' : ''
           lines.push(`- openai: ✓ ChatGPT subscription${suffix}`)
           if (openAIAuth.credentialError) lines.push(`  ⚠ ${openAIAuth.credentialError}`)
           continue
         }
-        lines.push(`- ${p}: ${ok ? '✓' : `✗  (set \`${envVar}\`)`}`)
+        const keyHint = provider.keyUrl ? ` — ${provider.keyUrl}` : ''
+        lines.push(`- ${provider.name}: ${ok ? '✓' : `✗  (set \`${provider.envKey}\`${keyHint})`}`)
+      }
+      // 本地 Ollama / LM Studio：只在发现到模型时显示数量。
+      const localByProvider = new Map<string, number>()
+      for (const model of localModelInfos()) {
+        localByProvider.set(model.provider, (localByProvider.get(model.provider) ?? 0) + 1)
+      }
+      for (const [provider, count] of localByProvider) {
+        lines.push(`- ${provider}: ✓ local (${count} model${count === 1 ? '' : 's'})`)
+      }
+      if (localByProvider.size === 0) {
+        lines.push('- ollama / lmstudio: — (start the local server, then run `/model`)')
       }
       // 自定义供应商
-      const hasCustom = available.has('custom')
-      if (hasCustom) {
+      if (available.has('custom')) {
         lines.push('- custom: ✓')
       }
-      const configuredCount = available.size
+      const configuredCount = available.size + localByProvider.size
       if (configuredCount === 0) {
         lines.push('', '⚠ No provider configured. Run `xc login` or set a provider API key.')
+      }
+      sections.push(lines.join('\n'))
+    }
+
+    // ── 网页搜索 ────────────────────────────────────────────────────
+    {
+      const lines = ['**Web search**', '']
+      for (const provider of WEB_SEARCH_PROVIDERS) {
+        if (provider.modelKeyOnly) {
+          lines.push(`- ${provider.id}: uses \`${provider.envKey}\` (model key)`)
+          continue
+        }
+        lines.push(
+          process.env[provider.envKey]
+            ? `- ${provider.id}: ✓`
+            : `- ${provider.id}: ✗  (set \`${provider.envKey}\` — ${provider.signup})`,
+        )
       }
       sections.push(lines.join('\n'))
     }

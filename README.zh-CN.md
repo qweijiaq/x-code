@@ -28,7 +28,7 @@
 社区版是 ad-hoc 签名、未公证，首次打开需要按提示放行；完整步骤见
 [快速开始](./GETTING_STARTED.md#desktop-macos-arm64)。
 
-**从 npm 安装 CLI**（Node 22+）：
+**从 npm 安装 CLI**（[npm](https://www.npmjs.com/package/@qweijiaq/x-code-cli)，Node 22+）：
 
 ```bash
 npm install -g @qweijiaq/x-code-cli@latest

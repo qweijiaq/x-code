@@ -84,10 +84,10 @@ import {
   S_RESET,
   S_SPINNER,
   S_SUCCESS,
-  S_SUCCESS_DOT,
-  S_SUCCESS_DOT_DIM,
   S_TEXT_STRONG,
   S_TEXT_STRONG_BOLD,
+  S_TOOL_DOT,
+  S_TOOL_DOT_DIM,
   S_USAGE,
   S_WARNING,
   S_WARNING_BOLD,
@@ -1393,11 +1393,10 @@ export function ChatInput({
 
           const row1: Cell[] = []
           row1.push({ char: ' ', style: S_NONE, width: 1 })
-          // 工具运行时让圆点亮↔暗地脉冲。每相位 6 帧（按每个 spinner tick 80ms 算约
-          // 480ms）读作心跳而不分心。当工具结束、该行提交到滚动区时，
-          // `stdout-writer.formatToolCall` 画一个稳定不脉冲的圆点 —— 相同色相，无 dim ——
-          // 所以过渡只是「停止脉冲」，而不是颜色变化。
-          const dotStyle = spinnerFrame % 6 < 3 ? S_SUCCESS_DOT : S_SUCCESS_DOT_DIM
+          // 工具运行时用品牌蓝圆点做亮↔暗脉冲。每相位 6 帧（约 480ms）读作
+          // 心跳而不分心；工具结束后该行提交到滚动区，`stdout-writer` 画一个
+          // 稳定不脉冲的中性灰圆点，让完成态退到背景里。
+          const dotStyle = spinnerFrame % 6 < 3 ? S_TOOL_DOT : S_TOOL_DOT_DIM
           row1.push(...textToCells(GLYPH_TOOL_BULLET, dotStyle))
           row1.push({ char: ' ', style: S_NONE, width: 1 })
           row1.push(...textToCells(label, S_BOLD))
@@ -1964,8 +1963,9 @@ export function ChatInput({
     //              模式切换仅经斜杠命令（/plan）；Shift+Tab 键绑定被移除，因为
     //              Windows 需要 Node ≥22.17 VT 输入模式，而且 Alt+M 太容易被
     //              IDE 菜单覆盖。
-    // 右侧 —— 当前模型，加上可用的 `ctx 6.6k / 200k · 3%`。上下文正常为绿色，
-    //              从 70% 起为琥珀色，在 80% 压缩阈值处为红色。
+    // 右侧 —— 当前模型，加上可用的 `ctx 6.6k / 200k · 3%`，最后跟一个 `/help`
+    //              提示。正常状态用中性灰；从 70% 起为琥珀色，在 80% 压缩阈值
+    //              处为红色。
     let leftCells: Cell[] | null = null
     if (notice) {
       const cells: Cell[] = []
@@ -2013,6 +2013,7 @@ export function ChatInput({
       rightCells.push(...textToCells('ctx ', S_DIM))
       rightCells.push(...textToCells(usage, usageStyle))
     }
+    if (rightCells.length > 0) rightCells.push(...textToCells(' · /help', S_DIM))
 
     if (leftCells || rightCells.length > 0) {
       // Footer 行构建为一条窄单元格序列 —— 左侧 + ` · ` + 右侧 ——

@@ -19,7 +19,7 @@ describe('TUI input and lifecycle', () => {
         expect(harness.text()).toContain('custom:test-model')
 
         harness.key('enter')
-        await harness.waitForText('Theme set to Dark mode')
+        await harness.waitForText('Theme set to Dark')
         const config = JSON.parse(await fs.readFile(path.join(workspace.xcodeHome, 'config.json'), 'utf-8')) as {
           theme?: string
         }

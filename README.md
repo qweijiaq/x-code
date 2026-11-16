@@ -30,7 +30,7 @@ hooks are shared between the desktop app and the CLI.
 ad-hoc signed, not notarized, so macOS asks for approval once — see the
 [getting-started guide](./GETTING_STARTED.md#desktop-macos-arm64).
 
-**CLI from npm** (Node 22+):
+**CLI from npm** ([npm](https://www.npmjs.com/package/@qweijiaq/x-code-cli), Node 22+):
 
 ```bash
 npm install -g @qweijiaq/x-code-cli@latest

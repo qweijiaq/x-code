@@ -15,8 +15,8 @@ export let S_BORDER = cellFg('border')
 /** 品牌主色——实时工具 `(preview)`、补全/选中标签。 */
 export let S_PRIMARY = cellFg('primary')
 export let S_PRIMARY_BOLD = cellFg('primary', { bold: true })
-/** 页脚状态栏颜色（Codex CLI 风格）：模型标签用柔和的黄色，相邻信息用柔和的
- *  绿色——明亮、不调暗，让页脚读起来像实时状态而非元文本。 */
+/** 页脚状态栏：模型名和上下文用量都用中性灰，靠亮度而不是黄/绿两色区分，
+ *  避免状态栏比正文还抢眼。 */
 export let S_MODEL = cellFg('model')
 export let S_USAGE = cellFg('usage')
 /** 素净的近白强调色——权限对话框标题和 Yes 选项。 */
@@ -32,15 +32,10 @@ export let S_DIM = cellFg('textDim')
  *  演化，而不必改动强调样式。 */
 export let S_SPINNER = cellFg('primary')
 export let S_SUCCESS = cellFg('success', { bold: true })
-// SUCCESS 的非加粗变体——用于实时工具 `•` 圆点，使它和已提交的
-// `stdout-writer.formatToolCall` 输出完全一致（那里 `paint('success')(GLYPH_TOOL_BULLET)`
-// 是不加粗的）。如果实时侧用了加粗变体，圆点会在工具结束那一刻明显「褪去加粗」。
-export let S_SUCCESS_DOT = cellFg('success')
-// 运行中工具圆点脉冲动画的「暗」半帧。与 S_SUCCESS_DOT 同绿色，但叠加了 ANSI
-// dim 属性 (2)，让终端把它渲染成同一颜色的柔和暗影，而不是完全不同的另一种颜色。
-// 每隔几帧 spinner 在它和 S_SUCCESS_DOT 之间切换，产生 CC 用来表示工具正在运行
-// 的亮↔暗「心跳」，让用户一眼看出滚动区里哪条已提交行变成了实时行。
-export let S_SUCCESS_DOT_DIM = cellFg('success', { dim: true })
+/** 运行中工具圆点：品牌蓝，用 dim 半帧做脉冲。完成后的工具行改用中性灰，
+ *  让滚动区不再满屏绿色。 */
+export let S_TOOL_DOT = cellFg('primary')
+export let S_TOOL_DOT_DIM = cellFg('primary', { dim: true })
 export let S_WARNING = cellFg('warning')
 export let S_WARNING_BOLD = cellFg('warning', { bold: true })
 /** 非加粗错误文本——与已提交的 `paint('error')` 输出一致。 */
@@ -59,8 +54,8 @@ export function rebuildPalette(): void {
   S_DIM = cellFg('textDim')
   S_SPINNER = cellFg('primary')
   S_SUCCESS = cellFg('success', { bold: true })
-  S_SUCCESS_DOT = cellFg('success')
-  S_SUCCESS_DOT_DIM = cellFg('success', { dim: true })
+  S_TOOL_DOT = cellFg('primary')
+  S_TOOL_DOT_DIM = cellFg('primary', { dim: true })
   S_WARNING = cellFg('warning')
   S_WARNING_BOLD = cellFg('warning', { bold: true })
   S_ERROR = cellFg('error')
