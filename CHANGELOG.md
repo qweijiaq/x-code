@@ -24,6 +24,18 @@
 - compact the composer: remove the separate Markdown toolbar (native Markdown input and shortcuts replace it), center the action icons, align the input with the 840px chat column, show turn activity and idle background tasks in the hint row, and reduce the footer padding
 - load Git status when the Inspector Git tab is opened and leave the error state instead of staying on 加载中 after a failed request
 
+## v1.0.12 (2026-11-16)
+
+### Features
+
+- simplify the CLI chrome: a one-line header, two themes (dark/light), a muted footer, and a theme-aware user message card
+- align CLI provider support with the desktop app: `/doctor` lists all 12 providers with key URLs, `/model` includes local Ollama / LM Studio models and provider labels, and `/doctor` also reports web search providers
+
+### Bug Fixes
+
+- respect terminal color depth: fall back to 256-color SGR on macOS Terminal instead of 24-bit `38;2` sequences that Terminal misparses into black/cyan backgrounds
+- keep the CLI provider diagnostics in sync with the core catalog instead of a hardcoded eight-provider list
+
 ### Build
 
 - publish the CLI as `@qweijiaq/x-code-cli` and publish only that package, since core is bundled into the CLI
