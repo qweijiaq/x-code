@@ -205,11 +205,12 @@ jobs:
           VERSION="$(node -p "require('./packages/cli/package.json').version")"
           name="@qweijiaq/x-code-cli"
           published=""
-          # 新包首次发布后 registry 传播可能要几分钟，给足 5 分钟窗口。
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+          # npm registry 的传播有时会超过 5 分钟（1.0.12 实测约 6 分钟），
+          # 给足 10 分钟窗口，避免包已经发布但验证步骤误报失败。
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
             published="$(npm view "${name}@${VERSION}" version 2>/dev/null || true)"
             if [ "$published" = "$VERSION" ]; then break; fi
-            echo "Waiting for ${name}@${VERSION} to appear on npm (attempt ${attempt}/10)..."
+            echo "Waiting for ${name}@${VERSION} to appear on npm (attempt ${attempt}/20)..."
             sleep 30
           done
           if [ "$published" != "$VERSION" ]; then
