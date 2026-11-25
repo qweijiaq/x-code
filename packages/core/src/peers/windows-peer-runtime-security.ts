@@ -15,6 +15,16 @@ import {
 
 const SECURE_RUNTIME_OPERATION_ID = 1
 const SECURE_RUNTIME_TIMEOUT_MS = 5_000
+/** kill() 之后等待子进程真正关闭的上界——不能让收尾 await 无限挂住。 */
+const BROKER_CLOSE_WAIT_MS = 1_000
+const PREMATURE_EXIT_MESSAGE = 'Windows peer runtime helper exited before completing the security check'
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    timer.unref?.()
+  })
+}
 
 export interface WindowsPeerRuntimePaths {
   registryDir: string
@@ -49,7 +59,10 @@ export function createWindowsPeerRuntimeSecurity(
   let initialized: Promise<WindowsPeerRuntimePaths> | undefined
   return {
     initialize(signal) {
-      if (initialized) return initialized
+      // 初始化已在飞行时，新调用方的取消意图不能被顺手丢掉。
+      if (initialized) {
+        return signal?.aborted ? Promise.reject(abortError()) : initialized
+      }
       const operation = secureWindowsPeerRuntime(options, signal).catch((error) => {
         initialized = undefined
         throw error
@@ -78,7 +91,17 @@ async function secureWindowsPeerRuntime(
       error,
     )
   }
-  const artifact = await (options.artifact ?? resolveWindowsPeerBrokerArtifact())
+  let artifact: WindowsPeerBrokerArtifact
+  try {
+    artifact = await (options.artifact ?? resolveWindowsPeerBrokerArtifact())
+  } catch (error) {
+    // 原始错误可能带着不可信子进程输出里的 ANSI 序列，统一走净化通道。
+    throw runtimeError(
+      'PEER_WINDOWS_RUNTIME_UNSAFE',
+      `Windows peer runtime helper resolution failed: ${errorMessage(error)}`,
+      error,
+    )
+  }
   if (signal?.aborted) throw abortError()
   let settled = false
   let resolveResult!: (namespaceId: string) => void
@@ -134,12 +157,7 @@ async function secureWindowsPeerRuntime(
     },
     onError: settleError,
     onClose() {
-      settleError(
-        runtimeError(
-          'PEER_WINDOWS_RUNTIME_UNSAFE',
-          'Windows peer runtime helper exited before completing the security check',
-        ),
-      )
+      settleError(runtimeError('PEER_WINDOWS_RUNTIME_UNSAFE', PREMATURE_EXIT_MESSAGE))
     },
   })
   const onAbort = (): void => {
@@ -161,18 +179,18 @@ async function secureWindowsPeerRuntime(
     })
     brokerProcess.endInput()
     const namespaceId = await result
-    const status = await brokerProcess.closed
-    if (status.code !== 0) {
-      throw runtimeError(
-        'PEER_WINDOWS_RUNTIME_UNSAFE',
-        'Windows peer runtime helper exited before completing the security check',
-      )
+    // terminate 不一定即时生效、子进程也可能卡在 IO 上：收尾等待必须有界，
+    // 否则 5s 超时保护形同虚设。
+    const status = await Promise.race([brokerProcess.closed, sleep(BROKER_CLOSE_WAIT_MS).then(() => undefined)])
+    if (signal?.aborted) throw abortError()
+    if (status && status.code !== 0) {
+      throw runtimeError('PEER_WINDOWS_RUNTIME_UNSAFE', PREMATURE_EXIT_MESSAGE)
     }
     const registryDir = path.join(root, 'runtime', 'peers')
     return { registryDir, socketDir: registryDir, namespaceId }
   } catch (error) {
     brokerProcess.kill()
-    await brokerProcess.closed
+    await Promise.race([brokerProcess.closed, sleep(BROKER_CLOSE_WAIT_MS)])
     if (error instanceof Error && (error.name === 'AbortError' || error.name.startsWith('PEER_'))) throw error
     throw runtimeError(
       'PEER_WINDOWS_RUNTIME_UNSAFE',

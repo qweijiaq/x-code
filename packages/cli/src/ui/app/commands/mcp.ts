@@ -23,7 +23,81 @@ import {
   trustProject,
   writeServerToConfig,
 } from '@x-code-cli/core'
-import type { AgentOptions, ConfigScope, McpServerConfig } from '@x-code-cli/core'
+import type { AgentOptions, ConfigScope, McpServerConfig, StoredServerAuth } from '@x-code-cli/core'
+
+// ── 配置回显脱敏 ─────────────────────────────────────────────────────
+//
+// `addCommandMessage` 的内容会进入会话记录、被持久化并参与后续上下文，所以
+// 任何回显出来的 MCP 配置都必须先剥掉凭据：`headers` / `env` 的值、URL 里的
+// userinfo 与敏感 query 参数、stdio `args` 里的 `--token xxx`、以及键名本身
+// 像密钥的字段（如 `oauth.clientSecret`）。
+
+const SECRET_KEY_RE = /(key|token|secret|password|passwd|authorization|credential|cookie|bearer)/i
+
+function redactUrl(raw: string): string {
+  try {
+    const url = new URL(raw)
+    if (url.username || url.password) {
+      url.username = '***'
+      url.password = ''
+    }
+    for (const key of [...url.searchParams.keys()]) {
+      if (SECRET_KEY_RE.test(key)) url.searchParams.set(key, '***')
+    }
+    return url.toString()
+  } catch {
+    return raw
+  }
+}
+
+function redactArgs(args: readonly unknown[]): unknown[] {
+  const out: unknown[] = []
+  let redactNext = false
+  for (const arg of args) {
+    if (typeof arg !== 'string') {
+      out.push(arg)
+      continue
+    }
+    if (redactNext) {
+      out.push('***')
+      redactNext = false
+      continue
+    }
+    const inline = arg.match(/^(--?[^=]+)=(.*)$/)
+    if (inline) {
+      out.push(SECRET_KEY_RE.test(inline[1]!) ? `${inline[1]}=***` : arg)
+      continue
+    }
+    if (/^--?/.test(arg)) {
+      out.push(arg)
+      redactNext = SECRET_KEY_RE.test(arg)
+      continue
+    }
+    out.push(/^authorization\s*:/i.test(arg) ? '***' : arg)
+  }
+  return out
+}
+
+function redactSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSecrets)
+  if (value === null || typeof value !== 'object') return value
+  const out: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if ((key === 'headers' || key === 'env') && entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      // 头部/环境变量的键名可以是任意自定义名，值一律按凭据处理。
+      out[key] = Object.fromEntries(Object.keys(entry as Record<string, unknown>).map((k) => [k, '***']))
+    } else if (key === 'url' && typeof entry === 'string') {
+      out[key] = redactUrl(entry)
+    } else if (key === 'args' && Array.isArray(entry)) {
+      out[key] = redactArgs(entry)
+    } else if (SECRET_KEY_RE.test(key)) {
+      out[key] = '***'
+    } else {
+      out[key] = redactSecrets(entry)
+    }
+  }
+  return out
+}
 
 export interface McpCommandDeps {
   options: AgentOptions
@@ -100,7 +174,7 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
       const existing = await readServerConfig(name, scope, process.cwd())
       const summary =
         existing && typeof existing === 'object'
-          ? JSON.stringify(existing, null, 2)
+          ? JSON.stringify(redactSecrets(existing), null, 2)
               .split('\n')
               .map((l) => '  ' + l)
               .join('\n')
@@ -311,12 +385,36 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
         // 我们想要强制重新认证（对齐 Gemini CLI 语义——再跑一次 auth 表示
         // 「让我从头登录」，而不是「验证我的现有会话」）。只想清除而不重新认证的
         // 用户另有单独的 /mcp logout。
+        //
+        // 但清除前要备份：浏览器流程被取消或失败时不能把用户原本可用的 token
+        // 一起冲掉——那等于把「重新登录」变成「强制登出」，且与 `/mcp remove`
+        // 先弹确认的谨慎风格不一致。
+        const tokenStorage = getTokenStorage()
+        let tokenBackup: StoredServerAuth | undefined
         try {
-          await getTokenStorage().clear(subArg)
+          tokenBackup = await tokenStorage.get(subArg)
+          await tokenStorage.clear(subArg)
         } catch {
           // 尽力而为；token 存储不可写时，剩下的流程仍能继续，用户会在
           // finishAuth 尝试保存时看到真正的失败。
         }
+        const restoreTokenBackup = async (): Promise<boolean> => {
+          if (!tokenBackup) return false
+          try {
+            if (tokenBackup.clientInformation) {
+              await tokenStorage.setClientInformation(subArg, tokenBackup.url, tokenBackup.clientInformation)
+            }
+            if (tokenBackup.tokens) {
+              await tokenStorage.setTokens(subArg, tokenBackup.url, tokenBackup.tokens)
+            }
+            return true
+          } catch {
+            return false
+          }
+        }
+        // 失败路径统一挂上「凭据已恢复 / 需要重新认证」的说明，避免静默登出。
+        const restoredSuffix = async (): Promise<string> =>
+          (await restoreTokenBackup()) ? ' Previous credentials were restored.' : ''
         addCommandMessage(text, `Authenticating "${subArg}" — opening browser...`)
         try {
           const server = await registry.authenticateServer(subArg, {
@@ -334,14 +432,20 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
               }, ${server.status.resourceCount} resource${server.status.resourceCount === 1 ? '' : 's'}`,
             )
           } else if (server.status.kind === 'needs_auth') {
-            addCommandResult(`⚠ Server still needs auth. The browser flow may have been cancelled.`)
+            addCommandResult(
+              `⚠ Server still needs auth. The browser flow may have been cancelled.${await restoredSuffix()}`,
+            )
           } else if (server.status.kind === 'failed') {
-            addCommandResult(`✗ Auth completed but server failed to connect: ${server.status.error}`)
+            addCommandResult(
+              `✗ Auth completed but server failed to connect: ${server.status.error}${await restoredSuffix()}`,
+            )
           } else {
             addCommandResult(`Server is now in state: ${server.status.kind}`)
           }
         } catch (err) {
-          addCommandResult(`✗ Authentication failed: ${err instanceof Error ? err.message : String(err)}`)
+          addCommandResult(
+            `✗ Authentication failed: ${err instanceof Error ? err.message : String(err)}${await restoredSuffix()}`,
+          )
         }
         return
       }
@@ -365,13 +469,50 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
       case 'disable': {
         const enable = sub === 'enable'
         const tokens = subArg.trim().split(/\s+/).filter(Boolean)
-        const name = tokens.find((t) => !t.startsWith('--scope=') && t !== '-s')
-        const scopeFlag = tokens.find((t) => t.startsWith('--scope='))?.slice('--scope='.length)
+        // 支持 `--scope user`、`--scope=user`、`-s user`、`-s=user` 四种写法。
+        // 旧实现只认 `--scope=`，于是 `--scope project` 的 scope 被静默忽略
+        // （回落到自动探测），`--scope project foo` 还会把 `--scope` 当成服务器名。
+        let scopeFlag: string | undefined
+        const positional: string[] = []
+        for (let i = 0; i < tokens.length; i++) {
+          const t = tokens[i]!
+          if (t.startsWith('--scope=')) {
+            scopeFlag = t.slice('--scope='.length)
+          } else if (t.startsWith('-s=')) {
+            scopeFlag = t.slice('-s='.length)
+          } else if (t === '--scope' || t === '-s') {
+            const value = tokens[i + 1]
+            if (value === undefined) {
+              addCommandMessage(text, `\`${t}\` requires a value: \`/mcp ${sub} <server> ${t} user|project\``)
+              return
+            }
+            scopeFlag = value
+            i++
+          } else if (t.startsWith('-')) {
+            // 未知/拼错的 flag 不再被当成服务器名吞掉。
+            addCommandMessage(text, `Unknown flag for \`/mcp ${sub}\`: ${t}`)
+            return
+          } else {
+            positional.push(t)
+          }
+        }
+        const name = positional[0]
         if (!name) {
           addCommandMessage(text, `Usage: \`/mcp ${sub} <server> [--scope=user|project]\``)
           return
         }
-        const detected = await detectScope(name, process.cwd())
+        if (scopeFlag !== undefined && scopeFlag !== 'user' && scopeFlag !== 'project') {
+          // 非法值不再静默回落到自动探测——那会写进用户没指定的作用域。
+          addCommandMessage(text, `Invalid scope \`${scopeFlag}\`. Use \`user\` or \`project\`.`)
+          return
+        }
+        let detected: Awaited<ReturnType<typeof detectScope>>
+        try {
+          detected = await detectScope(name, process.cwd())
+        } catch (err) {
+          addCommandMessage(text, `Failed to ${sub}: ${err instanceof Error ? err.message : String(err)}`)
+          return
+        }
         let scope: ConfigScope
         if (scopeFlag === 'user' || scopeFlag === 'project') {
           scope = scopeFlag
@@ -387,7 +528,15 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
         } else {
           scope = detected.kind
         }
-        const result = await setServerEnabled(name, enable, scope, process.cwd())
+        // 与 add/remove/refresh/logout/auth 一致：畸形 config.json 或写盘
+        // EACCES/EPERM 不能让异常一路逃出 handleMcp，用户得看到可读的错误。
+        let result: { path: string; changed: boolean }
+        try {
+          result = await setServerEnabled(name, enable, scope, process.cwd())
+        } catch (err) {
+          addCommandMessage(text, `Failed to ${sub}: ${err instanceof Error ? err.message : String(err)}`)
+          return
+        }
         if (!result.changed) {
           addCommandMessage(text, `No MCP server named \`${name}\` in ${scope} config.`)
           return

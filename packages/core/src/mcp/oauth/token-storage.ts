@@ -23,6 +23,7 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js'
 
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -44,6 +45,16 @@ export interface StoredServerAuth {
 }
 
 type FileShape = Record<string, StoredServerAuth>
+
+/** 缓存/磁盘快照里永远不允许出现的 key：以裸对象（`{}`）承载时，
+ *  `cache['__proto__'] ??= {...}` 会读到 `Object.prototype`（truthy，不赋值），
+ *  随后 `entry.url = url` 直接污染全局原型。 */
+const FORBIDDEN_SERVER_NAMES = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** 空快照：null 原型，索引任意名字都不会命中 `Object.prototype`。 */
+function emptyFileShape(): FileShape {
+  return Object.create(null) as FileShape
+}
 
 export class McpTokenStorage {
   private cache: FileShape | null = null
@@ -149,12 +160,14 @@ export class McpTokenStorage {
 
   private async writeNow(): Promise<void> {
     if (!this.cache) return
+    // 唯一 tmp 名：固定名在两个进程同时写时会交叉写入并产生半截 JSON。
+    const tmp = `${authFile()}.${process.pid}.${randomUUID()}.tmp`
     try {
       await fs.mkdir(userXcodeDir(), { recursive: true })
       // 写前重新读盘并只合并本进程改动过的 key：跨进程场景（CLI 与 Desktop
       // 各持一份单例）下整体覆盖会把对方刚写入的 entry 整条抹掉——用户在
       // 另一个终端的 `/mcp logout` 或手工编辑同样会被静默回滚。
-      const merged: FileShape = { ...(await readFile()) }
+      const merged = await readFile()
       for (const serverName of this.dirtyServers) {
         const entry = this.cache[serverName]
         if (entry) merged[serverName] = entry
@@ -163,32 +176,61 @@ export class McpTokenStorage {
       for (const serverName of this.removedServers) delete merged[serverName]
 
       this.cache = merged
-      // 唯一 tmp 名：固定名在两个进程同时写时会交叉写入并产生半截 JSON。
-      const tmp = `${authFile()}.${process.pid}.tmp`
       await fs.writeFile(tmp, JSON.stringify(merged, null, 2) + '\n', {
         encoding: 'utf-8',
         mode: 0o600,
       })
+      // `mode` 只在创建新文件时生效：残留的 tmp（上次崩溃、或同机其他进程先
+      // 创建）会让明文 access_token / refresh_token / client_secret 以 0o644
+      // 长期留在磁盘上。显式收紧一次再看。
+      if (process.platform !== 'win32') await fs.chmod(tmp, 0o600)
       await fs.rename(tmp, authFile())
       this.dirtyServers.clear()
       this.removedServers.clear()
     } catch (err) {
+      // 不吞：磁盘满 / 目录只读 / 权限不足时，若这里安静地成功，OAuth 流程
+      // 会向用户报告“已保存”，而下次启动仍要重走一遍完整授权（甚至因为
+      // client_secret 丢失而重复注册客户端）。清掉残留 tmp 后把错误抛给调用方。
+      await fs.rm(tmp, { force: true }).catch(() => undefined)
       debugLog('mcp.token-write-failed', String(err))
+      throw err instanceof Error ? err : new Error(String(err))
     }
   }
+}
+
+/** 把任意 JSON 值收敛成合法的快照：只保留"对象且 `url` 是字符串"的条目。
+ *  半写坏的文件 / 手工编辑 / 旧版本格式都可能让某个 key 变成 `null`、数组或
+ *  标量，直接返回给 `get()` / `listServers()` 会让 `entry.url` 在 `null` 上
+ *  取属性抛 TypeError（`Object.entries` 不过滤非法值），把 `/mcp list` 整条打挂。 */
+function toFileShape(value: unknown): FileShape {
+  const shape = emptyFileShape()
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return shape
+  for (const [name, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (FORBIDDEN_SERVER_NAMES.has(name)) {
+      debugLog('mcp.token-entry-rejected', `reserved server name: ${name}`)
+      continue
+    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      debugLog('mcp.token-entry-rejected', `${name}: not an object`)
+      continue
+    }
+    if (typeof (entry as Record<string, unknown>).url !== 'string') {
+      debugLog('mcp.token-entry-rejected', `${name}: missing url`)
+      continue
+    }
+    shape[name] = entry as StoredServerAuth
+  }
+  return shape
 }
 
 async function readFile(): Promise<FileShape> {
   try {
     const raw = await fs.readFile(authFile(), 'utf-8')
-    const parsed = JSON.parse(raw) as unknown
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as FileShape
-    }
+    return toFileShape(JSON.parse(raw) as unknown)
   } catch {
     // 缺失 / 格式错误——从干净状态开始
   }
-  return {}
+  return emptyFileShape()
 }
 
 /** 单例实例。接线简单：CLI 启动时构造一次，传给 loadMcpServers

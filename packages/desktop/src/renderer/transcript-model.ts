@@ -19,7 +19,10 @@ const SANDBOX_GUI_DENIAL =
 // npm / pip 会把缓存和日志写进用户目录；被沙箱拦截时 npm 会误报
 // “sudo chown ~/.npm”。
 const SANDBOX_PACKAGE_WRITE =
-  /(Log files were not written due to an error writing|npm error code (?:EACCES|EPERM)|EACCES: permission denied.*(?:\.npm|\.cache)|Cache (?:directory|folder).*permission denied)/i
+  // npm 的真实输出是多行带前缀的（`npm error code EACCES` / `npm error syscall
+  // mkdir` / `npm error path /Users/x/.npm/_cacache`），`.` 不匹配换行，所以
+  // 「code」与「路径」之间的匹配必须跨行。
+  /(Log files were not written due to an error writing|npm error code (?:EACCES|EPERM)|EACCES: permission denied[\s\S]{0,200}?(?:\.npm|\.cache)|Cache (?:directory|folder)[\s\S]{0,80}?permission denied)/i
 const SANDBOX_WRITE_DENIAL = /(sandbox-exec|Operation not permitted|Read-only file system)/i
 const COMMAND_NOT_FOUND =
   /(command not found|not recognized as an internal or external command|(?:sh|bash|zsh): .*: not found)/i
@@ -228,7 +231,11 @@ export function taskBranchName(task: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 28)
-  return `x-code/${slug || 'task'}-${Date.now().toString(36).slice(-5)}`
+  // 只用 Date.now() 的 5 位 base36 后缀时周期约 16.8 小时：同一天隔一个周期的
+  // 相同描述任务（或同毫秒并发创建）会得到完全相同的分局名而冲突。时间戳保留
+  // 2 位作为可读线索，再混入一段随机，把碰撞空间拉到千万级。
+  const suffix = `${Date.now().toString(36).slice(-2)}${Math.random().toString(36).slice(2, 5)}`
+  return `x-code/${slug || 'task'}-${suffix}`
 }
 
 export const STATUS_LABEL = {
@@ -247,14 +254,12 @@ export const TOOL_STATUS_LABEL: Record<NonNullable<Entry['toolStatus']>, string>
 
 export function summarizeInput(input: Record<string, unknown> | undefined): string {
   if (!input) return ''
-  const value =
-    (input.filePath as string) ??
-    (input.command as string) ??
-    (input.pattern as string) ??
-    (input.query as string) ??
-    (input.path as string) ??
-    (input.url as string) ??
-    ''
+  // `??` 短路链会在第一个「存在但为空」的字段上停住——流式渲染时 `filePath`
+  // 常先以空串出现，标题就会渲染成空、后面的 command/pattern 全被吞掉。
+  // `as string` 断言也不校验运行时类型：`limit: 50` / `paths: [...]` 这类字段
+  // 会让 `.length`、`.slice` 与 `string` 返回类型对不上。
+  const candidates = [input.filePath, input.command, input.pattern, input.query, input.path, input.url]
+  const value = candidates.find((item): item is string => typeof item === 'string' && item.trim() !== '')?.trim() ?? ''
   return value.length > 90 ? `${value.slice(0, 87)}…` : value
 }
 
@@ -263,16 +268,17 @@ export function sessionTitle(item: SessionListItem): string {
 }
 
 export function sessionTime(item: SessionListItem): string {
-  try {
-    return new Date(item.mtime).toLocaleString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return ''
-  }
+  // `new Date(...)` 对非法输入不抛异常，只在后续 toLocaleString 时给出
+  // "Invalid Date"——所以 try/catch 过去是死代码。显式判空才拦得住
+  // mtime 为 0 / undefined / NaN 的旧会话索引。
+  const date = new Date(item.mtime)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 export type SessionDayGroup = 'pinned' | 'today' | 'yesterday' | 'week' | 'earlier'

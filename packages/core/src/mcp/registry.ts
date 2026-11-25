@@ -18,7 +18,7 @@
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
 
 import { debugLog, errorMessage } from '../utils.js'
-import { McpClient } from './client.js'
+import { McpClient, isUnauthorizedError } from './client.js'
 import { UnsafeEnvError, assertSafeEnv } from './env-safety.js'
 import { EnvExpansionError, expandEnvDeep } from './expand-env.js'
 import { buildCallableName } from './name-mangling.js'
@@ -188,24 +188,48 @@ export class McpRegistry {
     if (this.connectAllRan) return
     this.connectAllRan = true
 
-    const tasks = [...this.configs.entries()].map(async ([name, config]) => {
-      try {
-        const result = await connectOneServer(name, config, this.oauthFactory)
-        this.removeServerEntries(name)
-        this.installServer(result)
-      } catch (err) {
-        debugLog('mcp.connectAll-failed', `${name}: ${String(err)}`)
-        const existing = this.servers.get(name)
-        if (existing) {
-          existing.status = { kind: 'failed', error: errorMessage(err) }
+    await this.serialize(async () => {
+      const tasks = [...this.configs.entries()].map(async ([name, config]) => {
+        try {
+          return await connectOneServer(name, config, this.oauthFactory)
+        } catch (err) {
+          debugLog('mcp.connectAll-failed', `${name}: ${String(err)}`)
+          const existing = this.servers.get(name)
+          if (existing) {
+            existing.status = { kind: 'failed', error: errorMessage(err) }
+          }
+          return null
         }
+      })
+      const results = await Promise.all(tasks)
+
+      // 按服务器名排序后再安装：工具名冲突按插入顺序消解（先到者拿到
+      // `<server>__<tool>`，后到者加哈希后缀），插入顺序又决定了 `list()` 的顺序，
+      // 而 OpenAI 兼容 provider 的前缀缓存要求字节稳定。不排序的话，哪个连接先
+      // resolve 就决定了最终顺序，每次启动都可能不同（restartAll 早就这么做了）。
+      for (const result of [...results].filter((r): r is ConnectResult => r !== null).sort(compareServerName)) {
+        this.removeServerEntries(result.server.name)
+        this.installServer(result)
       }
+      onReady?.()
     })
-    await Promise.allSettled(tasks)
-    onReady?.()
   }
 
   private connectAllRan = false
+
+  /** 生命周期入口的串行化链。`connectAll` / `restartServer` / `restartAll` 都会
+   *  在 await 前后读写同一组内部映射，交错执行会造成真实损坏：两个并发的
+   *  `restartServer(same name)` 都看到同一个 `existing`、都 close()、各自 spawn
+   *  一个子进程，结果只有后一个被记进 `servers`，前一个再没人 close（僵尸
+   *  子进程）；`restartAll` 的 `clear()` 与在途的 `connectAll` 交错还会把已拆除
+   *  的旧结果装回来。 */
+  private lifecycle: Promise<unknown> = Promise.resolve()
+
+  private serialize<T>(task: () => Promise<T>): Promise<T> {
+    const next = this.lifecycle.then(task, task)
+    this.lifecycle = next.catch(() => undefined)
+    return next
+  }
 
   // ── 重启 / 刷新 ──────────────────────────────────────────────────
 
@@ -216,39 +240,43 @@ export class McpRegistry {
    *  服务器的 `tools/list` 输出在两次重连间变化，工具名可能改变。调用方
    *  必须在此返回后失效 agent 的 systemPromptCache。 */
   async restartServer(name: string, opts: { driveOAuth?: AuthHooks } = {}): Promise<RegisteredServer> {
-    const config = this.configs.get(name)
-    if (!config) {
-      throw new Error(`No MCP server registered as "${name}"`)
-    }
-    // 在 spawn 替换前关闭现有客户端（若有）——对 stdio 服务器来说这会杀掉
-    // 之前的子进程，不留僵尸。错误不致命：一条无法干净关闭的断连仍应被替换。
-    const existing = this.servers.get(name)
-    if (existing) {
-      try {
-        await existing.client.close()
-      } catch (err) {
-        debugLog('mcp.restart-close-failed', `${name}: ${String(err)}`)
+    return this.serialize(async () => {
+      // 配置在锁内读取：并发的 `restartAll(newConfigs)` 可能刚把它换掉，锁外
+      // 取到的旧配置会让这次重连白跑一遍。
+      const config = this.configs.get(name)
+      if (!config) {
+        throw new Error(`No MCP server registered as "${name}"`)
       }
-    }
+      // 在 spawn 替换前关闭现有客户端（若有）——对 stdio 服务器来说这会杀掉
+      // 之前的子进程，不留僵尸。错误不致命：一条无法干净关闭的断连仍应被替换。
+      const existing = this.servers.get(name)
+      if (existing) {
+        try {
+          await existing.client.close()
+        } catch (err) {
+          debugLog('mcp.restart-close-failed', `${name}: ${String(err)}`)
+        }
+      }
 
-    // 剥离此服务器拥有的旧工具 / 资源。在*新连接之前*做，使重连中途的部分
-    // 失败让我们处于一致的 "此服务器一无所有" 状态，而不是旧的 + 无的混合。
-    this.removeServerEntries(name)
+      // 剥离此服务器拥有的旧工具 / 资源。在*新连接之前*做，使重连中途的部分
+      // 失败让我们处于一致的 "此服务器一无所有" 状态，而不是旧的 + 无的混合。
+      this.removeServerEntries(name)
 
-    // 连接失败必须把条目收敛到明确状态：上面已经 `existing.client.close()` 并
-    // `removeServerEntries(name)`，若这里直接抛出，`this.servers` 里会留下一个
-    // **已关闭**的旧客户端、status 还停在旧的 `connected`（含过期 toolCount），
-    // `/mcp list` 显示"已连接"而 callTool 会把调用派发给死连接。
-    let result: ConnectResult
-    try {
-      result = await connectOneServer(name, config, this.oauthFactory, opts.driveOAuth)
-    } catch (err) {
-      if (existing) existing.status = { kind: 'failed', error: errorMessage(err) }
-      else this.servers.delete(name)
-      throw err
-    }
-    this.installServer(result)
-    return result.server
+      // 连接失败必须把条目收敛到明确状态：上面已经 `existing.client.close()` 并
+      // `removeServerEntries(name)`，若这里直接抛出，`this.servers` 里会留下一个
+      // **已关闭**的旧客户端、status 还停在旧的 `connected`（含过期 toolCount），
+      // `/mcp list` 显示"已连接"而 callTool 会把调用派发给死连接。
+      let result: ConnectResult
+      try {
+        result = await connectOneServer(name, config, this.oauthFactory, opts.driveOAuth)
+      } catch (err) {
+        if (existing) existing.status = { kind: 'failed', error: errorMessage(err) }
+        else this.servers.delete(name)
+        throw err
+      }
+      this.installServer(result)
+      return result.server
+    })
   }
 
   /** 断开一切并按 `newConfigs`（或省略时按现有配置）重建。返回 diff 摘要，
@@ -258,6 +286,10 @@ export class McpRegistry {
    *  我们会添加 / 移除 / 重启相应集合。配置字节没变的服务器仍会重连——
    *  对用户更清爽，也比 diff 每个嵌套字段简单。 */
   async restartAll(newConfigs?: Map<string, McpServerConfig>): Promise<RestartSummary> {
+    return this.serialize(() => this.restartAllInternal(newConfigs))
+  }
+
+  private async restartAllInternal(newConfigs?: Map<string, McpServerConfig>): Promise<RestartSummary> {
     const oldNames = new Set(this.configs.keys())
     const newNames = new Set((newConfigs ?? this.configs).keys())
 
@@ -304,16 +336,24 @@ export class McpRegistry {
         return await connectOneServer(name, config, this.oauthFactory)
       } catch (err) {
         debugLog('mcp.restartAll-connect-failed', `${name}: ${String(err)}`)
-        return null
+        // 降级而不是丢弃：`this.servers` 已在上面 `clear()`，直接返回 null 会让
+        // 一个配置里存在、用户刚刚刷新过的服务器从 `serverStatus()` 里彻底消失，
+        // `/mcp list` 既看不到它也看不到原因。
+        return {
+          server: {
+            name,
+            client: new McpClient(name, config),
+            status: { kind: 'failed' as const, error: errorMessage(err) },
+          },
+          tools: [],
+          resources: [],
+        } satisfies ConnectResult
       }
     })
     const results = await Promise.all(tasks)
 
     // 按名字排序，使工具插入顺序稳定（与 loader.ts 中初始启动行为一致）。
-    const installable = results
-      .filter((r): r is ConnectResult => r !== null)
-      .sort((a, b) => a.server.name.localeCompare(b.server.name))
-    for (const r of installable) this.installServer(r)
+    for (const r of results.sort(compareServerName)) this.installServer(r)
 
     return summary
   }
@@ -379,6 +419,12 @@ export class McpRegistry {
       if (!this.resources.has(res.uri)) this.resources.set(res.uri, res)
     }
   }
+}
+
+/** 服务器结果的稳定安装顺序（`connectAll` / `restartAll` 共用）。工具名冲突
+ *  按插入顺序消解，所以顺序必须与网络时序无关，否则前缀缓存字节稳定性会破。 */
+function compareServerName(a: ConnectResult, b: ConnectResult): number {
+  return a.server.name.localeCompare(b.server.name)
 }
 
 /** 空 registry——当 MCP 整体禁用（配置里没有 mcpServers，或信任对话框被
@@ -461,7 +507,10 @@ export async function connectOneServer(
     }
   } catch (err) {
     const msg = errorMessage(err)
-    const needsAuth = /unauth|401|UnauthorizedError/i.test(msg) && isHttpConfig(expanded)
+    // 复用 client.ts 的身份判定，而不是裸文本匹配：`/unauth|401/i` 会把
+    // `http://127.0.0.1:4011`、退出码 401 之类的普通连接失败误报成
+    // `needs_auth`（用户于是看到“请先运行 /mcp auth”而不是真实错误）。
+    const needsAuth = isUnauthorizedError(err) && isHttpConfig(expanded)
     const status: RegisteredServer['status'] = needsAuth ? { kind: 'needs_auth' } : { kind: 'failed', error: msg }
     return {
       server: { name, client, status, stderrTail: client.stderr() || undefined },

@@ -56,10 +56,17 @@ async function loadAgentsFromDir(
       }
 
       const fm = result.data
+      // 正文为空时子代理会收到一份空 system prompt，行为无法定位；按坏文件处理，
+      // 与其他跳过路径一样告警后继续扫描。
+      const prompt = parsed.body.trim()
+      if (!prompt) {
+        console.error(`[sub-agents] Skipping ${filePath}: empty agent body (no prompt)`)
+        continue
+      }
       agents.push({
         name: fm.name,
         description: fm.description,
-        prompt: parsed.body.trim(),
+        prompt,
         tools: fm.tools,
         disallowedTools: fm.disallowedTools,
         model: fm.model,
@@ -88,15 +95,24 @@ export async function loadCustomAgents(opts: LoadCustomAgentsOptions = {}): Prom
   const override = process.env.XC_AGENTS_DIR
   if (override) {
     const overrideAgents = await loadAgentsFromDir(override, 'project')
-    return [...overrideAgents, ...(await loadAgentsFromExtras(opts.extraDirs))]
+    // 注册表是「后写胜出」：override 必须排在末尾，否则插件目录里的同名 agent
+    // 会覆盖掉调用方（测试）明确指定的那一个。
+    return [...(await loadAgentsFromExtras(opts.extraDirs)), ...overrideAgents]
   }
 
   const userDir = path.join(userXcodeDir(), 'agents')
-  const projectDir = path.join(process.cwd(), XCODE_DIR, 'agents')
+  // process.cwd() 在 cwd 被删除后会抛 ENOENT；单个目录解析失败不能让整个
+  // loadCustomAgents reject（文件头约定：坏文件/坏目录都不能拖垮 CLI）。
+  let projectDir: string | undefined
+  try {
+    projectDir = path.join(process.cwd(), XCODE_DIR, 'agents')
+  } catch (err) {
+    console.error(`[sub-agents] Skipping project agent directory: ${errorMessage(err)}`)
+  }
 
   const userAgents = await loadAgentsFromDir(userDir, 'user')
   const pluginAgents = await loadAgentsFromExtras(opts.extraDirs)
-  const projectAgents = await loadAgentsFromDir(projectDir, 'project')
+  const projectAgents = projectDir ? await loadAgentsFromDir(projectDir, 'project') : []
 
   // user → plugin → project。SubAgentRegistry 的 Map.set 会覆盖重名项，
   // 因此靠后的条目胜出——与 skills 的优先级一致。

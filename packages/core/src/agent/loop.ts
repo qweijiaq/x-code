@@ -809,7 +809,7 @@ export async function agentLoop(
 
   // 记忆只对不受限的根轮次可用。toolFilter 可能刻意约束一个根调用
   // （例如 goal 摘要），而 agentRole 独立控制生命周期行为，如 rewind。
-  const memoryService =
+  let memoryService =
     state.agentRole === 'root' && !options.toolFilter && !invocationPeerTainted ? options.memoryService : undefined
   const logMemoryFailure = (tag: string) => (error: unknown) => {
     debugLog(tag, errorMessage(error))
@@ -819,7 +819,14 @@ export async function agentLoop(
   if (memoryService) {
     memoryService.setActiveModelId(options.modelId)
     memoryService.setNoticeHandler(callbacks.onMemoryWrite)
-    await memoryService.initialize(state.projectCwd)
+    // recall / lateRecall / 投影都有兜底，唯独初始化是裸 await：索引损坏、磁盘/
+    // 权限异常或后端不可用时会一路抛出 agentLoop——而此时用户消息已经进入转录，
+    // 结果是一条永不回复的用户轮次。失败时把本轮降级为「无记忆服务」。
+    const initialized = await memoryService
+      .initialize(state.projectCwd)
+      .then(() => true)
+      .catch(logMemoryFailure('memory.initialize-error'))
+    if (!initialized) memoryService = undefined
   }
 
   // ── 插件 hook：SessionStart ──
@@ -965,6 +972,16 @@ export async function agentLoop(
   // 提取器唯一应该运行的情形。
   let completedNormally = false
   let cleanStop = false
+  // 已经用错误/中止结束本轮：再追加一条 "Reached maximum turns" 会在真实失败
+  // 原因之上覆盖一个误导性结论（`--print`、goal runner、sub-agent 都会传 maxTurns）。
+  let terminatedWithFailure = false
+  // 响应式恢复（图片剥离 / 溢压缩）不消耗轮次预算，因此需要独立上限：provider
+  // 反复返回 context-too-long 且压缩无法再压缩时，每圈都要付一次摘要往返。
+  const MAX_REACTIVE_RETRIES = 3
+  let reactiveRetries = 0
+  // 首轮工作树快照只做一次。`turn === 1` 不能表达这件事——响应式恢复会把
+  // turn 回退到 0，下一圈又变成 1，于是重复快照 + 重复 checkpoint jsonl 行。
+  let firstTurnCheckpointed = false
   let lateRecallAttempted = false
   let initialRecallAttempted = false
 
@@ -992,6 +1009,7 @@ export async function agentLoop(
       })
       if (verdict.exceeded) {
         callbacks.onError(new Error(verdict.message))
+        terminatedWithFailure = true
         break
       }
     }
@@ -1019,7 +1037,8 @@ export async function agentLoop(
     // ── Rewind 检查点（仅首轮） ──
     // 在压缩【之后】快照工作树，这样 markBoundaryAndReflush（它会清空
     // state.checkpoints）无法驱逐我们刚创建的检查点。sub-agent 跳过。
-    if (turn === 1 && state.agentRole === 'root') {
+    if (!firstTurnCheckpointed && turn === 1 && state.agentRole === 'root') {
+      firstTurnCheckpointed = true
       const promptPreview = userContentToText(effectiveUserMessage).slice(0, 200)
       const ckpt = await createCheckpoint(state, promptPreview, state.projectCwd, options.abortSignal)
       if (ckpt) void appendCheckpoint(state, ckpt)
@@ -1205,11 +1224,27 @@ export async function agentLoop(
       }
       // 没有可用备用模型（或重放不安全）时才把错误交给 UI。
       callbacks.onError(outcome.error)
+      terminatedWithFailure = true
       break
     }
-    if (outcome.kind === 'aborted') break
+    if (outcome.kind === 'aborted') {
+      terminatedWithFailure = true
+      break
+    }
     if (outcome.kind === 'retry') {
-      // 不计入经响应式压缩恢复的失败尝试。
+      // 不计入经响应式压缩恢复的失败尝试，但必须有独立上限：无上限时 provider
+      // 反复报 context-too-long（或图片错误反复命中删图分支）会一直循环，只能靠
+      // 用户按 Esc 中止。
+      reactiveRetries++
+      if (reactiveRetries > MAX_REACTIVE_RETRIES) {
+        callbacks.onError(
+          new Error(
+            `Unable to recover from the request after ${MAX_REACTIVE_RETRIES} recovery attempts — the request keeps failing.`,
+          ),
+        )
+        terminatedWithFailure = true
+        break
+      }
       turn--
       continue
     }
@@ -1230,6 +1265,7 @@ export async function agentLoop(
       try {
         toolCalls = await outcome.result.toolCalls
       } catch (err) {
+        terminatedWithFailure = true
         if (isAbortError(err, options.abortSignal)) break
         callbacks.onError(new Error(classifyApiError(err).message))
         break
@@ -1304,12 +1340,15 @@ export async function agentLoop(
           `Response still truncated after ${MAX_CONTINUATIONS} continuation attempts — ask a narrower question.`,
         ),
       )
+      terminatedWithFailure = true
       break
     }
 
     if (outcome.finishReason === 'content-filter') {
+      terminatedWithFailure = true
       callbacks.onError(new Error('Response stopped by the provider content filter.'))
     } else if (outcome.finishReason === 'error' || outcome.finishReason === 'other') {
+      terminatedWithFailure = true
       const rawFinishReason = await Promise.resolve(outcome.result.rawFinishReason).catch(() => undefined)
       const detail = rawFinishReason ? ` (${rawFinishReason})` : ''
       callbacks.onError(
@@ -1364,7 +1403,9 @@ export async function agentLoop(
   //   2. 我们达到了它，并且
   //   3. 模型没有在同一轮已经干净地完成——`!completedNormally` 守卫处理
   //      'stop' 恰好落在第 maxTurns 轮的边界。
-  if (options.maxTurns !== undefined && turn >= options.maxTurns && !completedNormally) {
+  //   4. 本轮不是已经以错误/中止结束——否则真实失败原因之后会再追加一条
+  //      误导性的 "Reached maximum turns"。
+  if (options.maxTurns !== undefined && turn >= options.maxTurns && !completedNormally && !terminatedWithFailure) {
     callbacks.onError(new Error(`Reached maximum turns (${options.maxTurns}). Stopping agent loop.`))
   }
 

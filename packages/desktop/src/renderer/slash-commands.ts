@@ -77,6 +77,17 @@ export function createSlashCommands(context: SlashCommandContext): SlashCommand[
     setManualOpen,
     append,
   } = context
+
+  /** 调用方（App / CommandPalette）用 `void command.run()` 丢弃返回值，所以
+   *  命令自己必须兜住 rejection：`openSettings` 里的 `refreshSettings()`、IPC
+   *  桥接失败、`submit` 抛错若没人接，全都会变成 unhandled rejection——用户点了
+   *  命令既没有反馈也没有日志。 */
+  const fireAndForget = (start: () => Promise<void>): void => {
+    void start().catch((error: unknown) => {
+      append({ role: 'system', text: t('命令执行失败：{{message}}', { message: String(error) }) })
+    })
+  }
+
   return [
     {
       name: '/model',
@@ -87,13 +98,13 @@ export function createSlashCommands(context: SlashCommandContext): SlashCommand[
         setModelMenuOpen(true)
       },
     },
-    { name: '/settings', description: t('打开设置'), run: () => void openSettings() },
-    { name: '/doc', description: t('打开文档面板'), run: () => void openDocumentPanel() },
+    { name: '/settings', description: t('打开设置'), run: () => fireAndForget(() => openSettings()) },
+    { name: '/doc', description: t('打开文档面板'), run: () => fireAndForget(() => openDocumentPanel()) },
     { name: '/files', description: t('打开文件浏览器与编辑器'), run: () => openInspector('file') },
-    { name: '/git', description: t('查看 Git 变更'), run: () => void openGitPanel() },
-    { name: '/checks', description: t('运行项目检查'), run: () => void openChecksPanel() },
-    { name: '/sessions', description: t('显示侧边栏'), run: () => void openSidebar() },
-    { name: '/resume', description: t('显示侧边栏并选择会话'), run: () => void openSidebar() },
+    { name: '/git', description: t('查看 Git 变更'), run: () => fireAndForget(() => openGitPanel()) },
+    { name: '/checks', description: t('运行项目检查'), run: () => fireAndForget(() => openChecksPanel()) },
+    { name: '/sessions', description: t('显示侧边栏'), run: () => fireAndForget(() => openSidebar()) },
+    { name: '/resume', description: t('显示侧边栏并选择会话'), run: () => fireAndForget(() => openSidebar()) },
     {
       name: '/terminal',
       description: t('展开 / 收起终端'),
@@ -103,44 +114,60 @@ export function createSlashCommands(context: SlashCommandContext): SlashCommand[
         toggleInspector('terminal')
       },
     },
-    { name: '/diagnostics', description: t('运行诊断'), run: () => void runDiagnostics() },
+    { name: '/diagnostics', description: t('运行诊断'), run: () => fireAndForget(() => runDiagnostics()) },
     { name: '/manual', description: t('打开用户手册'), run: () => setManualOpen(true) },
-    { name: '/compact', description: t('压缩上下文'), run: () => void runCompact() },
-    { name: '/context', description: t('查看上下文构成'), run: () => void requestTextReport('context:stats') },
-    { name: '/usage', description: t('查看本会话用量'), run: () => void requestTextReport('usage:summary') },
+    { name: '/compact', description: t('压缩上下文'), run: () => fireAndForget(() => runCompact()) },
+    {
+      name: '/context',
+      description: t('查看上下文构成'),
+      run: () => fireAndForget(() => requestTextReport('context:stats')),
+    },
+    {
+      name: '/usage',
+      description: t('查看本会话用量'),
+      run: () => fireAndForget(() => requestTextReport('usage:summary')),
+    },
     {
       name: '/export',
       description: t('导出当前会话（markdown / json / pdf）'),
-      run: () => void exportCurrentSession('markdown'),
+      run: () => fireAndForget(() => exportCurrentSession('markdown')),
     },
     {
       name: '/usage-history',
       description: t('查看最近会话用量'),
-      run: () => void requestTextReport('usage:history'),
+      run: () => fireAndForget(() => requestTextReport('usage:history')),
     },
-    { name: '/doctor', description: t('环境 / 插件 / MCP 诊断'), run: () => void requestTextReport('doctor:run') },
+    {
+      name: '/doctor',
+      description: t('环境 / 插件 / MCP 诊断'),
+      run: () => fireAndForget(() => requestTextReport('doctor:run')),
+    },
     { name: '/ps', description: t('后台任务面板'), run: () => setBackgroundOpen(true) },
     { name: '/background', description: t('后台任务面板'), run: () => setBackgroundOpen(true) },
-    { name: '/list-agents', description: t('列出子代理'), run: () => void requestTextReport('agents:list') },
+    {
+      name: '/list-agents',
+      description: t('列出子代理'),
+      run: () => fireAndForget(() => requestTextReport('agents:list')),
+    },
     { name: '/search', description: t('全局检索本地上下文'), run: () => setContextSearchOpen(true) },
     { name: '/goal', description: t('查看 goal 状态'), run: () => setGoalOpen(true) },
-    { name: '/thinking', description: t('切换思考模式'), run: () => void toggleThinking() },
-    { name: '/plan', description: t('切换计划模式'), run: () => void togglePlan() },
+    { name: '/thinking', description: t('切换思考模式'), run: () => fireAndForget(() => toggleThinking()) },
+    { name: '/plan', description: t('切换计划模式'), run: () => fireAndForget(() => togglePlan()) },
     {
       name: '/clear',
       description: t('新建会话并清空对话'),
       run: () => {
         setReport(null)
-        void newSession()
+        fireAndForget(() => newSession())
       },
     },
-    { name: '/stop', description: t('停止当前回复'), run: () => void abort() },
+    { name: '/stop', description: t('停止当前回复'), run: () => fireAndForget(() => abort()) },
     {
       name: '/init',
       description: t('分析仓库并生成 AGENTS.md'),
       run: () => {
         append({ role: 'system', text: t('执行 /init') })
-        void submit(INIT_PROMPT, true)
+        fireAndForget(() => submit(INIT_PROMPT, true))
       },
     },
     {
@@ -148,13 +175,13 @@ export function createSlashCommands(context: SlashCommandContext): SlashCommand[
       description: t('审查当前改动'),
       run: () => {
         append({ role: 'system', text: t('执行 /review') })
-        void submit(REVIEW_PROMPT, true)
+        fireAndForget(() => submit(REVIEW_PROMPT, true))
       },
     },
     {
       name: '/fork',
       description: t('从当前会话派生一个新分支'),
-      run: () => void forkCurrentSession(),
+      run: () => fireAndForget(() => forkCurrentSession()),
     },
     {
       name: '/rewind',
@@ -164,22 +191,28 @@ export function createSlashCommands(context: SlashCommandContext): SlashCommand[
     {
       name: '/memory',
       description: t('查看用户记忆'),
-      run: () => void requestTextReport('memory:get'),
+      run: () => fireAndForget(() => requestTextReport('memory:get')),
     },
     {
       name: '/theme',
       description: t('打开外观设置（亮色 / 暗色 / 跟随系统）'),
-      run: () => void openSettings(),
+      run: () => fireAndForget(() => openSettings()),
     },
     {
       name: '/browser',
       description: t('打开浏览器子代理与视觉检查设置'),
-      run: () => void openSettings('tools'),
+      run: () => fireAndForget(() => openSettings('tools')),
     },
     {
       name: '/exit',
       description: t('退出应用'),
-      run: () => void window.xcode.request({ id: crypto.randomUUID(), method: 'app:quit', params: {} }),
+      run: () =>
+        fireAndForget(async () => {
+          // 旧实现用 `void` 把 rejection 和 `ok: false` 一起丢掉：IPC 桥接挂掉时
+          // 用户按 /exit 什么都不会发生，也没有任何提示。
+          const response = await window.xcode.request({ id: crypto.randomUUID(), method: 'app:quit', params: {} })
+          if (!response.ok) throw new Error(response.error.message)
+        }),
     },
   ]
 }

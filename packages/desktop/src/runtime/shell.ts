@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import os from 'node:os'
 
 import type { RuntimeEvent, ShellCreateParams } from '../shared/protocol.js'
 import { refreshShellEnvironment } from './shell-env.js'
@@ -55,29 +56,59 @@ export function ptyEnv(): Record<string, string> {
 export class ShellManager {
   private shells = new Map<string, Pty>()
   private seq = 0
+  /** 被主动 kill 的终端 id：用来区分“用户关闭标签页”和“shell 意外退出”。 */
+  private readonly killed = new Set<string>()
 
   constructor(private readonly send: (event: RuntimeEvent) => void) {}
 
   async create(params: ShellCreateParams): Promise<{ id: string }> {
     const pty = await loadPty()
     const id = `shell-${++this.seq}`
-    const { file, args } = interactiveShell()
     await refreshShellEnvironment()
-    const proc = pty.spawn(file, args, {
-      name: 'xterm-256color',
-      cols: Math.max(2, params.cols),
-      rows: Math.max(2, params.rows),
-      cwd: params.cwd && fs.existsSync(params.cwd) ? params.cwd : process.cwd(),
-      env: ptyEnv(),
-    })
+    // 必须在刷新之后再求值：GUI 启动时 `SHELL` 常常是空的，登录 shell
+    // 探测会把真实的 `SHELL` 合并进 `process.env`，早求值就会退回到
+    // `/bin/sh`（Linux 上通常不是用户的真实 shell），与 `ptyEnv()` 的顺序
+    // 也不一致。
+    const { file, args } = interactiveShell()
+    let proc: Pty | null = null
+    try {
+      proc = pty.spawn(file, args, {
+        name: 'xterm-256color',
+        cols: Math.max(2, params.cols),
+        rows: Math.max(2, params.rows),
+        // `process.cwd()` 在打包后的 Electron 里可能是 `/` 或应用安装目录：
+        // 用户新开终端会落在一个不可写的奇怪位置。回退到 home。
+        cwd: params.cwd && fs.existsSync(params.cwd) ? params.cwd : os.homedir(),
+        env: ptyEnv(),
+      })
 
-    this.shells.set(id, proc)
-    proc.onData((data) => this.send({ type: 'shell:output', id, data }))
-    proc.onExit(({ exitCode, signal }) => {
+      this.shells.set(id, proc)
+      proc.onData((data) => {
+        // 主动 kill 的 shell 不再往 renderer 推残留输出。
+        if (this.killed.has(id)) return
+        this.send({ type: 'shell:output', id, data })
+      })
+      proc.onExit(({ exitCode, signal }) => {
+        this.shells.delete(id)
+        // 用户主动关闭标签页时不再回一条 `shell:exit`：那会让人误以为
+        // shell 崩溃，或在 disposeAll 的关闭流程里往已销毁的端口发消息。
+        if (this.killed.delete(id)) return
+        this.send({ type: 'shell:exit', id, exitCode, signal })
+      })
+      return { id }
+    } catch (error) {
+      // spawn / 注册失败时进程不在 `this.shells` 里，不 kill 就是无人管理的
+      // 孤儿进程（`seq` 已经自增，id 也不会再被复用）。
+      try {
+        proc?.kill()
+      } catch {
+        // 没起来就没有可 kill 的。
+      }
       this.shells.delete(id)
-      this.send({ type: 'shell:exit', id, exitCode, signal })
-    })
-    return { id }
+      this.killed.delete(id)
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`无法启动终端 ${file}：${message.slice(0, 200)}`)
+    }
   }
 
   write(id: string, data: string): void {
@@ -95,6 +126,7 @@ export class ShellManager {
   kill(id: string): void {
     const shell = this.shells.get(id)
     if (!shell) return
+    this.killed.add(id)
     this.shells.delete(id)
     try {
       shell.kill()

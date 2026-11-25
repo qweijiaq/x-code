@@ -57,7 +57,10 @@ const EAGER_LANGS = ['typescript', 'javascript', 'json', 'bash', 'python', 'mark
 
 async function loadShikiLanguage(name: string): Promise<LanguageInput | null> {
   const { languages } = await import('./shiki-assets-common.js')
-  return languages[name] ?? null
+  // 自有属性判断：`languages` 是普通对象字面量，`constructor` / `toString` 之类的
+  // 键会读到 `Object.prototype`（truthy，`?? null` 拦不住），于是把非语法对象
+  // 当成 LanguageInput 交给 `loadLanguage`。
+  return Object.hasOwn(languages, name) ? languages[name]! : null
 }
 
 /** 围栏 id / 扩展名 → shiki 语言 id + 惰性加载器。键是小写。shiki 默认不认识
@@ -89,6 +92,9 @@ const LANG_LOADERS: Record<string, () => Promise<LanguageInput | null>> = {
 
 let highlighter: HighlighterCore | null = null
 let warmPromise: Promise<void> | null = null
+/** 引擎初始化已彻底失败——后续调用直接短路，不要反复重建 Oniguruma WASM 与
+ *  全部 grammar（OOM 这类故障下那会是每帧一次的昂贵重试）。 */
+let initFailed = false
 /** 已知已加载的语言 id（shiki 名字）。 */
 const loadedLangs = new Set<string>()
 /** 正在进行的按需加载，以 shiki 语言 id 为键。 */
@@ -96,23 +102,32 @@ const pendingLangs = new Map<string, Promise<void>>()
 
 /** 在后台启动引擎初始化。可安全多次调用——后续调用是空操作。永不 reject。 */
 export function warmShikiEngine(): void {
-  if (highlighter || warmPromise) return
+  if (initFailed || highlighter || warmPromise) return
   warmPromise = (async () => {
     const assets = await import('./shiki-assets-common.js')
+    // 按「真正加载成功的模块」反推已注册的语言 id。急加载列表里某个语法缺失
+    // （或将来新增了 EAGER_LANG 却忘了在 shiki-assets-common 里注册）时不能
+    // 把它标成已加载——否则 `ensureLang` 直接返回 true，随后每次
+    // `codeToTokens` 都抛错并走 catch 回退，白在渲染循环里对每个代码块重复尝试。
+    const eager = await Promise.all(
+      EAGER_LANGS.map(async (id) => {
+        const loader = LANG_LOADERS[id]
+        const language: LanguageInput | null = loader ? await loader() : null
+        return language ? { id: shikiLangId(id), language } : null
+      }),
+    )
+    const loaded = eager.filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     const h = await createHighlighterCore({
       themes: assets.themes,
-      langs: (await Promise.all(
-        EAGER_LANGS.map(async (id) => {
-          const loader = LANG_LOADERS[id]
-          return loader ? await loader() : null
-        }),
-      ).then((mods) => mods.filter((m) => m !== null))) as LanguageInput[],
+      langs: loaded.map((entry) => entry.language),
       engine: createOnigurumaEngine(Promise.resolve(assets.wasm)),
     })
-    for (const id of EAGER_LANGS) loadedLangs.add(shikiLangId(id))
+    for (const entry of loaded) loadedLangs.add(entry.id)
     highlighter = h
   })().catch(() => {
     // 引擎失败（OOM、坏块……）——永久停留在正则回退上，而不是让 UI 崩溃。
+    // 同时记下失败，让后续 `warmShikiEngine()` 短路而不是再重试一次完整初始化。
+    initFailed = true
     warmPromise = null
   })
 }
@@ -277,7 +292,15 @@ export function highlightCodeShiki(code: string, fenceLang: string | undefined):
  *  该输入时回退到内置正则高亮器。所有 shell 预览调用点（实时工具行、已提交
  *  滚动区行、权限对话框）都必须经过这一个辅助函数，避免各自着色漂移。 */
 export function highlightShellCommand(command: string): string {
-  return highlightCodeShiki(command, 'shell') ?? highlightLine(command, 'shell')
+  // 回退时按行拆分后逐行高亮再 join：`highlightLine` 的正则在遇到未闭合引号 /
+  // 续行符时会跨行染色，而 shiki 路径永远不跨行——两种状态下的着色结果会漂移。
+  return (
+    highlightCodeShiki(command, 'shell') ??
+    command
+      .split('\n')
+      .map((line) => highlightLine(line, 'shell'))
+      .join('\n')
+  )
 }
 
 /** 测试钩子：引擎预热完成后为 true。 */

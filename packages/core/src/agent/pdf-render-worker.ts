@@ -12,11 +12,26 @@ let queue: Promise<void> = Promise.resolve()
 
 async function handleRequest(request: PdfRenderRequest): Promise<PdfRenderResponse> {
   try {
+    // destroy 必须先于「parser 未初始化」校验：init 失败或从未 init 时（parser
+    // 为 null）返回 ok:false 会让 onRequest 的 shouldClose 为 false，worker 自己
+    // 永远不关闭通道——Windows fork 模式下进程一直挂着，只能靠父端 kill。
+    if (request.type === 'destroy') {
+      await parser?.destroy().catch(() => {})
+      parser = null
+      return { id: request.id, ok: true, result: { type: 'destroy' } }
+    }
     if (request.type === 'init') {
       const { PDFParse } = await import('pdf-parse')
       configurePdfWorker(PDFParse)
-      parser = new PDFParse({ data: new Uint8Array(request.data) })
-      const info = await parser.getInfo()
+      // 复用同一个 worker 重新 init（换一份 PDF）时先释放旧实例：PDFParse 持有
+      // 整份 PDF 数据（最大 20MB），在 512MB 受限堆里很容易被放大成 OOM。
+      // 先赋值再 getInfo：getInfo 抛错时实例仍可被后续 destroy 释放，
+      // 而不是留在半初始化状态。
+      await parser?.destroy().catch(() => {})
+      parser = null
+      const nextParser = new PDFParse({ data: new Uint8Array(request.data) })
+      parser = nextParser
+      const info = await nextParser.getInfo()
       return { id: request.id, ok: true, result: { type: 'init', totalPages: info.total } }
     }
     if (!parser) throw new Error('PDF parser is not initialized')
@@ -60,9 +75,10 @@ async function handleRequest(request: PdfRenderRequest): Promise<PdfRenderRespon
         },
       }
     }
-    await parser.destroy().catch(() => {})
-    parser = null
-    return { id: request.id, ok: true, result: { type: 'destroy' } }
+    // 未知类型（父端把消息断言成 PdfRenderRequest，没有运行时校验）不能落到
+    // destroy 分支：那会静默销毁 parser 并关闭通道，让 worker 提前终止，
+    // 之后所有请求都表现为 "exited unexpectedly"。
+    throw new Error(`Unsupported PDF render request type: ${String((request as { type?: unknown }).type)}`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return { id: request.id, ok: false, error: message }

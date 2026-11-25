@@ -254,7 +254,11 @@ async function runSubAgentUnlocked(
   if (!runLoop) throw new Error('Sub-agent loop runner not configured')
 
   const subModel = resolveSubModel(agentDef, parentOptions, parentModel)
-  const subModelId = agentDef.model ? (resolveModelId(agentDef.model) ?? parentOptions.modelId) : parentOptions.modelId
+  // 只有解析出的模型确实被采用时才用它的 id，否则回退到父模型 id。否则注册表缺失 /
+  // 解析抛错 / 没有 modelRegistry 时实际跑的是父模型，而 subModelId 仍是子代理声明的
+  // 模型——计费归属、modelSupportsVision、capabilitiesOf 全部指向错误的模型。
+  const resolvedSubModelId = agentDef.model ? resolveModelId(agentDef.model) : null
+  const subModelId = resolvedSubModelId && subModel !== parentModel ? resolvedSubModelId : parentOptions.modelId
 
   // `browser` 代理拿到的是一份私有 mcp registry（@playwright/mcp server），替代父级的
   // registry，这样它的浏览器工具就永远不会进入主循环的工具面或任何其他代理。惰性连接；
@@ -428,6 +432,10 @@ async function runSubAgentUnlocked(
     },
     onFileEdit: callbacks.onFileEdit,
     onAskPermission: callbacks.onAskPermission,
+    // 不转发这两个会让子代理里需要 authority 审批的调用 fail-closed 静默拒绝
+    // （用户毫无感知），以及静默模型降级在 UI 上完全不可见。
+    onAskAuthority: callbacks.onAskAuthority,
+    onModelFallback: callbacks.onModelFallback,
     onAskUser: callbacks.onAskUser,
     onPlanApprovalRequest: callbacks.onPlanApprovalRequest,
     onPlanModeChange: () => {},
@@ -485,8 +493,13 @@ async function runSubAgentUnlocked(
     const durationMs = Date.now() - startTime
 
     // agentLoop 会在内部捕获 abort/error 并带 outcome 标记正常返回，因此这个 catch 只在
-    // 有东西越过那些守卫抛出时触发（通常是 setup 阶段代码：知识加载、slug 生成等）。
-    // 到那时子代理还没真正执行过任何轮次，所以报 0 是诚实的。
+    // 有东西越过那些守卫抛出时触发（setup 阶段代码：知识加载、slug 生成等；也可能
+    // 是执行中途抛错的持久化/压缩路径）。子循环已经消耗的 token 只存在于
+    // subState.tokenUsage 里，不在这里累加会让父会话与计费统计系统性偏低。
+    accumulateChildUsage(parentState, subState, subModelId)
+    callbacks.onUsageUpdate(parentState.tokenUsage)
+    void appendUsage(parentState, parentOptions.modelId)
+
     const fallbackTurnCount = 0
 
     if (isAbortError(err, parentOptions.abortSignal)) {

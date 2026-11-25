@@ -21,8 +21,16 @@ export const AttachmentImage = memo(
     variant: 'chip' | 'message'
     onOpen: (src: string, name: string) => void
   }): React.JSX.Element {
-    const [src, setSrc] = useState<string | null>(() => imagePreviewCache.get(file) ?? null)
-    const [failed, setFailed] = useState(false)
+    // 状态里带上文件路径。只存 src 时，同一个组件实例被复用（列表 key 用
+    // `${name}-${index}` 或 index，name/index 不变而 path 变了）就会命中
+    // 「已有 src」的早退分支，界面一直显示上一张图。
+    const [loaded, setLoaded] = useState<{ file: string; src?: string; failed?: boolean } | null>(() => {
+      const cached = imagePreviewCache.get(file)
+      return cached ? { file, src: cached } : null
+    })
+    const current = loaded && loaded.file === file ? loaded : null
+    const src = current?.src ?? null
+    const failed = current?.failed === true
     const name = attachmentName(file)
     useEffect(() => {
       if (src || failed) return
@@ -36,15 +44,15 @@ export const AttachmentImage = memo(
         .then((response) => {
           if (cancelled) return
           if (!response.ok) {
-            setFailed(true)
+            setLoaded({ file, failed: true })
             return
           }
           const dataUrl = (response.result as { dataUrl: string }).dataUrl
           imagePreviewCache.set(file, dataUrl)
-          setSrc(dataUrl)
+          setLoaded({ file, src: dataUrl })
         })
         .catch(() => {
-          if (!cancelled) setFailed(true)
+          if (!cancelled) setLoaded({ file, failed: true })
         })
       return () => {
         cancelled = true
@@ -70,8 +78,20 @@ export const AttachmentImage = memo(
       </button>
     )
   },
-  (prev, next) => prev.file === next.file && prev.variant === next.variant,
+  // `onOpen` 必须参与比较：调用点既传稳定的 `onOpenImage`，也传内联箭头函数。
+  // 漏掉它时，点击缩略图会执行捕获了旧 state/ref 的旧闭包（打开到错误的预览态）。
+  (prev, next) => prev.file === next.file && prev.variant === next.variant && prev.onOpen === next.onOpen,
 )
+
+/** diff 行前缀 → 渲染样式。`isCreate` 时 `content` 是文件原文而不是 diff 行：
+ *  原文里以 `-` 开头的 Markdown 列表、以 `+` 开头的字符串会被误标成 del/add，
+ *  所以整段按新增渲染（也与「新建文件全是 +」的统计口径一致）。 */
+function diffLineSigil(line: string, isCreate: boolean): 'add' | 'del' | 'ctx' {
+  if (isCreate) return 'add'
+  if (line[0] === '+') return 'add'
+  if (line[0] === '-') return 'del'
+  return 'ctx'
+}
 
 export function DiffView({
   diff,
@@ -94,9 +114,11 @@ export function DiffView({
   const open = override && override.base === baseOpen ? override.open : baseOpen
   const setOpen = (next: boolean): void => setOverride({ base: baseOpen, open: next })
   const allLines = diff.isCreate && diff.content ? diff.content.split('\n') : diff.hunks.flatMap((hunk) => hunk.lines)
-  const lines = allLines.slice(0, 80)
-  const preview = lines.slice(0, 4)
-  const hidden = lines.length - preview.length
+  // 折叠时只给 4 行预览；展开时渲染全部内容。过去展开被硬截断在 80 行，按钮却按
+  // `lines.length - preview.length` 报数——"展开剩余 76 行"点开后 80 行之后的
+  // 内容被永久丢弃且没有任何提示。
+  const preview = allLines.slice(0, 4)
+  const hidden = allLines.length - preview.length
   return (
     <div className="diff">
       <div className="diff-head">
@@ -122,14 +144,11 @@ export function DiffView({
         ) : null}
       </div>
       <div className={`diff-body ${open ? 'open' : 'collapsed'}`}>
-        {(open ? lines : preview).map((line, index) => {
-          const sigil = line[0] === '+' ? 'add' : line[0] === '-' ? 'del' : 'ctx'
-          return (
-            <div key={index} className={`diff-line ${sigil}`}>
-              {line}
-            </div>
-          )
-        })}
+        {(open ? allLines : preview).map((line, index) => (
+          <div key={index} className={`diff-line ${diffLineSigil(line, diff.isCreate === true)}`}>
+            {line}
+          </div>
+        ))}
       </div>
       {!open && hidden > 0 ? (
         <button type="button" className="diff-more" onClick={() => setOpen(true)}>
@@ -142,8 +161,17 @@ export function DiffView({
 
 export const SourceList = memo(function SourceList({ text }: { text: string }): React.JSX.Element | null {
   const { t } = useTranslation()
+  const [openError, setOpenError] = useState<string | null>(null)
   const urls = extractSourceUrls(text)
   if (urls.length === 0) return null
+  // 与开放外部链接的其他调用点一致：IPC 可能 reject，返回值也可能 `ok: false`。
+  // 不接住的话，用户点了来源标签什么都不会发生（还有一条 unhandled rejection）。
+  const openExternal = (url: string): void => {
+    void window.xcode
+      .request({ id: crypto.randomUUID(), method: 'app:open-external', params: { url } })
+      .then((response) => setOpenError(response.ok ? null : response.error.message))
+      .catch((error: unknown) => setOpenError(error instanceof Error ? error.message : String(error)))
+  }
   return (
     <div className="tool-sources" data-testid="tool-sources">
       <span className="tool-sources-label">{t('来源')}</span>
@@ -156,22 +184,16 @@ export const SourceList = memo(function SourceList({ text }: { text: string }): 
           // 保留原始 URL。
         }
         return (
-          <button
-            key={url}
-            className="source-chip"
-            title={url}
-            onClick={() =>
-              void window.xcode.request({
-                id: crypto.randomUUID(),
-                method: 'app:open-external',
-                params: { url },
-              })
-            }
-          >
+          <button key={url} type="button" className="source-chip" title={url} onClick={() => openExternal(url)}>
             {label}
           </button>
         )
       })}
+      {openError ? (
+        <span className="tool-sources-error" title={openError}>
+          {t('失败')}
+        </span>
+      ) : null}
     </div>
   )
 })

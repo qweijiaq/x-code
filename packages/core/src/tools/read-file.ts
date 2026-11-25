@@ -177,12 +177,15 @@ async function readTextResult(
   }
 
   if (partialLine) {
-    let text = lineParts.join('')
+    // 复用 truncateUtf8：`slice(0, -1)` 按 UTF-16 码元裁剪，会把代理对
+    // （emoji、部分 CJK 扩展字符）劈成孤立代理项，序列化后变成乱码；而且每轮
+    // 都对整串重算 `Buffer.byteLength` 在最坏情况下是 O(n²)。
+    const text = lineParts.join('')
     const separatorBytes = formatted.length > 0 ? 1 : 0
-    while (Buffer.byteLength(`${lineNumber}\t${text}`, 'utf-8') + separatorBytes > MAX_READ_BYTES) {
-      text = text.slice(0, -1)
-    }
-    formatted.push(`${lineNumber}\t${text}`)
+    const prefix = `${lineNumber}\t`
+    const budget = MAX_READ_BYTES - separatorBytes - Buffer.byteLength(prefix, 'utf-8')
+    const clipped = Buffer.byteLength(text, 'utf-8') > budget ? truncateUtf8(text, Math.max(0, budget)) : text
+    formatted.push(`${prefix}${clipped}`)
   }
 
   const includedLines = formatted.length
@@ -220,11 +223,17 @@ async function readTextResult(
 }
 
 // ── 读取去重 ──
-// 重新读一个本次会话已交付完整文本的文件 —— 无论是经附件摄入还是 readFile
+// 重新读一个本次会话已交付完整内容的文件 —— 无论是经附件摄入还是 readFile
 // —— 都浪费上下文。改为返回一个短占位桩，可以省下成千上万个 token，也避免
-// 反复做本地转写。只有产出文本的整文件读取才去重；显式文本范围总是重新读，
-// 而图片/PDF 读取仍可用于刻意的再次视觉查看。一次编辑/写入会改变文件的
-// mtime，所以下一次读取自然错过缓存、返回新鲜内容。
+// 反复做本地转写 / 反复上传同一张图。去重覆盖所有「整文件」读取（文本、
+// 图片、office 提取、notebook、音频转写）；显式 offset/limit 的文本范围读取
+// 总是重新读。注意这包括图片：同一个未变的图片第二次读取只会拿到占位桩，
+// 也就是说「刻意再看一眼这张图」做不到——这是为了让模型不在循环里反复上传
+// 同一张图而刻意付出的代价（想重新看就先改动文件，或用 offset/limit 看文本）。
+// 一次编辑/写入会改变文件的 mtime，所以下一次读取自然错过缓存、返回新鲜内容。
+//
+// 命中判断顺带返回 stat 指纹（`entry`），让调用方不必再为一趟读取做第二次
+// `fs.stat`。
 type ReadCacheVerdict = { hit: true; stub: string } | { hit: false; entry: ReadFileCacheEntry } | null
 
 async function checkReadCache(
@@ -300,12 +309,13 @@ Usage:
         // 原始 JSON。先分类可确保一个被改名的二进制文件永远不会被当成
         // notebook 文本解码。
         if (kind === 'notebook') {
-          const stats = await fs.stat(filePath)
-          if (stats.size > MAX_NOTEBOOK_SOURCE_BYTES) {
-            return `[Notebook ${filePath} is too large to parse safely (${(stats.size / (1024 * 1024)).toFixed(1)} MB, cap ${MAX_NOTEBOOK_SOURCE_BYTES / (1024 * 1024)} MB). Use grep or shell tools to inspect selected cells.]`
-          }
+          // 先查缓存（它自带一次 stat），命中时连尺寸校验都不必做。
           const verdict = await checkReadCache(cache, filePath, false)
           if (verdict && verdict.hit) return verdict.stub
+          const size = verdict ? verdict.entry.size : (await fs.stat(filePath)).size
+          if (size > MAX_NOTEBOOK_SOURCE_BYTES) {
+            return `[Notebook ${filePath} is too large to parse safely (${(size / (1024 * 1024)).toFixed(1)} MB, cap ${MAX_NOTEBOOK_SOURCE_BYTES / (1024 * 1024)} MB). Use grep or shell tools to inspect selected cells.]`
+          }
           const { text, complete } = await renderNotebookFile(filePath, abortSignal)
           if (verdict && !verdict.hit && complete) cache?.set(filePath, verdict.entry)
           return text
@@ -332,11 +342,13 @@ Usage:
         }
 
         if (kind === 'image') {
+          // 缓存命中判断本身就要 stat，这里复用它做体积校验，避免一次读取
+          // 对同一个文件做两次 `fs.stat`。
           const verdict = await checkReadCache(cache, filePath, false)
           if (verdict && verdict.hit) return verdict.stub
-          const stats = await fs.stat(filePath)
-          if (stats.size > MAX_IMAGE_SOURCE_BYTES) {
-            return `[Image ${filePath} is too large to process safely (${(stats.size / (1024 * 1024)).toFixed(1)} MB, cap ${MAX_IMAGE_SOURCE_BYTES / (1024 * 1024)} MB).]`
+          const size = verdict ? verdict.entry.size : (await fs.stat(filePath)).size
+          if (size > MAX_IMAGE_SOURCE_BYTES) {
+            return `[Image ${filePath} is too large to process safely (${(size / (1024 * 1024)).toFixed(1)} MB, cap ${MAX_IMAGE_SOURCE_BYTES / (1024 * 1024)} MB).]`
           }
           let buffer: Buffer
           try {

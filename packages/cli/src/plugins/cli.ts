@@ -34,6 +34,13 @@ import { updateInstalledPlugin } from './update.js'
 
 const chalk = new Chalk()
 
+/** `Writable.write` 的完整签名——打补丁时三参数必须原样转发。 */
+type StreamWrite = (
+  chunk: string | Buffer,
+  encoding?: BufferEncoding,
+  callback?: (error?: Error | null) => void,
+) => boolean
+
 export async function runPluginCli(args: string[]): Promise<number> {
   const sub = (args[0] ?? '').toLowerCase()
   const rest = args.slice(1)
@@ -284,7 +291,10 @@ async function promptConsent(preview: ConsentPreview): Promise<boolean> {
   process.stderr.write(lines.join('\n'))
 
   // 无 TTY → 默认拒绝。脚本应传 `--yes`。
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  // 提示写在 stderr 上：所以要检查 stderr 而不是 stdout 是不是 TTY。否则
+  // `xc plugin install foo > log` 会被误判成「无 TTY」而拒绝安装，反过来
+  // `2>err.log` 又会在用户看不见的日志里提问，进程表现为「卡住等输入」。
+  if (!process.stdin.isTTY || !process.stderr.isTTY) {
     process.stderr.write(chalk.yellow('No TTY — declining install. Use --yes to skip the prompt in scripts.\n'))
     return false
   }
@@ -309,7 +319,10 @@ async function promptUserConfig(
   // installer 只在 fields.length > 0 时才调用我们，但 TypeScript 从调用点
   // 看不到这一点——显式防护。
   if (!fields) return {}
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  // 提示写在 stderr 上：所以要检查 stderr 而不是 stdout 是不是 TTY。否则
+  // `xc plugin install foo > log` 会被误判成「无 TTY」而拒绝安装，反过来
+  // `2>err.log` 又会在用户看不见的日志里提问，进程表现为「卡住等输入」。
+  if (!process.stdin.isTTY || !process.stderr.isTTY) {
     process.stderr.write(
       chalk.yellow(
         'No TTY — skipping userConfig prompt. Pre-seed values in ~/.x-code/plugins/user-config.json or use --yes.\n',
@@ -326,8 +339,10 @@ async function promptUserConfig(
     for (const f of fields) {
       const label = f.prompt ?? f.description
       const required = f.required ? ' (required)' : ''
-      const defaultNote = f.default !== undefined ? ` [default: ${f.default}]` : ''
       const sensitive = f.sensitive === true
+      // 敏感字段的 `default` 就是凭据本身：回显到 stderr 会让终端回滚缓冲/日志
+      // 重定向留下明文密钥，与下面精心做的输入掩码自相矛盾。只提示存在默认值。
+      const defaultNote = f.default === undefined ? '' : sensitive ? ' [default: (hidden)]' : ` [default: ${f.default}]`
       // 当 manifest 既没提供 `prompt` 也没提供 `description` 时，旧代码会落到
       // `f.key`，产生像 `MY_URL: MY_URL [default: ...]` 这样的标签——键被同时
       // 用作标签*和*人类可读描述。那种情况下只显示键本身。
@@ -341,22 +356,28 @@ async function promptUserConfig(
         // 给输出流的 write 打补丁，丢弃除了每次击键一个 '*' 之外的所有内容。
         // 与 inquirer 用于其 `password` 提示的技术相同。
         const out = process.stderr
-        const originalWrite = out.write.bind(out)
+        const originalMethod: typeof out.write = out.write
+        const writeThrough = originalMethod.bind(out) as StreamWrite
         process.stderr.write(promptText)
         let muted = true
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ;(out as { write: (...args: any[]) => boolean }).write = (chunk: string | Buffer) => {
-          if (!muted) return originalWrite(chunk)
-          const s = typeof chunk === 'string' ? chunk : chunk.toString()
-          if (s.includes('\n') || s.includes('\r')) return originalWrite(s)
+        // 必须保留 `write(chunk, encoding, callback)` 的完整签名并原样转发：
+        // 只接收 chunk 的替换函数会丢掉 encoding，且 readline / 管道的写入回调
+        // 永远不触发（写队列停止排空，表现为挂住）。
+        ;(out as unknown as { write: StreamWrite }).write = (chunk, encodingOrCallback, callback) => {
+          const cb = typeof encodingOrCallback === 'function' ? encodingOrCallback : callback
+          const encoding = typeof encodingOrCallback === 'string' ? encodingOrCallback : undefined
+          if (!muted) return writeThrough(chunk, encoding, cb)
+          const s = typeof chunk === 'string' ? chunk : chunk.toString(encoding)
+          if (s.includes('\n') || s.includes('\r')) return writeThrough(s, encoding, cb)
+          // 被抑制的写入仍要兑现回调，否则调用方会一直等 drain。
+          cb?.()
           return true
         }
         try {
           answer = await rl.question('')
         } finally {
           muted = false
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          ;(out as { write: (...args: any[]) => boolean }).write = originalWrite
+          ;(out as unknown as { write: typeof out.write }).write = originalMethod
           process.stderr.write('\n')
         }
       } else {
@@ -427,8 +448,22 @@ async function cliUninstall(args: string[]): Promise<number> {
     console.error(`No plugin '${id}' installed.`)
     return 1
   }
-  for (const scope of ['user', 'project'] as PluginScope[]) {
-    await clearPluginEntry(id, scope).catch(() => undefined)
+  // 两个 scope 互不依赖，可并行清理；但失败必须可见——残留的 settings 条目会
+  // 让下面这句 “Uninstalled ...” 伪装成清理成功，下次加载时又变成一条加载错误。
+  const failedScopes: PluginScope[] = []
+  await Promise.all(
+    (['user', 'project'] as PluginScope[]).map((scope) =>
+      clearPluginEntry(id, scope).catch(() => {
+        failedScopes.push(scope)
+      }),
+    ),
+  )
+  if (failedScopes.length > 0) {
+    console.error(
+      chalk.yellow(
+        `Warning: could not clear settings entries in ${failedScopes.join(', ')} scope — edit settings.json manually.`,
+      ),
+    )
   }
   console.log(
     chalk.green(

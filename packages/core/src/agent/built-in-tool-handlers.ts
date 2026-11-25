@@ -1,8 +1,9 @@
 import { propagateExternalContent } from '../permissions/external-content.js'
 import { truncateToolResult } from '../tools/index.js'
 import { reportProgress } from '../tools/progress.js'
-import type { BackgroundInfoItem } from '../types/index.js'
+import type { AgentCallbacks, BackgroundInfoItem } from '../types/index.js'
 import { debugLog, isAbortError } from '../utils.js'
+import type { BackgroundTaskSnapshot } from './background-tasks.js'
 import { markExpectedCacheMiss } from './cache-stats.js'
 import { toolErrorFromUnknown, toolErrorString } from './messages.js'
 import { runSubAgent } from './sub-agents/runner.js'
@@ -63,6 +64,17 @@ async function collectBackgroundInfo(context: ToolHandlerContext): Promise<Backg
     debugLog('background-info-provider-failed', String(error))
   }
   return items
+}
+
+/** 通知 UI 一个后台任务已结束。UI 回调抛错绝不能让 `void` 出去的子代理 promise
+ *  变成 unhandled rejection（Node 默认会终止进程），也不能让 `.then()` 的错误
+ *  落到 `.catch()`——那会把已完成的任务重新走一遍失败分支。 */
+function emitBackgroundTaskEnd(callbacks: AgentCallbacks, task: BackgroundTaskSnapshot): void {
+  try {
+    callbacks.onBackgroundTaskEvent?.({ kind: 'end', task })
+  } catch (error) {
+    debugLog('background-task-event-error', String(error))
+  }
 }
 
 function formatBackgroundItem(item: BackgroundInfoItem): string {
@@ -151,8 +163,29 @@ async function waitForShell(
 export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Record<string, ToolHandler> {
   const handleAskUser = async (context: ToolHandlerContext): Promise<void> => {
     const { input, toolCallId, toolName, state, callbacks } = context
-    const question = input.question as string
-    const options = input.options as { label: string; description: string }[]
+    // 工具输入在运行时是 unknown：断言取值会让 `options.map`/`options.find` 在
+    // undefined 上抛出，用户看不到提问，整轮以一条内部错误结束。这里做真正的收窄。
+    const question = typeof input.question === 'string' ? input.question.trim() : ''
+    if (!question) {
+      pushToolResult(
+        state,
+        callbacks,
+        toolCallId,
+        toolName,
+        toolErrorString('askUser requires a non-empty question.'),
+        true,
+      )
+      return
+    }
+    const options = (Array.isArray(input.options) ? input.options : [])
+      .filter(
+        (option): option is { label: string; description?: unknown } =>
+          typeof option === 'object' && option !== null && typeof (option as { label?: unknown }).label === 'string',
+      )
+      .map((option) => ({
+        label: option.label,
+        description: typeof option.description === 'string' ? option.description : '',
+      }))
     const answer = await callbacks.onAskUser(question, options)
     pushToolResult(state, callbacks, toolCallId, toolName, `User answered: ${answer}`)
   }
@@ -186,6 +219,21 @@ export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Recor
     }
     reportProgress(toolCallId, `Task: ${description} (${agentName})`)
     const registry = options.backgroundTaskRegistry
+    // 没有注册表时不能静默降级成同步执行：模型被告知「后台运行、不要等待」，
+    // 但子代理会占满本轮直到跑完，双方对时序的假设完全相反。
+    if (input.background === true && !registry) {
+      pushToolResult(
+        state,
+        callbacks,
+        toolCallId,
+        toolName,
+        toolErrorString(
+          'Background dispatch is unavailable in this session; retry without `background: true` and the task will run synchronously inside this turn.',
+        ),
+        true,
+      )
+      return
+    }
     if (input.background === true && registry) {
       const { task, signal } = registry.start({
         toolCallId,
@@ -227,14 +275,14 @@ export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Recor
             externalContentTainted: result.externalContentTainted,
             externalContentSources: result.externalContentSources,
           })
-          if (finished) callbacks.onBackgroundTaskEvent?.({ kind: 'end', task: finished })
+          if (finished) emitBackgroundTaskEnd(callbacks, finished)
         })
         .catch((error: unknown) => {
           const finished = registry.complete(task.id, {
             status: signal.aborted ? 'aborted' : 'failed',
             error: error instanceof Error ? error.message : String(error),
           })
-          if (finished) callbacks.onBackgroundTaskEvent?.({ kind: 'end', task: finished })
+          if (finished) emitBackgroundTaskEnd(callbacks, finished)
         })
       return
     }

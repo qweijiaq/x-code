@@ -65,6 +65,8 @@ interface TsEvent {
 
 const REQUEST_TIMEOUT_MS = 15_000
 const IDLE_DISPOSE_MS = 60_000
+/** 行文本缓存最多保留多少个文件——缓存只是为了给预览省掉重复读盘，不该无限增长。 */
+const MAX_CACHED_FILES = 32
 
 function isPosition(value: unknown): value is Position {
   if (!value || typeof value !== 'object') return false
@@ -111,6 +113,11 @@ function renameSpans(value: unknown): FileSpan[] {
     if (isPosition(entry.start)) out.push(item as FileSpan)
   }
   return out
+}
+
+/** 丢掉 `toLocation` 判定为不可用的结果（缺少合法 `start` 的 span）。 */
+function compactLocations(locations: ReadonlyArray<LspLocation | undefined>): LspLocation[] {
+  return locations.filter((location): location is LspLocation => location !== undefined)
 }
 
 function diagnosticList(value: unknown): unknown[] {
@@ -181,6 +188,10 @@ export class TypeScriptService {
     this.child.stdout.on('data', (chunk: string) => this.consume(chunk))
     this.child.stderr.setEncoding('utf8')
     this.child.stderr.on('data', () => undefined)
+    // 流级错误（tsserver 已退出时的 EPIPE / ECONNRESET）只在 stream 上 emit，
+    // `child.on('error')` 收不到。没有监听器时 Node 会把它抛成未捕获异常，直接把
+    // CLI 打挂——`write()` 里的 `destroyed` 检查是 check-and-use，替不了它。
+    this.child.stdin.on('error', (error) => this.failAll(error instanceof Error ? error : new Error(String(error))))
     this.child.on('error', (error) => this.failAll(error))
     this.child.on('exit', (code, signal) => {
       if (!this.disposed)
@@ -291,6 +302,9 @@ export class TypeScriptService {
     const content = await fs.readFile(absolute, 'utf8')
     const previous = this.opened.get(absolute)
     if (previous === content) return
+    // 文件变了：预览行缓存必须一起失效，否则 tsserver 给出的是新位置、而
+    // `preview`/`diagnostics` 的行文本还是编辑前的旧内容。
+    this.lineCache.delete(absolute)
     if (previous === undefined) {
       await this.request('open', { file: absolute, fileContent: content, projectRootPath: this.root })
     } else {
@@ -304,12 +318,15 @@ export class TypeScriptService {
   }
 
   private async line(filePath: string, lineNumber: number): Promise<string | undefined> {
-    let lines = this.lineCache.get(filePath)
+    // 归一化 key：同一个文件可能以不同写法出现（Windows 的大小写 / 分隔符差异），
+    // 不归一化会为一份文件堆出多份缓存。
+    const key = path.resolve(filePath)
+    let lines = this.lineCache.get(key)
     if (!lines) {
       try {
-        const text = await fs.readFile(filePath, 'utf8')
+        const text = await fs.readFile(key, 'utf8')
         lines = text.split(/\r?\n/)
-        this.lineCache.set(filePath, lines)
+        this.cacheLines(key, lines)
       } catch {
         return undefined
       }
@@ -317,8 +334,22 @@ export class TypeScriptService {
     return lines[Math.max(0, lineNumber - 1)]
   }
 
-  private async toLocation(span: FileSpan): Promise<LspLocation> {
-    const start = span.start ?? { line: 1, offset: 1 }
+  private cacheLines(key: string, lines: string[]): void {
+    // 重新插入到末尾，使 Map 的插入顺序近似 LRU。
+    this.lineCache.delete(key)
+    this.lineCache.set(key, lines)
+    while (this.lineCache.size > MAX_CACHED_FILES) {
+      const oldest = this.lineCache.keys().next()
+      if (oldest.done) break
+      this.lineCache.delete(oldest.value)
+    }
+  }
+
+  /** 缺少 `start` 的 span 直接丢弃：伪造 `{ line: 1, offset: 1 }` 会给出一个
+   *  看起来合法、实际指向文件开头的定位，`rename` 叠加后尤其危险。 */
+  private async toLocation(span: FileSpan): Promise<LspLocation | undefined> {
+    const start = span.start
+    if (!isPosition(start)) return undefined
     const end = span.end
     const preview = span.lineText ?? (await this.line(span.file, start.line))
     return {
@@ -371,10 +402,12 @@ export class TypeScriptService {
     const absolute = path.resolve(this.root, filePath)
     await this.open(absolute)
     const body = await this.request<unknown>('definition', { file: absolute, line, offset: column }, signal)
-    return Promise.all(
-      spans(body)
-        .slice(0, limit)
-        .map((span) => this.toLocation(span)),
+    return compactLocations(
+      await Promise.all(
+        spans(body)
+          .slice(0, limit)
+          .map((span) => this.toLocation(span)),
+      ),
     )
   }
 
@@ -393,10 +426,12 @@ export class TypeScriptService {
       { file: absolute, line, offset: column, includeDeclaration },
       signal,
     )
-    return Promise.all(
-      spans(body?.refs)
-        .slice(0, limit)
-        .map((span) => this.toLocation(span)),
+    return compactLocations(
+      await Promise.all(
+        spans(body?.refs)
+          .slice(0, limit)
+          .map((span) => this.toLocation(span)),
+      ),
     )
   }
 
@@ -417,14 +452,15 @@ export class TypeScriptService {
     if (body?.info && body.info.canRename === false) {
       throw new Error(body.info.localizedErrorMessage || 'This symbol cannot be renamed')
     }
-    return Promise.all(
+    const edits = await Promise.all(
       renameSpans(body?.locs)
         .slice(0, limit)
-        .map(async (span) => ({
-          ...(await this.toLocation(span)),
-          newText: newName,
-        })),
+        .map(async (span) => {
+          const location = await this.toLocation(span)
+          return location ? { ...location, newText: newName } : undefined
+        }),
     )
+    return edits.filter((edit): edit is NonNullable<typeof edit> => edit !== undefined)
   }
 
   get isDisposed(): boolean {
@@ -433,10 +469,21 @@ export class TypeScriptService {
 
   dispose(): void {
     if (this.disposed) return
-    this.disposed = true
     if (this.idleTimer) clearTimeout(this.idleTimer)
     this.failAll(new Error('TypeScript service was closed'))
-    this.write({ seq: ++this.seq, type: 'request', command: 'exit', arguments: {} })
+    // 必须先把优雅关闭的 `exit` 请求发出去，再置 `disposed`——`write()` 在
+    // `disposed` 为真时会直接 return，于是这里原来的顺序让这条请求永远不会发出，
+    // tsserver 只能在 500ms 后被 kill() 强杀（来不及 flush 缓存/日志）。
+    if (!this.child.stdin.destroyed) {
+      try {
+        this.child.stdin.write(
+          `${JSON.stringify({ seq: ++this.seq, type: 'request', command: 'exit', arguments: {} })}\n`,
+        )
+      } catch {
+        // stdin 已关闭：直接走下面的硬退出路径。
+      }
+    }
+    this.disposed = true
     try {
       this.child.stdin.end()
     } catch {

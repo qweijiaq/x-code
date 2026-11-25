@@ -51,12 +51,20 @@ export interface DurationFmtOptions {
  *   >=60s → `"2m 15s"`（compact && secs === 0 时为 `"2m"`）
  */
 export function formatDuration(ms: number, opts: DurationFmtOptions = {}): string {
-  const { precision = 1, compact = false } = opts
+  const { compact = false } = opts
+  const precision = Math.max(0, Math.floor(opts.precision ?? 1))
+  // `durationMs` 通常来自 `Date.now()` 差值：时钟回拨或异常数据会给出 NaN / 负数，
+  // 不设防就会渲染成 `"NaNm NaNs"` / `"-500ms"`。
+  if (!Number.isFinite(ms) || ms < 0) return '0ms'
   if (ms < 1000) return `${ms}ms`
-  const seconds = ms / 1000
+  // 先把秒按精度舍入再判断进位，否则 59.6s（precision 0）会走秒分支渲染成 "60s"。
+  const scale = 10 ** precision
+  const seconds = Math.round((ms / 1000) * scale) / scale
   if (seconds < 60) return `${seconds.toFixed(precision)}s`
   const minutes = Math.floor(seconds / 60)
   const secs = Math.round(seconds % 60)
+  // 59.6s 这类值四舍五入到整秒后是 60——进位到分钟，别渲染 "1m 60s"。
+  if (secs === 60) return compact ? `${minutes + 1}m` : `${minutes + 1}m 0s`
   if (compact && secs === 0) return `${minutes}m`
   return `${minutes}m ${secs}s`
 }
@@ -89,6 +97,18 @@ const COLLAPSIBLE_READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   'listdir',
   'ls',
 ])
+
+/** 从工具入参里取第一个非空字符串。各 provider 的字段名并不统一
+ *  （`filePath` / `file_path` / `path`），而 `as string` 断言在运行时什么都不校验
+ *  ——数字 / 数组 / 对象会一路传到下游的 `.length` / `.slice`，或渲染成
+ *  `[object Object]`。 */
+function firstString(input: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = input[key]
+    if (typeof value === 'string' && value !== '') return value
+  }
+  return ''
+}
 
 function basename(p: string): string {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
@@ -125,7 +145,7 @@ export function getToolInputPreview(toolName: string, input: Record<string, unkn
   const n = normalizeToolName(toolName)
 
   if (n === 'shell' || n === 'bash') {
-    return (input.command as string) || ''
+    return firstString(input, 'command')
   }
 
   if (
@@ -137,27 +157,27 @@ export function getToolInputPreview(toolName: string, input: Record<string, unkn
     n === 'edit' ||
     n === 'update'
   ) {
-    return (input.filePath as string) || (input.file_path as string) || (input.path as string) || ''
+    return firstString(input, 'filePath', 'file_path', 'path')
   }
 
   if (n === 'listdir' || n === 'ls') {
-    return (input.dirPath as string) || (input.dir_path as string) || (input.path as string) || ''
+    return firstString(input, 'dirPath', 'dir_path', 'path')
   }
 
   if (n === 'glob' || n === 'grep' || n === 'search') {
-    return (input.pattern as string) || (input.query as string) || ''
+    return firstString(input, 'pattern', 'query')
   }
 
   if (n === 'websearch' || n === 'webfetch') {
-    return (input.query as string) || (input.url as string) || ''
+    return firstString(input, 'query', 'url')
   }
 
   if (n === 'task') {
-    return (input.description as string) || ''
+    return firstString(input, 'description')
   }
 
   if (n === 'askuser') {
-    const q = (input.question as string) || ''
+    const q = firstString(input, 'question')
     const firstLine = q.split(/\r?\n/)[0]?.trim() || ''
     return firstLine
   }
@@ -200,11 +220,11 @@ export function formatReadGroupSummary(tools: readonly DisplayToolCall[]): ReadG
     const n = normalizeToolName(tc.toolName)
     if (n === 'fileingest') {
       attachCount++
-      const p = (tc.input.filePath as string) || (tc.input.file_path as string) || (tc.input.path as string) || ''
+      const p = firstString(tc.input, 'filePath', 'file_path', 'path')
       if (p) readPaths.push(basename(p))
     } else if (n === 'read' || n === 'readfile') {
       readCount++
-      const p = (tc.input.filePath as string) || (tc.input.file_path as string) || (tc.input.path as string) || ''
+      const p = firstString(tc.input, 'filePath', 'file_path', 'path')
       if (p) readPaths.push(basename(p))
     } else if (n === 'grep' || n === 'search') {
       grepCount++
@@ -240,7 +260,9 @@ export function formatReadGroupSummary(tools: readonly DisplayToolCall[]): ReadG
 
 export function getToolResultSummary(toolName: string, output: string | undefined, status: string): string | null {
   if (status === 'denied') return 'Denied by user'
-  if (!output) return 'Done'
+  // 出错但没有输出（超时 / 被 kill 的 shell 常常如此）不能读作 “Done”——那正是
+  // 下面注释想消除的「符号是红色、文字却说成功」的误导场景。
+  if (!output) return status === 'error' ? 'Failed (no output)' : 'Done'
 
   // 下面的每工具成功摘要都是为正常路径写的（如 "Wrote file"、
   // "Applied changes"）。当工具出错时——权限拒绝、hook 拒绝、异常——
@@ -332,8 +354,18 @@ export function getToolResultSummary(toolName: string, output: string | undefine
   }
 
   if (n === 'shell' || n === 'bash') {
-    let text = output.trim()
-    text = text.replace(/^exit code: 0\n?/, '')
+    // shell 结果的真实头部是 `Chunk ID: <uuid>` / `Wall time: 0.12s` /
+    // `Process exited with code 0` / `Output:`（见 core 的
+    // shell-session/format.ts），并不存在字面量 `exit code: 0` 开头的格式。
+    // 不过滤这些元数据行，它们会被当成正文显示（含随机 uuid），`+N lines` 的
+    // 行数也会被虚增。
+    const text = output
+      .trim()
+      .replace(/^(?:chunk id:|wall time:|process exited with (?:code|signal|unknown status)|full output)[^\n]*$/gim, '')
+      // `Output:` 只在独占一行时才是头部标签；正文里 `Output: 42` 这类内容要保留。
+      .replace(/^Output:[ \t]*$/gim, '')
+      .replace(/\n{2,}/g, '\n')
+      .trim()
     const lines = text.split('\n').filter((l) => l.trim())
     if (lines.length === 0) return 'Done'
     if (looksLikeTableOutput(lines)) return summarizeTableOutput(lines)

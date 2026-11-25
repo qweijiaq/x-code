@@ -84,10 +84,11 @@ function bashScript(): string {
     '  fi',
     '',
     '  case "$prev" in',
-    `    --output-format) COMPREPLY=( $(compgen -W "${OPTION_VALUE_CHOICES['--output-format'].join(' ')}" -- "$cur") ); return 0 ;;`,
-    `    --external-content-policy) COMPREPLY=( $(compgen -W "${OPTION_VALUE_CHOICES['--external-content-policy'].join(' ')}" -- "$cur") ); return 0 ;;`,
+    `    --output-format) COMPREPLY=( $(compgen -W "${(OPTION_VALUE_CHOICES['--output-format'] ?? []).join(' ')}" -- "$cur") ); return 0 ;;`,
+    `    --external-content-policy) COMPREPLY=( $(compgen -W "${(OPTION_VALUE_CHOICES['--external-content-policy'] ?? []).join(' ')}" -- "$cur") ); return 0 ;;`,
     '    --model|-m|--name|--max-turns|--max-tokens|--max-cost|--fallback-model|--resume|-r) return 0 ;;',
-    `    plugin) COMPREPLY=( $(compgen -W "${PLUGIN_SUBCOMMANDS.join(' ')}" -- "$cur") ); return 0 ;;`,
+    // `xc plugin --<TAB>` 应补选项而不是子命令名。
+    `    plugin) if [[ "$cur" == -* ]]; then COMPREPLY=( $(compgen -W "${OPTIONS.join(' ')}" -- "$cur") ); else COMPREPLY=( $(compgen -W "${PLUGIN_SUBCOMMANDS.join(' ')}" -- "$cur") ); fi; return 0 ;;`,
     '  esac',
     '',
     '  if [[ "$cur" == -* ]]; then',
@@ -126,7 +127,12 @@ function zshScript(): string {
     '      ;;',
     '  esac',
     '}',
-    '_xc "$@"',
+    // 只在补全上下文里调用。脚本若被 `source`/`eval` 加载（本文件头部注释给出的
+    // 用法之一），直接执行 `_xc` 会向终端打印 `_arguments: command must be run
+    // under compadd` 之类的报错。参照 clap_complete 用 funcstack 守卫。
+    'if [[ "$funcstack[1]" == "_xc" ]]; then',
+    '  _xc "$@"',
+    'fi',
     '',
   ].join('\n')
 }

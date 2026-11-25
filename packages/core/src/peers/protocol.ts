@@ -89,6 +89,27 @@ function validDate(value: unknown): value is string {
   return validString(value, 64) && Number.isFinite(Date.parse(value))
 }
 
+/** peer inbox token 的形状：`randomBytes(32).toString('base64url')`（43 个字符）。
+ *  registry 早就是这么校验的（`/^[A-Za-z0-9_-]{43}$/`）；协议入口若放过任意
+ *  字符，ESC/CSI/OSC 序列就能借 token 走到日志/错误信息/UI 里，绕过本文件专门
+ *  建立的终端转义防护模型。 */
+const PEER_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/
+
+/** 帧 `type` 的合法形状。错误消息里会插值它，所以除了已知取值还要限长度/
+ *  字符集，否则远端可控的任意文本（含 ANSI 序列、换行）会被写进日志。 */
+const PEER_FRAME_TYPE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/
+
+/** `encodePeerFrame` 会 `JSON.stringify` 整帧：`"` / `\\` 会翻倍、控制字符最多
+ *  6 倍膨胀。校验层若只按原始字节数放行，一条“合法”消息（例如 96000 个反斜杠）
+ *  会在编码阶段抛 PEER_FRAME_TOO_LARGE，调用方在发送前无法预知。 */
+function fitsInOneFrame(frame: Record<string, unknown>): boolean {
+  try {
+    return Buffer.byteLength(JSON.stringify(frame), 'utf8') + 1 <= MAX_FRAME_BYTES
+  } catch {
+    return false
+  }
+}
+
 function sanitizeFrameStrings(value: Record<string, unknown>): Record<string, unknown> {
   const frame = { ...value }
   const fields =
@@ -112,7 +133,8 @@ function validatePeerFrame(value: unknown, sanitizeStrings: boolean): PeerFrameV
     case 'auth':
       if (
         !exactKeys(frame, ['v', 'type', 'targetToken', 'senderInstanceId']) ||
-        !validString(frame.targetToken, 128) ||
+        typeof frame.targetToken !== 'string' ||
+        !PEER_TOKEN_PATTERN.test(frame.targetToken) ||
         !validUuid(frame.senderInstanceId)
       )
         break
@@ -145,7 +167,9 @@ function validatePeerFrame(value: unknown, sanitizeStrings: boolean): PeerFrameV
         Buffer.byteLength(frame.text, 'utf8') <= MAX_MESSAGE_BYTES &&
         (frame.summary === undefined || validString(frame.summary, 200)) &&
         validDate(frame.sentAt) &&
-        (frame.senderPermissionClass === 'prompted' || frame.senderPermissionClass === 'bypass')
+        (frame.senderPermissionClass === 'prompted' || frame.senderPermissionClass === 'bypass') &&
+        // JSON 转义后的最终字节数才是 `encodePeerFrame` 真正要过的关卡。
+        fitsInOneFrame(frame)
       )
         return frame as PeerFrameV1
       break
@@ -197,7 +221,10 @@ function validatePeerFrame(value: unknown, sanitizeStrings: boolean): PeerFrameV
         return frame as PeerFrameV1
       break
   }
-  throw new Error(`Invalid peer ${frame.type} frame`)
+  // `frame.type` 是远端可控的任意文本：原样插进异常消息（通常会被打印/落盘）
+  // 等于允许日志伪造与终端转义注入。只回显符合形状的短名字，其余归一化。
+  const label = typeof frame.type === 'string' && PEER_FRAME_TYPE_PATTERN.test(frame.type) ? frame.type : 'frame'
+  throw new Error(`Invalid peer ${label}`)
 }
 
 export function parsePeerFrame(value: unknown): PeerFrameV1 {

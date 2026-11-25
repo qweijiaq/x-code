@@ -46,12 +46,16 @@ interface ToolContentEntry {
   [key: string]: unknown
 }
 
+/** 旧 payload 会用裸 `image` 表示图片（没有子类型），与 `image/png` 之类同等对待。
+ *  三处判定必须共用这一个函数，否则某条路径会把图片当成非图片文件丢弃。 */
+function isImageMediaType(mediaType: string | undefined): boolean {
+  const normalized = mediaType?.toLowerCase() ?? ''
+  return normalized === 'image' || normalized.startsWith('image/')
+}
+
 function isToolImageEntry(entry: ToolContentEntry): boolean {
-  if (entry.type === 'file') {
-    const mediaType = entry.mediaType?.toLowerCase() ?? ''
-    return mediaType === 'image' || mediaType.startsWith('image/')
-  }
-  return entry.type === 'image-data' || (entry.type === 'media' && (entry.mediaType?.startsWith('image/') ?? false))
+  if (entry.type === 'file') return isImageMediaType(entry.mediaType)
+  return entry.type === 'image-data' || (entry.type === 'media' && isImageMediaType(entry.mediaType))
 }
 
 function toolImageBase64(entry: ToolContentEntry): string | undefined {
@@ -290,11 +294,18 @@ function cloneRequestValue<T>(value: T): T {
   ) as T
 }
 
+/** 远程图片引用（`https://…`）不是 base64。把它当 base64 解码只会得到一段垃圾
+ *  字节，sniff 失败后图片被静默换成「not a recognized image」，模型完全丢失内容。 */
+function isRemoteImageReference(value: unknown): boolean {
+  return typeof value === 'string' && /^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(value.trim())
+}
+
 function imagePartToBuffer(part: { image: unknown; mediaType?: string }): Buffer | null {
   const img = part.image
   if (Buffer.isBuffer(img)) return img
   if (img instanceof Uint8Array) return Buffer.from(img)
   if (typeof img === 'string') {
+    if (isRemoteImageReference(img)) return null
     // 可能是 base64，也可能是 data URL。若存在 `data:...;base64,` 前缀则先剥离。
     const commaIdx = img.indexOf(',')
     const data = img.startsWith('data:') && commaIdx > 0 ? img.slice(commaIdx + 1) : img
@@ -305,6 +316,23 @@ function imagePartToBuffer(part: { image: unknown; mediaType?: string }): Buffer
     }
   }
   return null
+}
+
+/** normalizeCompatImage 包一层：用户消息与工具结果两条路径必须行为一致。压缩/
+ *  OCR 的异常此前只在工具结果里被局部兜住，用户消息里会直接让整次请求投影失败
+ *  （400 恢复路径本身也因此失效）。中止仍然向上抛，由调用方按中断处理。 */
+async function normalizeCompatImageSafely(
+  buffer: Buffer,
+  modelId: string,
+  abortSignal?: AbortSignal,
+): Promise<CompatImageProjection> {
+  try {
+    return await normalizeCompatImage(buffer, modelId, abortSignal)
+  } catch (error) {
+    if (abortSignal?.aborted) throw error
+    const detail = error instanceof Error && error.message ? `: ${error.message}` : ''
+    return { ok: false, notice: `[image omitted: local image preparation failed${detail}]` }
+  }
 }
 
 /** 就地替换对话中每一个二进制片段为文本提示。这是 agent loop 中的 400 恢复路径：
@@ -374,6 +402,15 @@ export async function downgradeBinaryPartsForProvider(
       const rewritten: unknown[] = []
       for (const part of msg.content) {
         if (part.type === 'image') {
+          if (isRemoteImageReference((part as { image: unknown }).image)) {
+            // 远程图片不是 base64：解码后只是一段垃圾字节，sniff 必然失败。
+            // 与其给出「not a recognized image」，不如说明真实原因和下一步。
+            rewritten.push({
+              type: 'text',
+              text: '[Image omitted: this payload is a remote image URL, not image data. Fetch the URL first so it can be attached as image bytes.]',
+            })
+            continue
+          }
           const buffer = imagePartToBuffer(part as { image: unknown; mediaType?: string })
           if (!acceptsImages) {
             const text = buffer ? await ocrBuffer(buffer, abortSignal) : '[image omitted]'
@@ -387,7 +424,7 @@ export async function downgradeBinaryPartsForProvider(
             rewritten.push({ type: 'text', text: '[image omitted: legacy payload could not be decoded]' })
             continue
           }
-          const normalized = await normalizeCompatImage(buffer, modelId, abortSignal)
+          const normalized = await normalizeCompatImageSafely(buffer, modelId, abortSignal)
           if (!normalized.ok) {
             rewritten.push({ type: 'text', text: normalized.notice })
             continue
@@ -414,7 +451,7 @@ export async function downgradeBinaryPartsForProvider(
               rewritten.push({ type: 'text', text: '[image omitted: legacy payload could not be decoded]' })
               continue
             }
-            const normalized = await normalizeCompatImage(buffer, modelId, abortSignal)
+            const normalized = await normalizeCompatImageSafely(buffer, modelId, abortSignal)
             if (!normalized.ok) {
               rewritten.push({ type: 'text', text: normalized.notice })
               continue
@@ -466,9 +503,12 @@ export async function downgradeBinaryPartsForProvider(
           // 为纯文本提供方做 OCR，以免它们拒绝二进制工具输出。
           const isImageEntry = isToolImageEntry(entry)
           const imageData = toolImageBase64(entry)
-          if (isImageEntry && (entry.mediaType?.startsWith('image/') ?? true) && acceptsImages) {
+          // mediaType 缺失（旧 payload）视为图片；裸 `image` 同样是图片——只看
+          // `startsWith('image/')` 会让它落到下面的 legacy 文件分支被静默丢弃。
+          const imageMediaTypeOk = entry.mediaType === undefined || isImageMediaType(entry.mediaType)
+          if (isImageEntry && imageMediaTypeOk && acceptsImages) {
             const buffer = Buffer.from(imageData ?? '', 'base64')
-            const normalized = await normalizeCompatImage(buffer, modelId, abortSignal)
+            const normalized = await normalizeCompatImageSafely(buffer, modelId, abortSignal)
             if (!normalized.ok) {
               rewritten.push({ type: 'text', text: normalized.notice })
               continue
@@ -486,7 +526,7 @@ export async function downgradeBinaryPartsForProvider(
             )
             continue
           }
-          if (isImageEntry && (entry.mediaType?.startsWith('image/') ?? true)) {
+          if (isImageEntry && imageMediaTypeOk) {
             const data = imageData ?? ''
             let text = '[image omitted]'
             try {
@@ -506,7 +546,7 @@ export async function downgradeBinaryPartsForProvider(
             entry.type === 'file-data' ||
             entry.type === 'file-url' ||
             entry.type === 'file-id' ||
-            (entry.type === 'media' && !entry.mediaType?.startsWith('image/'))
+            (entry.type === 'media' && !isImageMediaType(entry.mediaType))
           if (isLegacyFileEntry) {
             rewritten.push({
               type: 'text',

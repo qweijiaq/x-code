@@ -99,10 +99,14 @@ const CATEGORY_LABELS: Record<ContextCategoryKey, string> = {
   conversation: 'Conversation',
 }
 
-function removeOnce(text: string, fragment: string | undefined): string {
-  if (!fragment) return text
+/** 剥离一个子块，并报告是否真的剥离了——调用方据此决定要不要扣掉它的估算：
+ *  `removeOnce` 找不到片段时是静默 no-op（例如 skillBlock 是回退重算的，与缓存里
+ *  嵌入的版本已有差异），此时仍然扣减会把 system 类别低估甚至夹成 0。 */
+function removeOnce(text: string, fragment: string | undefined): { text: string; removed: boolean } {
+  if (!fragment) return { text, removed: false }
   const index = text.indexOf(fragment)
-  return index < 0 ? text : text.slice(0, index) + text.slice(index + fragment.length)
+  if (index < 0) return { text, removed: false }
+  return { text: text.slice(0, index) + text.slice(index + fragment.length), removed: true }
 }
 
 function markdownSectionDetails(text: string, headingLevel: 2 | 3, labelPrefix: string): ContextDetailEstimate[] {
@@ -136,9 +140,20 @@ export function estimateContextBreakdown(input: ContextBreakdownInput): ContextB
   const mcpBlockTokens = input.mcpDeferredBlock ? estimateTextTokenCount(input.mcpDeferredBlock) : 0
   const rulesTokens = input.knowledgeContext ? estimateTextTokenCount(input.knowledgeContext) : 0
   // 系统提示词是严格拼接：基础（含替换进来的 capability 块）
-  // + '\n\n' + knowledge + plan 覆盖层。减去已知子块就能精确
-  // 隔离出基础提示词 + 覆盖层。
-  const systemTokens = Math.max(0, systemTotal - skillTokens - mcpBlockTokens - rulesTokens)
+  // + '\n\n' + knowledge + plan 覆盖层。只扣掉「确实被剥离出去的」子块：
+  // removeOnce 找不到片段时是静默 no-op，此时仍然扣减会让 system 类别被低估
+  // 甚至被 Math.max(0, …) 夹成 0，各分类之和也不再反映真实构成。
+  const withoutSkill = removeOnce(input.systemPrompt, input.skillBlock)
+  const withoutMcp = removeOnce(withoutSkill.text, input.mcpDeferredBlock)
+  const withoutRules = removeOnce(withoutMcp.text, input.knowledgeContext)
+  const systemBase = withoutRules.text
+  const systemTokens = Math.max(
+    0,
+    systemTotal -
+      (withoutSkill.removed ? skillTokens : 0) -
+      (withoutMcp.removed ? mcpBlockTokens : 0) -
+      (withoutRules.removed ? rulesTokens : 0),
+  )
 
   let toolsTokens = 0
   let subagentsTokens = 0
@@ -187,10 +202,6 @@ export function estimateContextBreakdown(input: ContextBreakdownInput): ContextB
   ]
 
   const categories = rawEntries.filter((entry) => entry.estimatedTokens > 0)
-  let systemBase = input.systemPrompt
-  systemBase = removeOnce(systemBase, input.skillBlock)
-  systemBase = removeOnce(systemBase, input.mcpDeferredBlock)
-  systemBase = removeOnce(systemBase, input.knowledgeContext)
   const details: ContextDetailEstimate[] = [
     ...markdownSectionDetails(systemBase, 2, 'Prompt'),
     ...markdownSectionDetails(input.knowledgeContext ?? '', 3, 'Rules'),
@@ -246,10 +257,30 @@ export function calibrateContextBreakdown(breakdown: ContextBreakdown, realTotal
     tokens: Math.round(category.estimatedTokens * scale),
   }))
   const sum = categories.reduce((total, category) => total + category.tokens, 0)
-  const drift = realTotal - sum
+  let drift = realTotal - sum
   if (drift !== 0 && categories.length > 0) {
-    const largest = categories.reduce((a, b) => (b.tokens > a.tokens ? b : a))
-    largest.tokens = Math.max(0, largest.tokens + drift)
+    // 取整误差按类别体积降序级联吸收。只加到最大类别会被 `Math.max(0, …)` 截断：
+    // 负漂移绝对值超过最大类别的取整值（各类别估算相近时很容易发生）就会留下
+    // 求和 != realTotal 的自相矛盾数字，所以剩余误差要继续落到下一个非零类别。
+    const bySizeDesc = [...categories].sort((a, b) => b.tokens - a.tokens)
+    while (drift !== 0) {
+      let absorbed = false
+      for (const category of bySizeDesc) {
+        if (drift === 0) break
+        if (drift > 0) {
+          category.tokens++
+          drift--
+          absorbed = true
+        } else if (category.tokens > 0) {
+          category.tokens--
+          drift++
+          absorbed = true
+        }
+      }
+      // 所有类别都已经夹到 0（估算总量远小于 realTotal 的病态情形）——
+      // 没有可吸收的余量，保留真实的差额而不是继续夹取。
+      if (!absorbed) break
+    }
   }
   return categories
 }
@@ -268,14 +299,19 @@ export function buildContextBreakdownInput(options: AgentOptions, state: LoopSta
   const manualExecutorsBefore = new Map(state.manualToolExecutors)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let baseTools: Record<string, any>
+  // buildTools 会为新会话（恢复的会话 / 测试 / 还没跑过 loop）填充 catalog。还原
+  // state 之后必须用这个局部变量继续估算，否则下面拿到的是还原前的 undefined
+  // 快照——deferred 工具 schema 被丢弃、MCP 工具被错分到 tools 类别。
+  let catalogForEstimate = catalogBefore
   try {
     baseTools = buildTools(options, state)
+    catalogForEstimate = state.deferredCatalog
   } finally {
     state.deferredCatalog = catalogBefore
     state.manualToolExecutors.clear()
     for (const [name, execute] of manualExecutorsBefore) state.manualToolExecutors.set(name, execute)
   }
-  const tools = composeTurnTools(baseTools, state.deferredCatalog, state.activatedTools, state.permissionMode)
+  const tools = composeTurnTools(baseTools, catalogForEstimate, state.activatedTools, state.permissionMode)
 
   // 优先使用构建提示词时快照下来的块（loop.ts）：会话中途的
   // /skill 或 /mcp 刷新会改变 registry 现在会产生的内容，
@@ -290,9 +326,9 @@ export function buildContextBreakdownInput(options: AgentOptions, state: LoopSta
     blocks?.mcpDeferred ??
     (state.permissionMode === 'plan'
       ? ''
-      : state.deferredCatalog
+      : catalogForEstimate
         ? formatDeferredCapabilities(
-            state.deferredCatalog.map((entry) => ({
+            catalogForEstimate.map((entry) => ({
               name: entry.name,
               serverName: entry.serverName,
               source: entry.source,
@@ -304,7 +340,7 @@ export function buildContextBreakdownInput(options: AgentOptions, state: LoopSta
   // 其余经 deferred catalog 到达。registry 列表也覆盖了
   // 无延迟回退（极小 catalog）的情况，此时每个 MCP 工具都被完整注入。
   const mcpToolNames = new Set<string>()
-  for (const entry of state.deferredCatalog ?? []) {
+  for (const entry of catalogForEstimate ?? []) {
     if (entry.source === 'mcp') mcpToolNames.add(entry.name)
   }
   for (const entry of options.mcpRegistry?.list() ?? []) {
@@ -319,7 +355,7 @@ export function buildContextBreakdownInput(options: AgentOptions, state: LoopSta
     messages: state.messages,
     tools,
     mcpToolNames,
-    deferredTools: state.deferredCatalog?.map((entry) => ({ name: entry.name, source: entry.source })),
+    deferredTools: catalogForEstimate?.map((entry) => ({ name: entry.name, source: entry.source })),
     activatedToolNames: state.activatedTools,
   }
 }

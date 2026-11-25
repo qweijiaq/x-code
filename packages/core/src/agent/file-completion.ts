@@ -17,7 +17,7 @@ export interface AtTrigger {
   atIdx: number
   /** '@' 与光标之间的路径子串，不含可选的引号。 */
   query: string
-  /** token 的右边界（光标处或之后的首个空白，或 text.length）。
+  /** token 的右边界（光标处或之后的首个空白，或行尾）。
    *  applyCompletion 会替换 text.slice(atIdx, tokenEnd)。 */
   tokenEnd: number
 }
@@ -26,6 +26,23 @@ const INACTIVE: AtTrigger = { active: false, atIdx: -1, query: '', tokenEnd: -1 
 
 function isWhitespace(ch: string): boolean {
   return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r'
+}
+
+/** 从 `from` 开始的行尾位置（不含换行符），并去掉行尾空白。 */
+function lineEndIndex(text: string, from: number): number {
+  let end = from
+  while (end < text.length && text[end] !== '\n' && text[end] !== '\r') end++
+  while (end > from && isWhitespace(text[end - 1] ?? '')) end--
+  return end
+}
+
+/** 该位置的字符是否被反斜杠转义。
+ *  只有前面连续反斜杠个数为奇数才算被转义：`\\"` 是「转义的反斜杠 + 真正的
+ *  引号」，单字符回看会把两者混为一谈。 */
+function isEscaped(text: string, index: number): boolean {
+  let backslashes = 0
+  for (let i = index - 1; i >= 0 && text[i] === '\\'; i--) backslashes++
+  return backslashes % 2 === 1
 }
 
 export function detectAtToken(text: string, cursor: number): AtTrigger {
@@ -39,16 +56,21 @@ export function detectAtToken(text: string, cursor: number): AtTrigger {
 
     const quote = text[atIdx + 1]
     if (quote === '"' || quote === "'") {
+      // 扫描上界限制在当前行：多行输入框里第一行的 `@"foo` 会把后面若干行中的
+      // 同名引号当成闭合引号，让 token 跨行、query 里混入换行和无关文本。
+      const lineEnd = lineEndIndex(text, atIdx + 2)
       let closingQuote = -1
-      for (let index = atIdx + 2; index < text.length; index++) {
-        if (text[index] === quote && text[index - 1] !== '\\') {
+      for (let index = atIdx + 2; index < lineEnd; index++) {
+        if (text[index] === quote && !isEscaped(text, index)) {
           closingQuote = index
           break
         }
       }
       const contentStart = atIdx + 2
-      const contentEnd = closingQuote >= 0 ? closingQuote : text.length
-      const tokenEnd = closingQuote >= 0 ? closingQuote + 1 : text.length
+      // 引号未闭合时退回到行尾语法，而不是 text.length：applyCompletion 会替换
+      // text.slice(atIdx, tokenEnd)，用 text.length 会把光标之后的整段输入删掉。
+      const contentEnd = closingQuote >= 0 ? closingQuote : lineEnd
+      const tokenEnd = closingQuote >= 0 ? closingQuote + 1 : lineEnd
       if (cursor >= contentStart && cursor <= tokenEnd) {
         const query = text.slice(contentStart, Math.min(cursor, contentEnd)).split(`\\${quote}`).join(quote)
         return { active: true, atIdx, query, tokenEnd }
@@ -81,9 +103,9 @@ export interface ScoredEntry extends FileEntry {
 }
 
 function isHidden(relPath: string): boolean {
-  const slash = relPath.lastIndexOf('/')
-  const basename = slash >= 0 ? relPath.slice(slash + 1) : relPath
-  return basename.startsWith('.')
+  // 任意路径段以 `.` 开头都算隐藏。只看基名会让 `.venv` 自己被过滤、而
+  // `.venv/lib/python3.11/site-packages/foo.py` 照样出现在菜单里（基名是 `foo.py`）。
+  return relPath.split('/').some((segment) => segment.startsWith('.'))
 }
 
 /** 带连续段奖励的子序列匹配，未命中时返回 -Infinity。

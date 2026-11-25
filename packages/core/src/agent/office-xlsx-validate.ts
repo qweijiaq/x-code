@@ -247,6 +247,12 @@ function validateWorksheet(bytes: Uint8Array): WorksheetAllocation {
       const reference = requiredAttribute(attributes, 'r', 'cell')
       const { row, column } = parseCellReference(reference)
       if (currentRowNumber === null) currentRowNumber = row
+      // 单元格自带的行号必须与所在 <row r="…"> 一致：不一致时（`<row r="1"><c r="A10000"/>`)
+      // 只信 row 会让稀疏配额按 1 行算，而下游 read-excel-file 实际物化到第 10000 行，
+      // 内存放大上限失去保证；rowsAfterCurrent 的 out-of-place 保护也会被绕过。
+      else if (row !== currentRowNumber) {
+        throw new Error('Spreadsheet cell coordinate does not match its row')
+      }
       maximumColumn = Math.max(maximumColumn, column)
       assertAllocationLimit()
     },
@@ -313,11 +319,14 @@ export function validateXlsxArchive(archive: Uint8Array): void {
     if (!targetPaths.add(target)) throw new Error('Spreadsheet logical sheets must reference distinct worksheets')
   }
 
-  const worksheetFiles = unzipSync(archive, { filter: (entry) => targetPaths.has(entry.name) })
-  assertActualUncompressedSize(worksheetFiles)
   let allocatedRows = 0
   let allocatedCells = 0
   for (const target of targetPaths) {
+    // 一次只解一个 worksheet：成批解压会让所有 sheet 同时在内存里，而 worksheet
+    // 的真实膨胀量在被校验之前就已经分配完了（声明很小的 sheet 也能撑爆堆）。
+    // 解压后立即用真实 byteLength 复核，再交给解析器。
+    const worksheetFiles = unzipSync(archive, { filter: (entry) => entry.name === target })
+    assertActualUncompressedSize(worksheetFiles)
     const allocation = validateWorksheet(requiredArchiveEntry(worksheetFiles, target))
     allocatedRows += allocation.rows
     allocatedCells += allocation.cells

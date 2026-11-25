@@ -488,7 +488,7 @@ export class McpClient {
  *  太容易误判——`GET …pkg-1.0.1.tgz 401`、`ECONNREFUSED 127.0.0.1:4013`、
  *  第三方服务器自定义的错误文本都能命中，而一旦误判成"OAuth 预期抛出"，
  *  调用方就会跳过 safeClose，把 stdio 子进程 / HTTP 连接永久泄漏出去。 */
-function isUnauthorizedError(err: unknown, allowMessageMatch = false): boolean {
+export function isUnauthorizedError(err: unknown, allowMessageMatch = false): boolean {
   if (err instanceof UnauthorizedError) return true
   if (err instanceof Error && err.name === 'UnauthorizedError') return true
   // enrichError 把原始错误挂在 cause 上：先看原始错误身份，不要越过它直接

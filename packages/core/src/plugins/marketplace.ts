@@ -286,6 +286,30 @@ function freshKnown(): KnownMarketplaces {
   return { marketplaces: [] }
 }
 
+/** 只在名字确实是该对象自身的键时才取组织名：`RESERVED_MARKETPLACE_NAMES`
+ *  是普通对象字面量，用下标读取会让 `constructor` / `toString` / `__proto__`
+ *  这类合法市场名（`isSafePluginPathComponent` 只禁路径分隔符与控制字符）拿到
+ *  原型上的函数，随后 `sourceMatchesOrg` 在 `expectedOrg.toLowerCase()` 处抛
+ *  TypeError，或在错误消息里插出一个函数源码。 */
+function reservedOrgFor(name: string): string | undefined {
+  return Object.hasOwn(RESERVED_MARKETPLACE_NAMES, name) ? RESERVED_MARKETPLACE_NAMES[name] : undefined
+}
+
+/** 磁盘上的一条订阅是否可信：保留名必须指向对应的规范组织。
+ *  `known_marketplaces.json` 可被外部改写，若只按名字接受，攻击者可以保留
+ *  `anthropic-marketplace` 这个名字却指向自己的仓库，而
+ *  `ensureDefaultMarketplaces` 只比对 name，永远不会把官方来源恢复回来。 */
+function isTrustedKnownMarketplace(entry: KnownMarketplace): boolean {
+  if (typeof entry.source !== 'string' || !isSafePluginPathComponent(entry.name)) return false
+  const reservedOrg = reservedOrgFor(entry.name)
+  if (reservedOrg === undefined || sourceMatchesOrg(entry.source, reservedOrg)) return true
+  debugLog(
+    'plugins.reserved-marketplace-rejected',
+    `discarding "${entry.name}" → ${entry.source}: reserved name requires github:${reservedOrg}/*`,
+  )
+  return false
+}
+
 export async function readKnownMarketplaces(): Promise<KnownMarketplaces> {
   const file = knownMarketplacesPath()
   try {
@@ -295,9 +319,7 @@ export async function readKnownMarketplaces(): Promise<KnownMarketplaces> {
     const obj = parsed as Record<string, unknown>
     const list = Array.isArray(obj.marketplaces) ? (obj.marketplaces as KnownMarketplace[]) : []
     return {
-      marketplaces: list.filter(
-        (m) => m && typeof m.name === 'string' && isSafePluginPathComponent(m.name) && typeof m.source === 'string',
-      ),
+      marketplaces: list.filter((m) => m && typeof m.name === 'string' && isTrustedKnownMarketplace(m)),
       strictKnownMarketplaces:
         typeof obj.strictKnownMarketplaces === 'boolean' ? obj.strictKnownMarketplaces : undefined,
       blockedPlugins: Array.isArray(obj.blockedPlugins)
@@ -326,7 +348,19 @@ async function writeKnownMarketplaces(km: KnownMarketplaces): Promise<void> {
   existing.marketplaces = km.marketplaces
   if (km.strictKnownMarketplaces !== undefined) existing.strictKnownMarketplaces = km.strictKnownMarketplaces
   if (km.blockedPlugins !== undefined) existing.blockedPlugins = km.blockedPlugins
-  await fs.writeFile(file, JSON.stringify(existing, null, 2) + '\n', 'utf-8')
+  // 先写临时文件再 rename：直接覆盖时进程被 Esc 取消 / 崩溃会留下半截 JSON，
+  // 而 `readKnownMarketplaces` 对解析失败是静默返回空列表——用户的全部订阅会
+  // 凭空消失且毫无提示。rename 在同一文件系统内原子，读取方只会看到旧或新内容。
+  const tmp = `${file}.${process.pid}.tmp`
+  try {
+    await fs.writeFile(tmp, JSON.stringify(existing, null, 2) + '\n', 'utf-8')
+    await fs.rename(tmp, file)
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => {
+      /* 清理尽力而为，不要掩盖原始错误 */
+    })
+    throw err
+  }
 }
 
 /** 确保默认市场订阅存在。CLI 启动时调用，让全新安装预订阅 Anthropic 官方
@@ -358,7 +392,7 @@ export async function addKnownMarketplace(entry: KnownMarketplace): Promise<void
   if (!isSafePluginPathComponent(entry.name)) {
     throw new Error('Marketplace name must be one safe cross-platform filesystem path component')
   }
-  const reservedOrg = RESERVED_MARKETPLACE_NAMES[entry.name]
+  const reservedOrg = reservedOrgFor(entry.name)
   if (reservedOrg !== undefined) {
     if (!sourceMatchesOrg(entry.source, reservedOrg)) {
       throw new Error(
@@ -475,8 +509,14 @@ async function fetchViaShallowClone(source: string, signal?: AbortSignal): Promi
   // 否则 `ext::sh -c …` 或 `--upload-pack=…` 会直接变成命令执行。
   const cloneUrl = assertSafeCloneUrl(resolveCloneUrl(source))
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-marketplace-'))
+  // 订阅里钉的分支/标签必须显式传给 clone；否则 `github:owner/repo#v2` 会
+  // 静默地永远取默认分支 HEAD，与用户钉的版本不符。
+  const ref = githubSourceRef(source)
+  const args = ['clone', '--depth', '1']
+  if (ref !== undefined) args.push('--branch', assertSafeGitRef(ref))
+  args.push('--', cloneUrl, tempDir)
   try {
-    await execa('git', ['clone', '--depth', '1', '--', cloneUrl, tempDir], { signal, stdio: 'pipe' })
+    await execa('git', args, { signal, stdio: 'pipe' })
     const candidates = [
       path.join(tempDir, '.claude-plugin', 'marketplace.json'),
       path.join(tempDir, 'marketplace.json'),
@@ -499,16 +539,26 @@ async function fetchViaShallowClone(source: string, signal?: AbortSignal): Promi
 }
 
 /** 把来源字符串转成 `git clone` 能理解的形式：
- *  `github:owner/repo` → `https://github.com/owner/repo.git`。其它形式
+ *  `github:owner/repo[#ref]` → `https://github.com/owner/repo.git`。其它形式
  *  原样透传（真实 git URL、ssh: 等）。
+ *
+ *  `#ref` 后缀（分支/标签）不能留在 URL 里：`github:o/r#v2` 曾会被拼成
+ *  `https://github.com/o/r#v2.git`，克隆必然失败且错误信息很有迷惑性。ref 由
+ *  {@link githubSourceRef} 单独取出并交给 `git clone --branch`。
  *
  *  **不做安全校验**——交给 `git clone` 之前必须先过 {@link assertSafeCloneUrl}。 */
 export function resolveCloneUrl(source: string): string {
-  const m = source.match(/^github:([^/]+)\/(.+?)(?:\.git)?$/i)
+  const m = source.match(/^github:([^/]+)\/(.+?)(?:\.git)?(?:#.+)?$/i)
   if (m) {
     return `https://github.com/${m[1]}/${m[2]}.git`
   }
   return source
+}
+
+/** `github:owner/repo#ref` 里钉的分支/标签（没有则 undefined）。 */
+export function githubSourceRef(source: string): string | undefined {
+  const m = source.match(/^github:[^/]+\/[^#]+#(.+)$/i)
+  return m ? m[1]! : undefined
 }
 
 // ── git 参数白名单 ────────────────────────────────────────────────────

@@ -110,8 +110,22 @@ function peerInstanceId(peer: PublicPeer): string {
   return peer.address.startsWith('peer:') ? peer.address.slice('peer:'.length) : peer.address
 }
 
+/** 键部件里的 `:` 会和分隔符混淆（`a:b` + `c` 与 `a` + `b:c` 会拼出同一个键），
+ *  而两个部件都来自远端。这里先把控制序列剥掉，再转义 `%` / `:`，让键与
+ *  (instanceId, messageId) 一一对应。 */
+function encodeKeyPart(value: string): string {
+  return stripTerminalControls(value).replace(/%/g, '%25').replace(/:/g, '%3A')
+}
+
+/** 台账里的标识符（`key` / `senderInstanceId` / `messageId` / `requestedTarget`
+ *  等）全部源自远端地址与消息 id：返回给台账读取方（可能直接进终端）之前
+ *  统一剥掉终端控制序列，避免控制序列注入。 */
+function sanitizeLedgerIdentifier(value: string): string {
+  return stripTerminalControls(value)
+}
+
 function inboundKey(message: InboundPeerMessage): string {
-  return `${peerInstanceId(message.from)}:${message.id}`
+  return `${encodeKeyPart(peerInstanceId(message.from))}:${encodeKeyPart(message.id)}`
 }
 
 function parseTime(value: string): number | undefined {
@@ -119,11 +133,18 @@ function parseTime(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
+/** 地址同样是远端输入，会随台账/投递通知进入 UI 与日志。剥掉控制序列不会
+ *  改变 `peer:<id>` 形状（只删控制字符），因此这里保留模板字面量类型。 */
+function sanitizePeerAddress(address: PublicPeer['address']): PublicPeer['address'] {
+  return stripTerminalControls(address) as PublicPeer['address']
+}
+
 function clonePeer(peer: PublicPeer): PublicPeer {
   return {
     ...peer,
     name: stripTerminalControls(peer.name),
     cwd: stripTerminalControls(peer.cwd),
+    address: sanitizePeerAddress(peer.address),
   }
 }
 
@@ -138,9 +159,9 @@ function cloneMessage(message: InboundPeerMessage): InboundPeerMessage {
 
 function cloneInboundRecord(record: InternalInboundRecord): InboundLedgerRecord {
   return {
-    key: record.key,
-    senderInstanceId: record.senderInstanceId,
-    messageId: record.messageId,
+    key: sanitizeLedgerIdentifier(record.key),
+    senderInstanceId: sanitizeLedgerIdentifier(record.senderInstanceId),
+    messageId: sanitizeLedgerIdentifier(record.messageId),
     state: record.state,
     wireStatus: record.wireStatus,
     payloadHash: record.payloadHash,
@@ -152,10 +173,10 @@ function cloneInboundRecord(record: InternalInboundRecord): InboundLedgerRecord 
 
 function cloneOutboundRecord(record: InternalOutboundRecord): OutboundLedgerRecord {
   return {
-    messageId: record.messageId,
-    requestedTarget: record.requestedTarget,
-    receiverInstanceId: record.receiverInstanceId,
-    receiverAddress: record.receiverAddress,
+    messageId: sanitizeLedgerIdentifier(record.messageId),
+    requestedTarget: sanitizeLedgerIdentifier(record.requestedTarget),
+    receiverInstanceId: sanitizeLedgerIdentifier(record.receiverInstanceId),
+    receiverAddress: sanitizePeerAddress(record.receiverAddress),
     payloadHash: record.payloadHash,
     state: record.state,
     admittedAt: record.admittedAt,
@@ -168,11 +189,16 @@ function cloneOutboundRecord(record: InternalOutboundRecord): OutboundLedgerReco
 }
 
 function cloneDeliveryUpdate(update: PeerDeliveryUpdate): PeerDeliveryUpdate {
-  return { ...update, peer: clonePeer(update.peer) }
+  return { ...update, messageId: sanitizeLedgerIdentifier(update.messageId), peer: clonePeer(update.peer) }
 }
 
 function cloneFinalUpdate(update: PendingFinalUpdate): PendingFinalUpdate {
-  return { ...update, target: clonePeer(update.target) }
+  return {
+    ...update,
+    key: sanitizeLedgerIdentifier(update.key),
+    messageId: sanitizeLedgerIdentifier(update.messageId),
+    target: clonePeer(update.target),
+  }
 }
 
 function wireStatusFor(record: InternalInboundRecord): InboundWireStatus {
@@ -320,21 +346,24 @@ class InMemoryPeerInbox implements PeerInbox {
     this.sweep()
     const count = Math.min(Math.max(0, Math.floor(limit)), this.acceptedQueue.length)
     if (count === 0) return null
-    const keys = this.acceptedQueue.splice(0, count)
-    for (const key of keys) {
+    // 队列里可能残留已不是 `accepted` 状态、或记录已被淘汰的 key。先剔除它们
+    // 再建 claim：`AcceptedClaim` 的 `keys` 与 `messages` 是并列数组，调用方
+    // 往往按 `keys[i]` ↔ `messages[i]` 对位，源不同就会张冠李戴。
+    const claimed: InternalInboundRecord[] = []
+    for (const key of this.acceptedQueue.splice(0, count)) {
       const record = this.inboundLedger.get(key)
-      if (record?.state === 'accepted') record.state = 'claimed'
+      if (record?.state !== 'accepted') continue
+      record.state = 'claimed'
+      claimed.push(record)
     }
-    const claim = this.createClaim(keys)
+    if (claimed.length === 0) return null
+    const claim = this.createClaim(claimed.map((record) => record.key))
     this.acceptedClaims.set(claim.claimId, claim)
     this.changed()
     return {
       claimId: claim.claimId,
-      keys: keys.slice(),
-      messages: keys.flatMap((key) => {
-        const message = this.inboundLedger.get(key)?.message
-        return message ? [cloneMessage(message)] : []
-      }),
+      keys: claim.keys.slice(),
+      messages: claimed.map((record) => cloneMessage(record.message)),
       expiresAt: new Date(claim.expiresAtMs).toISOString(),
     }
   }
@@ -394,7 +423,7 @@ class InMemoryPeerInbox implements PeerInbox {
       if (!record?.held || record.state !== 'held') return []
       return [
         {
-          key,
+          key: sanitizeLedgerIdentifier(key),
           message: cloneMessage(record.message),
           heldAt: record.held.heldAt,
           expiresAt: record.held.expiresAt,
@@ -537,8 +566,9 @@ class InMemoryPeerInbox implements PeerInbox {
     }
 
     const now = this.now()
+    const reason = transition.reason === undefined ? undefined : stripTerminalControls(transition.reason)
     record.state = transition.state
-    record.reason = transition.reason === undefined ? undefined : stripTerminalControls(transition.reason)
+    record.reason = reason
     if (transition.state === 'held') {
       const heldUntilMs = parseTime(transition.heldUntil) ?? now
       record.heldUntilMs = heldUntilMs
@@ -553,7 +583,7 @@ class InMemoryPeerInbox implements PeerInbox {
       record.retryDeadlineAtMs = deadline
       record.retryDeadlineAt = new Date(deadline).toISOString()
     } else {
-      this.finishOutbound(record, transition.state, now)
+      this.finishOutbound(record, transition.state, now, reason)
     }
     this.changed()
     return { status: 'transitioned', record: cloneOutboundRecord(record) }
@@ -574,7 +604,7 @@ class InMemoryPeerInbox implements PeerInbox {
     }
     const now = this.now()
     if (record.retryDeadlineAtMs !== undefined && record.retryDeadlineAtMs <= now) {
-      this.finishOutbound(record, 'delivery-unknown-expired', now)
+      this.finishOutbound(record, 'delivery-unknown-expired', now, 'retry-deadline-expired')
       this.changed()
       return { status: 'expired', record: cloneOutboundRecord(record) }
     }
@@ -589,6 +619,9 @@ class InMemoryPeerInbox implements PeerInbox {
       return record ? { status: 'not-retryable', record: cloneOutboundRecord(record) } : { status: 'not-found' }
     }
     record.state = 'sending'
+    // 重试会重新走一遍投递：上一轮的 'receiver-busy' / 'timeout' 之类原因不再
+    // 描述当前状态，留着会让台账读到过期解释。
+    record.reason = undefined
     this.changed()
     return { status: 'ready', record: cloneOutboundRecord(record) }
   }
@@ -759,6 +792,10 @@ class InMemoryPeerInbox implements PeerInbox {
     delete record.held
   }
 
+  /** 终态化。`reason` 必须跟着状态一起写：由 `expireOutbound` /
+   *  `inspectOutboundRetry` / 迟到的 `recordDeliveryUpdate` 触发的终态若不清空
+   *  旧值，对外暴露的 `reason` 会停留在几轮之前（如 `receiver-busy`），排障时
+   *  严重误导。显式传 `undefined` 表示「该终态没有附带原因」，即清空。 */
   private finishOutbound(
     record: InternalOutboundRecord,
     state: Extract<
@@ -766,8 +803,10 @@ class InMemoryPeerInbox implements PeerInbox {
       'delivered' | 'denied' | 'expired' | 'refused' | 'delivery-unknown-expired' | 'held-final-status-unknown'
     >,
     now: number,
+    reason?: string,
   ): void {
     record.state = state
+    record.reason = reason === undefined ? undefined : stripTerminalControls(reason)
     record.terminalAtMs = now
     record.terminalAt = new Date(now).toISOString()
   }
@@ -913,7 +952,8 @@ class InMemoryPeerInbox implements PeerInbox {
     status: PendingFinalUpdate['status'],
     reason?: string,
   ): void {
-    const key = `${record.senderInstanceId}:${record.messageId}`
+    // 与 `inboundKey` 用同一套转义，避免 `:` 造成的键歧义/碰撞。
+    const key = `${encodeKeyPart(record.senderInstanceId)}:${encodeKeyPart(record.messageId)}`
     if (this.finalUpdates.has(key)) return
     if (this.finalUpdates.size >= this.limits.finalUpdateOutbox) {
       this.droppedFinalUpdates++
@@ -989,14 +1029,14 @@ class InMemoryPeerInbox implements PeerInbox {
         record.retryDeadlineAtMs !== undefined &&
         record.retryDeadlineAtMs <= now
       ) {
-        this.finishOutbound(record, 'delivery-unknown-expired', now)
+        this.finishOutbound(record, 'delivery-unknown-expired', now, 'retry-deadline-expired')
         changed = true
       } else if (
         record.state === 'held' &&
         record.finalStatusDeadlineAtMs !== undefined &&
         record.finalStatusDeadlineAtMs <= now
       ) {
-        this.finishOutbound(record, 'held-final-status-unknown', now)
+        this.finishOutbound(record, 'held-final-status-unknown', now, 'final-status-deadline-expired')
         this.enqueueDeliveryNotification({
           messageId: record.messageId,
           peer: {

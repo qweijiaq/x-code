@@ -368,31 +368,41 @@ interface ExtractedPdfPage {
   text: string
 }
 
+/** 单次 getText 只受 PDF_WORKER_OPERATION_TIMEOUT_MS（30s）约束，而超时分支会
+ *  failAll + terminate worker 并抛 PdfWorkerFailure——逐页回退对它是不可达的（看
+ *  起来像死代码）。把请求切成小批，让超时风险分摊到每一批，逐页回退才真正可用。 */
+const PDF_TEXT_EXTRACT_BATCH_PAGES = 16
+
 export async function extractPdfTextWithFallback(
   pageNumbers: number[],
   getText: (pageNumbers: number[]) => Promise<ExtractedPdfPage[]>,
   signal: AbortSignal,
   onNotice?: (message: string) => void,
 ): Promise<ExtractedPdfPage[]> {
-  try {
-    return await getText(pageNumbers)
-  } catch (error) {
-    signal.throwIfAborted()
-    if (error instanceof PdfWorkerFailure) throw error
-    onNotice?.('Batch PDF text extraction failed; retrying page by page before visual fallback.')
-  }
-
   const extracted: ExtractedPdfPage[] = []
-  for (const pageNumber of pageNumbers) {
+  for (let start = 0; start < pageNumbers.length; start += PDF_TEXT_EXTRACT_BATCH_PAGES) {
     signal.throwIfAborted()
+    const batch = pageNumbers.slice(start, start + PDF_TEXT_EXTRACT_BATCH_PAGES)
     try {
-      const pages = await getText([pageNumber])
-      extracted.push(pages.find((page) => page.num === pageNumber) ?? { num: pageNumber, text: '' })
+      extracted.push(...(await getText(batch)))
+      continue
     } catch (error) {
       signal.throwIfAborted()
       if (error instanceof PdfWorkerFailure) throw error
-      onNotice?.(`PDF page ${pageNumber} text extraction failed; using visual fallback.`)
-      extracted.push({ num: pageNumber, text: '' })
+      onNotice?.('Batch PDF text extraction failed; retrying page by page before visual fallback.')
+    }
+
+    for (const pageNumber of batch) {
+      signal.throwIfAborted()
+      try {
+        const pages = await getText([pageNumber])
+        extracted.push(pages.find((page) => page.num === pageNumber) ?? { num: pageNumber, text: '' })
+      } catch (error) {
+        signal.throwIfAborted()
+        if (error instanceof PdfWorkerFailure) throw error
+        onNotice?.(`PDF page ${pageNumber} text extraction failed; using visual fallback.`)
+        extracted.push({ num: pageNumber, text: '' })
+      }
     }
   }
   return extracted
@@ -517,16 +527,51 @@ function boundPageText(
   const textBytes = Buffer.byteLength(text, 'utf-8')
   if (textBytes <= maxTextBytes) return { parts, textBytes }
 
+  const hasImage = parts.some((part) => part.type === 'image')
+  const label = `--- PDF page ${pageNumber} ---`
   const notice = `[PDF page ${pageNumber} text truncated at the per-call ${maxTextBytes}-byte budget.]`
   const noticeBytes = Buffer.byteLength(notice, 'utf-8')
-  const body = truncateUtf8(text, Math.max(0, maxTextBytes - noticeBytes - 1))
-  const suffix = truncateUtf8(`${body ? '\n' : ''}${notice}`, maxTextBytes - Buffer.byteLength(body, 'utf-8'))
-  const boundedText = body + suffix
-  const images = parts.filter((part) => part.type === 'image')
-  return {
-    parts: [...(boundedText ? [{ type: 'text' as const, text: boundedText }] : []), ...images],
-    textBytes: Buffer.byteLength(boundedText, 'utf-8'),
+  // 图片必须带页码标签：标签原本拼在该页文本的末尾，会最先被截断，而 image 却被
+  // 无条件保留——模型可能收到一张没有任何来源标注的图片。这里为它预留最小字节。
+  const reservedLabelBytes = hasImage ? Buffer.byteLength(`${label}\n`, 'utf-8') : 0
+  const bodyBudget = Math.max(0, maxTextBytes - noticeBytes - reservedLabelBytes - 1)
+
+  if (!hasImage) {
+    // 纯文本页保持单一 text 片段（body + 截断提示）。
+    const body = truncateUtf8(text, bodyBudget)
+    const boundedText = `${body}${body ? '\n' : ''}${notice}`
+    return {
+      parts: [{ type: 'text' as const, text: boundedText }],
+      textBytes: Buffer.byteLength(boundedText, 'utf-8'),
+    }
   }
+
+  // 有图片时按 part 逐个分配预算，保留原 text/image 交错顺序（把 text 统一前置、
+  // image 统一后置会破坏多页累积到同一 parts 数组时的顺序）。
+  const bounded: ProcessedLocalPart[] = []
+  let remaining = bodyBudget
+  let keptTextBytes = 0
+  for (const part of parts) {
+    if (part.type !== 'text') {
+      const previous = bounded[bounded.length - 1]
+      const labelled = previous?.type === 'text' && previous.text.includes(`PDF page ${pageNumber}`)
+      if (!labelled) {
+        bounded.push({ type: 'text', text: label })
+        keptTextBytes += Buffer.byteLength(label, 'utf-8')
+      }
+      bounded.push(part)
+      continue
+    }
+    if (remaining <= 0) continue
+    const kept = truncateUtf8(part.text, remaining)
+    if (!kept) continue
+    bounded.push({ type: 'text', text: kept })
+    remaining -= Buffer.byteLength(kept, 'utf-8')
+    keptTextBytes += Buffer.byteLength(kept, 'utf-8')
+  }
+  bounded.push({ type: 'text', text: notice })
+  keptTextBytes += noticeBytes
+  return { parts: bounded, textBytes: keptTextBytes }
 }
 
 function classifyPdfError(error: unknown): ProcessPdfResult {
@@ -543,7 +588,12 @@ function classifyPdfError(error: unknown): ProcessPdfResult {
 export async function processPdf(filePath: string, options: ProcessPdfOptions): Promise<ProcessPdfResult> {
   const mode = options.mode ?? 'auto'
   const maxTextBytes = options.maxTextBytes ?? PDF_MAX_TEXT_BYTES
-  const maxRenderedPages = options.maxRenderedPages ?? PDF_AUTO_MAX_RENDERED_PAGES
+  // 显式 pageRange 是调用方明确要求的读取量（readFile 允许到 PDF_READ_MAX_PAGES
+  // 页）。沿用自动模式的渲染上限会让扫描版 PDF 在第 10 页后被静默截断成
+  // continuation，与 range 校验的语义冲突且极难排查。
+  const maxRenderedPages =
+    options.maxRenderedPages ??
+    (options.pageRange ? options.pageRange.last - options.pageRange.first + 1 : PDF_AUTO_MAX_RENDERED_PAGES)
   const maxRenderedBytes = options.maxRenderedBytes ?? PDF_MAX_RENDERED_BYTES
   const timeoutSignal = AbortSignal.timeout(PDF_PROCESS_TIMEOUT_MS)
   const signal = options.abortSignal ? AbortSignal.any([options.abortSignal, timeoutSignal]) : timeoutSignal

@@ -8,7 +8,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { getUserConfigPath } from '../config/index.js'
-import { XCODE_DIR, debugLog } from '../utils.js'
+import { XCODE_DIR, debugLog, errorMessage } from '../utils.js'
 import { McpClient } from './client.js'
 import { parseServersBlock } from './config-schema.js'
 import { buildCallableName as buildCallable } from './name-mangling.js'
@@ -105,7 +105,13 @@ export async function loadMcpConfigsFromDisk(opts: {
   })
 
   // `/mcp refresh` 忽略 'exit'（从斜杠命令退出 CLI 太粗暴）；启动路径则尊重它。
-  if (opts.onExitRequested && projectExitRequested) opts.onExitRequested()
+  // 用户明确选择 Exit 时必须短路：继续构建 registry 会让调用方随后
+  // `connectAll()` 把 user/plugin 服务器都 spawn 起来，而 CLI 已经在关闭了
+  // （`onExitRequested` 甚至是可选的）。
+  if (projectExitRequested) {
+    opts.onExitRequested?.()
+    return { registry: emptyRegistry(), configErrors, projectSkipped }
+  }
 
   if (configs.size === 0) {
     return {
@@ -151,10 +157,14 @@ export async function loadMergedConfigsFromDisk(opts: {
   /** 用户在信任对话框里明确选择了 Exit（不是 Skip）。 */
   projectExitRequested: boolean
 }> {
-  const userServers = await readMcpServersFromFile(getUserConfigPath())
-  const projectServers = await readMcpServersFromFile(path.join(opts.cwd, XCODE_DIR, 'config.json'))
-
   const configErrors: Array<{ name: string; message: string }> = []
+  const userServers = await readMcpServersFromFile(getUserConfigPath(), (message) =>
+    configErrors.push({ name: 'user', message }),
+  )
+  const projectServers = await readMcpServersFromFile(path.join(opts.cwd, XCODE_DIR, 'config.json'), (message) =>
+    configErrors.push({ name: 'project', message }),
+  )
+
   let projectSkipped = false
   let projectExitRequested = false
 
@@ -266,12 +276,35 @@ export async function loadMcpServers(options: LoadOptions): Promise<LoadResult> 
     }
   }
 
-  // 并行 spawn / 拨号。每个 per-server promise 用 .then/.catch 包裹，
-  // 使单个超时不会拖垮整个启动。
-  const tasks = Object.entries(merged).map(async ([name, rawConfig]) => {
-    return connectOneServer(name, rawConfig, options.oauthProviderFor)
+  // 并行 spawn / 拨号。`connectOneServer` 内部已经对连接失败兜底，但它仍有可以
+  // reject 的路径（`oauthFactory` / `McpClient` 构造函数、以及 catch 分支自身
+  // 抛错）。用 `Promise.allSettled` 而不是 `Promise.all`，否则一个 reject 就会
+  // 让整个启动失败——与文件开头“单个服务器失败绝不中止启动”的承诺相反
+  // （`registry.connectAll()` 早就是这个策略）。
+  const entries = Object.entries(merged)
+  const settled = await Promise.allSettled(
+    entries.map(([name, rawConfig]) => connectOneServer(name, rawConfig, options.oauthProviderFor)),
+  )
+  const results: ConnectResult[] = []
+  settled.forEach((outcome, index) => {
+    const [name, config] = entries[index]!
+    if (outcome.status === 'fulfilled') {
+      results.push(outcome.value)
+      return
+    }
+    debugLog('mcp.connect-rejected', `${name}: ${String(outcome.reason)}`)
+    // 仍然注册这个服务器（状态 failed、零工具），使 `/mcp list` 能显示它以及
+    // 原因，而不是让它凭空消失。
+    results.push({
+      server: {
+        name,
+        client: new McpClient(name, config),
+        status: { kind: 'failed', error: errorMessage(outcome.reason) },
+      },
+      tools: [],
+      resources: [],
+    })
   })
-  const results = await Promise.all(tasks)
 
   // 组装 registry。工具名冲突按插入顺序解决（先到者赢；后到的加哈希后缀），
   // 所以按服务器名排序以保证稳定——否则顺序会取决于哪个 connect() 先
@@ -330,16 +363,40 @@ async function askForTrust(
 
 /** 仅从 JSON 配置文件读出 `mcpServers` 字段。文件缺失 / 解析错误 / 字段缺失
  *  都返回 undefined——这些都表示"这里没有配置 MCP 服务器"，绝不是需要向上
- *  报告的错误。 */
-export async function readMcpServersFromFile(filePath: string): Promise<Record<string, McpServerConfig> | undefined> {
+ *  报告的错误。
+ *
+ *  可选的 `onError` 让调用方把**文件级**问题（超大、JSON 语法错误）汇进
+ *  `/mcp list` 的 configErrors。否则用户 config.json 里一个逗号写错，看到的
+ *  只是“没有任何 MCP 服务器”，与“让用户看到配置里的笔误”的设计目标相反。 */
+export async function readMcpServersFromFile(
+  filePath: string,
+  onError?: (message: string) => void,
+): Promise<Record<string, McpServerConfig> | undefined> {
+  // 先看大小再决定要不要整份读进内存：项目级 config.json 在信任门
+  // （isProjectTrusted）之前就被读取，一个未受信任的仓库放一个几 GB 的文件
+  // 就能让启动把内存吃满甚至假死（`fs.readFile` 还会做全量 UTF-8 解码）。
+  try {
+    const stat = await fs.stat(filePath)
+    if (!stat.isFile()) return undefined
+    if (stat.size > MAX_MCP_CONFIG_BYTES) {
+      debugLog('mcp.config-too-large', `${filePath}: ${stat.size} bytes`)
+      onError?.(`config file is too large (${stat.size} bytes, cap ${MAX_MCP_CONFIG_BYTES} bytes)`)
+      return undefined
+    }
+  } catch {
+    return undefined
+  }
+
   let raw: string
   try {
     raw = await fs.readFile(filePath, 'utf-8')
   } catch {
     return undefined
   }
+  // stat 之后文件仍可能变大，再按实际字节数兜一次底。
   if (Buffer.byteLength(raw, 'utf8') > MAX_MCP_CONFIG_BYTES) {
     debugLog('mcp.config-too-large', filePath)
+    onError?.(`config file is too large (cap ${MAX_MCP_CONFIG_BYTES} bytes)`)
     return undefined
   }
   try {
@@ -350,6 +407,7 @@ export async function readMcpServersFromFile(filePath: string): Promise<Record<s
     return undefined
   } catch (err) {
     debugLog('mcp.config-parse-failed', `${filePath}: ${String(err)}`)
+    onError?.(`config file is not valid JSON: ${errorMessage(err)}`)
     return undefined
   }
 }

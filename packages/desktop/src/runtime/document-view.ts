@@ -129,6 +129,33 @@ function parseDelimited(
   return { rows: preview, totalRows, totalColumns }
 }
 
+/** ExcelJS 的 `cell.value` 不只有标量：超链接是 `{ text, hyperlink }`、公式是
+ *  `{ formula, result }`、富文本是 `{ richText: [...] }`、错误值是
+ *  `{ error: '#DIV/0!' }`，日期是 `Date`。直接 `String(value)` 会把前几种渲染成
+ *  `[object Object]`——而这是用户直接看到的预览文本。 */
+function excelCellText(raw: unknown): string {
+  if (raw === null || raw === undefined) return ''
+  if (raw instanceof Date) return raw.toLocaleString()
+  if (typeof raw === 'object') {
+    const cell = raw as {
+      text?: unknown
+      result?: unknown
+      richText?: unknown
+      error?: unknown
+      hyperlink?: unknown
+    }
+    if (Array.isArray(cell.richText)) {
+      return cell.richText.map((run) => (run as { text?: string }).text ?? '').join('')
+    }
+    if (cell.text !== undefined && cell.text !== null) return String(cell.text)
+    if (cell.result !== undefined && cell.result !== null) return String(cell.result)
+    if (cell.error !== undefined) return String(cell.error)
+    if (typeof cell.hyperlink === 'string') return cell.hyperlink
+    return ''
+  }
+  return String(raw)
+}
+
 async function readSheetsWithExcel(filePath: string): Promise<DocumentSheetView[]> {
   const module = (await import('exceljs')) as unknown as {
     default?: { Workbook: new () => ExcelWorkbook }
@@ -162,8 +189,7 @@ async function readSheetsWithExcel(filePath: string): Promise<DocumentSheetView[
       const row = sheet.getRow(rowNumber)
       const cells: string[] = []
       for (let column = 1; column <= columnLimit; column++) {
-        const value = row.getCell(column).value
-        cells.push(value === null || value === undefined ? '' : String(value))
+        cells.push(excelCellText(row.getCell(column).value))
       }
       rows.push(cells)
     }
@@ -217,7 +243,7 @@ async function renderPdfPages(
   pageTexts: Map<number, string>,
   ocr: Record<number, string>,
   totalPages: number,
-): Promise<{ pages: DocumentPageView[]; error?: string }> {
+): Promise<{ pages: DocumentPageView[]; error?: string; warning?: string }> {
   const boundedStart = Math.max(1, start)
   const end = Math.min(totalPages, boundedStart + count - 1)
   if (count <= 0 || boundedStart > totalPages) return { pages: [] }
@@ -249,10 +275,14 @@ async function renderPdfPages(
       pages.push(pageView(page, `data:${part.mediaType};base64,${part.data.toString('base64')}`, pageTexts, ocr))
     }
   }
-  return {
-    pages: pages.sort((a, b) => a.page - b.page),
-    ...(pages.length === 0 && notices.length > 0 ? { error: notices.join(' ').slice(0, 600) } : {}),
-  }
+  const sorted = pages.sort((a, b) => a.page - b.page)
+  const note = notices.join(' ').slice(0, 600)
+  if (notices.length === 0) return { pages: sorted }
+  // 无论全失败还是部分失败都要报出来：只在「一张图都没渲染出来」时报错时，
+  // 一到某页失败就 `continue`/`break` 的部分结果会静默缺页（`lastLoaded` 取最后
+  // 一张成功图片的页码，`hasMore` 仍为 true，前端反复重试同一批）。
+  if (sorted.length === 0) return { pages: sorted, error: note }
+  return { pages: sorted, warning: `Some page images could not be rendered: ${note}` }
 }
 
 /** 总页数只认解析器给出的 metadata.pages：页面文本会被 core 在
@@ -367,6 +397,7 @@ export async function openDocumentView(
         )
         view.pages = rendered.pages
         if (rendered.error) view.notes.push(`Page images could not be rendered: ${rendered.error}`)
+        if (rendered.warning) view.notes.push(rendered.warning)
       } catch (error) {
         view.notes.push(`Page images could not be rendered: ${error instanceof Error ? error.message : String(error)}`)
       }
@@ -386,10 +417,15 @@ export async function loadDocumentPages(
   const resolved = path.resolve(input)
   if (path.extname(resolved).toLowerCase() !== PDF_EXTENSION) return { pages: [], hasMore: false }
   const { pageTexts, totalPages } = await pdfPageInfo(resolved)
+  // start/count 经 IPC 原样从 renderer 传来——`count: number` 只是编译期类型。
+  // 不复用 clampBatch 时：count 可以任意大（对长 PDF 触发上百次串行渲染 + 海量
+  // base64 回传），非数字/NaN 则让 `for (let first = NaN; ...)` 直接不执行，
+  // 前端只看到「没有更多页面」而没有任何错误信息。
+  const batch = clampBatch(start, count)
   const ocr = storedOcr(resolved)
-  const rendered = await renderPdfPages(resolved, start, count, pageTexts, ocr, totalPages)
+  const rendered = await renderPdfPages(resolved, batch.start, batch.count, pageTexts, ocr, totalPages)
   if (rendered.error) throw new Error(rendered.error)
-  const lastLoaded = rendered.pages.at(-1)?.page ?? start - 1
+  const lastLoaded = rendered.pages.at(-1)?.page ?? batch.start - 1
   return { pages: rendered.pages, hasMore: lastLoaded < totalPages }
 }
 
@@ -397,6 +433,10 @@ export async function loadDocumentPages(
  *  层）。结果被持久化，因此重新打开文档时仍保留。 */
 export async function ocrDocumentPage(filePath: string, page: number): Promise<string> {
   const resolved = path.resolve(filePath)
+  // `page` 与路径都直接来自 IPC 参数，`number` 只是编译期类型：非法页码会一路
+  // 传给 processPdf，非 PDF 文件则只换来一条难以理解的错误。
+  if (path.extname(resolved).toLowerCase() !== PDF_EXTENSION) throw new Error(`Not a PDF: ${resolved}`)
+  if (!Number.isInteger(page) || page < 1) throw new Error(`Invalid PDF page number: ${String(page)}`)
   const result = await processPdf(resolved, {
     mode: 'visual',
     vision: false,
@@ -412,6 +452,9 @@ export async function ocrDocumentPage(filePath: string, page: number): Promise<s
     .join('\n')
     .replace(/^--- PDF page \d+ of \d+: .*\(local OCR\) ---\n/, '')
     .trim()
+  // OCR 失败但 `result.type` 仍是 `content` 时 text 是空串。把空串持久化会让
+  // 「该页无文字」与真实空白页无法区分，而且下次打开会命中这条空缓存。
+  if (!text) throw new Error(`No text could be recognized on page ${page}.`)
   saveOcrPage(resolved, page, text)
   return text
 }
