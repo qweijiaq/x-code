@@ -106,23 +106,37 @@ export interface CompressionResult {
   summary: string
   usage?: LanguageModelUsage
   modelId?: string
+  /** 是否真的发生了摘要。false 表示全部消息都落在保留窗口内，转录未变——
+   *  调用方不得据此宣布“已压缩”，也不该清空缓存或触发 PostCompact。 */
+  summarized: boolean
 }
 
 /** 从新到旧遍历消息，累计估算 token 直到预算用尽。返回要保留的
- *  消息数（"recent" 尾部），并确保它不会以一个孤立的 tool result 开头。 */
-function computeKeepCount(messages: ModelMessage[]): number {
+ *  消息数（"recent" 尾部），并确保它不会以一个孤立的 tool result 开头。
+ *
+ *  `keepBudget` 由调用方按上下文阈值给出：固定 20K 在阈值更小的小窗口模型上
+ *  会让尾部吞掉全部消息，压缩退化成 no-op。 */
+function computeKeepCount(messages: ModelMessage[], keepBudget: number = KEEP_RECENT_TOKENS): number {
   let keepCount = 0
   let tokenBudget = 0
   for (let i = messages.length - 1; i >= 0; i--) {
     const msgTokens = estimateMessageTokenCount(messages[i])
-    if (tokenBudget + msgTokens > KEEP_RECENT_TOKENS && keepCount >= MIN_KEEP_MESSAGES) break
+    if (tokenBudget + msgTokens > keepBudget && keepCount >= MIN_KEEP_MESSAGES) break
     tokenBudget += msgTokens
     keepCount++
   }
+  // 边界落在 tool 角色上时会切出一个孤立的 tool result（提供商直接拒绝）。
+  // 这里只能向后扩展保留窗口，没有安全的上限：宁可多留一条巨 tool result，
+  // 也不能产生无主的 tool result。
   while (keepCount < messages.length && messages[messages.length - keepCount]?.role === 'tool') {
     keepCount++
   }
   return keepCount
+}
+
+/** `messages[0]` 是否为上一次压缩写入的摘要消息。 */
+function isPreviousSummaryMessage(message: ModelMessage | undefined): boolean {
+  return message?.role === 'user' && typeof message.content === 'string' && message.content.startsWith(SUMMARY_PREFIX)
 }
 
 export async function compressMessagesWithUsage(
@@ -131,13 +145,38 @@ export async function compressMessagesWithUsage(
   previousSummary?: string,
   filesTracked?: { modified: string[]; read: string[] },
   abortSignal?: AbortSignal,
+  keepBudget: number = KEEP_RECENT_TOKENS,
 ): Promise<CompressionResult> {
-  const keepCount = computeKeepCount(messages)
+  return compressWithKeepCount(
+    messages,
+    computeKeepCount(messages, keepBudget),
+    model,
+    previousSummary,
+    filesTracked,
+    abortSignal,
+  )
+}
 
+/** 用已算好的 `keepCount` 完成一次摘要压缩。tracked 路径借此复用同一次切片与
+ *  同一次 token 估算——两条路径各自计算一遍会让整份转录的估算跑两次，且一旦
+ *  预算需要区分，`recentEntries` 与内部切片就会错位（重复或丢失消息）。 */
+async function compressWithKeepCount(
+  messages: ModelMessage[],
+  keepCount: number,
+  model: LanguageModel,
+  previousSummary?: string,
+  filesTracked?: { modified: string[]; read: string[] },
+  abortSignal?: AbortSignal,
+): Promise<CompressionResult> {
   const recent = messages.slice(-keepCount)
-  const old = messages.slice(0, -keepCount)
+  const sliced = messages.slice(0, -keepCount)
+  // 旧摘要已经躺在 sliced[0]（`extractPreviousSummary` 的前提），而
+  // `summarizeWithOverflowSplit` 又会把它包成 <previous-summary> 传一次。
+  // 不剥掉就会让同一段摘要在请求里出现两次：每次压缩多付一份输入 token，
+  // 且模型容易把两份表述当成两段不同历史。
+  const old = previousSummary && isPreviousSummaryMessage(sliced[0]) ? sliced.slice(1) : sliced
 
-  if (old.length === 0) return { messages, summary: previousSummary ?? '' }
+  if (old.length === 0) return { messages, summary: previousSummary ?? '', summarized: false }
 
   const { text: summary, usage, modelId } = await summarizeWithOverflowSplit(old, model, previousSummary, abortSignal)
 
@@ -154,10 +193,11 @@ export async function compressMessagesWithUsage(
   }
 
   return {
-    messages: [{ role: 'user', content: `[Previous conversation summary]\n${enrichedSummary}` }, ...recent],
+    messages: [{ role: 'user', content: `${SUMMARY_PREFIX}${enrichedSummary}` }, ...recent],
     summary: enrichedSummary,
     usage,
     modelId,
+    summarized: true,
   }
 }
 
@@ -252,6 +292,8 @@ export interface TrackedCompressionResult {
   summary: string
   usage?: LanguageModelUsage
   modelId?: string
+  /** 同 `CompressionResult.summarized`。 */
+  summarized: boolean
 }
 
 export async function compressTrackedMessagesWithUsage(
@@ -260,21 +302,29 @@ export async function compressTrackedMessagesWithUsage(
   previousSummary?: string,
   filesTracked?: { modified: string[]; read: string[] },
   abortSignal?: AbortSignal,
+  keepBudget: number = KEEP_RECENT_TOKENS,
 ): Promise<TrackedCompressionResult> {
   const messages = entries.map((entry) => entry.message)
-  const keepCount = computeKeepCount(messages)
+  const keepCount = computeKeepCount(messages, keepBudget)
   const recentEntries = entries.slice(-keepCount)
   const oldEntries = entries.slice(0, -keepCount)
   if (oldEntries.length === 0) {
-    return { trackedMessages: entries.slice(), summary: previousSummary ?? '' }
+    return { trackedMessages: entries.slice(), summary: previousSummary ?? '', summarized: false }
   }
-  const result = await compressMessagesWithUsage(messages, model, previousSummary, filesTracked, abortSignal)
-  const summaryMessage = result.messages[0]!
+  const result = await compressWithKeepCount(messages, keepCount, model, previousSummary, filesTracked, abortSignal)
+  if (!result.summarized) {
+    return { trackedMessages: entries.slice(), summary: result.summary, summarized: false }
+  }
+  // 由 `result.summary` 重组摘要消息：不要再假设 `result.messages[0]` 一定是
+  // 摘要——那个假设只在内部 old 非空时成立，一旦内部提前返回，普通历史消息
+  // 就会被当成摘要写回转录。
+  const summaryMessage: ModelMessage = { role: 'user', content: `${SUMMARY_PREFIX}${result.summary}` }
   return {
     trackedMessages: [createTrackedMessage(summaryMessage, mergeProvenance(oldEntries)), ...recentEntries],
     summary: result.summary,
     usage: result.usage,
     modelId: result.modelId,
+    summarized: true,
   }
 }
 
@@ -307,6 +357,10 @@ export async function checkAndCompressContext(
 ): Promise<void> {
   const needsCompression = state.lastInputTokens > threshold || estimateTokenCount(state.messages) > threshold
   if (!needsCompression || state.messages.length <= MIN_KEEP_MESSAGES) return
+
+  // 保留预算必须随阈值收缩，否则在小窗口模型上尾部会吞掉全部消息，
+  // 摘要退化成 no-op，而 needsCompression 每轮依旧成立。
+  const keepBudget = Math.min(KEEP_RECENT_TOKENS, Math.floor(threshold / 2))
 
   // PreCompact——在任一压缩路径运行之前触发。我们不会等待 hook 的
   // 决策来影响行为（一旦越过阈值，压缩是强制的），所以这是即发即忘。
@@ -354,7 +408,15 @@ export async function checkAndCompressContext(
     model,
     callbacks,
     hookCtx,
+    keepBudget,
   )
+  // 保留窗口吞掉全部消息时（小上下文模型，或窗口被覆盖到 < KEEP_RECENT_TOKENS）
+  // 摘要根本没发生：此时不能向用户宣布“已压缩”，不能触发 PostCompact，
+  // 也不能清缓存——否则每轮都要重放文件缓存并白付一次 prompt cache miss。
+  if (!compressed.summarized) {
+    debugLog('compression.proactive-no-progress', `tokens=${tokensBefore} — keeping window holds everything`)
+    return
+  }
   const beforeK = Math.round(tokensBefore / 1000)
   const afterK = Math.round(tokensAfter / 1000)
   callbacks.onContextCompressed(`Context compressed: ~${beforeK}k → ~${afterK}k tokens.`)
@@ -384,10 +446,17 @@ export async function handleContextTooLong(
     messageCount: state.messages.length,
     tokenEstimate: estimateTokenCount(state.messages),
   })
+  // 响应式路径同样先跑两条廉价的原语：prompt-too-long 的高频成因正是循环产生的
+  // 重复 tool call 与巨大 tool result，先丢弃/截断它们能让摘要请求本身不至于
+  // 再次溢出（小窗口模型上尤其明显），并让压缩后的转录更小。
+  let candidate = structuredClone(state.trackedMessages)
+  const light = lightCompactTrackedMessages(candidate)
+  if (light.dropped > 0) candidate = light.trackedMessages
+  truncateOldTrackedToolResults(candidate)
   callbacks.onCompressionProgress?.('Summarizing conversation...')
   const { compressed, tokensBefore, tokensAfter } = await summarizeLoopState(
     state,
-    structuredClone(state.trackedMessages),
+    candidate,
     model,
     callbacks,
     hookCtx,
@@ -442,6 +511,7 @@ async function summarizeLoopState(
   model: LanguageModel,
   callbacks: AgentCallbacks,
   hookCtx?: CompactionHookContext,
+  keepBudget?: number,
 ): Promise<{ compressed: TrackedCompressionResult; tokensBefore: number; tokensAfter: number }> {
   const tokensBefore = estimateTokenCount(state.messages)
   const compressed = await compressTrackedMessagesWithUsage(
@@ -450,13 +520,18 @@ async function summarizeLoopState(
     extractPreviousSummary(state.messages),
     buildFilesTracked(state),
     hookCtx?.abortSignal,
+    keepBudget,
   )
-  await markBoundaryAndReflush(state, compressed.summary, compressed.trackedMessages)
-  setTrackedTranscript(state, compressed.trackedMessages)
-  state.readFileCache.clear()
+  if (compressed.summarized) {
+    await markBoundaryAndReflush(state, compressed.summary, compressed.trackedMessages)
+    setTrackedTranscript(state, compressed.trackedMessages)
+    // 只在确实裁剪过时丢弃文件缓存：无进展时清空会让每一轮都重放文件、
+    // 每次请求都白付一次 prompt cache miss。
+    state.readFileCache.clear()
+    state.lastInputTokens = 0
+    markExpectedCacheMiss(state, 'compaction')
+  }
   await recordCompressionUsage(state, compressed, callbacks, hookCtx)
-  state.lastInputTokens = 0
-  markExpectedCacheMiss(state, 'compaction')
   const tokensAfter = estimateTokenCount(state.messages)
   return { compressed, tokensBefore, tokensAfter }
 }

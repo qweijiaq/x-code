@@ -31,8 +31,16 @@ const TERMINAL_STATUSES = new Set<GoalStatus>([
   'failed',
 ])
 
+/** 可以回到 active 的状态。`blocked` / `max_turns` 虽是终态，但可以 resume；
+ *  这份集合此前在本文件与调用方各写了一遍，容易漂移，统一由这里导出。 */
+const RESUMABLE_STATUSES = new Set<GoalStatus>(['paused', 'blocked', 'max_turns'])
+
 export function isGoalTerminal(status: GoalStatus): boolean {
   return TERMINAL_STATUSES.has(status)
+}
+
+export function isGoalResumable(status: GoalStatus): boolean {
+  return RESUMABLE_STATUSES.has(status)
 }
 
 function assertActiveGoal(state: LoopState, goalId?: string): GoalState {
@@ -84,19 +92,24 @@ export function updateGoalStatus(goal: GoalState, status: GoalStatus, summary?: 
   return goal
 }
 
+/** 离开 active 时必须丢弃尚未消费的 pending transition：否则 pause/cancel 之后
+ *  它一直挂在 state 上（UI 持续显示 "Pending transition: complete_requested"），
+ *  且 resume 后 runner 会立刻拿用户已经放弃的旧请求去跑 verifier ladder。 */
 export function pauseGoal(state: LoopState): GoalState {
   const goal = assertActiveGoal(state)
-  goal.status = 'paused'
-  goal.updatedAt = new Date().toISOString()
+  updateGoalStatus(goal, 'paused')
+  clearPendingTransition(goal)
   return goal
 }
 
 export function resumeGoal(state: LoopState): GoalState {
   if (!state.goal) throw new Error('No goal exists in this session')
-  if (state.goal.status !== 'paused' && state.goal.status !== 'blocked' && state.goal.status !== 'max_turns') {
+  if (!isGoalResumable(state.goal.status)) {
     throw new Error(`Cannot resume a goal with status ${state.goal.status}`)
   }
   state.goal.status = 'active'
+  // 恢复时丢弃暂停/阻塞前遗留的完成请求，避免 runner 立刻拿旧证据跑 verifier。
+  clearPendingTransition(state.goal)
   if (!state.goal.authority) {
     state.goal.authority = { source: 'peer', peerTainted: true }
   }
@@ -111,8 +124,11 @@ export function resumeGoal(state: LoopState): GoalState {
 
 export function cancelGoal(state: LoopState): GoalState {
   if (!state.goal) throw new Error('No goal exists in this session')
-  state.goal.status = 'cancelled'
-  state.goal.updatedAt = new Date().toISOString()
+  // 已经处于终态时不动 updatedAt/status：否则“完成时间”会被取消操作改写，
+  // 事件日志里也会多出一条伪状态变更。
+  if (isGoalTerminal(state.goal.status)) return state.goal
+  updateGoalStatus(state.goal, 'cancelled')
+  clearPendingTransition(state.goal)
   return state.goal
 }
 
@@ -165,23 +181,43 @@ export function clearPendingTransition(goal: GoalState): void {
   goal.updatedAt = new Date().toISOString()
 }
 
+/** 保留的验证结果条数。每个结果可带最长 8000 字符的 stdout，无上限累积会让
+ *  LoopState 持续膨胀并被写进会话记录；取 40 与桌面端报告的窗口一致，
+ *  裁剪不会让任何已展示的内容消失。 */
+const MAX_VERIFICATION_RESULTS = 40
+
 export function recordGoalAttempt(goal: GoalState, attempt: GoalAttempt): void {
+  // 从旧版本会话记录恢复的 goal 可能缺这些字段：`attempts.push` 会抛 TypeError，
+  // 而 `turnCount` 为 undefined 时 `+= 1` 得到 NaN，令 runner 的
+  // `turnCount >= maxTurns` 恒为 false——max_turns 保护彻底失效。
+  if (!Array.isArray(goal.attempts)) goal.attempts = []
   goal.attempts.push(attempt)
-  goal.turnCount += 1
+  goal.turnCount = (Number.isFinite(goal.turnCount) ? goal.turnCount : 0) + 1
   goal.updatedAt = attempt.endedAt ?? new Date().toISOString()
 }
 
 export function recordVerificationResult(goal: GoalState, result: GoalVerificationResult): void {
+  if (!Array.isArray(goal.verificationResults)) goal.verificationResults = []
   goal.verificationResults.push(result)
+  if (goal.verificationResults.length > MAX_VERIFICATION_RESULTS) {
+    goal.verificationResults.splice(0, goal.verificationResults.length - MAX_VERIFICATION_RESULTS)
+  }
   goal.updatedAt = result.ts
 }
 
 export function recordVerificationFailure(goal: GoalState, results: GoalVerificationResult[]): number {
   const fingerprint = verificationFailureFingerprint(results)
+  // 空指纹表示“无法判定是否重复”（没有可归一化的失败文本）。此时既不能把一个
+  // 空串持久化进 lastVerificationFailureFingerprint（reset 用的是 delete 语义），
+  // 也不能让计数停在旧值上，统一归零并返回 1。
+  if (!fingerprint) {
+    delete goal.lastVerificationFailureFingerprint
+    goal.repeatedVerificationFailureCount = 1
+    goal.updatedAt = new Date().toISOString()
+    return 1
+  }
   const repeatedCount =
-    fingerprint && fingerprint === goal.lastVerificationFailureFingerprint
-      ? goal.repeatedVerificationFailureCount + 1
-      : 1
+    fingerprint === goal.lastVerificationFailureFingerprint ? goal.repeatedVerificationFailureCount + 1 : 1
   goal.lastVerificationFailureFingerprint = fingerprint
   goal.repeatedVerificationFailureCount = repeatedCount
   goal.updatedAt = new Date().toISOString()
@@ -195,8 +231,10 @@ export function resetVerificationFailures(goal: GoalState): void {
 }
 
 function verificationFailureFingerprint(results: GoalVerificationResult[]): string {
-  return results
-    .filter((result) => !result.ok)
+  // 没有失败项时退化为“整体验证”的指纹：否则返回空串会让重复失败计数永远停在
+  // 1，`buildVerifierFailurePrompt` 拿到的 consecutive count 也就永远升不上去。
+  const failing = results.filter((result) => !result.ok)
+  return (failing.length > 0 ? failing : results)
     .map((result) => {
       const verifier =
         result.verifier.kind === 'shell'

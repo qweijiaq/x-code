@@ -52,6 +52,14 @@ function logDesktopError(kind: string, detail: string): void {
   }
 }
 
+/** `void somePromise()` 一旦 reject 就是主进程的未捕获异常（Node 15+ 可能
+ *  直接终止进程）。凡是发了就不等的调用都走这里。 */
+function safeRun(promise: Promise<unknown>, label: string): void {
+  void promise.catch((error: unknown) => {
+    logDesktopError(label, error instanceof Error ? error.message : String(error))
+  })
+}
+
 const isSmoke = process.argv.includes('--smoke-test')
 const isUiSmoke = process.argv.includes('--ui-smoke')
 const isHeadlessSmoke = isSmoke || isUiSmoke
@@ -216,7 +224,8 @@ interface RuntimeContext {
   window: BrowserWindow
   runtime: UtilityProcess | null
   ready: boolean
-  readyWaiters: Array<() => void>
+  /** 传 error 表示运行时没能就绪（退出 / 超时），等待者应立即失败。 */
+  readyWaiters: Array<(error?: Error) => void>
   pending: Map<string, PendingRequest>
   /** 创建此窗口时显式请求的工作区。 */
   workspacePath?: string
@@ -289,6 +298,11 @@ function failPending(context: RuntimeContext, code: string, message: string): vo
   context.pending.clear()
 }
 
+/** 运行时永远不会就绪时叫醒所有等待者，否则它们会白等到超时。 */
+function failReadyWaiters(context: RuntimeContext, error: Error): void {
+  for (const waiter of context.readyWaiters.splice(0)) waiter(error)
+}
+
 /** 用隐藏窗口把 HTML 渲染为 PDF。供运行时的
  *  documentExport 工具通过 main-request 通道使用。 */
 async function renderPdfBase64(html: string): Promise<string> {
@@ -296,6 +310,10 @@ async function renderPdfBase64(html: string): Promise<string> {
     show: false,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   })
+  // 这个窗口渲染的是运行时提供的任意 HTML：不允许它导航到别处或开新窗口，
+  // 否则它就能以本应用的身份去申请权限。
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event) => event.preventDefault())
   let timer: NodeJS.Timeout | undefined
   try {
     const timeout = new Promise<never>((_, reject) => {
@@ -497,7 +515,7 @@ function onRuntimeMessage(message: RuntimeOutbound, context: RuntimeContext): vo
       log(`[runtime:${event.level}] ${event.message}`)
     }
     if (event.type === 'mcp:auth-url' && event.url.startsWith('https://')) {
-      void shell.openExternal(event.url)
+      safeRun(shell.openExternal(event.url), 'mcp-auth-url')
     }
     if (event.type === 'smoke:result' && isSmoke) {
       finishSmoke(event.report)
@@ -550,6 +568,8 @@ function spawnRuntime(context: RuntimeContext): void {
     if (context.runtime === child) context.runtime = null
     context.ready = false
     failPending(context, 'runtime-exited', `Runtime process exited (code ${code})`)
+    // 运行时已经死了，等它就绪的人不可能再等到：立刻失败，别让它们空等 30 秒。
+    failReadyWaiters(context, new Error(`运行时进程已退出（code ${code}）`))
     if (!context.window.isDestroyed()) {
       context.window.webContents.send('runtime:event', { type: 'runtime:exit', code } satisfies RuntimeEvent)
     }
@@ -559,12 +579,20 @@ function spawnRuntime(context: RuntimeContext): void {
 function waitForRuntime(context: RuntimeContext): Promise<void> {
   if (context.ready) return Promise.resolve()
   spawnRuntime(context)
+  // 窗口已销毁或 fork 失败时根本没有运行时可以等。
+  if (!context.runtime) return Promise.reject(new Error('无法启动运行时进程（窗口可能已关闭）'))
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Runtime did not become ready in time')), 30_000)
-    context.readyWaiters.push(() => {
+    // 超时后要把自己从等待队列里摘掉，否则失败的等待者会永久留在数组里。
+    function waiter(error?: Error): void {
       clearTimeout(timer)
-      resolve()
-    })
+      if (error) reject(error)
+      else resolve()
+    }
+    const timer = setTimeout(() => {
+      context.readyWaiters = context.readyWaiters.filter((entry) => entry !== waiter)
+      reject(new Error('Runtime did not become ready in time'))
+    }, 30_000)
+    context.readyWaiters.push(waiter)
   })
 }
 
@@ -870,14 +898,14 @@ function createWindow(show = true, search = '', workspacePath?: string): Runtime
   })
 
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) void shell.openExternal(url)
+    if (url.startsWith('https://')) safeRun(shell.openExternal(url), 'window-open')
     return { action: 'deny' }
   })
 
   window.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith('file://')) {
       event.preventDefault()
-      if (url.startsWith('https://')) void shell.openExternal(url)
+      if (url.startsWith('https://')) safeRun(shell.openExternal(url), 'will-navigate')
     }
   })
 
@@ -924,7 +952,10 @@ function createWindow(show = true, search = '', workspacePath?: string): Runtime
     void forwardRequest({ id: `cancel-renderer-${Date.now()}`, method: 'approvals:cancel-all', params: {} }, context)
   })
 
-  void window.loadFile(path.join(__dirname, '../renderer/index.html'), search ? { search } : undefined)
+  safeRun(
+    window.loadFile(path.join(__dirname, '../renderer/index.html'), search ? { search } : undefined),
+    'load-renderer',
+  )
   return context
 }
 
@@ -1723,10 +1754,15 @@ function installIpc(): void {
   })
 
   ipcMain.on('app:running-sessions', (event, payload: unknown) => {
-    const data = payload as { workspace?: unknown; sessionIds?: unknown }
+    // `payload as {...}` 对 null / 原始值不设防，读 data.workspace 会抛
+    // TypeError，而 ipcMain.on 的监听器抛错会成为主进程未捕获异常。
+    const data = (payload && typeof payload === 'object' ? payload : {}) as {
+      workspace?: unknown
+      sessionIds?: unknown
+    }
     const workspace = typeof data.workspace === 'string' ? data.workspace : ''
     const sessionIds = Array.isArray(data.sessionIds)
-      ? data.sessionIds.filter((id): id is string => typeof id === 'string')
+      ? data.sessionIds.filter((id): id is string => typeof id === 'string').slice(0, 200)
       : []
     if (workspace) runningSessionsByWindow.set(event.sender.id, { workspace, sessionIds })
     else runningSessionsByWindow.delete(event.sender.id)
@@ -1804,9 +1840,12 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     installIpc()
-    // Chromium 级媒体权限；OS（TCC）仍会单独提示。
-    session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
-      callback(permission === 'media')
+    // Chromium 级媒体权限；OS（TCC）仍会单独提示。只授予受控的应用窗口：
+    // 渲染任意 HTML 的隐藏窗口（如 PDF 导出）不能拿到摄像头/麦克风。
+    session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => {
+      const owner = BrowserWindow.fromWebContents(contents)
+      const trusted = owner !== null && runtimeContexts.has(owner.id)
+      callback(trusted && permission === 'media')
     })
     if (isSmoke) {
       void runSmoke()

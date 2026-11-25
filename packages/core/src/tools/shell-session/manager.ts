@@ -232,13 +232,22 @@ export class UnifiedShellSessionManager implements ShellSessionController {
 
     const readyOutcome = await this.awaitSpawnReady(session, attempt, request.turnAbortSignal)
     if (readyOutcome.kind !== 'ready') {
-      return this.settleFailedSpawn(
-        session,
-        attempt,
-        readyOutcome.reason,
-        readyOutcome.failure,
-        request.originToolCallId,
-      )
+      try {
+        return await this.settleFailedSpawn(
+          session,
+          attempt,
+          readyOutcome.reason,
+          readyOutcome.failure,
+          request.originToolCallId,
+        )
+      } catch (error) {
+        // provider 在 cancelBeforeReady / discardBufferedFrames 上抛错时不能把
+        // 会话留在 `this.sessions` 里：它会以 treeConfirmedExited=false 永久
+        // 占用 liveSessionCount() 的配额，shutdown 注册表里的条目也不会注销。
+        this.sessions.delete(shellId)
+        unregisterManagedShellTarget(this.managerInstanceId, shellId)
+        throw error
+      }
     }
 
     // 这个仲裁检查和下面的 activation 提交之间不允许任何 await。并发 dispose
@@ -756,7 +765,9 @@ export class UnifiedShellSessionManager implements ShellSessionController {
   }
 
   private onFrame(session: ShellSession, frame: ManagedProcessFrame): void {
-    if (session.activation !== 'active') return
+    // dispose 之后 eventHub 已关闭，而 `publish` 在 closed 时会同步抛错。迟到
+    // 的 provider 帧若把异常甩回 provider 自己的派发循环，会打断它的帧处理。
+    if (session.activation !== 'active' || this.closed) return
     if (frame.kind === 'output') {
       this.appendOutput(session, frame.stream, frame.chunk, true, frame.fullOutputCaptured === true)
       return
@@ -775,6 +786,15 @@ export class UnifiedShellSessionManager implements ShellSessionController {
     }
     const failure = { code: 'termination-failed' as const, message: frame.message }
     session.failure = failure
+    // `runTermination` 只在 `terminationReason` 尚未设置时才写入（`??=`），而
+    // `commitRootExit` 会在根进程退出时先发起 'root-exited-residual' 终止。于是
+    // 随后到来的 provider 失败帧永远写不进 reason，`observeSessionUntil` 里
+    // `terminationReason === 'provider-failure'` 的判断变成死代码，观察者只能等
+    // 到 deadline。provider 失败是比「根进程退出后的自动残留清理」更精确的原
+    // 因，因此显式提升它（不动用户 / 管理器发起的终止原因）。
+    if (session.terminationReason === undefined || session.terminationReason === 'root-exited-residual') {
+      session.terminationReason = 'provider-failure'
+    }
     const cleanup = this.terminate(session.id, 'provider-failure')
     session.lifecycleChanged.notify({ kind: 'provider-failure', failure })
     void cleanup.catch((error) => {
@@ -796,7 +816,7 @@ export class UnifiedShellSessionManager implements ShellSessionController {
     session.unreadOutput.append(text)
     session.transcript.append(text)
     session.outputAvailable.notify(undefined)
-    if (publish) this.eventHub.publish({ kind: 'output', shellId: session.id, stream, chunk: text })
+    if (publish && !this.closed) this.eventHub.publish({ kind: 'output', shellId: session.id, stream, chunk: text })
   }
 
   private endStream(session: ShellSession, stream: 'stdout' | 'stderr', publish: boolean): void {
@@ -807,7 +827,7 @@ export class UnifiedShellSessionManager implements ShellSessionController {
       session.unreadOutput.append(tail)
       session.transcript.append(tail)
       session.outputAvailable.notify(undefined)
-      if (publish) this.eventHub.publish({ kind: 'output', shellId: session.id, stream, chunk: tail })
+      if (publish && !this.closed) this.eventHub.publish({ kind: 'output', shellId: session.id, stream, chunk: tail })
     }
     session.streamsEnded.add(stream)
     if (session.streamsEnded.size === 2) {
@@ -876,7 +896,7 @@ export class UnifiedShellSessionManager implements ShellSessionController {
         session.unreadOutput.append(tail)
         session.transcript.append(tail)
         session.outputAvailable.notify(undefined)
-        if (session.activation === 'active') {
+        if (session.activation === 'active' && !this.closed) {
           this.eventHub.publish({ kind: 'output', shellId: session.id, stream, chunk: tail })
         }
       }
@@ -895,30 +915,38 @@ export class UnifiedShellSessionManager implements ShellSessionController {
     if (session.hardTimeoutTimer) clearTimeout(session.hardTimeoutTimer)
     session.completion.resolve({ completedAt: session.exitedAt })
     const interactionBarrier = session.activeInteraction?.finished.promise
+    // 这个异步 IIFE 用 `void` 启动：dispose 路径（`runDispose` 里的
+    // `eventHub.close()`）之后仍有会话完成时，`publish` 会抛
+    // 'Shell session event hub is closed'，变成未处理的 Promise 拒绝，Node 默认
+    // 策略下直接让进程崩溃。
     void (async () => {
-      if (interactionBarrier) await interactionBarrier
-      if (session.exitEventPublished) return
-      if (session.spawnOutcome === 'failed' && !session.cleanupResidual) return
-      const event = this.eventHub.publish({
-        kind: 'exited',
-        shellId: session.id,
-        exitCode: session.exitCode,
-        signal: session.signal,
-        failure: session.failure,
-        durationMs: Math.max(0, (session.exitedMonotonicAt ?? this.monotonicNow()) - session.spawnMonotonicAt),
-        wasYielded: session.yielded,
-        timedOut: session.timedOut,
-        terminationReason: session.terminationReason,
-        terminationConfirmed: true,
-        spawnOutcome: session.spawnOutcome === 'ready' ? 'ready' : 'failed',
-        cleanupResidual: session.cleanupResidual,
-        rootExited: session.rootExited,
-        treeConfirmedExited: true,
-        recentOutput: this.recentOutput(session),
-        uiOmittedBytes: this.eventHub.omittedBytesFor(session.id),
-      })
-      session.exitEventPublished = true
-      session.exitedSeq = event.seq
+      try {
+        if (interactionBarrier) await interactionBarrier
+        if (session.exitEventPublished || this.closed) return
+        if (session.spawnOutcome === 'failed' && !session.cleanupResidual) return
+        const event = this.eventHub.publish({
+          kind: 'exited',
+          shellId: session.id,
+          exitCode: session.exitCode,
+          signal: session.signal,
+          failure: session.failure,
+          durationMs: Math.max(0, (session.exitedMonotonicAt ?? this.monotonicNow()) - session.spawnMonotonicAt),
+          wasYielded: session.yielded,
+          timedOut: session.timedOut,
+          terminationReason: session.terminationReason,
+          terminationConfirmed: true,
+          spawnOutcome: session.spawnOutcome === 'ready' ? 'ready' : 'failed',
+          cleanupResidual: session.cleanupResidual,
+          rootExited: session.rootExited,
+          treeConfirmedExited: true,
+          recentOutput: this.recentOutput(session),
+          uiOmittedBytes: this.eventHub.omittedBytesFor(session.id),
+        })
+        session.exitEventPublished = true
+        session.exitedSeq = event.seq
+      } catch (error) {
+        debugLog('shell-session.exit-event-publish-failed', `${session.id} ${String(error)}`)
+      }
     })()
     this.scheduleCompletedExpiration(session)
   }
@@ -1258,6 +1286,15 @@ export class UnifiedShellSessionManager implements ShellSessionController {
   ): Promise<ShellTerminationResult> {
     if (!session.process) {
       const failure = { code: 'termination-failed' as const, message: 'Shell process handle is unavailable' }
+      // 与下面真正的失败分支保持一致：不置 status / failure 也不 notify 的话，
+      // 正在 `observeSessionUntil()` 里等 lifecycle 唤醒的观察者收不到任何信号，
+      // 只能等 deadline 才返回，`list()` 摘要同样会展示误导性的状态。
+      session.terminationReason ??= reason
+      session.status = 'termination-failed'
+      session.failure = failure
+      session.terminationConfirmed = false
+      session.terminationAttempts++
+      session.lifecycleChanged.notify({ kind: 'termination-failed', reason: session.terminationReason, failure })
       return this.failedTermination(session, reason, failure, false, false)
     }
     session.terminationReason ??= reason
@@ -1270,7 +1307,11 @@ export class UnifiedShellSessionManager implements ShellSessionController {
     if (result.rootExited) this.commitRootExit(session, result.exitCode, result.signal, session.activation === 'active')
     if (result.treeConfirmedExited) {
       this.commitTreeConfirmed(session)
-      if (!session.outputFinalized) await session.completion.promise
+      // 有界等待而非裸 `await session.completion.promise`：若 root-exit 帧始终
+      // 没有提交（tree-exit 先到 / 根退出帧丢失），`maybeFinalizeSession()`
+      // 不会 resolve completion，这个 termination flight 就永不结束，进而让
+      // `terminateAll()` / `dispose()` 在进程退出路径上挂死。
+      if (!session.outputFinalized) await this.waitForFinalize(session, undefined)
       return {
         managerInstanceId: this.managerInstanceId,
         shellId: session.id,

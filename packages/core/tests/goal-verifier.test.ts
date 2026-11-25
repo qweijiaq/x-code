@@ -263,6 +263,34 @@ describe('goal verifier', () => {
     expect(result.results[0]?.requiredFixes).toEqual(['fix both failing tests'])
   })
 
+  it('reads the verifier result even when the output quotes braces and other JSON', async () => {
+    runSubAgent.mockResolvedValueOnce({
+      resultText: [
+        '<task_result>',
+        'Checked the empty object {} and {"tmp": 1} while reading the repo.',
+        '{"ok": true, "findings": [], "requiredFixes": []}',
+        '</task_result>',
+      ].join('\n'),
+      tokenUsage: {},
+      turnCount: 1,
+      toolCallCount: 0,
+      durationMs: 1,
+      aborted: false,
+    })
+    const state = createLoopState()
+    const goal = createGoal(state, { objective: 'verify' })
+
+    const result = await runVerifierLadder({
+      goal,
+      state,
+      options: options(),
+      callbacks: callbacks(),
+      model: {} as any,
+    })
+
+    expect(result.ok).toBe(true)
+  })
+
   it('fails a sub-agent verifier if a shell command was denied by sub-agent restrictions', async () => {
     runSubAgent.mockResolvedValue({
       resultText: [

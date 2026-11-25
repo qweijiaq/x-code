@@ -207,6 +207,9 @@ function readQuotedPath(input: string, quoteIndex: number): { end: number; value
 
 export function extractFileReferences(input: string): FileReference[] {
   const refs = new Map<string, FileReference>()
+  // 句尾标点不属于路径：`see @src/a.ts,` / `(@cfg/app.yaml)` 里的逗号和右括号
+  // 必须剪掉，否则会去 stat 一个不存在的路径，把 `[Cannot read …]` 噪声塞进用户消息。
+  const trailingPunctuation = new Set(['.', ',', ':', ';', '!', '?', ')', ']', '}'])
 
   const addReference = (value: string, raw: string): void => {
     if (!value || value.startsWith('@')) return
@@ -228,7 +231,9 @@ export function extractFileReferences(input: string): FileReference[] {
     if (input[valueStart] === "'" || input[valueStart] === '"') continue
     let end = valueStart
     while (end < input.length && !isWhitespace(input[end] ?? '')) end++
-    addReference(input.slice(valueStart, end), input.slice(index, end))
+    let referenceEnd = end
+    while (referenceEnd > valueStart && trailingPunctuation.has(input[referenceEnd - 1] ?? '')) referenceEnd--
+    addReference(input.slice(valueStart, referenceEnd), input.slice(index, referenceEnd))
     index = Math.max(index, end - 1)
   }
 
@@ -243,7 +248,6 @@ export function extractFileReferences(input: string): FileReference[] {
 
   // 每个 token 只扫描一次。除了避免在路由密集的提示词上出现正则回溯，
   // 这也刻意要求含空格的路径必须加引号。
-  const trailingPunctuation = new Set(['.', ',', ':', ';', '!', '?', ')', ']', '}'])
   for (let start = 0; start < input.length; ) {
     while (start < input.length && isWhitespace(input[start] ?? '')) start++
     if (start >= input.length) break
@@ -351,15 +355,27 @@ async function extractZippedOfficeText(archive: Buffer, kind: OfficeKind, abortS
     terminate = unzip(
       archive,
       {
+        // filter 是在 fflate 自己的回调栈里被同步调用的，不在 `new Promise`
+        // executor 的捕获范围内：这里 throw 不会被转成 unzip 的 `error` 参数，
+        // `finish` 就永远不会执行，await 直接挂死。而这两条恰好是压缩炸弹防护
+        // 路径，最需要确定性地失败——所以改成显式 finish(error) 并跳过该条目。
         filter: (entry) => {
           entryCount++
           if (entryCount > MAX_OFFICE_ARCHIVE_ENTRIES) {
-            throw new Error('Office archive exceeds the safe entry-count limit')
+            finish(new Error('Office archive exceeds the safe entry-count limit'))
+            return false
           }
           if (!wanted(entry.name)) return false
+          // originalSize 非法会让累计值变成 NaN，`NaN > 上限` 恒为 false，
+          // 解压上限就形同虚设。
+          if (!Number.isSafeInteger(entry.originalSize) || entry.originalSize < 0) {
+            finish(new Error('Office archive contains an invalid entry size'))
+            return false
+          }
           uncompressedBytes += entry.originalSize
-          if (uncompressedBytes > MAX_OFFICE_UNCOMPRESSED_BYTES) {
-            throw new Error('Office archive exceeds the safe decompression limit')
+          if (!Number.isSafeInteger(uncompressedBytes) || uncompressedBytes > MAX_OFFICE_UNCOMPRESSED_BYTES) {
+            finish(new Error('Office archive exceeds the safe decompression limit'))
+            return false
           }
           return true
         },

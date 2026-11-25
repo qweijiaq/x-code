@@ -22,22 +22,18 @@ function originKey(origin: PeerOrigin): string {
   return `${origin.instanceId}\u0000${origin.messageId}\u0000${origin.nameAtReceipt}`
 }
 
-function hashOriginKeys(keys: readonly string[]): string {
-  const accumulator = Buffer.alloc(32)
-  for (const key of keys) {
-    const digest = createHash('sha256').update(key).digest()
-    for (let index = 0; index < accumulator.length; index++) accumulator[index] ^= digest[index]!
-  }
-  return accumulator.toString('hex')
-}
-
-function mergeOriginDigests(digests: readonly string[]): string {
-  const accumulator = Buffer.alloc(32)
-  for (const hex of digests) {
-    const digest = Buffer.from(hex, 'hex')
-    for (let index = 0; index < accumulator.length; index++) accumulator[index] ^= digest[index]!
-  }
-  return accumulator.toString('hex')
+/** 对“排序后的 origin 键集合 + 总数”做一次域分隔的 SHA-256。
+ *
+ *  不能用逐个 hash 再 XOR 累加：XOR 是线性的，攻击者（`messageId` /
+ *  `nameAtReceipt` 完全由对端控制）只要提供 ≥257 条 origin 就能用高斯消元找到
+ *  异或为任意目标值的子集，从而伪造摘要；合并两个有交集的集合时共有元素还会被
+ *  抵消，让合并结果承诺一个“对称差”而不是并集。 */
+function hashOriginKeys(keys: readonly string[], totalCount: number): string {
+  const hash = createHash('sha256')
+  hash.update('peer-origins\u0000')
+  for (const key of keys) hash.update(`${key.length}\u0000${key}\u0000`)
+  hash.update(`count\u0000${totalCount}`)
+  return hash.digest('hex')
 }
 
 export function canonicalSecurityJson(value: unknown): string {
@@ -51,7 +47,15 @@ export function canonicalSecurityJson(value: unknown): string {
     if (typeof item === 'bigint' || typeof item === 'function' || typeof item === 'symbol' || item === undefined) {
       throw new Error('Unsupported transcript value')
     }
-    if (Array.isArray(item)) return item.map(normalize)
+    // 数组同样要登记：自引用数组此前会一路递归到 RangeError
+    // （"Maximum call stack size exceeded"），而不是预期的 Cyclic 错误。
+    if (Array.isArray(item)) {
+      if (seen.has(item)) throw new Error('Cyclic transcript value')
+      seen.add(item)
+      const normalizedArray = item.map(normalize)
+      seen.delete(item)
+      return normalizedArray
+    }
     if (typeof item !== 'object') throw new Error('Unsupported transcript value')
     if (seen.has(item)) throw new Error('Cyclic transcript value')
     seen.add(item)
@@ -83,7 +87,10 @@ export function summarizePeerOrigins(origins: readonly PeerOrigin[]): PeerOrigin
   return {
     items: entries.slice(0, MAX_PEER_ORIGIN_ITEMS).map(([, origin]) => origin),
     totalCount: entries.length,
-    digest: hashOriginKeys(entries.map(([key]) => key)),
+    digest: hashOriginKeys(
+      entries.map(([key]) => key),
+      entries.length,
+    ),
     truncated: entries.length > MAX_PEER_ORIGIN_ITEMS,
   }
 }
@@ -108,7 +115,10 @@ export function mergePeerOriginSummaries(
     unique.size,
     values.reduce((sum, summary) => sum + summary.totalCount, 0) - duplicateVisibleCount,
   )
-  const digest = mergeOriginDigests(values.map((summary) => summary.digest))
+  const digest = hashOriginKeys(
+    sorted.map(([key]) => key),
+    totalCount,
+  )
   return {
     items: sorted.slice(0, MAX_PEER_ORIGIN_ITEMS).map(([, origin]) => origin),
     totalCount,
@@ -122,12 +132,16 @@ export function provenanceForAuthority(
   messageRole: ModelMessage['role'],
 ): MessageProvenance {
   const peerOrigins = authority.peerOrigins
+  // fail-closed：`source: 'peer'` 本身就是污点，即使 peerTainted 为 false。调用方
+  // 可以直接构造这种组合（不经过 effectiveExecutionAuthority），此时对端消息会被
+  // 记为 authority:'user' 并把来源摘要丢掉——对端来源被洗白。
+  const tainted = authority.peerTainted || authority.source === 'peer'
   if (messageRole === 'user') {
-    return authority.peerTainted
+    return tainted
       ? { authority: authority.source, derivedFromPeer: true, ...(peerOrigins ? { peerOrigins } : {}) }
       : { authority: 'user', derivedFromPeer: false }
   }
-  return authority.peerTainted
+  return tainted
     ? { authority: 'internal', derivedFromPeer: true, ...(peerOrigins ? { peerOrigins } : {}) }
     : { ...CLEAN_PROVENANCE }
 }
@@ -243,9 +257,12 @@ export function isValidContextSecurity(
   if (state.firstTaintedEntryId !== undefined && typeof state.firstTaintedEntryId !== 'string') return false
   if (state.peerOrigins !== undefined && !isValidPeerOriginSummary(state.peerOrigins)) return false
   const derived = deriveContextSecurity(entries)
+  // 只比对 digest 会漏掉 `items` / `totalCount` / `truncated` 的篡改——而 `items`
+  // 正是 UI/审计展示“本次执行受哪些 peer 影响”的依据。整体按规范化形式比较。
+  // （`integrityFailure` 不参与：它由调用方单独判定，且无法从 entries 推导。）
   return (
     state.peerInfluenceActive === derived.peerInfluenceActive &&
     state.firstTaintedEntryId === derived.firstTaintedEntryId &&
-    (state.peerOrigins?.digest ?? '') === (derived.peerOrigins?.digest ?? '')
+    canonicalSecurityJson(state.peerOrigins ?? null) === canonicalSecurityJson(derived.peerOrigins ?? null)
   )
 }

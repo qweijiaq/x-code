@@ -60,8 +60,15 @@ async function writeStore(store: TrustedStore): Promise<void> {
   await fs.mkdir(userXcodeDir(), { recursive: true })
   // 原子写入：tmp + rename。避免进程在写入中途被杀时留下半个文件
   // （信任文件很小，但原则成立——我们绝不想损坏的 JSON 把用户锁在 MCP 之外）。
-  const tmp = trustedFile() + '.tmp'
+  //
+  // 临时名带进程 / 随机后缀：多个 CLI 实例同时写这份文件时，固定名
+  // `trusted-projects.json.tmp` 会被两个进程交替写、先后 rename，产生交错内容
+  // 甚至 ENOENT。`mode` 只在创建时生效，若临时文件是上一次崩溃的残留（或以
+  // 0644 被别的工具创建过），rename 会把那份宽松权限变成正式的信任文件——
+  // 所以写入后必须显式 chmod 收紧。
+  const tmp = `${trustedFile()}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
   await fs.writeFile(tmp, JSON.stringify(store, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 })
+  await fs.chmod(tmp, 0o600)
   await fs.rename(tmp, trustedFile())
 }
 
@@ -90,6 +97,16 @@ export async function untrustProject(projectPath: string): Promise<void> {
 
 export type TrustChoice = 'trust' | 'skip' | 'exit'
 
+const TRUST_LABEL = 'Trust this project'
+const SKIP_LABEL = 'Skip project MCP'
+const EXIT_LABEL = 'Exit X-Code'
+
+/** 服务器名 / 命令串来自提交进仓库的 `.x-code/config.json`，是不可信输入。
+ *  原样拼进提示文本会带来两类问题：(1) 命令里的 ANSI 转义 / `\r` / `\n` 能在
+ *  终端里重绘、覆盖甚至伪造对话框内容，让真实命令隐身；(2) 超长字符串刷屏，
+ *  把真正的选项挤出可视区域。 */
+const MAX_PREVIEW_CHARS = 512
+
 /** 询问用户是否信任项目的 MCP 配置。
  *
  *  调用方传入一个通用 askUser 回调（与 agent loop 用于 askUser 工具调用的
@@ -101,25 +118,40 @@ export type TrustChoice = 'trust' | 'skip' | 'exit'
  *    'skip'  — 只加载用户级 mcpServers
  *    'exit'  — 调用方应终止 CLI */
 export async function promptForTrust(
-  _projectPath: string,
+  projectPath: string,
   serverSummaries: Array<{ name: string; preview: string }>,
   askUser: (question: string, options: Array<{ label: string; description: string }>) => Promise<string>,
 ): Promise<TrustChoice> {
-  const lines = serverSummaries.map((s) => `  • ${s.name}: ${s.preview}`).join('\n')
+  let truncated = false
+  const sanitize = (value: string): string => {
+    const flattened = value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    if (flattened.length <= MAX_PREVIEW_CHARS) return flattened
+    truncated = true
+    return `${flattened.slice(0, MAX_PREVIEW_CHARS)}…`
+  }
+
+  const lines = serverSummaries.map((s) => `  • ${sanitize(s.name)}: ${sanitize(s.preview)}`).join('\n')
   const question =
-    `This project wants to load ${serverSummaries.length} MCP server(s):\n` +
+    // 渲染规范化后的绝对路径：信任是以绝对路径为键的，不显示它，用户就无法
+    // 核对到底在同意哪个目录（攻击者可以把仓库放在与已信任目录同名的路径下）。
+    `This project (${normalize(projectPath)}) wants to load ${serverSummaries.length} MCP server(s):\n` +
     lines +
-    `\n\nThese commands will run on your machine. Trust only if you trust this project.`
+    `\n\nThese commands will run on your machine. Trust only if you trust this project.` +
+    (truncated ? `\n(Some commands were truncated — see .x-code/config.json for the full text.)` : '')
 
   const answer = await askUser(question, [
-    { label: 'Trust this project', description: 'Remember this choice. The project MCP servers will load.' },
-    { label: 'Skip project MCP', description: 'Use only user-level mcpServers for this session. No write to disk.' },
-    { label: 'Exit X-Code', description: 'Close the CLI without loading any MCP servers.' },
+    { label: TRUST_LABEL, description: 'Remember this choice. The project MCP servers will load.' },
+    { label: SKIP_LABEL, description: 'Use only user-level mcpServers for this session. No write to disk.' },
+    { label: EXIT_LABEL, description: 'Close the CLI without loading any MCP servers.' },
   ])
 
-  const lower = answer.toLowerCase()
-  if (lower.startsWith('trust')) return 'trust'
-  if (lower.startsWith('exit')) return 'exit'
+  // 全等比较而非前缀匹配：UI 可能改变标签大小写（"Trust this project" →
+  // "Allow"），前缀匹配会静默落到 'skip' 丢掉用户已确认的信任；部分 askUser
+  // 实现还允许自由输入（Other），"trusted earlier" 这类文本不该通过。
+  // 回调 resolve 出 undefined/null 时也不再抛错。
+  const normalized = typeof answer === 'string' ? answer.trim().toLowerCase() : ''
+  if (normalized === TRUST_LABEL.toLowerCase()) return 'trust'
+  if (normalized === EXIT_LABEL.toLowerCase()) return 'exit'
   return 'skip'
 }
 
@@ -127,10 +159,15 @@ export async function promptForTrust(
  *  command + args；HTTP 服务器展示 URL。我们刻意不截断——用户需要看到
  *  全貌才能做出知情的决定。 */
 export function buildServerPreview(config: { command?: string; args?: string[]; url?: string }): string {
-  if (config.url) return config.url
-  if (config.command) {
-    const parts = [config.command, ...(config.args ?? [])]
-    return parts.join(' ')
+  // loader 把从磁盘读到的原始配置（未经 schema 校验）直接断言成这个形状，所以
+  // 不能相信声明类型：`args` 若是数字 / 布尔，扩展运算符会抛
+  // `TypeError: x is not iterable` 崩掉整个信任视图；`command` / `url` 若是对象
+  // 会渲染成 `[object Object]`，让用户在信息缺失的情况下点「信任」。
+  const raw = config as { command?: unknown; args?: unknown; url?: unknown }
+  if (typeof raw.url === 'string' && raw.url) return raw.url
+  if (typeof raw.command === 'string' && raw.command) {
+    const args = Array.isArray(raw.args) ? raw.args.filter((arg): arg is string => typeof arg === 'string') : []
+    return [raw.command, ...args].join(' ')
   }
   return '(invalid config)'
 }

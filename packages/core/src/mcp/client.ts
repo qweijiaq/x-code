@@ -75,7 +75,7 @@ export class McpClient {
   private cachedResources: McpResourceEntry[] = []
   /** SDK 不会把 onclose 事件重放给在 transport 已断开后才注册的监听器。
    *  维护我们自己的生命周期状态，使迟到的观察者不会把死连接误认为活连接。 */
-  private connectionState: 'idle' | 'open' | 'closed' = 'idle'
+  private connectionState: 'idle' | 'opening' | 'open' | 'closed' = 'idle'
   private closeHandlers = new Set<() => void | Promise<void>>()
 
   constructor(
@@ -91,9 +91,14 @@ export class McpClient {
   async connect(abortSignal?: AbortSignal): Promise<ConnectInfo> {
     const timeout = this.config.timeout ?? DEFAULT_CONNECT_TIMEOUT_MS
 
+    // 在旧连接上重连之前先关闭它：否则 this.transport / this.client 会被直接
+    // 覆盖，旧 HTTP socket 或 stdio 子进程就此泄漏（且再也拿不到句柄去关）。
+    if (this.client || this.transport) await this.safeClose()
+
     this.transport = this.buildTransport()
     this.client = new Client(CLIENT_INFO, { capabilities: {} })
-    this.connectionState = 'open'
+    // 握手完成前不能宣告 'open'：onClose() 观察者会把'还没连上'误判成活连接。
+    this.connectionState = 'opening'
     this.client.onclose = () => this.notifyClosed()
 
     // SDK 的 connect() 执行 initialize 往返，并在服务器确认后 resolve。
@@ -118,6 +123,9 @@ export class McpClient {
     } finally {
       clearTimeout(timer)
     }
+
+    // 握手完成：从这里开始这条连接才是真的可用。
+    this.connectionState = 'open'
 
     // 发现能力。Tools/resources 相互独立——服务器可以只提供其一——
     // 并且我们容忍任一列举抛错（有些服务器在没有 resources 时会拒绝
@@ -459,8 +467,14 @@ export class McpClient {
     const base = err instanceof Error ? err : new Error(String(err))
     if (this.stderrTail.length === 0) return base
     const tail = this.stderrTail.slice(-5).join(' | ')
-    const enriched = new Error(`${base.message} — stderr: ${tail}`)
+    // 保留原错误的身份：`name`（UnauthorizedError 的识别）、`code`
+    // （`code !== -32601` 这类能力判断）以及 cause 链。换成一个裸 Error 会把这些
+    // 全部退化成对 message 文本的脆弱匹配。
+    const enriched = new Error(`${base.message} — stderr: ${tail}`, { cause: base })
+    enriched.name = base.name
     enriched.stack = base.stack
+    const code = (base as { code?: unknown }).code
+    if (code !== undefined) (enriched as { code?: unknown }).code = code
     return enriched
   }
 }
@@ -477,6 +491,11 @@ export class McpClient {
 function isUnauthorizedError(err: unknown, allowMessageMatch = false): boolean {
   if (err instanceof UnauthorizedError) return true
   if (err instanceof Error && err.name === 'UnauthorizedError') return true
+  // enrichError 把原始错误挂在 cause 上：先看原始错误身份，不要越过它直接
+  // 退化成文本匹配。
+  const cause = err instanceof Error ? err.cause : undefined
+  if (cause instanceof UnauthorizedError) return true
+  if (cause instanceof Error && cause.name === 'UnauthorizedError') return true
   if (!allowMessageMatch || !(err instanceof Error)) return false
   // 收紧到"消息开头 / 独立单词"：`401` 必须是独立的数字 token。
   if (/^unauthorized\b/i.test(err.message)) return true
@@ -484,9 +503,13 @@ function isUnauthorizedError(err: unknown, allowMessageMatch = false): boolean {
 }
 
 function truncateText(value: string, maxBytes: number): string {
+  // 预算可以是负数：TextDecoder 会把截断到多字节字符中间的尾巴替换成 U+FFFD
+  // （3 字节），于是 `remaining -= byteLength(bounded)` 可能变负。负数直接喂给
+  // `subarray(0, n)` 会被当作"从末尾倒数"，返回几乎完整的文本，预算就此失效。
+  const limit = Math.max(0, Math.floor(maxBytes))
   const bytes = Buffer.from(value, 'utf8')
-  if (bytes.length <= maxBytes) return value
-  return new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, maxBytes))
+  if (bytes.length <= limit) return value
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, limit))
 }
 
 function boundedJsonRecord(value: unknown, maxBytes: number): Record<string, unknown> | undefined {
@@ -511,9 +534,20 @@ function flattenCallResult(result: unknown): McpCallResult {
   const images: Array<{ data: string; mediaType: string }> = []
   let remainingTextBytes = MAX_RESOURCE_TEXT_BYTES
   let remainingImageChars = MAX_RESULT_IMAGE_BASE64_CHARS
+  let textBudgetExhausted = false
   for (const b of blocks) {
     const block = b as { type?: string; text?: string; data?: unknown; mimeType?: string }
     if (block.type === 'text' && typeof block.text === 'string') {
+      if (!block.text) continue
+      // 预算耗尽后必须继续守住上限（否则每块数 MB 的文本会整段塞进
+      // tool_result），同时留一条省略标记，与 binary 分支一样可观测。
+      if (remainingTextBytes <= 0) {
+        if (!textBudgetExhausted) {
+          textBudgetExhausted = true
+          parts.push('[further text content omitted: size budget exceeded]')
+        }
+        continue
+      }
       const text = truncateText(block.text, remainingTextBytes)
       if (text) parts.push(text)
       remainingTextBytes -= Buffer.byteLength(text, 'utf8')

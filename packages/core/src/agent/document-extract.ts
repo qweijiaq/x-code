@@ -215,6 +215,34 @@ function epubElementText($: cheerio.CheerioAPI, parentSelector: string, localNam
   return result
 }
 
+/** 字体混淆（而非 DRM）使用的 algorithm URI：这些书的正文完全可读。 */
+const EPUB_OBFUSCATION_ALGORITHMS = ['http://www.idpf.org/2008/embedding', 'http://ns.adobe.com/pdf/enc#rc']
+
+/** `META-INF/encryption.xml` 有两种用途：真正的 DRM（Adobe ADEPT、
+ *  Apple FairPlay、XML-ENC 的 AES 等）以及仅仅声明字体混淆。只要文件存在就
+ *  拒读会把大量正常的字体混淆书整体挡掉，因此逐个 algorithm 判定。 */
+function epubIsDrmProtected(encryption: Uint8Array | undefined): boolean {
+  if (!encryption) return false
+  const xml = Buffer.from(encryption).toString('utf8')
+  const algorithms = [...xml.matchAll(/algorithm\s*=\s*"([^"]*)"/gi)].map((match) => (match[1] ?? '').toLowerCase())
+  if (algorithms.length === 0) return false
+  return algorithms.some((algorithm) => !EPUB_OBFUSCATION_ALGORITHMS.includes(algorithm))
+}
+
+/** `manifest` 的 `href` 是 URI：可能带百分号编码、`#fragment`、`?query`，
+ *  也可能用反斜杠分隔。畸形百分号编码会让 `decodeURIComponent` 抛 URIError，
+ *  因此返回 null 由调用方跳过该章节（否则整本书都读不出来）。 */
+function epubHrefToZipPath(href: string): string | null {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(href)
+  } catch {
+    return null
+  }
+  const pathPart = decoded.split('#')[0]?.split('?')[0]?.replace(/\\/g, '/') ?? ''
+  return pathPart || null
+}
+
 async function readEpub(filePath: string, maxChars: number): Promise<DocumentReadResult> {
   const buffer = await fs.readFile(filePath)
   let files: Record<string, Uint8Array>
@@ -223,7 +251,7 @@ async function readEpub(filePath: string, maxChars: number): Promise<DocumentRea
   } catch (error) {
     throw new Error(`Invalid EPUB archive: ${error instanceof Error ? error.message : String(error)}`)
   }
-  if (files['META-INF/encryption.xml']) {
+  if (epubIsDrmProtected(files['META-INF/encryption.xml'])) {
     throw new Error('EPUB is encrypted/DRM-protected; text extraction is not supported')
   }
   const container = files['META-INF/container.xml']
@@ -256,11 +284,16 @@ async function readEpub(filePath: string, maxChars: number): Promise<DocumentRea
 
   const opfDir = path.posix.dirname(opfPath)
   const chapters: string[] = []
+  let skippedHrefs = 0
   for (const idref of spine.slice(0, MAX_EPUB_CHAPTERS)) {
     const item = manifest.get(idref)
     if (!item) continue
     if (!/html|xhtml/i.test(item.mediaType) && !/\.x?html?$/i.test(item.href)) continue
-    const rel = decodeURIComponent(item.href)
+    const rel = epubHrefToZipPath(item.href)
+    if (!rel) {
+      skippedHrefs++
+      continue
+    }
     const zipPath = opfDir === '.' ? rel : path.posix.normalize(path.posix.join(opfDir, rel))
     const content = files[zipPath]
     if (!content) continue
@@ -270,6 +303,9 @@ async function readEpub(filePath: string, maxChars: number): Promise<DocumentRea
   const body = chapters.join('\n\n')
   const truncated = truncateText(body, maxChars)
   const notes: string[] = []
+  if (skippedHrefs > 0) {
+    notes.push(`${skippedHrefs} chapter link(s) had malformed or empty hrefs and were skipped.`)
+  }
   if (chapters.length === 0) notes.push('No extractable XHTML chapters were found in the spine.')
   return {
     path: filePath,
@@ -445,8 +481,12 @@ function mp4Metadata(buffer: Buffer): { durationSeconds?: number; width?: number
     const tkhd = findBox(buffer, trak.start + 8, trak.end, 'tkhd')
     if (tkhd) {
       const version = buffer[tkhd.start + 8]
-      const widthOffset = version === 1 ? tkhd.start + 100 : tkhd.start + 84
-      const heightOffset = version === 1 ? tkhd.start + 104 : tkhd.start + 88
+      // v1 的时间戳是 64 位：version/flags(4) + creation(8) + modification(8) +
+      // trackID(4) + reserved(4) + duration(8) + reserved(8) + layer(2) +
+      // altGroup(2) + volume(2) + reserved(2) + matrix(36) = 88，加 8 字节 box 头
+      // 即 width 在 +96、height 在 +100（v0 的 84/88 是对的）。
+      const widthOffset = version === 1 ? tkhd.start + 96 : tkhd.start + 84
+      const heightOffset = version === 1 ? tkhd.start + 100 : tkhd.start + 88
       if (heightOffset + 4 <= tkhd.end) {
         const width = buffer.readUInt32BE(widthOffset) / 65536
         const height = buffer.readUInt32BE(heightOffset) / 65536
@@ -470,21 +510,33 @@ async function ffmpegAvailable(): Promise<boolean> {
   }
 }
 
-async function extractVideoFrames(filePath: string, count: number, durationSeconds?: number): Promise<string[]> {
+async function extractVideoFrames(
+  filePath: string,
+  count: number,
+  durationSeconds?: number,
+  abortSignal?: AbortSignal,
+): Promise<string[]> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'xcode-video-frames-'))
   const times =
     durationSeconds && durationSeconds > 0
       ? Array.from({ length: count }, (_, index) => Math.max(0, (durationSeconds * (index + 0.5)) / count))
       : [1]
   const paths: string[] = []
-  for (let index = 0; index < times.length; index++) {
-    const output = path.join(dir, `frame-${index + 1}.png`)
-    await execFileAsync(
-      'ffmpeg',
-      ['-y', '-ss', String(times[index]), '-i', filePath, '-frames:v', '1', '-vf', 'scale=min(1280\\,iw):-2', output],
-      { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
-    )
-    if (fsSync.existsSync(output)) paths.push(output)
+  try {
+    for (let index = 0; index < times.length; index++) {
+      // 用户中断后不再继续拉起剩余的 ffmpeg 进程。
+      abortSignal?.throwIfAborted()
+      const output = path.join(dir, `frame-${index + 1}.png`)
+      await execFileAsync(
+        'ffmpeg',
+        ['-y', '-ss', String(times[index]), '-i', filePath, '-frames:v', '1', '-vf', 'scale=min(1280\\,iw):-2', output],
+        { timeout: 60_000, maxBuffer: 4 * 1024 * 1024, signal: abortSignal },
+      )
+      if (fsSync.existsSync(output)) paths.push(output)
+    }
+  } finally {
+    // 一帧都没成功时清掉临时目录，避免在 /tmp 留下残缺帧。
+    if (paths.length === 0) await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
   }
   return paths
 }
@@ -495,9 +547,11 @@ async function readVideo(
   options: DocumentReadOptions,
 ): Promise<DocumentReadResult> {
   const stat = await fs.stat(filePath)
-  const buffer = await fs.readFile(filePath)
   const metadata: Record<string, string | number> = { size: formatBytes(stat.size) }
   if (['.mp4', '.m4v', '.mov'].includes(extension)) {
+    // 只有 ISOBMFF 系列需要整份 buffer 解析 moov；mkv/avi/webm 用不到，
+    // 无条件 readFile 会白白吃掉上百 MB 堆内存。
+    const buffer = await fs.readFile(filePath)
     const parsed = mp4Metadata(buffer)
     if (parsed.durationSeconds !== undefined) metadata.durationSeconds = parsed.durationSeconds
     if (parsed.width && parsed.height) metadata.resolution = `${parsed.width}x${parsed.height}`
@@ -507,7 +561,12 @@ async function readVideo(
   if (frameCount > 0) {
     if (await ffmpegAvailable()) {
       try {
-        const frames = await extractVideoFrames(filePath, frameCount, metadata.durationSeconds as number | undefined)
+        const durationSeconds = metadata.durationSeconds as number | undefined
+        if (durationSeconds === undefined) {
+          // 无法定位时间轴时只能抽首帧——必须说明，否则调用方会以为拿到了 count 帧。
+          notes.push('Video duration is unknown; only a single frame near the start was extracted.')
+        }
+        const frames = await extractVideoFrames(filePath, frameCount, durationSeconds, options.abortSignal)
         if (frames.length > 0) {
           metadata.frames = frames.length
           notes.push(`Extracted frames:\n${frames.map((frame) => `- ${frame}`).join('\n')}`)
@@ -549,23 +608,29 @@ async function ensurePdfGlobals(): Promise<void> {
   }
 }
 
-function parsePageRange(spec: string | undefined, totalPages: number): number[] {
+/** 解析 `"1-5,8"` 形式的页码，并把被 `limit`（总页数 / MAX_PDF_PAGES）裁掉的
+ *  请求标记为 `clamped`，由调用方补一条 note。 */
+function parsePageRange(spec: string | undefined, totalPages: number): { pages: number[]; clamped: boolean } {
   const limit = Math.min(totalPages, MAX_PDF_PAGES)
-  if (!spec?.trim()) return Array.from({ length: limit }, (_, index) => index + 1)
+  if (!spec?.trim()) return { pages: Array.from({ length: limit }, (_, index) => index + 1), clamped: false }
   const pages = new Set<number>()
+  let clamped = false
   for (const part of spec.split(',')) {
     const trimmed = part.trim()
     const range = trimmed.match(/^(\d+)\s*-\s*(\d+)$/)
     if (range) {
       const start = Math.max(1, Number(range[1]))
-      const end = Math.min(limit, Number(range[2]))
+      const requestedEnd = Number(range[2])
+      const end = Math.min(limit, requestedEnd)
+      if (requestedEnd > limit) clamped = true
       for (let page = start; page <= end; page++) pages.add(page)
     } else if (/^\d+$/.test(trimmed)) {
       const page = Number(trimmed)
+      if (page > limit) clamped = true
       if (page >= 1 && page <= limit) pages.add(page)
     }
   }
-  return [...pages].sort((a, b) => a - b)
+  return { pages: [...pages].sort((a, b) => a - b), clamped }
 }
 
 async function readPdf(filePath: string, options: DocumentReadOptions, maxChars: number): Promise<DocumentReadResult> {
@@ -577,7 +642,16 @@ async function readPdf(filePath: string, options: DocumentReadOptions, maxChars:
   try {
     const info = await parser.getInfo()
     const totalPages = info.total ?? 0
-    const pages = parsePageRange(options.pages, totalPages)
+    const { pages, clamped } = parsePageRange(options.pages, totalPages)
+    // 空页码集合会让 getText 返回空文本，用户随后只会看到“可能是扫描件”的
+    // 误导性 note——这里直接给出可修正的报错。
+    if (pages.length === 0) {
+      throw new Error(
+        options.pages?.trim()
+          ? `Invalid pages specifier "${options.pages}"; use forms like "1-5" or "1,3,8" within 1-${Math.min(totalPages, MAX_PDF_PAGES)}.`
+          : 'The PDF has no readable pages.',
+      )
+    }
     const result = await parser.getText({ partial: pages, pageJoiner: '' })
     const textByPage = new Map<number, string>()
     for (const page of result.pages) textByPage.set(page.num, page.text.trim())
@@ -646,6 +720,10 @@ async function readPdf(filePath: string, options: DocumentReadOptions, maxChars:
     }
     if (totalPages > MAX_PDF_PAGES && !options.pages) {
       notes.push(`Only the first ${MAX_PDF_PAGES} of ${totalPages} pages were read.`)
+    } else if (clamped) {
+      notes.push(
+        `Requested pages beyond ${Math.min(totalPages, MAX_PDF_PAGES)} were skipped; at most ${MAX_PDF_PAGES} pages can be read per call.`,
+      )
     }
     return {
       path: filePath,

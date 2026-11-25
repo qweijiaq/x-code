@@ -187,6 +187,11 @@ export function createUnixSocketTransport(dependencies: UnixSocketTransportOptio
         const decoder = new NdjsonFrameDecoder()
         let authenticatedSender: string | undefined
         let handledRequest = false
+        // 这个空闲超时只用于淘汰未鉴权 / 静默的连接。鉴权成功后必须关掉：
+        // onRequest 可能等用户确认或做磁盘 / 网络 IO，超过 3 秒时定时器会把
+        // socket 直接 destroy，响应写入必然失败，请求方只能等到自己的超时——
+        // 表现为「请求石沉大海」。业务处理阶段的超时由调用方的 request()
+        // 自己控制。
         socket.setTimeout(DEFAULT_TIMEOUT_MS, () => socket.destroy(new Error('PEER_TIMEOUT')))
         socket.on('data', (chunk: Buffer) => {
           void (async () => {
@@ -204,6 +209,7 @@ export function createUnixSocketTransport(dependencies: UnixSocketTransportOptio
                     return
                   }
                   authenticatedSender = frame.senderInstanceId
+                  socket.setTimeout(0)
                   await writeFrame(socket, { v: 1, type: 'auth-ok' })
                   continue
                 }
@@ -224,6 +230,11 @@ export function createUnixSocketTransport(dependencies: UnixSocketTransportOptio
                     : await options.onRequest(frame, authenticatedSender)
                 await writeFrame(socket, response)
                 socket.end()
+                // 连接已结束，但同一批 chunk 里可能还残留后续帧。继续往下走会
+                // 再次进入 handledRequest 分支，对已 end() 的 socket 调用
+                // writeFrame 触发 ERR_STREAM_WRITE_AFTER_END，再落到外层 catch
+                // 重复 writeFrame + end()，制造误导性的错误码。
+                return
               }
             } catch (error) {
               // `code` 是与 `PEER_AUTH_FAILED` / `PEER_PROTOCOL_ERROR` 同级的
@@ -355,7 +366,13 @@ export function createUnixSocketTransport(dependencies: UnixSocketTransportOptio
           }
           const onAbort = () => {
             settle(abortError())
-            void closeBoundServer(0)
+            // 清理失败（PEER_SOCKET_CLOSE_GUARD_FAILED、非 ENOENT 的 rename /
+            // mkdir 错误）不能变成未处理的拒绝：当前外层 catch 只是碰巧 await 到
+            // 同一个缓存的 closePromise，任何重构去掉那个 await 就会在 Node ≥15
+            // 的默认策略下直接让进程崩溃。
+            void closeBoundServer(0).catch((error) => {
+              debugLog('peers.socket-cleanup-failed', errorMessage(error))
+            })
           }
           const onError = (error: Error) => settle(error)
           options.signal?.addEventListener('abort', onAbort, { once: true })
@@ -390,6 +407,10 @@ export function createUnixSocketTransport(dependencies: UnixSocketTransportOptio
         if (
           !securedSocket.isSocket() ||
           securedSocket.isSymbolicLink() ||
+          // chmod 只是「请求」收紧权限：目录权限宽松、或有其它进程在中间改写，
+          // socket 仍可能以 0o666 对外可连，绕过「仅本用户可访问」的前提。
+          // 所以必须回读实际权限确认，而不是假定 chmod 生效。
+          (Number(securedSocket.mode) & 0o777) !== 0o600 ||
           !sameFileIdentity(probedSocket, securedSocket)
         ) {
           throw new Error('PEER_SOCKET_UNSAFE')
@@ -397,7 +418,12 @@ export function createUnixSocketTransport(dependencies: UnixSocketTransportOptio
         ownedSocket = securedSocket
         if (options.signal?.aborted) throw abortError()
       } catch (error) {
-        await closeBoundServer(0)
+        // 清理失败不能掩盖主错误：否则调用方看到的是
+        // PEER_SOCKET_CLOSE_GUARD_FAILED 之类的噪音，真正的原因（EACCES /
+        // EADDRINUSE）丢失。
+        await closeBoundServer(0).catch((cleanupError) => {
+          debugLog('peers.socket-cleanup-failed', errorMessage(cleanupError))
+        })
         if (options.signal?.aborted) throw abortError()
         throw error
       }

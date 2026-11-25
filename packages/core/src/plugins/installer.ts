@@ -29,7 +29,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { debugLog, errorMessage } from '../utils.js'
+import { debugLog, errorMessage, isAbortError } from '../utils.js'
 import { atomicWriteFile } from '../utils/atomic-file.js'
 import { type ConsentPreview, buildConsentPreview, probePluginRoot } from './consent.js'
 import { ManifestParseError, discoverManifest, parseManifest } from './manifest.js'
@@ -49,7 +49,7 @@ import type {
   PluginScope,
   PluginSource,
 } from './types.js'
-import { type UserConfigValue, setPluginUserConfig } from './user-config.js'
+import { type UserConfigValue, clearPluginUserConfig, setPluginUserConfig } from './user-config.js'
 
 export interface InstallRequest {
   source: PluginSource
@@ -114,6 +114,12 @@ export async function installPlugin(req: InstallRequest): Promise<InstallResult>
   }
 
   const tempDir = await fetchToTemp(req.source, req.signal)
+
+  // userConfig 在提交之前就落盘了（见下面的说明）。如果后续的
+  // stageAndSwap / recordInstallation 失败，插件并没有装上，但用户填进去的
+  // 凭据（多为 `sensitive: true` 的 token）已经留在 settings 文件里，因此
+  // 外层 catch 要把这台清理回调跑掉。
+  let rollbackUserConfig: (() => Promise<void>) | undefined
 
   try {
     await validatePluginTree(tempDir, req.signal)
@@ -194,6 +200,11 @@ export async function installPlugin(req: InstallRequest): Promise<InstallResult>
       // id 为键，重装时干净覆盖。
       const pluginIdForConfig = `${manifest.name}@${req.marketplace}`
       await setPluginUserConfig(pluginIdForConfig, collected)
+      rollbackUserConfig = async () => {
+        await clearPluginUserConfig(pluginIdForConfig).catch((error) => {
+          debugLog('plugins.install-user-config-rollback-failed', `${pluginIdForConfig}: ${errorMessage(error)}`)
+        })
+      }
     }
 
     const pluginId = `${manifest.name}@${req.marketplace}`
@@ -225,12 +236,25 @@ export async function installPlugin(req: InstallRequest): Promise<InstallResult>
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {
       /* 无可作为 */
     })
+    if (rollbackUserConfig) await rollbackUserConfig()
+    // 用户按 Esc 取消时抛出的是 AbortError（DOMException）。若把它统一改写成
+    // InstallError("The operation was aborted")，CLI / TUI 就无法区分「用户
+    // 主动取消」与「安装真的失败」，会把正常取消渲染成红色错误。
+    if (isAbortError(err, req.signal)) throw err
     if (err instanceof InstallError || err instanceof ManifestParseError) throw err
     throw new InstallError(errorMessage(err))
   }
 }
 
 // ── 来源 → 临时目录 ───────────────────────────────────────────────────
+
+/** 去掉 URL 里的 userinfo（`https://user:TOKEN@host/repo.git`）。市场条目 /
+ *  用户可以用带 userinfo 的克隆 URL，凭据被原样写进终端、日志和错误上报是
+ *  真实的泄漏面。脱敏必须作用在整条消息上：git 失败时 execa 会把完整 argv
+ *  打进错误消息，只处理我们自己拼的那部分是不够的。 */
+function redactUrl(text: string): string {
+  return text.replace(/\/\/[^/\s@]+@/g, '//***@')
+}
 
 async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<string> {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-plugin-install-'))
@@ -248,7 +272,18 @@ async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<
       const cwdHint = isRelative ? ` (resolved relative to cwd: ${process.cwd()})` : ''
       throw new InstallError(`local source is not a directory: ${resolved}${cwdHint}`)
     }
-    await copyDirFiltered(resolved, tempDir, signal)
+    // 复制失败（EACCES / EPERM / signal 抛出的 AbortError / 其它 IO 错误）时
+    // 必须清掉刚 mkdtemp 出来的目录——其它分支都做了清理，只有这里没有；而且
+    // 这个调用点位于 installPlugin 的 try 之外，裸 errno 会直接冒泡给用户
+    // （"EPERM: operation not permitted, ..."），调用方也拿不到 InstallError。
+    try {
+      await copyDirFiltered(resolved, tempDir, signal)
+    } catch (err) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+      if (isAbortError(err, signal)) throw err
+      if (err instanceof InstallError) throw err
+      throw new InstallError(`failed to copy local source ${resolved}: ${errorMessage(err)}`)
+    }
     return tempDir
   }
 
@@ -272,7 +307,9 @@ async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<
       await execa('git', args, { signal, stdio: 'pipe' })
     } catch (err) {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
-      throw new InstallError(`git clone failed: ${errorMessage(err)}`)
+      // execa 的错误消息里带着完整 argv（含 URL 的 userinfo），所以整条消息
+      // 都要过一遍脱敏。
+      throw new InstallError(redactUrl(`git clone failed: ${errorMessage(err)}`))
     }
 
     // 完整性校验：当 marketplace.json 钉死了 `sha` 时，校验我们实际克隆的
@@ -297,7 +334,7 @@ async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<
         if (!actualSha.startsWith(expected)) {
           await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
           throw new InstallError(
-            `sha integrity check failed for ${cloneUrl}${source.ref ? `@${source.ref}` : ''}: ` +
+            `sha integrity check failed for ${redactUrl(cloneUrl)}${source.ref ? `@${source.ref}` : ''}: ` +
               `marketplace.json declared sha=${expected}, actual HEAD=${actualSha}. ` +
               `The upstream ref may have been force-pushed or the repo compromised. ` +
               `Contact the marketplace author or pin to a different version.`,
@@ -308,7 +345,7 @@ async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<
         // rev-parse 失败（在全新克隆上不应发生）——视作完整性失败，以免
         // 静默安装未经校验的内容。
         await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
-        throw new InstallError(`failed to verify sha for ${cloneUrl}: ${errorMessage(err)}`)
+        throw new InstallError(redactUrl(`failed to verify sha for ${cloneUrl}: ${errorMessage(err)}`))
       }
     }
 
@@ -412,6 +449,10 @@ async function validatePluginTree(rootDir: string, signal?: AbortSignal): Promis
         const physical = await fs.realpath(resolved).catch(() => null)
         const physicalRelative = physical ? path.relative(rootPhysical, physical) : relative
         const targetStats = await fs.stat(resolved).catch(() => null)
+        // 只丢弃逃逸出插件树的 symlink。目录 symlink 若仍指向树内（例如
+        // `commands/shared -> ../_shared/commands`）是合法布局，而
+        // `copyDirFiltered` 本来就保留树内 symlink——这里曾经无条件删除，两处
+        // 策略冲突，插件作者只会看到「装完目录不见了」。
         if (
           relative === '' ||
           relative === '..' ||
@@ -419,9 +460,12 @@ async function validatePluginTree(rootDir: string, signal?: AbortSignal): Promis
           path.isAbsolute(relative) ||
           physicalRelative === '..' ||
           physicalRelative.startsWith('..' + path.sep) ||
-          path.isAbsolute(physicalRelative) ||
-          targetStats?.isDirectory()
+          path.isAbsolute(physicalRelative)
         ) {
+          debugLog(
+            'plugins.copy-symlink-escape',
+            `${entryPath} -> ${target} (resolved ${resolved}, outside ${rootDir})`,
+          )
           await fs.rm(entryPath, { force: true })
         } else if (targetStats?.isFile()) {
           // 没有 symlink 权限的 Windows 主机会把这个目标复制进缓存，因此
@@ -636,13 +680,18 @@ export async function uninstallPlugin(id: string): Promise<UninstallResult> {
     const result: UninstallResult = { removedVersions: [], removedRecord: false }
 
     if (record) {
-      const parent = pluginCacheParent(record.marketplace, record.name)
+      // `pluginCacheParent` 会校验 marketplace / name 组件，对非法值直接抛错。
+      // 它原先在 try 之外，而 installed_plugins.json 是用户可编辑、也可能被旧
+      // 版本写坏的文件——一条含非法组件的记录会让 uninstallPlugin 在删除记录
+      // 之前就抛出，那条坏记录于是永远无法卸载（只能手删文件）。
       try {
+        const parent = pluginCacheParent(record.marketplace, record.name)
         const versions = await fs.readdir(parent)
         result.removedVersions = versions.filter((version) => !version.startsWith('.'))
         await fs.rm(parent, { recursive: true, force: true })
       } catch {
-        // 没有缓存条目——该记录可能是陈旧的。下面删除记录仍会执行。
+        // 没有缓存条目 / 记录里的路径组件非法——该记录是陈旧的。下面删除记录
+        // 仍会执行。
       }
     }
 
@@ -651,6 +700,12 @@ export async function uninstallPlugin(id: string): Promise<UninstallResult> {
     if (data.plugins.length !== before) {
       await writeInstalledPlugins(data)
       result.removedRecord = true
+      // 插件通过 userConfigPrompt 收集的 `sensitive: true` 值（API key /
+      // token）以 pluginId 为键存在 settings 文件里。记录已删，插件不会再被
+      // 加载，这些值就成了纯凭据残留，必须一并清掉。（数据目录按设计保留。）
+      await clearPluginUserConfig(id).catch((error) => {
+        debugLog('plugins.uninstall-user-config-clear-failed', `${id}: ${errorMessage(error)}`)
+      })
     }
 
     return result

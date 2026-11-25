@@ -35,25 +35,33 @@ export function StorageSettings({ onNotice, onSessionsChanged }: Props): React.J
   const [error, setError] = useState<string | null>(null)
 
   const load = async (): Promise<void> => {
-    const response = await request('storage:usage', {})
-    if (response.ok) setUsage(response.result as StorageUsageView)
-    else setError(response.error.message)
-  }
-
-  useEffect(() => {
-    void (async () => {
+    setError(null)
+    try {
       const response = await request('storage:usage', {})
       if (response.ok) setUsage(response.result as StorageUsageView)
       else setError(response.error.message)
-    })()
+    } catch (cause) {
+      // 刷新按钮是 `void load()`，reject 不接住就是静默的 unhandled rejection。
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  useEffect(() => {
+    void load()
   }, [])
 
-  const run = async (id: string, params: Record<string, unknown>): Promise<void> => {
+  const run = async (id: string, params: RequestMap['storage:cleanup']['params']): Promise<void> => {
     setBusy(id)
     setError(null)
     onNotice(null)
     try {
-      const response = await request('storage:cleanup', params as never)
+      let response: RuntimeResponse
+      try {
+        response = await request('storage:cleanup', params)
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+        return
+      }
       if (!response.ok) {
         setError(response.error.message)
         return
@@ -61,6 +69,8 @@ export function StorageSettings({ onNotice, onSessionsChanged }: Props): React.J
       const result = response.result as { deletedFiles: number; freedBytes: number; usage: StorageUsageView }
       setUsage(result.usage)
       setConfirming(null)
+      // 会话被删掉了，侧栏的会话列表必须跟着刷新，否则仍显示已删除的会话。
+      if (params.sessionsOlderThanDays !== undefined) onSessionsChanged?.()
       onNotice(
         t('已删除 {{files}} 个文件，释放 {{size}}。', {
           files: result.deletedFiles,
@@ -134,7 +144,7 @@ export function StorageSettings({ onNotice, onSessionsChanged }: Props): React.J
   const actionRow = (
     id: string,
     label: string,
-    params: Record<string, unknown>,
+    params: RequestMap['storage:cleanup']['params'],
     options: { danger?: boolean; hint?: string } = {},
   ): React.JSX.Element => (
     <div className="setting-row" key={id}>
@@ -149,7 +159,7 @@ export function StorageSettings({ onNotice, onSessionsChanged }: Props): React.J
               {t('取消')}
             </button>
             <button
-              className={`btn ${options.danger ? '' : ''}`}
+              className={`btn ${options.danger ? 'danger' : ''}`}
               disabled={busy !== null}
               onClick={() => void run(id, params)}
             >

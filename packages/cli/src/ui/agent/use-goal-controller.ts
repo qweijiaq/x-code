@@ -42,12 +42,46 @@ import type {
 import type { GoalToolLifecycleCallbacks } from './agent-tool-lifecycle.js'
 import { authorityApproval } from './authority-approval.js'
 import { OTHER_OPTION } from './question-options.js'
-import type { TurnCoordinator, TurnLease } from './turn-coordinator.js'
+import type { AuthoritySnapshot, TurnCoordinator, TurnLease } from './turn-coordinator.js'
 import type { AgentState, PendingAuthority, PendingQuestion, RunGoalCommand, SubmitAgentInput } from './types.js'
 import { extractLastAssistantText } from './use-stream-buffer.js'
 
 interface MutableRef<T> {
   current: T
+}
+
+/** `resumeGoalRun` 的结果：`busy` 表示目标运行器已持有租约（输入会被消费），
+ *  `failed` 才是真的没恢复成功。 */
+interface ResumeGoalOutcome {
+  status: 'resumed' | 'busy' | 'failed'
+  goal: GoalState | null
+  reason?: string
+}
+
+/** 租约里的 authority 是深冻结的只读快照（见 turn-coordinator 的
+ *  `AuthoritySnapshot`）。下游把它当可变对象用（例如写 `peerTainted`）时，
+ *  严格模式下就地写入会抛 TypeError，而 `as ExecutionAuthority` 恰恰让编译器
+ *  发现不了这种结构不匹配——所以这里做一次显式的可写副本。 */
+function toExecutionAuthority(authority: AuthoritySnapshot): ExecutionAuthority {
+  const peerOrigins = authority.peerOrigins
+  return {
+    source: authority.source,
+    peerTainted: authority.peerTainted,
+    ...(peerOrigins
+      ? {
+          peerOrigins: {
+            items: peerOrigins.items.map((item) => ({
+              instanceId: item.instanceId,
+              nameAtReceipt: item.nameAtReceipt,
+              messageId: item.messageId,
+            })),
+            totalCount: peerOrigins.totalCount,
+            digest: peerOrigins.digest,
+            truncated: peerOrigins.truncated,
+          },
+        }
+      : {}),
+  }
 }
 
 interface UseGoalControllerOptions {
@@ -122,6 +156,11 @@ export function useGoalController({
       onAskAuthority: (request) => {
         return new Promise<AuthorityApproval>((resolve) => {
           const pending: PendingAuthority = { ...request, requestId: authorityRequestSequenceRef.current++, resolve }
+          // 单槽位覆盖前先应答上一个请求：丢弃它的 `resolve` 会让等待它的
+          // 核心循环永远挂起（`drainPendingInteractions` 只在显式中断时才清理）。
+          // 拒绝语义与那里保持一致。
+          const previous = pendingAuthorityRef.current
+          if (previous) previous.resolve(authorityApproval(previous.preview, 'deny'))
           pendingAuthorityRef.current = pending
           void agentOptions.peerService?.updateLocalState({ status: 'waiting' }).catch(() => {})
           setState((previous) => ({ ...previous, authorityRequest: pending }))
@@ -136,6 +175,9 @@ export function useGoalController({
             abortAnswer: '',
             layout: 'compact-vertical',
           }
+          // 与 onAskAuthority 同理：覆盖单槽位前先应答上一个请求，否则它的
+          // promise 永远不会 settle。
+          if (pendingQuestionRef.current) pendingQuestionRef.current.resolve(pendingQuestionRef.current.abortAnswer)
           pendingQuestionRef.current = pendingQuestion
           setState((previous) => ({ ...previous, pendingQuestion }))
         })
@@ -219,7 +261,7 @@ export function useGoalController({
             skipIdleDrain: true,
             owner: 'goal',
             lease,
-            authority: lease.authority as ExecutionAuthority,
+            authority: toExecutionAuthority(lease.authority),
           })
           if (!result) throw new Error('Goal agent turn did not complete')
           return {
@@ -333,17 +375,22 @@ export function useGoalController({
     return goal
   }, [loopStateRef, stopGoalRun])
 
-  const resumeGoal = useCallback(async (): Promise<GoalState | null> => {
+  /** resume 的实现体。与 `resumeGoal` 相比，它区分「目标自己正跑着（busy）」
+   *  和「真的没能恢复」——`steerGoal` 需要靠这个区别判断刚写入的 steering 输入
+   *  到底会不会被消费。 */
+  const resumeGoalRun = useCallback(async (): Promise<ResumeGoalOutcome> => {
     const state = loopStateRef.current
-    if (!state?.goal) return null
+    if (!state?.goal) return { status: 'failed', goal: null, reason: 'No goal exists in this session' }
     const lease = turnCoordinatorRef.current.tryAcquire('goal', currentAuthority())
-    if (!lease) return null
+    // 拿不到租约：目标运行器自己正持有它（正常，输入会在下一个工具边界被消费），
+    // 或者是别的 turn 占着（只能等它结束）。
+    if (!lease) return { status: 'busy', goal: state.goal }
     let goal: GoalState
     try {
       goal = state.goal.status === 'active' ? state.goal : resumeCoreGoal(state)
-    } catch {
+    } catch (error) {
       lease.release()
-      return null
+      return { status: 'failed', goal: null, reason: errorMessage(error) }
     }
     try {
       await appendGoalState(state)
@@ -351,21 +398,45 @@ export function useGoalController({
       goalCoordinatorRef.current.wake(goal.id, async (signal) => {
         try {
           await executeGoalLoop(state, goal.id, signal, lease)
+        } catch (error) {
+          // 与 runGoal 不同，这个 runner 没有外层调用者能接住异常：不在这里上报，
+          // 用户在目标失败后就什么提示都看不到。
+          setState((previous) => ({ ...previous, error: `Goal run failed: ${errorMessage(error)}` }))
         } finally {
-          lease.release()
-          setState((previous) => ({
-            ...previous,
-            goalStatus: state.goal ? { ...state.goal } : null,
-            goalRunnerActive: false,
-          }))
+          // 收尾要写会话日志，否则 resume 后目标完成/再次暂停的最终状态在重启后
+          // 与内存不一致。写盘失败也不能让 `goalRunnerActive` 卡在 true。
+          try {
+            if (loopStateRef.current) await appendGoalState(loopStateRef.current)
+            setState((previous) => ({
+              ...previous,
+              goalStatus: state.goal ? { ...state.goal } : null,
+              goalRunnerActive: false,
+            }))
+          } catch (error) {
+            setState((previous) => ({
+              ...previous,
+              goalStatus: state.goal ? { ...state.goal } : null,
+              goalRunnerActive: false,
+              error: `Goal run could not be finalized: ${errorMessage(error)}`,
+            }))
+          } finally {
+            lease.release()
+          }
         }
       })
-      return goal
-    } catch {
+      return { status: 'resumed', goal }
+    } catch (error) {
       lease.release()
-      return null
+      return { status: 'failed', goal: null, reason: errorMessage(error) }
     }
   }, [currentAuthority, executeGoalLoop, loopStateRef, setState, turnCoordinatorRef])
+
+  /** 对外保持原有契约：只有真的唤醒了运行器才返回目标（拿不到租约、恢复失败
+   *  都返回 null）。 */
+  const resumeGoal = useCallback(async (): Promise<GoalState | null> => {
+    const outcome = await resumeGoalRun()
+    return outcome.status === 'resumed' ? outcome.goal : null
+  }, [resumeGoalRun])
 
   const cancelGoal = useCallback(async (): Promise<GoalState | null> => {
     const state = loopStateRef.current
@@ -399,10 +470,18 @@ export function useGoalController({
       await appendGoalInput(state, input)
       await appendGoalState(state)
       setState((previous) => ({ ...previous, goalStatus: state.goal ? { ...state.goal } : null }))
-      await resumeGoal()
+      const outcome = await resumeGoalRun()
+      if (outcome.status === 'failed') {
+        // steering 已写进 goalInputs，但运行器没被唤醒，它就永远不会被消费。
+        // 不提示的话调用方（和用户）会以为「已插入并继续运行」。
+        setState((previous) => ({
+          ...previous,
+          error: `Goal steering is queued but the goal did not resume: ${outcome.reason ?? 'unknown reason'}`,
+        }))
+      }
       return state.goal
     },
-    [loopStateRef, resumeGoal, setState],
+    [loopStateRef, resumeGoalRun, setState],
   )
 
   const editGoal = useCallback(
@@ -437,6 +516,7 @@ export function useGoalController({
     if (!state?.goal) return null
     const lease = turnCoordinatorRef.current.tryAcquire('goal', currentAuthority())
     if (!lease) return null
+    const previousController = abortControllerRef.current
     const controller = new AbortController()
     abortControllerRef.current = controller
     setState((previous) => ({ ...previous, goalVerificationActive: true }))
@@ -490,6 +570,10 @@ export function useGoalController({
       setState((previous) => ({ ...previous, goalStatus: { ...goal } }))
       return { goal, ok: verification.ok, summary: verification.summary }
     } finally {
+      // 校验结束后这个 controller 已经 settle：继续留在 ref 里，后续依赖它中止
+      // 的路径（stopGoalRun / clearGoal / Esc）会 abort 一个失效对象，真正在跑的
+      // 任务反而中止不了。恢复成进入前的值。
+      if (abortControllerRef.current === controller) abortControllerRef.current = previousController
       setState((previous) => ({ ...previous, goalVerificationActive: false }))
       lease.release()
     }

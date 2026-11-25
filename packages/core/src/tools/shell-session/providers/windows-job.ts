@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+import type { Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
 import { resolveWindowsNativeArtifact, resolveWindowsNativeRoot } from '../../../native/windows-native-artifact.js'
@@ -44,6 +45,27 @@ function timeoutWake(ms: number): { promise: Promise<false>; dispose(): void } {
     dispose() {
       if (timer) clearTimeout(timer)
     },
+  }
+}
+
+/** supervisor 不读 stdin（卡死）时 write 回调永远不会触发，没有 deadline 就会
+ *  把这些 promise 永久挂住。 */
+const WINDOWS_SUPERVISOR_LAUNCH_WRITE_TIMEOUT_MS = 15_000
+const WINDOWS_SUPERVISOR_FRAME_WRITE_TIMEOUT_MS = 2_000
+
+async function writeFrameWithDeadline(stdin: Writable, frame: Buffer, timeoutMs: number): Promise<void> {
+  const deadline = timeoutWake(timeoutMs)
+  try {
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        stdin.write(frame, (error) => (error ? reject(error) : resolve()))
+      }),
+      deadline.promise.then(() => {
+        throw new Error(`supervisor did not accept the frame within ${timeoutMs}ms`)
+      }),
+    ])
+  } finally {
+    deadline.dispose()
   }
 }
 
@@ -143,6 +165,9 @@ class WindowsManagedProcess implements ManagedProcess {
   async probeTree(): Promise<'live' | 'confirmed-exited' | 'unknown'> {
     if (this.treeExit.settled) return 'confirmed-exited'
     if (this.helperState === 'absent') return 'confirmed-exited'
+    // pending：supervisor 还没 spawn 成功，进程树尚未建立 —— 不能断言 'live'
+    // （与 windows-pty 的 probeTree 保持同一语义）。
+    if (this.helperState === 'pending') return 'unknown'
     return this.helperState === 'exited' || this.protocolFailure ? 'unknown' : 'live'
   }
 
@@ -169,8 +194,11 @@ class WindowsManagedProcess implements ManagedProcess {
       this.markSpawnAbsent()
       return 'already-exited'
     }
+    // helper 已经退出时进程树大概率也消失了：这是"已经结束"，不是"关停失败"，
+    // 否则 shutdown 汇总会把死掉的 supervisor 统计成失败并污染重试决策。
+    if (this.helperState === 'exited') return 'already-exited'
     try {
-      return this.helper?.kill() ? 'force-sent-unconfirmed' : 'failed'
+      return this.helper?.kill() ? 'force-sent-unconfirmed' : 'already-exited'
     } catch {
       return 'failed'
     }
@@ -222,9 +250,7 @@ class WindowsManagedProcess implements ManagedProcess {
     const stdin = this.helper?.stdin
     if (!stdin || stdin.destroyed || !stdin.writable) return false
     try {
-      await new Promise<void>((resolve, reject) => {
-        stdin.write(encodeWindowsSupervisorFrame(kind), (error) => (error ? reject(error) : resolve()))
-      })
+      await writeFrameWithDeadline(stdin, encodeWindowsSupervisorFrame(kind), WINDOWS_SUPERVISOR_FRAME_WRITE_TIMEOUT_MS)
       return true
     } catch (error) {
       this.protocolFailure = `Could not write Windows supervisor termination frame: ${String(error)}`
@@ -274,6 +300,11 @@ class WindowsSpawnAttempt implements ManagedSpawnAttempt {
     this.frames = new ActivationFrameBuffer(options.outputCapture)
     this.handle = new WindowsManagedProcess(() => this.cancelPendingSpawn())
     this.ready = this.readyState.promise
+    // 同步 best-effort 关停路径（forceTreeSync → cancelPendingSpawn）可能 reject
+    // `ready`，而此时未必有调用方在等它；没有 handler 的 rejection 在 Node 默认
+    // 策略下会直接打崩进程。挂一个兜底 handler，真正的错误仍会传给 await ready
+    // 的调用方。
+    void this.ready.catch(() => undefined)
     void this.initialize(artifact)
   }
 
@@ -368,9 +399,9 @@ class WindowsSpawnAttempt implements ManagedSpawnAttempt {
         application: this.powerShellExecutable,
         commandLine: powerShellCommandLine(this.powerShellExecutable, this.command),
       })
-      await new Promise<void>((resolve, reject) => {
-        helper.stdin.write(launch, (error) => (error ? reject(error) : resolve()))
-      })
+      // launch 帧的写入同样要有 deadline：supervisor 启动了却不读 stdin 时，
+      // write 回调不会触发，`ready` 会无限挂起并把整条 shell 会话拖住。
+      await writeFrameWithDeadline(helper.stdin, launch, WINDOWS_SUPERVISOR_LAUNCH_WRITE_TIMEOUT_MS)
     } catch (error) {
       this.readyState.reject(error)
     }
@@ -448,7 +479,19 @@ export class WindowsJobObjectProvider implements ManagedShellProvider {
   }
 
   spawnManaged(command: string, options: ManagedShellSpawnOptions): ManagedSpawnAttempt {
-    this.artifact ??= this.configuredArtifact ?? resolveWindowsSupervisorArtifact()
+    if (this.configuredArtifact) {
+      // 调用方注入的 artifact 由其自身生命周期决定，这里既不缓存也不重试。
+      return new WindowsSpawnAttempt(command, options, this.configuredArtifact, this.executable)
+    }
+    if (!this.artifact) {
+      // 一次瞬时失败（原生产物还没解压完、临时 I/O 错误）不能让这个 provider
+      // 实例后续所有 spawn 都复用同一个 rejected promise：失败时清掉缓存，
+      // 下一次 spawn 重新解析产物。
+      this.artifact = resolveWindowsSupervisorArtifact().catch((error: unknown) => {
+        this.artifact = undefined
+        throw error
+      })
+    }
     return new WindowsSpawnAttempt(command, options, this.artifact, this.executable)
   }
 }

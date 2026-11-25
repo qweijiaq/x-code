@@ -28,6 +28,8 @@ function lastUserMessageText(messages: LoopState['messages']): string {
   return ''
 }
 
+const VALID_TODO_STATUSES: readonly TodoItem['status'][] = ['pending', 'in_progress', 'completed']
+
 export async function handleTodoWrite(
   input: Record<string, unknown>,
   toolCallId: string,
@@ -35,17 +37,28 @@ export async function handleTodoWrite(
   callbacks: AgentCallbacks,
   pushToolResult: PushToolResult,
 ): Promise<void> {
-  type RawTodo = { content?: string; activeForm?: string; status?: TodoItem['status'] }
-  const raw = (input.todos as RawTodo[] | undefined) ?? []
+  type RawTodo = { content?: unknown; activeForm?: unknown; status?: unknown }
+  // 模型可以给出任何 JSON：非数组、null 元素或非字符串字段都会让朴素的
+  // `for (const t of raw)` / `t.content.trim()` 抛 TypeError，异常会冒泡出处理器，
+  // 模型连一个可自我修正的工具错误都拿不到。
+  const raw: RawTodo[] = Array.isArray(input.todos) ? (input.todos as RawTodo[]) : []
   const normalized: TodoItem[] = []
   for (const t of raw) {
-    const content = (t.content ?? '').trim()
-    const activeForm = (t.activeForm ?? '').trim()
+    if (!t || typeof t !== 'object') continue
+    const record = t as Record<string, unknown>
+    const content = typeof record.content === 'string' ? record.content.trim() : ''
+    const activeForm = typeof record.activeForm === 'string' ? record.activeForm.trim() : ''
     if (!content && !activeForm) continue
+    // 非法状态过去会原样写进 state：`acc[t.status]++` 得到 NaN 并污染统计，
+    // 该项既不算 completed 也不算 in_progress，清单永远清不掉，UI 面板还会渲染
+    // 出未知状态。回落成 pending（下面的回显让模型看到修正后的状态）。
+    const status = VALID_TODO_STATUSES.includes(record.status as TodoItem['status'])
+      ? (record.status as TodoItem['status'])
+      : 'pending'
     normalized.push({
       content: content || activeForm,
       activeForm: activeForm || content,
-      status: t.status ?? 'pending',
+      status,
     })
   }
   const allDone = normalized.length > 0 && normalized.every((t) => t.status === 'completed')

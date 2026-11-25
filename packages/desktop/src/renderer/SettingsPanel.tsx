@@ -8,6 +8,7 @@ import type {
   CodeIndexStatsView,
   DiagnosticsExportResult,
   EnvironmentRefreshResult,
+  LibraryIndexResultView,
   LibrarySearchView,
   LibraryStatsView,
   MarketplaceEntryView,
@@ -254,6 +255,13 @@ export function SettingsPanel({
     })
     return off
   }, [])
+
+  // 登录状态变化后（成功登录 / 退出 / 失败）清掉过期的登录指引：否则区块里会一直
+  // 挂着已经不用的链接与设备码，诱导用户重复操作。
+  useEffect(() => {
+    setAuthPrompt(null)
+  }, [settings.openaiAuth.mode, settings.openaiAuth.credentialError])
+
   const [pluginPreview, setPluginPreview] = useState<{
     preview: PluginConsentPreviewView
     target: PluginInstallTarget
@@ -474,11 +482,11 @@ export function SettingsPanel({
       setError(t('只允许打开 https 链接'))
       return
     }
-    await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'app:open-external',
-      params: { url },
-    } as unknown as RuntimeRequest)
+    // 调用点都是 `void openExternal(...)`：这里必须自己接住失败（IPC 可能
+    // reject，返回值也可能 `ok: false`），否则要么是未捕获的 Promise 异常，
+    // 要么用户点了「获取 Key / 打开授权页」却毫无反应。
+    const response = await request('app:open-external', { url })
+    if (!response.ok) setError(response.error.message)
   }
 
   const saveKey = async (provider: string): Promise<void> => {
@@ -744,8 +752,14 @@ export function SettingsPanel({
       const raw = draft[field.key] ?? ''
       if (field.sensitive === true && raw === '') continue
       if (field.type === 'boolean') values[field.key] = raw === 'true'
-      else if (field.type === 'number') values[field.key] = Number(raw)
-      else values[field.key] = raw
+      else if (field.type === 'number') {
+        // 空值不能提交：Number('') 是 0，会静默覆盖插件默认值；非法文本得到
+        // NaN，经 IPC 序列化后变成 null，主进程校验失败并给出难以理解的错误。
+        if (raw.trim() === '') continue
+        const parsed = Number(raw)
+        if (!Number.isFinite(parsed)) continue
+        values[field.key] = parsed
+      } else values[field.key] = raw
     }
     return values
   }
@@ -1104,14 +1118,39 @@ export function SettingsPanel({
         .filter(Boolean)
         .join(language === 'zh' ? '、' : ', ')
     : ''
+  // 拉取失败时必须给出可见的错误：否则 library / codeIndex 永远是 null，界面
+  // 一直停在“加载中…”占位，用户分不清「加载中」「加载失败」「索引为空」。
   const loadLibrary = async (): Promise<void> => {
     const response = await request('library:stats', {})
-    if (response.ok) setLibrary(response.result as LibraryStatsView)
+    if (!response.ok) {
+      setError(response.error.message)
+      return
+    }
+    setLibrary(response.result as LibraryStatsView)
   }
 
   const loadCodeIndex = async (): Promise<void> => {
     const response = await request('code-index:stats', {})
-    if (response.ok) setCodeIndex(response.result as CodeIndexStatsView)
+    if (!response.ok) {
+      setError(response.error.message)
+      return
+    }
+    setCodeIndex(response.result as CodeIndexStatsView)
+  }
+
+  /** 索引结果里的部分失败（`errors`）与降级说明（`note`）都要展示，否则界面
+   *  只显示“索引完成”，用户以为全部文件都成功入库。 */
+  const reportIndexProblems = (result: LibraryIndexResultView): void => {
+    const problems = [
+      result.note ?? '',
+      result.errors.length > 0
+        ? t('索引存在 {{count}} 个失败项：{{errors}}', {
+            count: result.errors.length,
+            errors: result.errors.slice(0, 5).join('; '),
+          })
+        : '',
+    ].filter(Boolean)
+    if (problems.length > 0) setError(problems.join('\n'))
   }
 
   const indexCodeNow = async (): Promise<void> => {
@@ -1138,7 +1177,7 @@ export function SettingsPanel({
           },
         ),
       )
-      if (result.note) setError(result.note)
+      reportIndexProblems(result)
       await loadCodeIndex()
     } finally {
       setCodeIndexBusy(null)
@@ -1182,16 +1221,9 @@ export function SettingsPanel({
         setError(response.error.message)
         return
       }
-      const result = response.result as {
-        indexed: number
-        skipped: number
-        removed: number
-        files: number
-        chunks: number
-        vectors: number
-        semantic: boolean
-        note?: string
-      }
+      // 直接复用协议类型：内联成匿名结构会把 `errors: string[]` 丢掉，于是部分
+      // 文件索引失败的信息被静默吞掉。
+      const result = response.result as LibraryIndexResultView
       setNotice(
         t(
           '索引完成：新增/更新 {{indexed}}，跳过 {{skipped}}，移除 {{removed}}；共 {{files}} 个文件，{{chunks}} 个分块，{{vectors}} 个向量{{semantic}}',
@@ -1206,7 +1238,7 @@ export function SettingsPanel({
           },
         ),
       )
-      if (result.note) setError(result.note)
+      reportIndexProblems(result)
       await loadLibrary()
     } finally {
       setLibraryBusy(null)

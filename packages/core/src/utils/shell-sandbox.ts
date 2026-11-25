@@ -59,26 +59,58 @@ function sbplString(value: string): string {
  *  `plugins/user-config.json`、`.env`、`config.json`、`settings.json`、
  *  `auth/`、`mcp.json`）留在沙箱内命令可读的位置上，与“除凭据位置外处处
  *  允许读取”的设计意图相反。整根拒绝，再单独放行不含凭据的 skill-runtime。 */
-function sensitivePaths(xcodeRoot: string): string[] {
+interface SensitivePath {
+  path: string
+  /** 目录用 `subpath`（整棵子树），单文件用 `literal`（只匹配该路径本身）。 */
+  kind: 'dir' | 'file'
+}
+
+function sensitivePaths(xcodeRoot: string): SensitivePath[] {
   const home = os.homedir()
-  return [
-    path.join(home, '.ssh'),
-    path.join(home, '.aws'),
-    path.join(home, '.gnupg'),
-    path.join(home, '.kube'),
-    path.join(home, '.config', 'gcloud'),
-    path.join(home, '.netrc'),
-    path.join(home, '.npmrc'),
-    path.join(home, '.pypirc'),
-    path.join(home, 'Library', 'Keychains'),
-    xcodeRoot,
+  const entries: SensitivePath[] = [
+    { path: path.join(home, '.ssh'), kind: 'dir' },
+    { path: path.join(home, '.aws'), kind: 'dir' },
+    { path: path.join(home, '.gnupg'), kind: 'dir' },
+    { path: path.join(home, '.kube'), kind: 'dir' },
+    { path: path.join(home, '.config', 'gcloud'), kind: 'dir' },
+    // 单文件：`subpath` 会按路径前缀连带否定 `~/.npmrc.bak`、`~/.netrc.d/…`
+    // 之类无关位置，匹配范围与预期不符。
+    { path: path.join(home, '.netrc'), kind: 'file' },
+    { path: path.join(home, '.npmrc'), kind: 'file' },
+    { path: path.join(home, '.pypirc'), kind: 'file' },
+    { path: path.join(home, 'Library', 'Keychains'), kind: 'dir' },
+    { path: xcodeRoot, kind: 'dir' },
   ]
+  return entries
+}
+
+/** macOS 把 `/var` 软链到 `/private/var`，而 sandbox-exec 按真实路径匹配，因此
+ *  临时目录的两种写法都要放行。 */
+const USER_TEMP_DIR_RE = /^(?:\/private)?\/var\/folders\/[^/]+\/[^/]+$/
+
+/** 临时目录的写入白名单。 */
+function tempWriteScopes(temp: string): string[] {
+  const scopes = new Set<string>([temp])
+  const realTemp = temp.startsWith('/private/') ? temp : `/private${temp}`
+  scopes.add(realTemp)
+  // 收窄到当前用户那一层（`/var/folders/<xx>/<hash>`）：放行整棵
+  // `/private/var/folders` 会让沙箱内的命令能改写其他用户的临时文件。
+  for (const base of [temp, realTemp]) {
+    const userDir = path.dirname(base)
+    if (USER_TEMP_DIR_RE.test(userDir)) scopes.add(userDir)
+  }
+  return [...scopes]
 }
 
 /** 构建 SBPL 配置。后面的规则覆盖前面的，因此敏感路径的拒绝块放在工作区
  *  写入允许之后。 */
 export function sandboxProfileText(config: ShellSandboxConfig = current): string {
-  const workspace = path.resolve(config.workspace)
+  const workspace = path.resolve(config.workspace || process.cwd())
+  // 全盘 / 家目录可写会让"写入只允许在工作区内"这条核心保证（只剩凭据清单
+  // 被拒）形同虚设，且不会有任何报错提示。宁可直接拒绝，也不要给出虚假保证。
+  if (workspace === path.parse(workspace).root || workspace === os.homedir()) {
+    throw new Error(`shell sandbox: refusing to treat ${workspace} as the writable workspace`)
+  }
   const temp = os.tmpdir()
   // 与 userXcodeDir() 一致：凭据实际落在 ${X_CODE_HOME ?? ~/.x-code} 下。
   const xcodeRoot = process.env.X_CODE_HOME?.trim() || path.join(os.homedir(), '.x-code')
@@ -89,12 +121,11 @@ export function sandboxProfileText(config: ShellSandboxConfig = current): string
     '(deny file-write*)',
     '(allow file-write*',
     `  (subpath ${sbplString(workspace)})`,
-    `  (subpath ${sbplString(temp)})`,
+    ...tempWriteScopes(temp).map((scope) => `  (subpath ${sbplString(scope)})`),
     // 技能脚本可能把模型/依赖下载到其隔离运行时；该目录由应用管理且不含
     // 凭据。
     `  (subpath ${sbplString(skillRuntime)})`,
     '  (subpath "/private/tmp")',
-    '  (subpath "/private/var/folders")',
     '  (literal "/dev/null")',
     '  (literal "/dev/zero")',
     '  (literal "/dev/tty")',
@@ -102,7 +133,9 @@ export function sandboxProfileText(config: ShellSandboxConfig = current): string
     '  (literal "/dev/stderr")',
     '  (literal "/dev/dtracehelper"))',
     '(deny file-read* file-write*',
-    ...sensitivePaths(xcodeRoot).map((entry) => `  (subpath ${sbplString(entry)})`),
+    ...sensitivePaths(xcodeRoot).map(
+      (entry) => `  (${entry.kind === 'dir' ? 'subpath' : 'literal'} ${sbplString(entry.path)})`,
+    ),
     ')',
     // 凭据整根拒绝之后，重新放行 skill-runtime（沙箱写入白名单在上方，会被
     // 上面的 deny 覆盖）。技能脚本需要在这里读写依赖，而它不含任何凭据。
@@ -122,7 +155,12 @@ export function wrapShellSpawn(
   return { executable: '/usr/bin/sandbox-exec', args: ['-p', sandboxProfileText(config), executable, ...args] }
 }
 
-const SECRET_ENV_PATTERN = /(API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE[_-]?KEY)/i
+/** `ACCESS[_-]?KEY` 覆盖 `AWS_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_ID` /
+ *  `*_ACCESS_KEY` 这类 access key id（它们不含 SECRET，否则会被下面的模式漏掉）。
+ *  TOKEN 分支难以精确，因此用白名单保留名字里带 token 但无害的变量。 */
+const SECRET_ENV_PATTERN = /(API[_-]?KEY|ACCESS[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE[_-]?KEY)/i
+/** 命中上面模式、但实际只是配置开关的变量，保留以免破坏常见工具链。 */
+const SECRET_ENV_ALLOWLIST = new Set(['TOKENIZERS_PARALLELISM'])
 
 /** Electron utilityProcess 用来让内部 worker 以 Node 运行，但它会继承给所有
  *  子进程。agent shell 如果带着它启动 Electron，Electron 会退化成纯 Node：
@@ -139,6 +177,7 @@ export function sanitizeShellEnv(env: NodeJS.ProcessEnv, config: ShellSandboxCon
   for (const key of ELECTRON_RUNTIME_ENV_KEYS) delete sanitized[key]
   if (!sandboxed) return sanitized
   for (const key of Object.keys(sanitized)) {
+    if (SECRET_ENV_ALLOWLIST.has(key)) continue
     if (SECRET_ENV_PATTERN.test(key)) delete sanitized[key]
   }
   return sanitized

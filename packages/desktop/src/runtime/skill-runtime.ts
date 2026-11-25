@@ -220,13 +220,16 @@ async function run(command: string, args: string[], cwd: string): Promise<void> 
       windowsHide: true,
     })
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`${command} ${args.join(' ')} failed: ${message.slice(0, 500)}`)
+    // execFile 不走 shell，message 里通常只有命令名；把 stderr 摘要一并给出，
+    // 用户才能看出是哪个包 / 哪一步失败。
+    const failure = error as { message?: string; stderr?: string }
+    const detail = (failure.stderr?.trim() || failure.message || String(error)).trim()
+    throw new Error(`${command} ${args.join(' ')} failed: ${detail.slice(0, 500)}`)
   }
 }
 
 /** 把声明的依赖安装到隔离的运行时目录中。 */
-export async function installSkillRuntime(skill: SkillRuntimeTarget): Promise<SkillRuntimeView> {
+async function installSkillRuntimeOnce(skill: SkillRuntimeTarget): Promise<SkillRuntimeView> {
   const view = skillRuntimeView(skill)
   if (view.manifests.length === 0)
     throw new Error('该技能没有可识别的依赖清单（requirements.txt / pyproject.toml / package.json）')
@@ -241,11 +244,19 @@ export async function installSkillRuntime(skill: SkillRuntimeTarget): Promise<Sk
     if (manifests.some((manifest) => manifest.kind === 'python')) {
       const pythonExe = venvPython(dir)
       if (!fs.existsSync(pythonExe)) {
-        await run(process.env.PYTHON?.trim() || 'python3', ['-m', 'venv', path.join(dir, 'venv')], dir)
+        // Windows 的官方安装包提供的是 `python` / `py`，没有 `python3`。
+        await run(
+          process.env.PYTHON?.trim() || (process.platform === 'win32' ? 'python' : 'python3'),
+          ['-m', 'venv', path.join(dir, 'venv')],
+          dir,
+        )
       }
+      // 两个清单都要装：只装 requirements.txt 会让 pyproject.toml 里的
+      // 依赖永远缺失，而 mtimes 却把两者都记成“已安装”。
       if (manifests.some((manifest) => manifest.file === 'requirements.txt')) {
         await run(pythonExe, ['-m', 'pip', 'install', '-r', path.join(skill.dir, 'requirements.txt')], dir)
-      } else {
+      }
+      if (manifests.some((manifest) => manifest.file === 'pyproject.toml')) {
         await run(pythonExe, ['-m', 'pip', 'install', skill.dir], dir)
       }
       python = true
@@ -257,16 +268,40 @@ export async function installSkillRuntime(skill: SkillRuntimeTarget): Promise<Sk
         const source = path.join(skill.dir, name)
         if (fs.existsSync(source)) fs.copyFileSync(source, path.join(nodeDir, name))
       }
-      await run(process.env.NPM?.trim() || 'npm', ['install', '--no-audit', '--no-fund'], nodeDir)
+      // Windows 上裸 `npm` 无法被 execFile 解析（实际可执行文件是 npm.cmd）。
+      await run(
+        process.env.NPM?.trim() || (process.platform === 'win32' ? 'npm.cmd' : 'npm'),
+        ['install', '--no-audit', '--no-fund'],
+        nodeDir,
+      )
       node = true
     }
     writeMeta(dir, { installedAt: Date.now(), manifests: mtimes, python, node })
     return skillRuntimeView(skill)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    writeMeta(dir, { installedAt: Date.now(), manifests: mtimes, python, node, lastError: message.slice(0, 500) })
+    try {
+      writeMeta(dir, { installedAt: Date.now(), manifests: mtimes, python, node, lastError: message.slice(0, 500) })
+    } catch {
+      // 记录失败不应覆盖真正的安装错误。
+    }
     throw error
   }
+}
+
+/** 同一个运行时目录同时只允许一次安装：连点两次或两个窗口同时安装会并发
+ *  跑 pip/npm 并互相覆盖 runtime.json。 */
+const installsInFlight = new Map<string, Promise<SkillRuntimeView>>()
+
+export function installSkillRuntime(skill: SkillRuntimeTarget): Promise<SkillRuntimeView> {
+  const dir = skillRuntimeDir(skill)
+  const running = installsInFlight.get(dir)
+  if (running) return running
+  const task: Promise<SkillRuntimeView> = installSkillRuntimeOnce(skill).finally(() => {
+    if (installsInFlight.get(dir) === task) installsInFlight.delete(dir)
+  })
+  installsInFlight.set(dir, task)
+  return task
 }
 
 export function clearSkillRuntime(skill: SkillRuntimeTarget): void {

@@ -503,6 +503,11 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         onAskAuthority: (request) => {
           return new Promise<AuthorityApproval>((resolve) => {
             const pending: PendingAuthority = { ...request, requestId: authorityRequestSequenceRef.current++, resolve }
+            // authority 请求同样可能并发（SDK 会交错发出并行工具调用）。覆盖前
+            // 先拒绝上一个：单槽位直接覆盖会让它的 promise 永远不 settle，等待它
+            // 的核心循环就此挂死。拒绝语义与 `drainPendingInteractions` 一致。
+            const previous = pendingAuthorityRef.current
+            if (previous) previous.resolve(authorityApproval(previous.preview, 'deny'))
             pendingAuthorityRef.current = pending
             void options.peerService?.updateLocalState({ status: 'waiting' }).catch(() => {})
             setState((prev) => ({ ...prev, authorityRequest: pending }))
@@ -537,6 +542,11 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
               resolve,
               abortAnswer: '[Request interrupted by user]',
               layout: 'compact-vertical',
+            }
+            if (pendingQuestionRef.current) {
+              // 同上：问答也是单槽位。直接覆盖会让上一个 askUser 的 promise
+              // 永远悬挂，等待它的核心循环无法回到用户手里。
+              pendingQuestionRef.current.resolve(pendingQuestionRef.current.abortAnswer)
             }
             pendingQuestionRef.current = pendingQuestion
             setState((prev) => ({ ...prev, pendingQuestion }))
@@ -757,6 +767,9 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
           }
         }
         pendingToolsRef.current.clear()
+        // 中断/新回合清理点必须同时丢弃未消费的 diff 载荷：没有等到结果的那些
+        // toolCallId 的 diff（可能含完整文件内容）否则会一直留在 Map 里。
+        pendingEditDiffsRef.current.clear()
         externalSignal?.removeEventListener('abort', abortFromExternal)
         if (controller.signal.aborted) {
           // 现在可以安全地把中断通知推入 state.messages 了：agentLoop 已返回，
@@ -798,6 +811,7 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         }
         consumedPeerInboxKeysRef.current.clear()
         pendingToolsRef.current.clear()
+        pendingEditDiffsRef.current.clear()
         externalSignal?.removeEventListener('abort', abortFromExternal)
         // 用户取消路径：agentLoop 把 AbortError 吞成一个干净的 'aborted' 结果并
         // 正常返回，所以对于 Esc/Ctrl+C 中止我们不应该走到这里。但如果某个
@@ -826,6 +840,10 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         return null
       } finally {
         activeForkBoundaryRef.current = null
+        // 按身份清理：回合结束后如果还留着这个（已完成但未 abort 的）controller，
+        // `abort()` 的 `signal.aborted` 守卫就失效了，idle 状态下的 abort/quiesce
+        // 会往 scrollback 追加一条虚假的 `[Request interrupted by user]`。
+        if (abortControllerRef.current === controller) abortControllerRef.current = null
         if (ownsLease) {
           lease.release()
           if (!submitOptions?.skipIdleDrain) {
@@ -932,21 +950,16 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     submitRef.current = submit
   })
 
-  /** 解析第一个待处理的权限请求，并把它从队列中弹出 */
+  /** 解析第一个待处理的权限请求，并把它从队列中弹出。
+   *  resolver 的取出/出队必须在 updater 之外同步完成：StrictMode 下 updater 会被
+   *  重复执行，把副作用放进去只能靠 resolver 身份比较侥幸兜住，且把「head 判断 +
+   *  ref shift + 队列裁剪」三件事耦合得难以推理。setState 现在只负责裁剪队列。 */
   const resolvePermission = useCallback((decision: PermissionDecision) => {
-    setState((prev) => {
-      const [head, ...tail] = prev.permissionQueue
-      if (head) {
-        const r = permissionResolversRef.current[0]
-        queueMicrotask(() => {
-          if (r !== undefined && permissionResolversRef.current[0] === r) {
-            permissionResolversRef.current.shift()
-            r(decision)
-          }
-        })
-      }
-      return { ...prev, permissionQueue: tail }
-    })
+    const resolver = permissionResolversRef.current.shift()
+    if (resolver) queueMicrotask(() => resolver(decision))
+    setState((prev) =>
+      prev.permissionQueue.length === 0 ? prev : { ...prev, permissionQueue: prev.permissionQueue.slice(1) },
+    )
   }, [])
 
   const resolveAuthority = useCallback(
@@ -1028,6 +1041,16 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         return { ok: false, removed: 0, reason: 'A peer message arrived while confirmation was open.' }
       }
       const removed = await clearCorePeerContext(ls)
+      // `permissionResolversRef` 与 `permissionQueue` 是按下标对齐的：只裁剪
+      // state 而留下 resolver，后续 `resolvePermission` 会把用户的 Yes/No 归属到
+      // 一条已经不存在的行，被丢弃的 promise 还会永远悬挂。清理保持与
+      // `use-session-controller` 的会话切换一致。
+      const droppedResolvers = permissionResolversRef.current
+      permissionResolversRef.current = []
+      for (const resolveDropped of droppedResolvers) resolveDropped('no')
+      pendingQuestionRef.current = null
+      pendingToolsRef.current.clear()
+      pendingEditDiffsRef.current.clear()
       setState((prev) => ({
         ...prev,
         messages: modelMessagesToDisplay(ls.messages),

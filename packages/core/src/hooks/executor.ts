@@ -57,7 +57,18 @@ export async function executeHook(
   event: HookEvent,
   opts: ExecuteHookOptions = {},
 ): Promise<HookDecision> {
-  const timeoutMs = Math.min(hook.entry.timeout ?? opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
+  // `hook.entry.timeout` 来自 manifest，是未经校验的外部输入。0 / 负数会让
+  // execa 不挂超时定时器（插件的作者常把 0 理解为"不限"），NaN 则让
+  // `Math.min` 得到 NaN——两者都与文件头"损坏的 hook 绝不能卡死代理循环"
+  // 的约定冲突：一个挂死的 hook 就能无限期阻塞 agent 循环。
+  const requestedTimeout = hook.entry.timeout ?? opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS
+  const timeoutMs = Math.min(
+    Number.isFinite(requestedTimeout) && requestedTimeout > 0 ? requestedTimeout : DEFAULT_TIMEOUT_MS,
+    MAX_TIMEOUT_MS,
+  )
+  if (timeoutMs !== requestedTimeout) {
+    debugLog('hooks.timeout-clamped', `${hook.pluginId} ${event.name}: ${String(hook.entry.timeout)} -> ${timeoutMs}ms`)
+  }
 
   // 把所属插件的 userConfig 值合并进 hook 的环境变量。
   // 需要 manifest 中声明的 API key 的 hook 脚本可直接读
@@ -71,23 +82,34 @@ export async function executeHook(
     debugLog('hooks.user-config-read-failed', `${hook.pluginId}: ${String(err)}`)
   }
 
-  const sandbox = isExtensionSandboxActive() ? getShellSandbox() : null
-  // Hook 作者依赖继承的环境来获取 PATH 和 locale，但
-  // 形如凭证的变量不应泄漏进沙箱化的 hook。插件的
-  // 自有 userConfig 值则特意在之后重新加入。
-  const inherited = sanitizeShellEnv(process.env, sandbox ?? { ...getShellSandbox(), enabled: false })
-  const vars = buildVariableContext({
-    pluginDir: hook.pluginDir,
-    cwd: event.session.cwd,
-    pluginId: hook.pluginId,
-  })
-  const expandedCommand = expandVariables(pickPlatformCommand(hook.entry), {
-    ...vars,
-    env: { ...inherited, ...pluginEnv },
-  })
-  const stdinPayload = JSON.stringify(buildStdinPayload(hook, event))
-
+  // 环境准备、命令展开与 stdin 序列化全部放在 try 里：`event.session.cwd`
+  // 在 session 缺失时会抛 TypeError，manifest 里的 command 可能是非字符串
+  // （`expandVariables` 内部直接 `source.replace`），`JSON.stringify` 遇到
+  // BigInt / 循环引用也会抛。任何一个冒出 try 之外都会中断整条 hook 级联，
+  // 而不是按 `failurePolicy` 降级。
   try {
+    const command = pickPlatformCommand(hook.entry)
+    if (typeof command !== 'string' || command.trim() === '') {
+      debugLog('hooks.invalid-command', `${hook.pluginId} ${event.name}: hook entry has no runnable command`)
+      return failurePolicyDecision(hook, 'hook entry has no runnable command')
+    }
+
+    const sandbox = isExtensionSandboxActive() ? getShellSandbox() : null
+    // Hook 作者依赖继承的环境来获取 PATH 和 locale，但
+    // 形如凭证的变量不应泄漏进沙箱化的 hook。插件的
+    // 自有 userConfig 值则特意在之后重新加入。
+    const inherited = sanitizeShellEnv(process.env, sandbox ?? { ...getShellSandbox(), enabled: false })
+    const vars = buildVariableContext({
+      pluginDir: hook.pluginDir,
+      cwd: event.session.cwd,
+      pluginId: hook.pluginId,
+    })
+    const expandedCommand = expandVariables(command, {
+      ...vars,
+      env: { ...inherited, ...pluginEnv },
+    })
+    const stdinPayload = JSON.stringify(buildStdinPayload(hook, event))
+
     const wrapped = sandbox ? wrapShellSpawn('/bin/sh', ['-c', expandedCommand], sandbox) : null
     const result = await execa(wrapped?.executable ?? expandedCommand, wrapped?.args ?? [], {
       shell: !wrapped,
@@ -111,10 +133,23 @@ export async function executeHook(
       debugLog('hooks.exec-timeout', `${hook.pluginId} ${event.name}: timed out after ${timeoutMs}ms`)
       return failurePolicyDecision(hook, `hook timed out after ${timeoutMs}ms`)
     }
-    if (typeof result.exitCode === 'number' && result.exitCode !== 0) {
+    // 被信号杀死（SIGKILL / SIGSEGV / 子进程自行 SIGTERM，且不走 timeout /
+    // abort 路径）时 execa 的 `exitCode` 是 undefined，只看 exitCode 会让这类
+    // 异常终止继续走 `parseDecision`，多半得到一个 allow——把崩溃当成放行。
+    if (
+      result.failed ||
+      result.signal !== undefined ||
+      (typeof result.exitCode === 'number' && result.exitCode !== 0)
+    ) {
       const stderrTail = (result.stderr ?? '').toString().slice(0, 200)
-      debugLog('hooks.exec-nonzero', `${hook.pluginId} ${event.name}: exit ${result.exitCode} stderr=${stderrTail}`)
-      return failurePolicyDecision(hook, `hook exited ${result.exitCode}`)
+      debugLog(
+        'hooks.exec-nonzero',
+        `${hook.pluginId} ${event.name}: exit ${String(result.exitCode)} signal=${result.signal ?? 'none'} stderr=${stderrTail}`,
+      )
+      return failurePolicyDecision(
+        hook,
+        result.signal !== undefined ? `hook killed by ${result.signal}` : `hook exited ${String(result.exitCode)}`,
+      )
     }
 
     const decision = parseDecision(result.stdout ?? '', hook, event)
@@ -184,26 +219,52 @@ function buildStdinPayload(hook: RegisteredHook, event: HookEvent): Record<strin
   return base
 }
 
-function parseDecision(stdout: string, hook: RegisteredHook, event: HookEvent): HookDecision {
-  const trimmed = (stdout ?? '').toString().trim()
-  if (!trimmed) return { decision: 'allow' }
-
-  try {
-    const parsed = JSON.parse(trimmed) as unknown
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const obj = parsed as Record<string, unknown>
-      const d = obj.decision
-      if (d === 'allow' || d === 'deny' || d === 'modify') {
-        return obj as HookDecision
-      }
+/** 把 hook 返回的对象窄化成 `HookDecision`：只保留协议里声明的字段，并校验
+ *  类型。hook 的 stdout 是不可信输入，`output`/`context` 若是数字或对象，
+ *  原样透传会让下游拼接上下文时崩掉；未知字段也不该流进 agent 循环。 */
+function narrowDecision(obj: Record<string, unknown>): HookDecision | null {
+  switch (obj.decision) {
+    case 'allow':
+      return typeof obj.context === 'string' ? { decision: 'allow', context: obj.context } : { decision: 'allow' }
+    case 'deny':
+      return typeof obj.reason === 'string' ? { decision: 'deny', reason: obj.reason } : { decision: 'deny' }
+    case 'modify': {
+      const modify: Extract<HookDecision, { decision: 'modify' }> = { decision: 'modify' }
+      if (obj.args !== undefined) modify.args = obj.args
+      if (typeof obj.output === 'string') modify.output = obj.output
+      if (typeof obj.context === 'string') modify.context = obj.context
+      return modify
     }
-  } catch {
-    // 不是 JSON —— 许多 hook 的 stdout 是给人看的（日志）。按默认
-    // allow 处理，但记录面包屑，以防用户原本期望它能影响代理。
-    debugLog(
-      'hooks.decision-not-json',
-      `${hook.pluginId} ${event.name}: ignoring non-JSON stdout: ${trimmed.slice(0, 200)}`,
-    )
+    default:
+      return null
+  }
+}
+
+function parseDecision(stdout: string, hook: RegisteredHook, event: HookEvent): HookDecision {
+  // 逐行（从尾向前）尝试解析：hook 里常见的写法是先打一行日志再输出决策
+  // JSON。整体 `JSON.parse` 会因为那行日志而失败并落到 allow，等于把一个
+  // 本意 `deny` 的 hook 静默 fail-open —— 而文件头写的是"stdout 上的其他
+  // 内容被忽略"。
+  const lines = (stdout ?? '').toString().split(/\r?\n/)
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const trimmed = lines[index]!.trim()
+    if (!trimmed) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch {
+      continue
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+    const decision = narrowDecision(parsed as Record<string, unknown>)
+    if (decision) return decision
+  }
+
+  // 没有任何一行是可解析的合法决策 —— 许多 hook 的 stdout 是给人看的
+  // （日志）。按默认 allow 处理，但记录面包屑，以防用户原本期望它能影响代理。
+  const preview = (stdout ?? '').toString().trim().slice(0, 200)
+  if (preview) {
+    debugLog('hooks.decision-not-json', `${hook.pluginId} ${event.name}: ignoring non-JSON stdout: ${preview}`)
   }
   return { decision: 'allow' }
 }

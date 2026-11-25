@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import type { LanguageModel } from 'ai'
 
-import { checkPermission } from '../../permissions/index.js'
+import { checkPermission, isPathWithinProject } from '../../permissions/index.js'
 import { truncateToolResult } from '../../tools/index.js'
 import { getShellProvider } from '../../tools/shell-provider.js'
 import type { AgentCallbacks, AgentOptions } from '../../types/index.js'
@@ -21,6 +21,9 @@ export interface GoalVerifierLadderResult {
   summary: string
 }
 
+/** 未显式配置 `timeoutMs` 时校验器命令（以及语义审计子代理）的时限。 */
+const DEFAULT_VERIFIER_TIMEOUT_MS = 120_000
+
 const AUTOMATIC_SEMANTIC_VERIFIER: GoalVerifier = {
   kind: 'subagent',
   agent: 'goal-verifier',
@@ -30,7 +33,7 @@ const AUTOMATIC_SEMANTIC_VERIFIER: GoalVerifier = {
     'Check each requirement against authoritative current evidence. Explicit verifiers are evidence, not permission to narrow the objective.',
     'Fail when any requirement is incomplete, contradicted, weakly evidenced, stale, or unverified.',
   ].join(' '),
-  timeoutMs: 120000,
+  timeoutMs: DEFAULT_VERIFIER_TIMEOUT_MS,
 }
 
 export async function runVerifierLadder(input: {
@@ -101,7 +104,13 @@ async function runSingleVerifier(input: {
   verificationRunId: string
 }): Promise<GoalVerificationResult> {
   const { verifier } = input
-  if (verifier.kind === 'file') return runFileVerifier({ verifier, verificationRunId: input.verificationRunId })
+  if (verifier.kind === 'file') {
+    return runFileVerifier({
+      verifier,
+      projectCwd: input.state.projectCwd,
+      verificationRunId: input.verificationRunId,
+    })
+  }
   if (verifier.kind === 'shell') {
     return runShellVerifier({
       verifier,
@@ -116,10 +125,25 @@ async function runSingleVerifier(input: {
 
 async function runFileVerifier(input: {
   verifier: Extract<GoalVerifier, { kind: 'file' }>
+  projectCwd?: string
   verificationRunId: string
 }): Promise<GoalVerificationResult> {
   const start = Date.now()
-  const abs = path.resolve(input.verifier.path)
+  // 相对路径必须相对会话的项目目录解析：CLI/桌面 runtime 的工作目录未必等于
+  // 项目目录，否则会去检查错误路径（甚至系统上的同名文件）。
+  const projectCwd = input.projectCwd ?? process.cwd()
+  const abs = path.resolve(projectCwd, input.verifier.path)
+  // `verifier.path` 源自可被模型影响的 goal 数据，且这里完全不经过权限判定。
+  // 限制在项目内，避免把项目外的敏感文件读进转录。
+  if (!isPathWithinProject(abs, projectCwd)) {
+    return makeResult({
+      verifier: input.verifier,
+      ok: false,
+      summary: `File verifier path is outside the project: ${input.verifier.path}`,
+      start,
+      verificationRunId: input.verificationRunId,
+    })
+  }
   try {
     const stat = await fs.stat(abs)
     if (input.verifier.exists === false && stat) {
@@ -173,18 +197,29 @@ async function runShellVerifier(input: {
   const { verifier, state, options, callbacks } = input
   const start = Date.now()
   const toolCallId = `goal-verify-${Date.now().toString(36)}`
-  callbacks.onToolCall(toolCallId, 'shell', { command: verifier.command, timeout: verifier.timeoutMs ?? 120000 })
+  const timeoutMs = verifier.timeoutMs ?? DEFAULT_VERIFIER_TIMEOUT_MS
+  callbacks.onToolCall(toolCallId, 'shell', { command: verifier.command, timeout: timeoutMs })
 
   const approved = await checkPermission(
     {
       toolCallId,
       toolName: 'shell',
-      input: { command: verifier.command, timeout: verifier.timeoutMs ?? 120000 },
+      input: { command: verifier.command, timeout: timeoutMs },
     },
     options.trustMode,
     callbacks.onAskPermission,
     state.permissionMode,
     state.projectCwd,
+    // 与主循环一致：会话级 allow 规则（sessionRulesMatch/buildAllowRule）依赖
+    // executionCwd，缺了它校验器命令的分类结果会和主循环不一致。
+    state.projectCwd,
+    // 外部内容污染必须同样经过这里：taint 策略下即使 trustMode 也应询问用户，
+    // 否则校验器命令绕过了这道门禁。
+    {
+      policy: options.externalContentPolicy ?? 'off',
+      tainted: state.externalContentTainted === true,
+      ...(state.externalContentSources ? { sources: state.externalContentSources } : {}),
+    },
   )
 
   if (options.abortSignal?.aborted) {
@@ -214,7 +249,7 @@ async function runShellVerifier(input: {
   try {
     callbacks.onToolProgress(toolCallId, `Verifying: ${verifier.command}`)
     const result = await getShellProvider().spawn(verifier.command, {
-      timeout: verifier.timeoutMs ?? 120000,
+      timeout: timeoutMs,
       cwd: state.projectCwd,
       signal: options.abortSignal,
     })
@@ -296,14 +331,24 @@ async function runSubAgentVerifier(input: {
         throw new Error('Model request preflight returned an incomplete model switch.')
       }
     }
-    preflight?.onApplied?.()
+    // 契约：只有在能真正使用返回的模型后才能调用 onApplied。请求随后被阻止时，
+    // 模型切换的副作用（持久化选择、UI 状态、鉴权后的提供商替换）不该已生效。
     if (preflight?.blockedMessage) throw new Error(preflight.blockedMessage)
+    preflight?.onApplied?.()
     if (preflight?.modelId) options.modelId = preflight.modelId
     const verifierModel = preflight?.model ?? model
+    // 子代理分支此前完全忽略 `verifier.timeoutMs`：语义审计可以无限期挂起，
+    // 进而卡死整个 goal runner 的 attempt 循环。把时限接到 abortSignal 上。
+    const timeoutMs = verifier.timeoutMs ?? DEFAULT_VERIFIER_TIMEOUT_MS
+    const timeoutSignal = AbortSignal.timeout(timeoutMs)
+    const subAgentOptions: AgentOptions = {
+      ...options,
+      abortSignal: options.abortSignal ? AbortSignal.any([options.abortSignal, timeoutSignal]) : timeoutSignal,
+    }
     const result = await runSubAgent(
       {
         parentState: state,
-        parentOptions: options,
+        parentOptions: subAgentOptions,
         callbacks,
         toolCallId: `goal-subagent-${Date.now().toString(36)}`,
         agentName: verifier.agent,
@@ -315,6 +360,16 @@ async function runSubAgentVerifier(input: {
       verifierModel,
       agentLoop,
     )
+    if (timeoutSignal.aborted && !options.abortSignal?.aborted) {
+      return makeResult({
+        verifier,
+        ok: false,
+        summary: `Sub-agent verifier timed out after ${timeoutMs}ms: ${verifier.agent}`,
+        start,
+        verificationRunId: input.verificationRunId,
+        stdout: result.resultText.slice(0, 8000),
+      })
+    }
     if (hasDeniedSubAgentRestriction(result.resultText)) {
       return makeResult({
         verifier,
@@ -360,11 +415,71 @@ function requestsDestructiveVerification(prompt: string): boolean {
   )
 }
 
+/** 从 `start`（必须指向 `{`）开始按括号配平（跳过字符串字面量里的括号）找到
+ *  与之匹配的 `}`。返回 null 表示没有配平。 */
+function balancedJsonSlice(text: string, start: number): string | null {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = start; index < text.length; index++) {
+    const char = text[index]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+    if (char === '"') inString = true
+    else if (char === '{') depth++
+    else if (char === '}') {
+      depth--
+      if (depth === 0) return text.slice(start, index + 1)
+    }
+  }
+  return null
+}
+
+/** 候选块是否是校验结果对象（契约要求带布尔 `ok`）。用它区分真正的结果与
+ *  findings 里引用的无关 JSON 片段。 */
+function isVerifierResultJson(candidate: string): boolean {
+  try {
+    const parsed = JSON.parse(candidate) as { ok?: unknown } | null
+    return typeof parsed === 'object' && parsed !== null && typeof parsed.ok === 'boolean'
+  } catch {
+    return false
+  }
+}
+
+function isJsonParseable(candidate: string): boolean {
+  try {
+    JSON.parse(candidate)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 从模型输出里取出校验结果 JSON。
+ *  不能简单用 `/{[\s\S]*}/`（贪婪）——findings 里引用了代码片段或输出中出现第二个
+ *  JSON 对象时，拼出的子串不是合法 JSON，一次本可通过的审计会被误判为失败。
+ *  先看 ```json 代码块，再逐个 `{` 收集括号配平的候选块；优先返回带布尔 `ok`
+ *  的那一块，其次才退到第一个能解析的对象。 */
+function extractVerifierJsonText(text: string): string | null {
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)?.[1]?.trim()
+  if (fenced && isVerifierResultJson(fenced)) return fenced
+  const candidates: string[] = []
+  for (let index = text.indexOf('{'); index !== -1; index = text.indexOf('{', index + 1)) {
+    const candidate = balancedJsonSlice(text, index)
+    if (candidate) candidates.push(candidate)
+  }
+  return candidates.find(isVerifierResultJson) ?? candidates.find(isJsonParseable) ?? candidates[0] ?? null
+}
+
 function parseVerifierJson(text: string): { ok: boolean; findings: string[]; requiredFixes: string[] } {
-  const match = text.match(/\{[\s\S]*\}/)
+  const match = extractVerifierJsonText(text)
   if (!match) return { ok: false, findings: [text], requiredFixes: ['Verifier did not return JSON.'] }
   try {
-    const parsed = JSON.parse(match[0]) as { ok?: unknown; findings?: unknown; requiredFixes?: unknown }
+    const parsed = JSON.parse(match) as { ok?: unknown; findings?: unknown; requiredFixes?: unknown }
     return {
       ok: parsed.ok === true,
       findings: Array.isArray(parsed.findings) ? parsed.findings.map(String) : [],

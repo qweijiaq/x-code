@@ -114,15 +114,24 @@ function currentTabIndex(text: string): number | undefined {
   return match ? Number(match[1]) : undefined
 }
 
+/** 从工具响应的固定 `### Result` 区块里取出 marker 值。
+ *
+ *  只扫描该区块（到下一个 `### ` 标题为止），不要退化成“扫描响应里任意一行带引号
+ *  的文本”：被检查的页面能影响响应里 Result 之外的部分（标题、快照文本），那条宽松
+ *  路径会让一个已跳转到外站的页面抢先伪造出一行本地 URL 通过校验。 */
 function evaluatedMarkerValue(text: string, marker: string): string | undefined {
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim()
+  const lines = text.split(/\r?\n/)
+  const resultStart = lines.findIndex((line) => line.trim() === '### Result')
+  if (resultStart < 0) return undefined
+  for (let index = resultStart + 1; index < lines.length; index++) {
+    const line = lines[index]?.trim() ?? ''
+    if (line.startsWith('### ')) break
     if (!line.startsWith('"') || !line.endsWith('"') || !line.includes(marker)) continue
     try {
       const value = JSON.parse(line) as unknown
       if (typeof value === 'string' && value.startsWith(marker)) return value.slice(marker.length)
     } catch {
-      // 继续扫描：MCP 响应里可能混有无关的带引号行。
+      // 继续扫描 Result 区块内的其余行。
     }
   }
   return undefined
@@ -138,10 +147,18 @@ async function verifiedCurrentLocalUrl(
   abortSignal: AbortSignal | undefined,
   settleBeforeRead = false,
 ): Promise<string> {
+  // settle 阶段必须自带总上限：Chromium 对不可见/后台标签页会暂停派发 rAF 回调，
+  // 此时“等两帧动画”的 Promise 永不 resolve，这次 evaluate 会一直挂到 MCP 工具超时，
+  // 而这段时间整个浏览器操作锁被独占。`requestAnimationFrame` 也要存在性检查——
+  // 非 window 求值上下文里它是 reference error。
   const readUrl = settleBeforeRead
     ? `async () => { ` +
+      `const settle = (async () => { ` +
       `if (globalThis.document?.fonts?.ready) await Promise.race([globalThis.document.fonts.ready, new Promise(resolve => setTimeout(resolve, 750))]); ` +
-      `await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); ` +
+      `const raf = globalThis.requestAnimationFrame; ` +
+      `if (raf) await new Promise(resolve => raf(() => raf(() => resolve(undefined)))); ` +
+      `})(); ` +
+      `await Promise.race([settle, new Promise(resolve => setTimeout(resolve, 1500))]); ` +
       `return '${CURRENT_URL_MARKER}' + globalThis.location.href }`
     : `() => '${CURRENT_URL_MARKER}' + globalThis.location.href`
   const result = await browser.registry.callTool(evaluate.callableName, { function: readUrl }, abortSignal)
@@ -210,6 +227,10 @@ export async function runBrowserVisualCheck(
     let prepared = false
     let completed: BrowserVisualCheckResult | undefined
     let failed: unknown
+    // 不能用 `failed !== undefined` 判断失败：底层的 `Promise.reject()`（即
+    // undefined）会让这个比较失效，函数会把尚未赋值的 completed 当成结果返回，
+    // 真实错误被完全吞掉。
+    let didFail = false
     try {
       const listed = await browser.registry.callTool(tabs.callableName, { action: 'list' }, options.abortSignal)
       // 标签页列表里可能含之前已登录 Browser Use 留下的标题/URL。
@@ -301,6 +322,7 @@ export async function runBrowserVisualCheck(
       }
     } catch (error) {
       failed = error
+      didFail = true
     } finally {
       if (prepared) {
         const cleanup = await restoreOriginalTab(browser, tabs, temporaryTabOwnerId)
@@ -319,7 +341,8 @@ export async function runBrowserVisualCheck(
         }
       }
     }
-    if (failed !== undefined) throw failed
-    return completed!
+    if (didFail) throw failed instanceof Error ? failed : new Error(`Visual check failed: ${String(failed)}`)
+    if (!completed) throw new Error('Visual check did not produce a result')
+    return completed
   })
 }

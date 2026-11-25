@@ -48,30 +48,49 @@ function createToolProgressCallback(setState: ToolLifecycleDependencies['setStat
   }
 }
 
+/** 模块级自增序号：与毫秒时间戳叠加，保证同一毫秒内完成的多个工具消息
+ *  （并行工具调用、或时钟回拨）仍有唯一的消息/工具 id。列表渲染与滚动缓冲
+ *  依赖这个 id 作为身份，重复会让两条消息被当成同一条。 */
+let toolMessageSeq = 0
+
+function nextToolMessageUid(completedAt: number): string {
+  toolMessageSeq += 1
+  return `${completedAt}-${toolMessageSeq}`
+}
+
 function createCompletedToolMessage(
-  pending: PendingTool | undefined,
+  pending: PendingTool,
   result: string,
   isError: boolean | undefined,
   durationMs: number,
-  now: () => number,
+  completedAt: number,
   editPayload?: EditDiffPayload,
 ): DisplayMessage {
+  // 一次取时间戳 + 自增序号：id 与 timestamp 必须描述同一条完成记录。
+  const uid = nextToolMessageUid(completedAt)
   const toolCall: DisplayToolCall = {
-    id: `tc-${now()}`,
-    toolName: pending?.toolName ?? 'unknown',
-    input: pending?.input ?? {},
+    id: `tc-${uid}`,
+    toolName: pending.toolName,
+    input: pending.input,
     output: result,
     status: isError ? 'error' : 'completed',
     durationMs,
     ...(editPayload ? { editPayload } : {}),
   }
   return {
-    id: `tool-${now()}`,
+    id: `tool-${uid}`,
     role: 'assistant',
     content: '',
     toolCalls: [toolCall],
-    timestamp: now(),
+    timestamp: completedAt,
   }
+}
+
+/** 只在没有其它活跃工具时清空 shell 输出面板：并行工具里先返回的那个
+ *  不能把另一个仍在跑（且正在往里写）的 shell 输出抹掉。 */
+function shellOutputAfterRemoval(previous: AgentState, toolCallId: string): string {
+  const remaining = previous.activeToolCalls.filter((tool) => tool.id !== toolCallId)
+  return remaining.length === 0 ? '' : previous.shellOutput
 }
 
 export function createToolLifecycleCallbacks({
@@ -112,25 +131,35 @@ export function createToolLifecycleCallbacks({
 
       if (pending?.toolName === TOOL_SEARCH_TOOL_NAME) return
 
+      if (!pending) {
+        // 没有待处理记录说明这条调用的 UI 记录已被中断/新回合清理掉了。
+        // 不要伪造一条 `unknown` / `durationMs: 0` 的“已完成”工具消息。
+        setState((previous) =>
+          previous.activeToolCalls.some((tool) => tool.id === toolCallId)
+            ? { ...previous, activeToolCalls: previous.activeToolCalls.filter((tool) => tool.id !== toolCallId) }
+            : previous,
+        )
+        return
+      }
+
       if (isPassiveShellWait(pending)) {
         setState((previous) => ({
           ...previous,
           activeToolCalls: previous.activeToolCalls.filter((tool) => tool.id !== toolCallId),
-          shellOutput: '',
+          shellOutput: shellOutputAfterRemoval(previous, toolCallId),
         }))
         return
       }
 
-      const durationMs = pending ? now() - pending.startedAt : 0
-      setState((previous) => {
-        const message = createCompletedToolMessage(pending, result, isError, durationMs, now, editPayload)
-        return {
-          ...previous,
-          activeToolCalls: previous.activeToolCalls.filter((tool) => tool.id !== toolCallId),
-          shellOutput: '',
-          messages: [...previous.messages, message],
-        }
-      })
+      const completedAt = now()
+      const durationMs = completedAt - pending.startedAt
+      const message = createCompletedToolMessage(pending, result, isError, durationMs, completedAt, editPayload)
+      setState((previous) => ({
+        ...previous,
+        activeToolCalls: previous.activeToolCalls.filter((tool) => tool.id !== toolCallId),
+        shellOutput: shellOutputAfterRemoval(previous, toolCallId),
+        messages: [...previous.messages, message],
+      }))
     },
     onSubAgentEvent: (event) => {
       if (event.kind === 'tool-call') {
@@ -153,7 +182,9 @@ export function createToolLifecycleCallbacks({
             : `${event.tokenUsage.totalTokens} tok`
         const durationInfo =
           event.durationMs > 1000 ? `${(event.durationMs / 1000).toFixed(1)}s` : `${event.durationMs}ms`
-        onToolProgress(event.toolCallId, `Done (${turnInfo}, ${tokenInfo}, ${durationInfo})`)
+        // 中断/失败的子代理不能显示成 “Done”。
+        const statusLabel = event.aborted ? 'Aborted' : 'Done'
+        onToolProgress(event.toolCallId, `${statusLabel} (${turnInfo}, ${tokenInfo}, ${durationInfo})`)
       }
     },
     onShellOutput: (chunk) => {
@@ -183,16 +214,23 @@ export function createGoalToolLifecycleCallbacks({
     onToolResult: (toolCallId, result, isError) => {
       const pending = pendingToolsRef.current.get(toolCallId)
       pendingToolsRef.current.delete(toolCallId)
-      const durationMs = pending ? now() - pending.startedAt : 0
+      if (!pending) {
+        setState((previous) =>
+          previous.activeToolCalls.some((tool) => tool.id === toolCallId)
+            ? { ...previous, activeToolCalls: previous.activeToolCalls.filter((tool) => tool.id !== toolCallId) }
+            : previous,
+        )
+        return
+      }
 
-      setState((previous) => {
-        const message = createCompletedToolMessage(pending, result, isError, durationMs, now)
-        return {
-          ...previous,
-          activeToolCalls: previous.activeToolCalls.filter((tool) => tool.id !== toolCallId),
-          messages: [...previous.messages, message],
-        }
-      })
+      const completedAt = now()
+      const durationMs = completedAt - pending.startedAt
+      const message = createCompletedToolMessage(pending, result, isError, durationMs, completedAt)
+      setState((previous) => ({
+        ...previous,
+        activeToolCalls: previous.activeToolCalls.filter((tool) => tool.id !== toolCallId),
+        messages: [...previous.messages, message],
+      }))
     },
   }
 }

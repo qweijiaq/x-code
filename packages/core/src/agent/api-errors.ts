@@ -5,14 +5,18 @@ import {
 } from '../providers/openai-chatgpt-fetch.js'
 import { errorMessage } from '../utils.js'
 
-/** 表示请求超出模型上下文窗口的子串。 */
+/** 表示请求超出模型上下文窗口的子串。
+ *  `providers/registry.ts` 的 413 分组是本表的服务端副本，两边必须保持同集：
+ *  只在一边命中的错误要么被 SDK 白白重试，要么漏掉友好的恢复提示。
+ *  刻意不收录 `'input tokens'` 这类泛化词——"Failed to count input tokens"
+ *  之类的服务端故障会被误判成上下文溢出，把用户导向 /compact。 */
 const CONTEXT_TOO_LONG_PATTERNS = [
   'maximum context length',
   'context_length_exceeded',
+  'context length exceeded',
   'token limit',
   'prompt is too long',
   'prompt_too_long',
-  'input tokens',
   'context window',
 ] as const
 
@@ -94,17 +98,36 @@ export interface ClassifiedError {
 // 无需驱动整个分类器即可验证单个分支。
 
 function isReasoningContentError(msg: string): boolean {
-  // DeepSeek Reasoner 要求 tool-call 链中的 assistant 消息携带 reasoning_content；
-  // 两种措辞在线上都出现过。
-  return msg.includes('Missing `reasoning_content`') || msg.includes('reasoning_content')
+  // DeepSeek Reasoner 要求 tool-call 链中的 assistant 消息携带 reasoning_content。
+  // 只认“缺失 / 必须有”语义：宽泛匹配任何提及该字段的错误会把
+  // "Unsupported parameter: reasoning_content" 这类参数不兼容误导成 SDK bug。
+  if (!/reasoning_content/i.test(msg)) return false
+  return /\b(?:missing|required|must be (?:included|present))\b/i.test(msg)
 }
 
+/** 只表示“密钥不存在”的措辞。必须与“密钥存在但无效”区分开：
+ *  `INVALID_API_KEY` / `api_key_invalid` 是 401 认证失败，若被这里抢先命中，
+ *  用户会被引导去设置一个其实已经存在的环境变量。 */
+const MISSING_API_KEY_PATTERNS = [
+  'api key is missing',
+  'api key is not set',
+  'api key not set',
+  'api key is not configured',
+  'api key not configured',
+  'api key is not defined',
+  'api key is empty',
+  'missing api key',
+  'no api key',
+] as const
+
 function isMissingApiKeyError(msg: string): boolean {
-  return msg.includes('API key is missing') || msg.includes('API_KEY')
+  const lower = msg.toLowerCase()
+  return MISSING_API_KEY_PATTERNS.some((pattern) => lower.includes(pattern))
 }
 
 function isUnauthorizedError(msg: string, status: number): boolean {
-  return status === 401 || msg.includes('Unauthorized') || msg.includes('Invalid API Key')
+  const lower = msg.toLowerCase()
+  return status === 401 || lower.includes('unauthorized') || lower.includes('invalid api key')
 }
 
 function isInsufficientBalanceError(msg: string, status: number): boolean {
@@ -129,27 +152,31 @@ function isInsufficientBalanceError(msg: string, status: number): boolean {
 }
 
 function isForbiddenError(msg: string, status: number): boolean {
-  return status === 403 || msg.includes('Forbidden')
+  return status === 403 || msg.toLowerCase().includes('forbidden')
 }
 
 function isMaxTokensError(msg: string): boolean {
-  if (msg.includes('Invalid max_tokens') || msg.includes('Range of max_tokens') || msg.includes('InvalidParameter')) {
-    return true
-  }
+  if (msg.includes('Invalid max_tokens') || msg.includes('Range of max_tokens')) return true
+  // DashScope 的 `InvalidParameter` 错误码同样用于 max_tokens 越界，但还覆盖
+  // 无效参数、messages 结构错误等——必须与 max_tokens 同时出现才算。
+  if (/invalidparameter/i.test(msg) && /max_tokens|maximum tokens/i.test(msg)) return true
   // 兜底：任何 "max_tokens" 引用再叠加 invalid/range 标记。
   if (!msg.includes('max_tokens')) return false
   return /invalid|range/i.test(msg)
 }
 
 function isServiceUnavailableError(msg: string, status: number): boolean {
-  return status === 503 || msg.includes('Service Unavailable') || msg.includes('overloaded')
+  // 归一化小写：提供商大小写并不统一（"Overloaded"、"Service unavailable"），
+  // 而当 SDK 未透传 statusCode 时本谓词就是唯一的判定来源。
+  const lower = msg.toLowerCase()
+  return status === 503 || lower.includes('service unavailable') || lower.includes('overloaded')
 }
 
-/** 提供商的安全/审核过滤器拦截了内容。permanentErrorFetch 会把匹配的
- *  响应体重写为 HTTP 422，因此仅凭状态码即可命中；模式回退用于兜住
- *  绕过该 fetch 垫片的情形（其他入口、其他提供商）。 */
-function isContentPolicyError(msg: string, status: number): boolean {
-  if (status === 422) return true
+/** 提供商的安全/审核过滤器拦截了内容。`permanentErrorFetch` 改写响应时
+ *  状态码与响应体都保留，因此必须同时命中关键字——单凭 422 不够：
+ *  网关的参数校验失败（如 DashScope 的 `InvalidParameter`）同样使用 422，
+ *  若只按状态码判定，max_tokens 越界会被报成“内容被安全过滤器拦截”。 */
+function isContentPolicyError(msg: string): boolean {
   const lower = msg.toLowerCase()
   return (
     lower.includes('content_policy_violation') ||
@@ -158,6 +185,7 @@ function isContentPolicyError(msg: string, status: number): boolean {
     lower.includes('content_policy') ||
     lower.includes('input_blocked') ||
     lower.includes('harmful_content') ||
+    lower.includes('unsafe content') ||
     lower.includes('safety_violation')
   )
 }
@@ -175,7 +203,9 @@ function isModelNotFoundError(msg: string, status: number): boolean {
 }
 
 function isRateLimitedError(msg: string, status: number): boolean {
-  return status === 429 || /rate limit/i.test(msg)
+  // 连字符变体（`rate-limit`）与 429 的 statusText（"Too Many Requests"）都要覆盖：
+  // 提供商用 400/503 携带 `type: "rate_limit_error"` 时否则会掉进网络/兜底分支。
+  return status === 429 || /rate[\s_-]?limit/i.test(msg) || /too many requests/i.test(msg)
 }
 
 function isNetworkError(msg: string): boolean {
@@ -432,7 +462,7 @@ export function classifyApiError(err: unknown): ClassifiedError {
       fallbackEligible: true,
     }
   }
-  if (isContentPolicyError(msg, status)) {
+  if (isContentPolicyError(msg)) {
     return {
       message:
         "Content blocked by the provider's safety filter (422). Rephrase the request or try a different model with /model.",
@@ -494,5 +524,14 @@ export function classifyApiError(err: unknown): ClassifiedError {
     }
   }
 
-  return { message: msg, retryable: false }
+  // 兜底必须给出非空文本：调用方（loop.ts）会用它 `new Error(...)` 推给 onError，
+  // 空串或 "[object Object]" 让用户完全无法自助排查。
+  const fallback = msg.trim()
+  return {
+    message:
+      fallback && fallback !== '[object Object]'
+        ? fallback
+        : 'Unknown API error. Check the provider status or logs and try again.',
+    retryable: false,
+  }
 }

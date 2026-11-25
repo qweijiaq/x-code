@@ -25,7 +25,16 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? 'x-code@localhost',
 }
 
-async function git(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+interface GitResult {
+  stdout: string
+  stderr: string
+  code: number
+  /** git 本身跑不起来（未安装、无执行权限、超时被杀），
+   *  与“命令正常返回了非零退出码”（例如不是 Git 仓库）区分开。 */
+  unavailable: boolean
+}
+
+async function git(cwd: string, args: string[]): Promise<GitResult> {
   try {
     const result = await execFileAsync('git', args, {
       cwd,
@@ -33,19 +42,33 @@ async function git(cwd: string, args: string[]): Promise<{ stdout: string; stder
       maxBuffer: 20 * 1024 * 1024,
       env: GIT_ENV,
     })
-    return { stdout: result.stdout, stderr: result.stderr, code: 0 }
+    return { stdout: result.stdout, stderr: result.stderr, code: 0, unavailable: false }
   } catch (error) {
-    const failure = error as { stdout?: string; stderr?: string; code?: number; message?: string }
+    const failure = error as {
+      stdout?: string
+      stderr?: string
+      code?: number | string
+      message?: string
+      killed?: boolean
+      signal?: string
+    }
+    const unavailable = failure.code === 'ENOENT' || failure.killed === true || typeof failure.signal === 'string'
     return {
       stdout: failure.stdout ?? '',
       stderr: failure.stderr ?? failure.message ?? '',
       code: typeof failure.code === 'number' ? failure.code : 1,
+      unavailable,
     }
   }
 }
 
 export async function gitRepoRoot(cwd: string): Promise<string | null> {
   const result = await git(cwd, ['rev-parse', '--show-toplevel'])
+  // “没有 git”和“这里不是仓库”必须给出不同的提示，否则未安装 git 的
+  // 用户只会看到「当前工作区不是 Git 仓库」这种误导性文案。
+  if (result.unavailable) {
+    throw new Error(`无法执行 git 命令（未安装、无执行权限或超时）：${result.stderr.trim().slice(0, 200)}`)
+  }
   const root = result.stdout.trim()
   return result.code === 0 && root ? root : null
 }
@@ -147,8 +170,25 @@ export async function undoCheckpoint(checkpoint: GitCheckpoint): Promise<{
   const root = checkpoint.root
   const before = new Set(checkpoint.untracked)
 
+  // 检查点可能跨轮次保存在内存里、也可能来自被改动过的状态：撤销是破坏性
+  // 操作，先确认它记录的仍是同一个仓库，再决定是否动文件。
+  const currentRoot = await gitRepoRoot(root).catch(() => null)
+  if (!currentRoot || (await canonicalPath(currentRoot)) !== (await canonicalPath(root))) {
+    return { restored: 0, deleted: 0, message: 'checkpoint 对应的仓库已变化，已取消撤销以免误删文件' }
+  }
+
   let restored = 0
   if (checkpoint.stash) {
+    // `git gc --auto` / `git prune` 会回收 stash 提交；那时 read-tree 只会
+    // 报 “bad object”，用户看不到根因。先显式校验对象是否还在。
+    const exists = await git(root, ['cat-file', '-e', `${checkpoint.stash}^{commit}`])
+    if (exists.code !== 0) {
+      return {
+        restored: 0,
+        deleted: 0,
+        message: '检查点已被 Git 清理（gc/prune），无法恢复已跟踪文件；未做任何改动',
+      }
+    }
     // stash 的 tree 是“工作树快照”。`checkout <stash> -- .` 会把索引也写成
     // 工作树内容（部分暂存的改动全变成 staged），而且不会清理本轮 `git add`
     // 过的新文件。因此先把索引+工作树重置成工作树快照，再把索引单独恢复成
@@ -175,7 +215,11 @@ export async function undoCheckpoint(checkpoint: GitCheckpoint): Promise<{
   const current = await untrackedFiles(root)
   for (const relative of current) {
     if (before.has(relative)) continue
-    const target = path.join(root, relative)
+    const target = path.resolve(root, relative)
+    // ls-files 只产出仓库内的相对路径，但这个列表也可能来自磁盘上被改动的
+    // 检查点：再确认一次目标仍在仓库内，绝不把 rm 作用到仓库外的路径。
+    const inside = path.relative(root, target)
+    if (!inside || inside.startsWith('..') || path.isAbsolute(inside)) continue
     try {
       await fs.rm(target, { recursive: true, force: true })
       deleted++
@@ -533,6 +577,11 @@ export async function gitFileDiff(
 ): Promise<{ diff: string; truncated: boolean }> {
   const root = await gitRepoRoot(cwd)
   if (!root) return { diff: '', truncated: false }
+  // 只看仓库内的路径：`../..` 会把 readFile 带到仓库之外，
+  // 不能依赖 git status 的报错来兜底。
+  const resolved = path.resolve(root, relativePath)
+  const inside = path.relative(root, resolved)
+  if (!inside || inside.startsWith('..') || path.isAbsolute(inside)) return { diff: '', truncated: false }
   const status = await git(root, ['status', '--porcelain=v1', '-z', '--', relativePath])
   const entry = parsePorcelain(status.stdout)[0]
   if (entry?.untracked) {
@@ -541,11 +590,20 @@ export async function gitFileDiff(
       const stats = await fs.stat(target)
       if (stats.isDirectory()) return { diff: '', truncated: false }
       const buffer = await fs.readFile(target)
-      const text = buffer.subarray(0, DIFF_MAX_BYTES).toString('utf8')
-      const lines = text.split('\n').map((line) => `+${line}`)
+      const truncated = buffer.length > DIFF_MAX_BYTES
+      const slice = buffer.subarray(0, DIFF_MAX_BYTES)
+      // 图片等二进制内容按 utf8 解出来是乱码，不是 diff。
+      if (slice.subarray(0, 8192).includes(0)) {
+        return { diff: `--- /dev/null\n+++ b/${relativePath}\n(二进制文件，无法以文本展示差异)`, truncated }
+      }
+      // 行数要从实际输出的文本算，否则截断后 hunk 头与正文对不上。
+      const lines = slice
+        .toString('utf8')
+        .split('\n')
+        .map((line) => `+${line}`)
       return {
         diff: [`--- /dev/null`, `+++ b/${relativePath}`, `@@ -0,0 +1,${lines.length} @@`, ...lines].join('\n'),
-        truncated: buffer.length > DIFF_MAX_BYTES,
+        truncated,
       }
     } catch {
       return { diff: '', truncated: false }

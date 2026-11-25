@@ -4,6 +4,7 @@
 // 只读工具里，统一返回 source/title/snippet/引用信息。这样模型不必分别调用
 // memorySearch、documentSearch、grep 再自己拼证据。
 import fs from 'node:fs/promises'
+import path from 'node:path'
 
 import { tool } from 'ai'
 
@@ -15,6 +16,7 @@ import { searchCodeIndex } from '../code-index/index.js'
 import { tokenizeMemoryText } from '../knowledge/memory/search-index.js'
 import type { MemoryService } from '../knowledge/memory/service.js'
 import { searchLibrary } from '../library/index.js'
+import { errorMessage } from '../utils.js'
 import { extractText } from '../utils/message-helpers.js'
 import { grep } from './grep.js'
 
@@ -42,6 +44,16 @@ export interface ContextSearchOptions {
   state: LoopState
   memoryService?: MemoryService
 }
+
+/** 调用方的工具调用上下文。透传下来让下游 ripgrep 子进程能随会话中断被取消，
+ *  进度事件也挂到真实的 tool call 上。 */
+export interface ContextSearchRuntime {
+  toolCallId?: string
+  abortSignal?: AbortSignal
+}
+
+/** 记忆检索一次最多暴露多少个不同 topic（跨轮复用同一个 Set）。 */
+const MAX_EXPOSED_MEMORY_TOPICS = 5
 
 function latestUserText(state: LoopState): string {
   for (let index = state.messages.length - 1; index >= 0; index--) {
@@ -76,30 +88,40 @@ async function searchMemory(
   limit: number,
   state: LoopState,
   exposedTopics: Set<string>,
-): Promise<ContextSearchResult[]> {
-  if (!service) return []
-  if (!memoryQueryIsGrounded(query, latestUserText(state))) return []
+): Promise<{ results: ContextSearchResult[]; notes: string[] }> {
+  if (!service) return { results: [], notes: [] }
+  // 被跳过时给一条可诊断的说明：返回空数组会让模型误判"记忆里没有相关内容"。
+  if (!memoryQueryIsGrounded(query, latestUserText(state))) {
+    return {
+      results: [],
+      notes: ['memory search skipped: the query is not grounded in the latest user message'],
+    }
+  }
   try {
     const results = await service.search(
       { query, maxResults: Math.min(limit, 5), semantic: true },
       { repositoryId: projectCwd },
     )
-    return results
-      .filter((result) => {
-        if (exposedTopics.has(result.topicId)) return true
-        if (exposedTopics.size >= 5) return false
-        exposedTopics.add(result.topicId)
-        return true
-      })
-      .map((result) => ({
-        source: 'memory' as const,
+    const selected: ContextSearchResult[] = []
+    for (const result of results) {
+      // 语义是"最近已暴露过的 topic 不再重复"，而不是"暴露满 N 个之后永远
+      // 闭嘴"：满了就淘汰最旧的记录，后续轮次的新话题仍然能被检索到。
+      if (!exposedTopics.has(result.topicId) && exposedTopics.size >= MAX_EXPOSED_MEMORY_TOPICS) {
+        const oldest = exposedTopics.values().next().value
+        if (oldest !== undefined) exposedTopics.delete(oldest)
+      }
+      exposedTopics.add(result.topicId)
+      selected.push({
+        source: 'memory',
         title: `${result.topicId} · ${result.section}`,
         snippet: clip(result.snippet),
         score: result.score,
         path: result.path,
-      }))
-  } catch {
-    return []
+      })
+    }
+    return { results: selected, notes: [] }
+  } catch (error) {
+    return { results: [], notes: [`memory search failed: ${errorMessage(error)}`] }
   }
 }
 
@@ -155,7 +177,12 @@ async function searchSessions(query: string, projectCwd: string, limit: number):
   return results
 }
 
-async function searchCode(query: string, projectCwd: string, limit: number): Promise<ContextSearchResult[]> {
+async function searchCode(
+  query: string,
+  projectCwd: string,
+  limit: number,
+  runtime: ContextSearchRuntime,
+): Promise<ContextSearchResult[]> {
   try {
     const indexed = await searchCodeIndex(query, { limit, path: projectCwd, semantic: true })
     if (indexed.results.length > 0) {
@@ -188,20 +215,32 @@ async function searchCode(query: string, projectCwd: string, limit: number): Pro
       caseInsensitive: true,
       headLimit: Math.max(20, limit * 4),
     },
-    { toolCallId: 'context-search' },
+    // 真实 tool call id + signal：伪造的 id 会让 grep 的进度事件挂到不存在的
+    // tool call 上，缺 signal 则 ripgrep 子进程无法随会话中断被取消。
+    {
+      toolCallId: runtime.toolCallId ?? 'context-search',
+      ...(runtime.abortSignal ? { abortSignal: runtime.abortSignal } : {}),
+    },
   )
   if (!output || output.startsWith('Error') || output === 'No matches found.') return []
   const results: ContextSearchResult[] = []
   for (const line of output.split('\n')) {
     if (results.length >= limit) break
-    const match = line.match(/^(.*):(\d+):(.*)$/)
+    // 首组用非贪婪：`path:42:  const t = "x:100:y"` 这类正文里再出现
+    // `:<数字>:` 的匹配行，贪婪匹配会把路径和行号都解析错。
+    const match = line.match(/^(.*?):(\d+):(.*)$/)
     if (!match) continue
+    const filePath = match[1]
+    const lineNumber = match[2]
+    const text = match[3]
+    if (!filePath || !lineNumber || text === undefined) continue
     results.push({
       source: 'code',
-      title: match[1]!,
-      path: match[1]!,
-      line: Number(match[2]),
-      snippet: clip(match[3]!),
+      // 与索引分支保持同一标题格式（文件名:行号）；完整路径走 path 字段。
+      title: `${path.basename(filePath)}:${lineNumber}`,
+      path: filePath,
+      line: Number(lineNumber),
+      snippet: clip(text),
     })
   }
   return results
@@ -213,23 +252,24 @@ export async function collectContextResults(
   scopes?: ContextSearchSource[],
   limit?: number,
   exposedMemoryTopics: Set<string> = new Set(),
+  runtime: ContextSearchRuntime = {},
 ): Promise<{ query: string; results: ContextSearchResult[]; notes: string[] }> {
   const wanted = new Set(scopes ?? ['memory', 'docs', 'sessions', 'code'])
   const perSource = Math.min(limit ?? 6, 20)
   const [memory, docs, sessions, code] = await Promise.all([
     wanted.has('memory')
       ? searchMemory(options.memoryService, query, options.projectCwd, perSource, options.state, exposedMemoryTopics)
-      : Promise.resolve([]),
+      : Promise.resolve({ results: [], notes: [] }),
     wanted.has('docs') ? searchDocs(query, perSource) : Promise.resolve([]),
     wanted.has('sessions') ? searchSessions(query, options.projectCwd, perSource) : Promise.resolve([]),
-    wanted.has('code') ? searchCode(query, options.projectCwd, perSource) : Promise.resolve([]),
+    wanted.has('code') ? searchCode(query, options.projectCwd, perSource, runtime) : Promise.resolve([]),
   ])
-  const results = [...memory, ...docs, ...sessions, ...code]
-  return {
-    query,
-    results,
-    notes: results.length === 0 ? ['No local context matched. Try a broader query or index the document library.'] : [],
+  const results = [...memory.results, ...docs, ...sessions, ...code]
+  const notes = [...memory.notes]
+  if (results.length === 0) {
+    notes.push('No local context matched. Try a broader query or index the document library.')
   }
+  return { query, results, notes }
 }
 
 export function createContextSearchTool(options: ContextSearchOptions) {
@@ -246,7 +286,10 @@ export function createContextSearchTool(options: ContextSearchOptions) {
         .describe('Limit to specific sources (default: all)'),
       limit: z.number().int().min(1).max(20).optional().describe('Max results per source (default: 6)'),
     }),
-    execute: async ({ query, scopes, limit }) =>
-      collectContextResults(options, query, scopes, limit, exposedMemoryTopics),
+    execute: async ({ query, scopes, limit }, toolOptions) =>
+      collectContextResults(options, query, scopes, limit, exposedMemoryTopics, {
+        toolCallId: toolOptions.toolCallId,
+        ...(toolOptions.abortSignal ? { abortSignal: toolOptions.abortSignal } : {}),
+      }),
   })
 }

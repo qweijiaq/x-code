@@ -178,47 +178,85 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
   }
 
   const loadDir = async (dir: string): Promise<boolean> => {
-    const response = await request('files:list', { path: dir })
-    if (!response.ok) {
-      setError(response.error.message)
+    try {
+      const response = await request('files:list', { path: dir })
+      if (!response.ok) {
+        setError(response.error.message)
+        return false
+      }
+      const result = response.result as { path: string; entries: FileTreeEntryView[] }
+      setChildren((prev) => ({ ...prev, [dir]: result.entries }))
+      return true
+    } catch (cause) {
+      // 调用点都是 `void loadDir(...)`，reject 不接住就是静默的 unhandled rejection。
+      setError(cause instanceof Error ? cause.message : String(cause))
       return false
     }
-    const result = response.result as { path: string; entries: FileTreeEntryView[] }
-    setChildren((prev) => ({ ...prev, [dir]: result.entries }))
-    return true
   }
 
+  /** 父组件每次渲染都会传新的内联回调：放进 ref，避免仅因回调身份变化就
+   *  重跑 initialPath 的 effect（那会重置 draft/original，丢掉正在编辑的内容）。 */
+  const onOpenDocumentRef = useRef<Props['onOpenDocument']>(onOpenDocument)
   useEffect(() => {
+    onOpenDocumentRef.current = onOpenDocument
+  }, [onOpenDocument])
+
+  // 切换工作区后，树、选中项和编辑器内容都属于上一个仓库，必须整体重置；
+  // 首次挂载（或工作区从空串解析出来）不算切换。
+  const workspaceRef = useRef(workspace)
+  useEffect(() => {
+    const changed = Boolean(workspaceRef.current) && workspaceRef.current !== workspace
+    workspaceRef.current = workspace
+    if (changed) {
+      setChildren({})
+      setExpanded(new Set(['.']))
+      setSelected(null)
+      setRead(null)
+      setDraft('')
+      setOriginal('')
+      setPreview(false)
+      setError(null)
+    }
     void loadDir('.')
-  }, [])
+  }, [workspace])
 
   useEffect(() => {
     if (!initialPath) return
-    if (onOpenDocument && documentPreviewExtension(initialPath)) {
-      onOpenDocument(initialPath)
+    const openDocument = onOpenDocumentRef.current
+    if (openDocument && documentPreviewExtension(initialPath)) {
+      openDocument(initialPath)
       return
     }
     let cancelled = false
     void (async () => {
-      const response = await request('files:read', { path: initialPath })
-      if (cancelled || !response.ok) return
-      const result = response.result as FileReadView
-      setSelected({
-        name: initialPath.split('/').pop() ?? initialPath,
-        path: initialPath,
-        type: 'file',
-        size: result.size,
-      })
-      setRead(result)
-      setDraft(result.binary ? '' : result.content)
-      setOriginal(result.binary ? '' : result.content)
-      setPreview(false)
-      setCursor({ line: 1, column: 1, selected: 0 })
+      try {
+        const response = await request('files:read', { path: initialPath })
+        if (cancelled) return
+        if (!response.ok) {
+          // 读不出来要给原因，否则面板只会停在空白状态。
+          setError(response.error.message)
+          return
+        }
+        const result = response.result as FileReadView
+        setSelected({
+          name: initialPath.split('/').pop() ?? initialPath,
+          path: initialPath,
+          type: 'file',
+          size: result.size,
+        })
+        setRead(result)
+        setDraft(result.binary ? '' : result.content)
+        setOriginal(result.binary ? '' : result.content)
+        setPreview(false)
+        setCursor({ line: 1, column: 1, selected: 0 })
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
+      }
     })()
     return () => {
       cancelled = true
     }
-  }, [initialPath, onOpenDocument])
+  }, [initialPath])
 
   const toggleDir = async (entry: FileTreeEntryView): Promise<void> => {
     setError(null)
@@ -294,6 +332,8 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
           [parent]: entries.map((entry) => (entry.path === selected.path ? { ...entry, size: result.size } : entry)),
         }
       })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setSaving(false)
     }
@@ -323,6 +363,8 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
         size: created.size,
       })
       editorRef.current?.focus()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setSaving(false)
     }
@@ -537,12 +579,31 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
                           const target = event.currentTarget
                           const start = target.selectionStart
                           const end = target.selectionEnd
-                          setDraft(`${draft.slice(0, start)}  ${draft.slice(end)}`)
-                          requestAnimationFrame(() => {
-                            target.selectionStart = start + 2
-                            target.selectionEnd = start + 2
-                            updateCursor(target)
-                          })
+                          if (draft.slice(start, end).includes('\n')) {
+                            // 跨行选区按编辑器惯例整体缩进，而不是把选中的整块文本删掉。
+                            const lineStart = draft.lastIndexOf('\n', start - 1) + 1
+                            const block = draft.slice(lineStart, end)
+                            const indented = block
+                              .split('\n')
+                              .map((line) => `  ${line}`)
+                              .join('\n')
+                            const next = `${draft.slice(0, lineStart)}${indented}${draft.slice(end)}`
+                            setDraft(next)
+                            const grow = indented.length - block.length
+                            requestAnimationFrame(() => {
+                              target.selectionStart = start + 2
+                              target.selectionEnd = end + grow
+                              updateCursor(target)
+                            })
+                          } else {
+                            const next = `${draft.slice(0, start)}  ${draft.slice(end)}`
+                            setDraft(next)
+                            requestAnimationFrame(() => {
+                              target.selectionStart = start + 2
+                              target.selectionEnd = start + 2
+                              updateCursor(target)
+                            })
+                          }
                         }
                       }}
                     />

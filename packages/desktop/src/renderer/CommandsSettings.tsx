@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -23,11 +23,18 @@ export function CommandsSettings({ onNotice }: { onNotice: (message: string | nu
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  /** commands:detail 的请求序号：连点两行的“编辑”时，只让最后一次的结果落表单。 */
+  const editSeqRef = useRef(0)
 
   const load = async (): Promise<void> => {
-    const response = await request('commands:list', {})
-    if (response.ok) setCommands((response.result as { commands: CustomCommandView[] }).commands)
-    else setError(response.error.message)
+    try {
+      const response = await request('commands:list', {})
+      if (response.ok) setCommands((response.result as { commands: CustomCommandView[] }).commands)
+      else setError(response.error.message)
+    } catch (cause) {
+      // IPC 本身可能 reject（主进程异常 / 桥接未就绪），不能让它静默消失。
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 
   useEffect(() => {
@@ -36,19 +43,31 @@ export function CommandsSettings({ onNotice }: { onNotice: (message: string | nu
 
   const edit = async (command: CustomCommandView): Promise<void> => {
     if (command.source === 'plugin') return
-    const response = await request('commands:detail', { name: command.name })
-    if (!response.ok) {
-      setError(response.error.message)
-      return
+    const seq = ++editSeqRef.current
+    setError(null)
+    setBusy(`edit:${command.name}`)
+    try {
+      const response = await request('commands:detail', { name: command.name })
+      // 连点两行的“编辑”时，只有最后一次点击的结果可以落到表单上。
+      if (seq !== editSeqRef.current) return
+      if (!response.ok) {
+        setError(response.error.message)
+        return
+      }
+      const detail = response.result as { name: string; description: string; body: string; source: 'user' | 'project' }
+      setEditing(detail.name)
+      setForm({
+        name: detail.name,
+        description: detail.description,
+        body: detail.body,
+        scope: detail.source === 'project' ? 'project' : 'user',
+      })
+    } catch (cause) {
+      if (seq !== editSeqRef.current) return
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (seq === editSeqRef.current) setBusy(null)
     }
-    const detail = response.result as { name: string; description: string; body: string; source: 'user' | 'project' }
-    setEditing(detail.name)
-    setForm({
-      name: detail.name,
-      description: detail.description,
-      body: detail.body,
-      scope: detail.source === 'project' ? 'project' : 'user',
-    })
   }
 
   const save = async (): Promise<void> => {
@@ -69,6 +88,9 @@ export function CommandsSettings({ onNotice }: { onNotice: (message: string | nu
       setCommands((response.result as { commands: CustomCommandView[] }).commands)
       setEditing(form.name.trim())
       onNotice(t('已保存 /{{name}}。下一轮对话即可在 / 菜单中使用。', { name: form.name.trim() }))
+    } catch (cause) {
+      // reject 时界面既没有错误也没有“已保存”，用户会以为保存成功了。
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(null)
     }
@@ -88,9 +110,12 @@ export function CommandsSettings({ onNotice }: { onNotice: (message: string | nu
         setEditing(null)
         setForm(EMPTY_FORM)
       }
-      setDeleting(null)
       onNotice(t('已删除 /{{name}}。', { name }))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
+      // 失败时也要退出“确认删除”状态，否则该行会一直卡在待确认。
+      setDeleting(null)
       setBusy(null)
     }
   }

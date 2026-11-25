@@ -86,7 +86,20 @@ export class HookBus {
       throw new Error(`Hook snapshot mismatch: expected ${expectedName} for ${snapshot.toolName}`)
     }
     if ('authority' in event && (event.authority?.peerTainted || event.authority?.source === 'peer')) return []
-    return this.emitHooks(phase === 'pre' ? snapshot.preHooks : snapshot.postHooks, event, opts)
+    // 快照的生命周期可能远超一次工具调用（后台 shell 会话的 ShellHookOrigin 会
+    // 一直持有它）。期间 `/plugin refresh` 可能已卸载某个插件；用旧快照执行一个
+    // 已被移除插件的命令是不可接受的，因此 generation 不一致时按当前注册表
+    // 重新捕获（快照对象本身仍保持不变）。
+    const current = snapshot.generation === this.registryGeneration ? snapshot : this.recapture(snapshot)
+    return this.emitHooks(phase === 'pre' ? current.preHooks : current.postHooks, event, opts)
+  }
+
+  private recapture(snapshot: ToolHookSnapshot): ToolHookSnapshot {
+    debugLog(
+      'hooks.snapshot-stale',
+      `${snapshot.toolName}: snapshot generation ${snapshot.generation} != ${this.registryGeneration}`,
+    )
+    return this.captureToolSnapshot(snapshot.toolName)
   }
 
   /** 发射一个事件。按运行顺序返回各 hook 的决策 —— 没有匹配的 hook 时
@@ -181,7 +194,9 @@ export interface PreToolEffect {
   reason?: string
   /** 修改后的 args，或 undefined 表示用原始值。 */
   args?: unknown
-  /** 要注入的额外上下文（PreToolUse 少见；为对称性而支持）。 */
+  /** 要注入的额外上下文（PreToolUse 少见；为对称性而支持）。
+   *  多个 hook 都注入时**最后一个生效**（与 `args` 的叠加语义一致）——
+   *  需要累加拼接的是 UserPromptSubmit，见 `UserPromptEffect.context`。 */
   context?: string
 }
 

@@ -131,7 +131,18 @@ export class MemoryRetriever {
 
   retrieve(query: RecallQuery): RetrieveResult {
     const recentHash = memoryContentHash(query.recentConversationText).slice(0, 12)
-    const cacheKey = `${this.index.generation}:${normalizeMemoryText(query.currentUserText)}:${normalizeMemoryText(query.repositoryId)}:${recentHash}:${query.explicitHistoryIntent}:${query.explicitForgetIntent}`
+    // 用 JSON 序列化后再哈希，而不是把字段直接拼进 key：字段里可能出现 ':'，
+    // 于是不同的 (文本, 仓库, …) 组合能拼出同一个 key，从而拿到别人的缓存结果
+    // （generation 不变时不会失效）。
+    const cacheKey = `${this.index.generation}:${memoryContentHash(
+      JSON.stringify([
+        normalizeMemoryText(query.currentUserText),
+        normalizeMemoryText(query.repositoryId),
+        recentHash,
+        query.explicitHistoryIntent,
+        query.explicitForgetIntent,
+      ]),
+    )}`
     const cached = this.cache.get(cacheKey)
     if (cached) return structuredClone(cached)
     const routeRanks = new Map<string, Map<string, number>>()
@@ -207,6 +218,10 @@ export class MemoryRetriever {
     const protectedSet = new Set(protectedTopicIds)
     const normalizedMessage = normalizeMemoryText(query.currentUserText)
     const candidates: RecallCandidate[] = [...scoreMap]
+      // `related` 关系会把不在索引里的 topic id 塞进 scoreMap（related 允许被
+      // patch，也可能与索引不同步）。它们没有 topic 元数据，直接取会让下面的
+      // `topic.metadata` 抛 TypeError 并崩掉整轮召回。
+      .filter(([topicId]) => this.index.topics.has(topicId))
       .map(([topicId, entry]) => {
         const topic = this.index.topics.get(topicId)!
         let score = entry.score
@@ -384,8 +399,10 @@ function renderSection(section: MemorySection): string {
   for (const fact of section.facts) {
     const id = fact.metadata.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const content = fact.content.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+    // 带 `g`：同一段标记在正文里出现多次（手工编辑或复制段落很常见），只替换
+    // 第一处会把过期/已忘记的内容继续送进模型上下文，等于"忘记"没生效。
     manual = manual.replace(
-      new RegExp(`<!--\\s*x-memory:\\s*\\{[^\\n]*"id"\\s*:\\s*"${id}"[^\\n]*\\}\\s*-->\\s*${content}`),
+      new RegExp(`<!--\\s*x-memory:\\s*\\{[^\\n]*"id"\\s*:\\s*"${id}"[^\\n]*\\}\\s*-->\\s*${content}`, 'g'),
       '',
     )
   }

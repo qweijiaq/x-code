@@ -83,6 +83,8 @@ export function buildSubAgentSystemPrompt(options: {
   agentPrompt: string
   knowledgeContext: string
   isGitRepo: boolean
+  /** 本项目的工作目录（`state.projectCwd`）。缺省回落到 `process.cwd()`。 */
+  cwd?: string
 }): string {
   const shellProvider = getShellProvider()
   return `You are a specialized subagent invoked by a parent coding assistant.
@@ -93,7 +95,7 @@ ${options.agentPrompt}
 # Environment
 - Platform: ${process.platform}
 - Shell: ${shellProvider.type}
-- Working Directory: ${process.cwd()}
+- Working Directory: ${options.cwd ?? process.cwd()}
 - Is Git Repo: ${options.isGitRepo ? 'yes' : 'no'}
 
 # Knowledge context
@@ -191,11 +193,12 @@ export function formatMcpCapabilities(mcpTools: readonly SystemPromptMcpTool[] |
 
 /** 格式化 `## Deferred Tools` 块（仅顶层 agent）。按来源分组列出每个延迟工具
  *  （非核心内置 + 全部 MCP 工具）的名称，并附上通过 `toolSearch` 加载它们的指令。
- *  当 `deferredTools` 为 undefined（子 agent / 无延迟）时返回 ""，使字节布局与
- *  非延迟形态一致。该列表在启动时固定，因此该块跨轮次字节稳定——这是前缀缓存的
- *  前提。导出给上下文构成估算器。 */
+ *  当 `deferredTools` 为 undefined（子 agent / 无延迟）或为空数组时返回 ""，使
+ *  字节布局与非延迟形态一致——一个空目录不能声明“下面的工具可用”却一个名字都不给，
+ *  那既浪费 token 又会诱发对不存在工具的 toolSearch 调用。该列表在启动时固定，因此
+ *  该块跨轮次字节稳定——这是前缀缓存的前提。导出给上下文构成估算器。 */
 export function formatDeferredCapabilities(deferredTools: readonly SystemPromptDeferredTool[] | undefined): string {
-  if (deferredTools === undefined) return ''
+  if (!deferredTools || deferredTools.length === 0) return ''
 
   const lines: string[] = [
     '',
@@ -203,10 +206,6 @@ export function formatDeferredCapabilities(deferredTools: readonly SystemPromptD
     '## Deferred Tools',
     'The tools below are available but not loaded. Call `toolSearch` with keywords or `select:<exact_name>`; the selected schema becomes callable on the next step. Do not search for a tool already present in the current tool list.',
   ]
-
-  if (deferredTools.length === 0) {
-    return lines.join('\n')
-  }
 
   const builtins = deferredTools.filter((t) => t.source === 'builtin').map((t) => t.name)
   if (builtins.length > 0) {
@@ -233,6 +232,11 @@ export function buildSystemPrompt(options?: {
   knowledgeContext?: string
   modelId?: string
   isGitRepo?: boolean
+  /** 本项目的工作目录（`state.projectCwd`）。缺省回落到 `process.cwd()`。
+   *  恢复历史会话时二者可以不同，而 `Working Directory` 一旦说错，模型就会按它去
+   *  拼绝对路径——tool-execution 的解析、权限检查、checkpoint 与 shell cwd 却全都
+   *  基于 `state.projectCwd`。 */
+  cwd?: string
   /** 为 true 时追加 plan 模式叠加层（只读约束 + exitPlanMode 交接）。
    *  与 `planFilePath` 搭配，让模型知道哪个路径被允许写入。 */
   planMode?: boolean
@@ -259,23 +263,27 @@ export function buildSystemPrompt(options?: {
 }): string {
   const shellProvider = getShellProvider()
 
-  let prompt = BASE_SYSTEM_PROMPT.replace(/\{platform\}/g, process.platform)
-    .replace(/\{shell\}/g, shellProvider.type)
-    .replace(/\{cwd\}/g, process.cwd())
-    .replace(/\{model\}/g, options?.modelId ?? 'unknown')
-    .replace(/\{isGitRepo\}/g, options?.isGitRepo ? 'yes' : 'no')
-    .replace(/\{browserRules\}/g, options?.hasBrowserVisualCheck ? BROWSER_RULES : '')
-    .replace(/\{peerRules\}/g, options?.hasPeerTools ? PEER_RULES : '')
-    .replace(/\{delegationRules\}/g, options?.hasTaskTool ? DELEGATION_RULES : '')
-    .replace(/\{taskManagementRules\}/g, options?.hasTodoTool ? TASK_MANAGEMENT_RULES : '')
-    .replace(/\{memoryRules\}/g, options?.hasMemoryService ? MEMORY_RULES : '')
+  // 用函数形式替换：替换值来自外部可控数据（cwd 路径、modelId、MCP 服务器名与描述、
+  // SKILL.md 描述），字符串形式会把其中的 `$&` / `$'` / `$$` 当成替换模式解释，
+  // 轻则吞掉一个 `$`，重则把基础提示词的剩余整段复制进该位置。
+  const literal = (value: string) => () => value
+  let prompt = BASE_SYSTEM_PROMPT.replace(/\{platform\}/g, literal(process.platform))
+    .replace(/\{shell\}/g, literal(shellProvider.type))
+    .replace(/\{cwd\}/g, literal(options?.cwd ?? process.cwd()))
+    .replace(/\{model\}/g, literal(options?.modelId ?? 'unknown'))
+    .replace(/\{isGitRepo\}/g, literal(options?.isGitRepo ? 'yes' : 'no'))
+    .replace(/\{browserRules\}/g, literal(options?.hasBrowserVisualCheck ? BROWSER_RULES : ''))
+    .replace(/\{peerRules\}/g, literal(options?.hasPeerTools ? PEER_RULES : ''))
+    .replace(/\{delegationRules\}/g, literal(options?.hasTaskTool ? DELEGATION_RULES : ''))
+    .replace(/\{taskManagementRules\}/g, literal(options?.hasTodoTool ? TASK_MANAGEMENT_RULES : ''))
+    .replace(/\{memoryRules\}/g, literal(options?.hasMemoryService ? MEMORY_RULES : ''))
     // Deferred 与 MCP 共用一个槽位。二者至多一个非空：顶层 agent 传 deferredTools
     // （全量注入被仅名称替代），子 agent 传 mcpTools（全量注入）。二者皆 undefined → ""。
     .replace(
       /\{mcpCapabilities\}/g,
-      formatDeferredCapabilities(options?.deferredTools) + formatMcpCapabilities(options?.mcpTools),
+      literal(formatDeferredCapabilities(options?.deferredTools) + formatMcpCapabilities(options?.mcpTools)),
     )
-    .replace(/\{skillCapabilities\}/g, formatSkillCapabilities(options?.skills))
+    .replace(/\{skillCapabilities\}/g, literal(formatSkillCapabilities(options?.skills)))
 
   if (options?.knowledgeContext) {
     prompt += '\n\n' + options.knowledgeContext
@@ -286,7 +294,15 @@ export function buildSystemPrompt(options?: {
   }
 
   if (options?.planMode) {
-    prompt += PLAN_MODE_OVERLAY.replace(/\{planFilePath\}/g, options.planFilePath ?? '<unset>')
+    // 没有分配路径时绝不能写成一个叫 `<unset>` 的路径：提示词同时要求“只允许写这个
+    // 文件”，模型会照着去写，而 tool-execution 的 plan 路径校验会拒绝，表现为一次
+    // 难以定位的写入失败。显式说明“还没有路径”，并禁止写文件。
+    const planFilePath = options.planFilePath
+    prompt += PLAN_MODE_OVERLAY.replace(/\{planFilePath\}/g, () =>
+      planFilePath === undefined || planFilePath === ''
+        ? 'no plan file path has been assigned for this session yet — do not write any file until one is assigned'
+        : planFilePath,
+    )
   }
 
   // 保持这段在最后：英文知识、任务模式指令或 plan 叠加层，

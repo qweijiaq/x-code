@@ -87,7 +87,9 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
   const [steerDraft, setSteerDraft] = useState('')
   const [, setTick] = useState(0)
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [prompts, setPrompts] = useState<Record<string, { status: 'loading' | 'ready' | 'missing'; text?: string }>>({})
+  const [prompts, setPrompts] = useState<
+    Record<string, { status: 'loading' | 'ready' | 'missing' | 'error'; text?: string }>
+  >({})
   const [resultFilter, setResultFilter] = useState<ResultFilter>('all')
   const [dayFilter, setDayFilter] = useState<string>('all')
   const [query, setQuery] = useState('')
@@ -96,7 +98,7 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
   const [confirmClear, setConfirmClear] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
   const [expandedVerify, setExpandedVerify] = useState<string | null>(null)
-  const [verifyOutputs, setVerifyOutputs] = useState<Record<string, string | null | 'loading'>>({})
+  const [verifyOutputs, setVerifyOutputs] = useState<Record<string, string | null | 'loading' | 'error'>>({})
   const [exporting, setExporting] = useState(false)
   const [exportNotice, setExportNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [exportPath, setExportPath] = useState<string | null>(null)
@@ -175,11 +177,15 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
   }, [query, goal?.id])
 
   // 运行中的目标没有事件时，靠定时刷新让「已运行」与时长保持可信。
+  // 依赖必须收窄到 id/status：挂在整个 goal 对象上会把定时器在每次
+  // 状态更新时重新计时，30 秒几乎永远到不了点。
+  const goalId = goal?.id
+  const goalStatus = goal?.status
   useEffect(() => {
-    if (!goal || isTerminal(goal.status)) return
+    if (!goalStatus || isTerminal(goalStatus)) return
     const id = window.setInterval(() => setTick((value) => value + 1), 30000)
     return () => window.clearInterval(id)
-  }, [goal])
+  }, [goalId, goalStatus])
 
   const run = async <T extends RequestMethod>(
     method: T,
@@ -273,12 +279,14 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
   const timeline = groupByDay(filteredEntries)
   const elapsedMs = goal ? goalElapsedMs(goal) : 0
   const resultOptions: { value: ResultFilter; label: string; count: number }[] = [
-    { value: 'all', label: '全部', count: allEntries.length },
+    // 计数、按天汇总都以搜索后的集合为准，否则三个分类之和 ≠ 全部。
+    { value: 'all', label: '全部', count: queryEntries.length },
     { value: 'error', label: '出错', count: counts.error },
     { value: 'verify', label: '验证未过', count: counts.verify },
     { value: 'ok', label: '正常', count: counts.ok },
   ]
-  const stats = dayStats(allEntries)
+  // 与上面的按日 chip 保持同一口径（搜索命中集），否则同一屏内两处按天数据矛盾。
+  const stats = dayStats(queryEntries)
   const filtersActive = resultFilter !== 'all' || dayFilter !== 'all' || normalizedQuery !== ''
   const scopeParts: string[] = []
   if (resultFilter !== 'all') {
@@ -291,16 +299,22 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
 
   const loadPrompt = async (attemptId: string): Promise<void> => {
     setPrompts((prev) => ({ ...prev, [attemptId]: { status: 'loading' } }))
-    const response = await request('goal:attempt-prompt', { attemptId })
-    if (!response.ok) {
-      setPrompts((prev) => ({ ...prev, [attemptId]: { status: 'missing' } }))
-      return
+    try {
+      const response = await request('goal:attempt-prompt', { attemptId })
+      if (!response.ok) {
+        // 请求失败不是“没有提示词”：标成 error 让展开区可重试，而不是
+        // 永远停在“读取完整提示词…”或误报“已不在会话记录中”。
+        setPrompts((prev) => ({ ...prev, [attemptId]: { status: 'error' } }))
+        return
+      }
+      const result = response.result as { prompt: string | null }
+      setPrompts((prev) => ({
+        ...prev,
+        [attemptId]: result.prompt ? { status: 'ready', text: result.prompt } : { status: 'missing' },
+      }))
+    } catch {
+      setPrompts((prev) => ({ ...prev, [attemptId]: { status: 'error' } }))
     }
-    const result = response.result as { prompt: string | null }
-    setPrompts((prev) => ({
-      ...prev,
-      [attemptId]: result.prompt ? { status: 'ready', text: result.prompt } : { status: 'missing' },
-    }))
   }
 
   const toggleAttempt = (attemptId: string): void => {
@@ -309,7 +323,8 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
       return
     }
     setExpandedId(attemptId)
-    if (!prompts[attemptId]) void loadPrompt(attemptId)
+    const cached = prompts[attemptId]
+    if (!cached || cached.status === 'error') void loadPrompt(attemptId)
   }
 
   const exportReport = async (): Promise<void> => {
@@ -382,6 +397,9 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
+      // 搜索框里的 Esc 用来清空搜索，交给面板自身处理；否则捕获阶段就把
+      // 事件吞掉，用户看到的是“确定关闭面板？”。
+      if (event.target === searchRef.current && query) return
       if (confirmClose) {
         setConfirmClose(false)
         event.preventDefault()
@@ -396,7 +414,7 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [confirmClose, draftDirty])
+  }, [confirmClose, draftDirty, query])
 
   // 面板是模态层，打开后焦点留在内部，Tab 不跑到背景界面。
   useEffect(() => {
@@ -430,18 +448,25 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
       return
     }
     setExpandedVerify(key)
-    if (verifyOutputs[key] !== undefined) return
+    const cached = verifyOutputs[key]
+    if (cached !== undefined && cached !== 'error') return
     setVerifyOutputs((prev) => ({ ...prev, [key]: 'loading' }))
     void (async () => {
-      const response = await request('goal:verification-output', {
-        at: result.at,
-        kind: result.kind,
-        summary: result.summary,
-      })
-      setVerifyOutputs((prev) => ({
-        ...prev,
-        [key]: response.ok ? ((response.result as { output: string | null }).output ?? '') : null,
-      }))
+      try {
+        const response = await request('goal:verification-output', {
+          at: result.at,
+          kind: result.kind,
+          summary: result.summary,
+        })
+        // 调用失败与“确实没有输出”是两件事，不能都写成 null。
+        if (!response.ok) {
+          setVerifyOutputs((prev) => ({ ...prev, [key]: 'error' }))
+          return
+        }
+        setVerifyOutputs((prev) => ({ ...prev, [key]: (response.result as { output: string | null }).output ?? '' }))
+      } catch {
+        setVerifyOutputs((prev) => ({ ...prev, [key]: 'error' }))
+      }
     })()
   }
 
@@ -845,6 +870,10 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
                                   <div className="goal-entry-prompt">
                                     {verifyOutputs[verificationKey(result)] === 'loading' ? (
                                       <div className="goal-prompt-muted">{t('读取原始输出…')}</div>
+                                    ) : verifyOutputs[verificationKey(result)] === 'error' ? (
+                                      <div className="goal-prompt-muted">
+                                        {t('读取原始输出失败，收起后重新展开可重试。')}
+                                      </div>
                                     ) : verifyOutputs[verificationKey(result)] ? (
                                       <>
                                         <pre>
@@ -919,6 +948,10 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
                                     </>
                                   ) : prompt?.status === 'loading' ? (
                                     <div className="goal-prompt-muted">{t('读取完整提示词…')}</div>
+                                  ) : prompt?.status === 'error' ? (
+                                    <div className="goal-prompt-muted">
+                                      {t('读取完整提示词失败，收起后重新展开可重试。')}
+                                    </div>
                                   ) : (
                                     <div className="goal-prompt-muted">
                                       {t('完整输入已不在会话记录中，以上为摘要。')}

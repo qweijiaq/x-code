@@ -179,9 +179,19 @@ describe('classifyApiError', () => {
     expect(result.retryable).toBe(false)
   })
 
-  it('classifies 422 content policy by status', () => {
-    const result = classifyApiError(new Error('Request failed with status code 422'))
+  it('classifies 422 content policy by status and body keyword', () => {
+    // permanentErrorFetch 改写状态码时会保留响应体，因此真实的审核拦截
+    // 一定同时带有关键字；单凭 422 不足以定案（见下一个用例）。
+    const result = classifyApiError(
+      new Error('Request failed with status code 422: {"error":{"message":"content_policy_violation"}}'),
+    )
     expect(result.message).toContain('safety filter')
+    expect(result.retryable).toBe(false)
+  })
+
+  it('does not report a bare 422 parameter error as a safety filter', () => {
+    const result = classifyApiError(new Error('InvalidParameter: bad request body (422)'))
+    expect(result.message).not.toContain('safety filter')
     expect(result.retryable).toBe(false)
   })
 
