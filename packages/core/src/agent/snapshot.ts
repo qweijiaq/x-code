@@ -142,6 +142,51 @@ function isManifestFileEntry(value: unknown): value is ManifestFileEntry {
   return flags === 1
 }
 
+/** 内容寻址的 blob 名只能是 sha256 十六进制。清单/原点是磁盘上的文件，被损坏或
+ *  篡改后可以塞进 `../../etc/passwd` 之类的“hash”，让恢复读取 blobs/ 之外的文件
+ *  并写到清单里的任意绝对路径上。 */
+const BLOB_HASH_RE = /^[0-9a-f]{64}$/
+
+/** 返回 blob 的绝对路径，hash 非法或解析后跑出 blobsDir 时返回 null。 */
+function safeBlobPath(sessionId: string, hash: string, cwd: string): string | null {
+  if (!BLOB_HASH_RE.test(hash)) return null
+  const dir = path.resolve(blobsDir(sessionId, cwd))
+  const target = path.resolve(blobPath(sessionId, hash, cwd))
+  return target.startsWith(dir + path.sep) ? target : null
+}
+
+/** 解析并校验 checkpoint 清单。结构不合法时返回 null——`restoreCheckpoint`
+ *  的契约是 `Promise<boolean>`，调用方不做 try/catch，这里抛错会变成未捕获的
+ *  rejection，且此时工作树已经处于「半恢复 + 记账没更新」的状态。 */
+function parseManifest(raw: string, ckptId: string): Manifest | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const candidate = parsed as Partial<Manifest>
+  if (candidate.ckptId !== ckptId) return null
+  const files = candidate.files
+  if (!files || typeof files !== 'object' || Array.isArray(files)) return null
+  const validated: Record<string, ManifestFileEntry> = {}
+  for (const [absPath, value] of Object.entries(files as Record<string, unknown>)) {
+    // 清单键是绝对路径：相对路径/空键会让恢复写到无法追踪的位置。
+    if (!path.isAbsolute(absPath)) return null
+    if (!isManifestFileEntry(value)) return null
+    if (value.hash !== undefined && !BLOB_HASH_RE.test(value.hash)) return null
+    validated[absPath] = value
+  }
+  return {
+    ckptId,
+    ts: typeof candidate.ts === 'string' ? candidate.ts : '',
+    messageCount: typeof candidate.messageCount === 'number' ? candidate.messageCount : 0,
+    userPrompt: typeof candidate.userPrompt === 'string' ? candidate.userPrompt : '',
+    files: validated,
+  }
+}
+
 async function readOrigins(sessionId: string, cwd: string): Promise<OriginManifest> {
   let raw: string
   try {
@@ -181,6 +226,21 @@ export async function captureFileBeforeMutation(
   if (state.checkpoints.length === 0 || state.filesModified.has(absPath)) return
   signal?.throwIfAborted()
 
+  // origins.json 是本文件里唯一没有走串行化队列的共享状态写路径，而
+  // restoreCheckpointUnlocked 写它时走队列。并发的 capture（`task` 子代理经
+  // Promise.all 并行分发，共用同一 sessionId/cwd）或与 /rewind 并发时会用
+  // 「读到的旧快照」整体覆盖 origins，静默丢掉条目——丢条目意味着该文件再也
+  // 不会被 origin 溯源，/rewind 只能把它留在被改后的状态。
+  return serializeCheckpointMutation(state, () => captureFileBeforeMutationUnlocked(state, absPath, cwd, signal))
+}
+
+async function captureFileBeforeMutationUnlocked(
+  state: LoopState,
+  absPath: string,
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted()
   const origins = await readOrigins(state.sessionId, cwd)
   if (origins.files[absPath]) return
 
@@ -388,12 +448,8 @@ async function restoreCheckpointUnlocked(state: LoopState, ckptId: string, cwd: 
   } catch {
     return false
   }
-  let manifest: Manifest
-  try {
-    manifest = JSON.parse(raw) as Manifest
-  } catch {
-    return false
-  }
+  const manifest = parseManifest(raw, ckptId)
+  if (!manifest) return false
 
   let origins: OriginManifest
   try {
@@ -416,8 +472,13 @@ async function restoreCheckpointUnlocked(state: LoopState, ckptId: string, cwd: 
       continue
     }
     if (entry.hash) {
+      // hash 可能来自被篡改的清单或 origins（两者都是磁盘上的文件）。校验形状
+      // 并确认解析后的路径仍在 blobsDir 内，再读，避免把 blobs/ 之外的文件
+      // 写到清单指定的任意绝对路径上。
+      const source = safeBlobPath(state.sessionId, entry.hash, cwd)
+      if (!source) continue
       try {
-        const buf = await fs.readFile(blobPath(state.sessionId, entry.hash, cwd))
+        const buf = await fs.readFile(source)
         await fs.mkdir(path.dirname(absPath), { recursive: true })
         await fs.writeFile(absPath, buf)
       } catch {

@@ -240,8 +240,13 @@ export async function indexLibrary(
       const oldChunks = previousChunksByPath.get(candidate.path) ?? []
       chunks.push(...oldChunks)
       characters += existing.characters
-      for (const chunk of oldChunks) {
-        if (chunk.vectorIndex === undefined && reusable.has(chunk.hash)) pendingEmbedding.push(chunk)
+      // 只为缺向量的块入队：`reusable` 是"已有向量"的哈希表，而 embed 阶段
+      // 又会用 `!vectorsByHash.has` 过滤，写成 `reusable.has(...)` 会让这段
+      // push 成为死代码，上次嵌入失败的块永远补不上。
+      if (options.semantic) {
+        for (const chunk of oldChunks) {
+          if (chunk.vectorIndex === undefined && !reusable.has(chunk.hash)) pendingEmbedding.push(chunk)
+        }
       }
       skipped++
       continue
@@ -311,7 +316,10 @@ export async function indexLibrary(
   // 对还没有可复用向量的块做嵌入。
   const vectorsByHash = new Map(reusable)
   let semantic = false
-  if (options.semantic && pendingEmbedding.length > 0 && vectorsByHash.size < chunks.length) {
+  // 不要比较 `vectorsByHash.size` 与 `chunks.length`：前者只覆盖往轮已嵌的块，
+  // 与本轮块总数没有可比性，索引基本未变时该不等式恒不成立，新块会被静默丢掉
+  // 向量。下面已用 `unique` 去重，队列为空自然不会进入循环。
+  if (options.semantic && pendingEmbedding.length > 0) {
     const unique = new Map<string, LibraryChunk>()
     for (const chunk of pendingEmbedding) if (!vectorsByHash.has(chunk.hash)) unique.set(chunk.hash, chunk)
     const list = [...unique.values()]

@@ -385,13 +385,20 @@ async function runSubAgentUnlocked(
     ...(browserMcp ? { mcpRegistry: browserMcp.registry, mcpPermissionStore: browserMcp.permissions } : {}),
   }
 
+  // `onToolResult` 只拿到 subToolCallId，但轨迹里要展示的是工具名和真实耗时。
+  // 在 onToolCall 里记下 id → 名称/开始时间的映射，结果回来时回填。
+  const subToolNames = new Map<string, string>()
+  const subToolStartTimes = new Map<string, number>()
+
   // 构造子代理回调：通过 onSubAgentEvent 把事件转发到父级 UI，
   // 但不直接把子状态混入父状态。
   const subCallbacks: AgentCallbacks = {
     onTextDelta: (delta) => {
       callbacks.onSubAgentEvent?.({ kind: 'text-delta', toolCallId, delta })
     },
-    onToolCall: (_subToolCallId, subToolName, subInput) => {
+    onToolCall: (subToolCallId, subToolName, subInput) => {
+      subToolNames.set(subToolCallId, subToolName)
+      subToolStartTimes.set(subToolCallId, Date.now())
       callbacks.onSubAgentEvent?.({
         kind: 'tool-call',
         toolCallId,
@@ -406,12 +413,16 @@ async function runSubAgentUnlocked(
     },
     onToolResult: (subToolCallId, result, isError) => {
       const preview = result.length > 200 ? result.slice(0, 197) + '...' : result
+      const startedAt = subToolStartTimes.get(subToolCallId)
+      const subToolName = subToolNames.get(subToolCallId) ?? 'unknown'
+      subToolNames.delete(subToolCallId)
+      subToolStartTimes.delete(subToolCallId)
       callbacks.onSubAgentEvent?.({
         kind: 'tool-result',
         toolCallId,
-        subToolName: subToolCallId,
+        subToolName,
         resultPreview: preview,
-        durationMs: 0,
+        durationMs: startedAt === undefined ? 0 : Date.now() - startedAt,
         isError: isError ?? false,
       })
     },

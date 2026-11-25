@@ -472,7 +472,18 @@ export async function loginOpenAIChatGPTWithBrowser(
   }
 
   const server = createServer((request, response) => {
-    const requestUrl = new URL(request.url ?? '/', redirectUri)
+    // `new URL` 对畸形请求行（例如 `http://[bad` 这样的 absolute-form）会同步
+    // 抛 TypeError。此处运行在 http 服务器的同步回调里，异常不会被 Promise
+    // 捕获，而是变成 uncaughtException 直接终止 CLI——本机任意进程发一个坏
+    // 请求即可触发。解析失败按 400 处理。
+    let requestUrl: URL
+    try {
+      requestUrl = new URL(request.url ?? '/', redirectUri)
+    } catch {
+      response.writeHead(400)
+      response.end(callbackPage('ChatGPT login failed', 'The callback request was malformed.'))
+      return
+    }
     response.setHeader('Content-Type', 'text/html; charset=utf-8')
     response.setHeader('Cache-Control', 'no-store')
     response.setHeader('Connection', 'close')
@@ -482,6 +493,10 @@ export async function loginOpenAIChatGPTWithBrowser(
       return
     }
     if (requestUrl.searchParams.get('state') !== state) {
+      // 只拒绝、不 settle：本机端口上任何进程（或攻击者页面）都能打一个错误
+      // state 过来，若据此终结流程就成了一次免费 DoS。真正的超时由流程自带的
+      // 5 分钟上限兜底（见 tests/openai-chatgpt-auth.test.ts
+      // 「ignores a mismatched state callback and still accepts the legitimate callback」）。
       response.writeHead(400)
       response.end(callbackPage('ChatGPT login failed', 'The authorization state did not match.'))
       return

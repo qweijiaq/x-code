@@ -10,7 +10,7 @@
 // 启动时生效。
 import path from 'node:path'
 
-import { mutateSettingsFile, readSettingsFile } from '../settings-io.js'
+import { mutateSettingsFile, readSettingsFileForRead } from '../settings-io.js'
 import { XCODE_DIR, userXcodeDir } from '../utils.js'
 
 export type SkillSettingsScope = 'user' | 'project'
@@ -32,7 +32,8 @@ function disabledSkillsFrom(obj: Record<string, unknown>): string[] {
 }
 
 async function readSettings(scope: SkillSettingsScope): Promise<SkillSettings> {
-  const obj = await readSettingsFile(skillSettingsPath(scope))
+  // 纯读路径：损坏的设置文件不应让技能注册表加载失败（写路径仍用严格版本）。
+  const obj = await readSettingsFileForRead(skillSettingsPath(scope))
   return { disabledSkills: disabledSkillsFrom(obj) }
 }
 

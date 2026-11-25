@@ -111,7 +111,7 @@ export class McpClient {
       // 而无法完成交换。让 transport + client 保持存活；调用方
       // （runOAuthDance）或 finally 关闭路径会清理。对于其他任何错误，
       // 我们仍会 safeClose，以避免泄漏子进程 / 悬挂的 HTTP 连接。
-      if (!isUnauthorizedError(err)) {
+      if (!isUnauthorizedError(err, this.allowsOAuthExpectation())) {
         await this.safeClose()
       }
       throw this.enrichError(err)
@@ -277,7 +277,7 @@ export class McpClient {
       return await this.connect()
     } catch (err) {
       // 任何不属于"需要等待用户"的错误都会向上传播。
-      if (!isUnauthorizedError(err)) {
+      if (!isUnauthorizedError(err, true)) {
         provider.cancel()
         throw err
       }
@@ -285,12 +285,24 @@ export class McpClient {
 
     // provider 已调用 redirectToAuthorization（SDK 在抛出前内部会这么做）。
     // 现在等待用户通过 callback server 返回，然后完成交换。
-    const { code } = await provider.waitForAuthCode()
-    const transport = this.transport
-    if (!(transport instanceof StreamableHTTPClientTransport)) {
-      throw new Error(`Internal error: OAuth flow expected an HTTP transport for "${this.serverName}"`)
+    //
+    // 这一段的所有失败路径（用户取消、回调超时、token 交换失败、transport
+    // 类型不符）都必须清理：第一次 connect 在握手途中抛出，SDK 只在
+    // UnauthorizedError 路径上不动 transport，于是 transport（HTTP socket 或
+    // stdio 子进程）与回调 server 会一直泄漏，`connectionState` 还会停在
+    // 'open'，onClose 订阅者收不到失效通知。
+    try {
+      const { code } = await provider.waitForAuthCode()
+      const transport = this.transport
+      if (!(transport instanceof StreamableHTTPClientTransport)) {
+        throw new Error(`Internal error: OAuth flow expected an HTTP transport for "${this.serverName}"`)
+      }
+      await transport.finishAuth(code)
+    } catch (err) {
+      provider.cancel()
+      await this.safeClose()
+      throw err
     }
-    await transport.finishAuth(code)
 
     // token 现已保存。第一次尝试把 client + transport 留在半开状态
     // （SDK 的 connect 在握手途中抛出）；重试需要一条干净的 transport，
@@ -398,6 +410,12 @@ export class McpClient {
     throw new Error(`mcp server "${this.serverName}": unrecognised config shape`)
   }
 
+  /** 本次连接是否可能是"OAuth 需要用户参与"的情形——只有此时才允许用错误
+   *  文本去猜测 UnauthorizedError（见 `isUnauthorizedError`）。 */
+  private allowsOAuthExpectation(): boolean {
+    return this.authProvider !== undefined && this.transport instanceof StreamableHTTPClientTransport
+  }
+
   private async safeClose(): Promise<void> {
     // SDK 的 Client.close() 也会关闭 transport。我们先尝试 client，因为它会
     // 发送规范的 shutdown 通知；如果 client 从未构建（例如构造函数在赋值前
@@ -449,14 +467,20 @@ export class McpClient {
 
 /** 从 SDK 模式匹配 UnauthorizedError，而不依赖 instanceof（当 SDK 在不同
  *  esm/cjs 根下被复制时，跨打包边界的 instanceof 可能很脆弱）。不过 SDK
- *  直接导出了该类，所以我们两种检查都用。 */
-function isUnauthorizedError(err: unknown): boolean {
+ *  直接导出了该类，所以我们两种检查都用。
+ *
+ *  `allowMessageMatch` 只在"确实配置了 OAuth provider 且是 HTTP transport"
+ *  时为 true（见 {@link McpClient.allowsOAuthExpectation}）。裸字符串匹配
+ *  太容易误判——`GET …pkg-1.0.1.tgz 401`、`ECONNREFUSED 127.0.0.1:4013`、
+ *  第三方服务器自定义的错误文本都能命中，而一旦误判成"OAuth 预期抛出"，
+ *  调用方就会跳过 safeClose，把 stdio 子进程 / HTTP 连接永久泄漏出去。 */
+function isUnauthorizedError(err: unknown, allowMessageMatch = false): boolean {
   if (err instanceof UnauthorizedError) return true
-  if (err instanceof Error) {
-    if (err.name === 'UnauthorizedError') return true
-    if (/unauthorized|401/i.test(err.message)) return true
-  }
-  return false
+  if (err instanceof Error && err.name === 'UnauthorizedError') return true
+  if (!allowMessageMatch || !(err instanceof Error)) return false
+  // 收紧到"消息开头 / 独立单词"：`401` 必须是独立的数字 token。
+  if (/^unauthorized\b/i.test(err.message)) return true
+  return /\b401\b/.test(err.message) && /\bunauthorized\b/i.test(err.message)
 }
 
 function truncateText(value: string, maxBytes: number): string {

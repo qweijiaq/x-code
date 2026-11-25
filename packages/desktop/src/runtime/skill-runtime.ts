@@ -82,8 +82,19 @@ function metaPath(dir: string): string {
 
 function readMeta(dir: string): RuntimeMeta | null {
   try {
-    const parsed = JSON.parse(fs.readFileSync(metaPath(dir), 'utf8')) as RuntimeMeta
-    if (parsed && typeof parsed === 'object' && typeof parsed.installedAt === 'number') return parsed
+    // 元数据是磁盘上的外部输入（旧版本写入 / 被截断 / 人工改坏），
+    // `manifests` 缺失时调用方会直接抛 TypeError，必须在这里归一化。
+    const parsed = JSON.parse(fs.readFileSync(metaPath(dir), 'utf8')) as Partial<RuntimeMeta> | null
+    if (parsed && typeof parsed === 'object' && typeof parsed.installedAt === 'number') {
+      const recorded = parsed.manifests
+      const manifests: Record<string, number> = {}
+      if (recorded && typeof recorded === 'object' && !Array.isArray(recorded)) {
+        for (const [file, mtime] of Object.entries(recorded)) {
+          if (typeof mtime === 'number') manifests[file] = mtime
+        }
+      }
+      return { ...parsed, installedAt: parsed.installedAt, manifests }
+    }
   } catch {
     // 没有元数据或元数据格式损坏。
   }

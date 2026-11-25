@@ -89,8 +89,17 @@ export function pluginCacheDir(marketplace: string, plugin: string, version: str
  *  数据目录。插件 ID（"name@marketplace"）被净化，好让 `@` 和任何意外路径
  *  分隔符不会在 Windows 上出问题。 */
 export function pluginDataDir(pluginId: string): string {
-  const safe = pluginId.replace(/[/\\:]/g, '_')
-  return path.join(pluginsRoot(), 'data', safe)
+  // 净化后再走与其它构造函数相同的白名单校验（"最严格公共子集"）：
+  //  - `..` / `.` 不含分隔符，旧的替换会原样放行，`path.join(root,'data','..')`
+  //    直接跳出 data/（`pluginId` 来自磁盘上的 installed_plugins.json 与
+  //    `${CLAUDE_PLUGIN_DATA}` 展开，而 commands/registry 与 hooks/variables 会
+  //    对它做 `mkdirSync(recursive)`，被篡改的记账文件即可造成任意目录创建）；
+  //  - 控制字符、尾随 `.`/空格、Windows 保留名（con/nul/com1…）在 Windows 上
+  //    会产生非法目录名；
+  //  - `a:b` 与 `a_b` 曾被映射到同一个目录，两个插件共享持久状态。
+  // 正常的 `name@marketplace` 仍然通过。
+  const safe = pluginId.replace(/[\\/:\0-\x1f]/g, '_')
+  return path.join(pluginsRoot(), 'data', requireSafePluginPathComponent(safe, 'plugin id'))
 }
 
 /** ~/.x-code/plugins/installed_plugins.json */

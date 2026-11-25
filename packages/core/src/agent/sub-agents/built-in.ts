@@ -58,6 +58,10 @@ ${FINAL_MESSAGE_CONTRACT_HEADER} Your output must be comprehensive enough that t
 - Never say "see file X for details" — the parent CANNOT see file X. Inline the relevant details.`,
     tools: ['readFile', 'glob', 'grep', 'listDir', 'shell'],
     shellRestrictions: SHELL_DENY_KEYWORDS,
+    // 描述与提示词承诺的是“只读探索”，但子串 denylist 挡不住 `git clean -fdx`、
+    // `git checkout -- <path>`、`git restore`、`sed -i`、`dd of=…`、`npm install`
+    // 或 `r""m` 之类的变形。这里改用 isReadOnly() 的白名单强制。
+    shellReadOnlyOnly: true,
     maxTurns: 25,
     source: 'built-in',
   },

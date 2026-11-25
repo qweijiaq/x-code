@@ -237,7 +237,22 @@ const runtimeContexts = new Map<number, RuntimeContext>()
 /** 在此进程中下载并校验过校验和的安装器；renderer
  *  只能要求主进程打开此集合中的路径。 */
 const downloadedUpdateFiles = new Set<string>()
+/** 用户在保存对话框里显式挑选过的安装包路径。renderer 不能凭空指定
+ *  目标目录，否则等于给它任意文件写入能力。 */
+const pickedUpdatePaths = new Set<string>()
 const updateDownloads = new DownloadControllerRegistry()
+
+/** `target` 是否严格位于 `dir` 之内（排除 dir 自身与 `..` 兄弟目录）。 */
+function isInsideDir(target: string, dir: string): boolean {
+  const rel = path.relative(path.resolve(dir), target)
+  if (!rel) return false
+  return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)
+}
+
+function isAllowedUpdatePath(candidate: string): boolean {
+  if (pickedUpdatePaths.has(candidate)) return true
+  return [app.getPath('downloads'), app.getPath('temp')].some((dir) => isInsideDir(candidate, dir))
+}
 
 function contextForWindow(window: BrowserWindow | null | undefined): RuntimeContext | null {
   if (!window || window.isDestroyed()) return null
@@ -1030,11 +1045,11 @@ function editorCandidates(): Array<{ command: string; label: string }> {
   return candidates
 }
 
-function openInEditor(
+async function openInEditor(
   filePath: string,
   line?: number,
   column?: number,
-): { opened: boolean; editor?: string; error?: string } {
+): Promise<{ opened: boolean; editor?: string; error?: string }> {
   if (!path.isAbsolute(filePath)) return { opened: false, error: '需要一个绝对路径' }
   if (!fs.existsSync(filePath)) return { opened: false, error: `文件不存在：${filePath}` }
   const candidates = editorCandidates()
@@ -1047,12 +1062,25 @@ function openInEditor(
       ? `${filePath}:${Math.max(1, Math.round(line))}:${Math.max(1, Math.round(column ?? 1))}`
       : filePath
   try {
-    const child = spawn(candidate.command, line !== undefined ? ['--goto', target] : [target], {
-      detached: true,
-      stdio: 'ignore',
-      shell: process.platform === 'win32',
+    // spawn 的失败（ENOENT/EACCES 等）是异步 'error' 事件，try/catch 捕获不到；
+    // 没有 error 监听器时它更是会变成主进程未捕获异常直接崩溃，而这里还会
+    // 虚假返回 opened: true。因此等待 'spawn'/'error' 之一再返回。
+    const failure = await new Promise<string | null>((resolve) => {
+      const child = spawn(candidate.command, line !== undefined ? ['--goto', target] : [target], {
+        detached: true,
+        stdio: 'ignore',
+        shell: process.platform === 'win32',
+      })
+      child.on('error', (error) => {
+        logDesktopError('open-in-editor', `${candidate.command}: ${error.message}`)
+        resolve(error.message)
+      })
+      child.on('spawn', () => {
+        child.unref()
+        resolve(null)
+      })
     })
-    child.unref()
+    if (failure) return { opened: false, error: `无法启动 ${candidate.label}：${failure}` }
     return { opened: true, editor: candidate.label }
   } catch (error) {
     return { opened: false, error: error instanceof Error ? error.message : String(error) }
@@ -1204,7 +1232,9 @@ function installIpc(): void {
       const result = senderWindow
         ? await dialog.showSaveDialog(senderWindow, options)
         : await dialog.showSaveDialog(options)
-      return { id: request.id, ok: true, result: { path: result.canceled ? null : (result.filePath ?? null) } }
+      const picked = result.canceled ? null : (result.filePath ?? null)
+      if (picked) pickedUpdatePaths.add(path.resolve(picked))
+      return { id: request.id, ok: true, result: { path: picked } }
     }
     if (request?.method === 'app:open-in-editor') {
       const params = request.params as { filePath?: string; line?: number; column?: number }
@@ -1215,7 +1245,7 @@ function installIpc(): void {
       return {
         id: request.id,
         ok: true,
-        result: openInEditor(filePath, params.line, params.column),
+        result: await openInEditor(filePath, params.line, params.column),
       }
     }
     if (request?.method === 'app:capture-region') {
@@ -1405,7 +1435,17 @@ function installIpc(): void {
     if (request?.method === 'app:download-update') {
       const feed = (request.params as { feed?: string }).feed?.trim() ?? ''
       const requestedPath = (request.params as { destPath?: string }).destPath?.trim()
-      const destPath = requestedPath ? path.resolve(requestedPath) : undefined
+      const candidate = requestedPath ? path.resolve(requestedPath) : undefined
+      // destPath 来自 renderer（可被注入内容影响），只接受下载目录/临时目录
+      // 或用户在保存对话框里亲手挑过的位置；否则等于任意文件写入。
+      if (candidate && !isAllowedUpdatePath(candidate)) {
+        return {
+          id: request.id,
+          ok: false,
+          error: { code: 'invalid-dest', message: '下载位置不受允许，请通过保存对话框选择' },
+        }
+      }
+      const destPath = candidate
       const ownerId = event.sender.id
       const controller = updateDownloads.start(ownerId)
       try {

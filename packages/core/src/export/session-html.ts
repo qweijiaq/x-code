@@ -39,7 +39,10 @@ function renderEntry(entry: SessionHtmlEntry): string {
       : `<pre class="input">${escapeHtml(JSON.stringify(entry.toolInput, null, 2))}</pre>`
   const output = entry.toolOutput ? `<pre class="output">${escapeHtml(entry.toolOutput)}</pre>` : ''
   const status = entry.toolStatus ? ` · ${escapeHtml(entry.toolStatus)}` : ''
-  return `<details class="tool"><summary>工具 · ${escapeHtml(entry.toolName ?? '(unknown)')}${status}</summary>${input}${output}</details>`
+  // `open`：PDF 导出链路只是 `loadURL(data:…)` + `printToPDF`，没有脚本去展开
+  // `<details>`；浏览器不会渲染未 open 的 details 里的非 summary 内容，导出结果
+  // 会丢掉全部工具输入/输出。所以这里默认展开。
+  return `<details class="tool" open><summary>工具 · ${escapeHtml(entry.toolName ?? '(unknown)')}${status}</summary>${input}${output}</details>`
 }
 
 export function renderSessionHtml(meta: SessionHtmlMeta, entries: readonly SessionHtmlEntry[]): string {

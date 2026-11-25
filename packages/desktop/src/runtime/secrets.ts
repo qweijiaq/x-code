@@ -11,6 +11,7 @@
  * 设置 UI 会如此说明。旧的明文条目会在可能时于下一次加载迁移到 `enc`。
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 import { PROVIDERS, WEB_SEARCH_PROVIDERS, acquireFileLock, debugLog, userXcodeDir } from '@x-code-cli/core'
@@ -103,7 +104,11 @@ export function setSecretCipher(next: SecretCipher | null): void {
   storageKind = 'unknown'
 }
 
+/** 探测专用的临时路径；设置后所有读写都落到该文件，绝不触碰真实条目。 */
+let secretsPathOverride: string | null = null
+
 function secretsPath(): string {
+  if (secretsPathOverride) return secretsPathOverride
   return path.join(userXcodeDir(), 'desktop-secrets.json')
 }
 
@@ -251,11 +256,28 @@ export async function loadSecrets(): Promise<void> {
 
   cache = { providers, search, baseUrls }
   if (providersDecoded.migrated || searchDecoded.migrated) {
-    writeRaw({
-      providers: providersDecoded.next,
-      search: searchDecoded.next,
-      baseUrls: Object.fromEntries(baseUrls),
+    await persistMigration(providersDecoded.next, searchDecoded.next)
+  }
+}
+
+/** 把明文条目迁移成密文。必须与其它写入共享同一把锁，否则基于旧快照的
+ *  写入会抹掉另一个窗口刚保存的 Key；同时在锁内重读，只替换已迁移的条目，
+ *  白名单外的历史条目（未知 provider、modelKeyOnly 搜索源等）保持原样。 */
+async function persistMigration(
+  providers: Record<string, StoredEntry>,
+  search: Record<string, StoredEntry>,
+): Promise<void> {
+  try {
+    await withSecretsLock(async () => {
+      const current = readRaw()
+      writeRaw({
+        providers: { ...(current.providers ?? {}), ...providers },
+        search: { ...(current.search ?? {}), ...search },
+        baseUrls: current.baseUrls ?? {},
+      })
     })
+  } catch (error) {
+    debugLog('secrets.migrate-failed', error instanceof Error ? error.message : String(error))
   }
 }
 
@@ -447,7 +469,13 @@ export async function clearProviderKey(provider: string): Promise<void> {
 }
 
 /** 冒烟探测：保存一个值，验证文件持有密文（当加密可用时），
- *  通过正常路径读回，然后清除。 */
+ *  通过正常路径读回，然后清除。
+ *
+ *  整个过程只作用于一次性的临时 secrets 文件：旧实现在真实的
+ *  `desktop-secrets.json` 上 save → 读 → clear，等于跑一次体检就把用户
+ *  已保存的 Anthropic Key 覆盖成探测值、再整条删除（连 env 一起清掉）。
+ *  现在改成隔离路径 + 直接走 `encodeEntry`/`decodeEntries`，
+ *  既不写用户的文件，也不改内存缓存和 `process.env`。 */
 export async function secretRoundTripProbe(): Promise<{
   available: boolean
   encrypted: boolean
@@ -455,17 +483,23 @@ export async function secretRoundTripProbe(): Promise<{
 }> {
   const value = `smoke-secret-${Date.now()}`
   const available = await cipher.available().catch(() => false)
-  await saveProviderKey('anthropic', value)
-  let encrypted = false
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xcode-secret-probe-'))
+  const previousOverride = secretsPathOverride
+  secretsPathOverride = path.join(dir, 'desktop-secrets.json')
   try {
-    const raw = fs.readFileSync(secretsPath(), 'utf8')
-    encrypted = available && !raw.includes(value) && raw.includes('"enc"')
-  } catch {
-    encrypted = false
+    writeRaw({ providers: { anthropic: await encodeEntry(value) }, search: {}, baseUrls: {} })
+    let encrypted = false
+    try {
+      const raw = fs.readFileSync(secretsPath(), 'utf8')
+      encrypted = available && !raw.includes(value) && raw.includes('"enc"')
+    } catch {
+      encrypted = false
+    }
+    const decoded = await decodeEntries(readRaw().providers, ENV_BY_PROVIDER)
+    const roundTrip = decoded.values.get('anthropic') === value
+    return { available, encrypted, roundTrip }
+  } finally {
+    secretsPathOverride = previousOverride
+    fs.rmSync(dir, { recursive: true, force: true })
   }
-  const status = providerSecretStatus('anthropic')
-  const roundTrip =
-    status.source === 'stored' && status.hint === maskHint(value) && process.env.ANTHROPIC_API_KEY === value
-  await clearProviderKey('anthropic')
-  return { available, encrypted, roundTrip }
 }

@@ -252,7 +252,17 @@ export async function runWatchMode(deps: WatchModeDependencies): Promise<number>
       baseline = next
       const total = changes.added.length + changes.modified.length + changes.deleted.length
       process.stdout.write(`\n[watch] ${total} change(s); running…\n`)
-      const code = await runPrintMode(model, options, formatWatchPrompt(prompt, changes, cwd, next.truncated))
+      // 单轮运行失败不该结束整个 watch 会话：网络异常、工具抛错、序列化失败都会
+      // 一路冒泡到 `main().catch` → `gracefulShutdown(1)`，用户必须手动重启（而单次
+      // `xc -p` 失败只是退一次码）。这里把单轮异常打到 stderr 后继续监听。
+      let code: number
+      try {
+        code = await runPrintMode(model, options, formatWatchPrompt(prompt, changes, cwd, next.truncated))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        process.stderr.write(`[watch] run failed: ${message}; waiting for the next change.\n`)
+        continue
+      }
       if (stopped) break
       if (code !== 0) process.stdout.write(`[watch] run exited ${code}; waiting for the next change.\n`)
     }

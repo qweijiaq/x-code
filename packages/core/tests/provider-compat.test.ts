@@ -15,6 +15,8 @@ import { collapseStaleToolResults } from '../src/agent/tool-result-pruning.js'
 
 vi.mock('../src/agent/image-ocr.js', () => ({
   ocrImage: vi.fn(async () => 'mock compatibility OCR'),
+  // provider-compat 用它把失败占位串挡在 OCR 缓存之外
+  isOcrFailureText: (value: string) => value.startsWith('[OCR failed: '),
 }))
 
 function imageToolResult(toolCallId: string, data: string, toolName = 'readFile'): ModelMessage {

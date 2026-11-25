@@ -55,16 +55,62 @@ export async function clearDocumentStore(): Promise<void> {
   await fs.promises.rm(storePath(), { force: true }).catch(() => undefined)
 }
 
+/** 存储文件是不可信输入（可被手工编辑、旧版本写入或写一半损坏）。
+ *  逐条归一化，避免缺少 `ocr` 的坏条目让 `Object.keys(document.ocr)`
+ *  抛 TypeError，把「最近文档」整块功能带崩。 */
+function normalizeDocument(value: unknown): StoredDocument {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? (value as Partial<StoredDocument>) : {}
+  const ocr: Record<string, string> = {}
+  const rawOcr = source.ocr
+  if (rawOcr && typeof rawOcr === 'object' && !Array.isArray(rawOcr)) {
+    for (const [page, text] of Object.entries(rawOcr as Record<string, unknown>)) {
+      if (typeof text === 'string') ocr[page] = text
+    }
+  }
+  const document: StoredDocument = {
+    ocr,
+    updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : new Date(0).toISOString(),
+  }
+  const baseline = source.baseline
+  if (
+    baseline &&
+    typeof baseline === 'object' &&
+    typeof baseline.hash === 'string' &&
+    typeof baseline.text === 'string'
+  ) {
+    document.baseline = {
+      hash: baseline.hash,
+      text: baseline.text,
+      updatedAt: typeof baseline.updatedAt === 'string' ? baseline.updatedAt : new Date(0).toISOString(),
+    }
+  }
+  return document
+}
+
 function loadStore(): DocumentStoreFile {
   try {
     const raw = fs.readFileSync(storePath(), 'utf8')
     const parsed = JSON.parse(raw) as Partial<DocumentStoreFile>
-    if (!parsed || typeof parsed !== 'object' || !parsed.documents || !Array.isArray(parsed.recent)) {
+    const sourceDocuments = parsed?.documents
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      !sourceDocuments ||
+      typeof sourceDocuments !== 'object' ||
+      Array.isArray(sourceDocuments) ||
+      !Array.isArray(parsed.recent)
+    ) {
       return emptyStore()
+    }
+    // 键是文件路径；用无原型对象，避免外部可控键命中原型链。
+    const documents: Record<string, StoredDocument> = Object.create(null) as Record<string, StoredDocument>
+    for (const [key, value] of Object.entries(sourceDocuments)) {
+      if (typeof key !== 'string' || !key) continue
+      documents[key] = normalizeDocument(value)
     }
     return {
       version: 1,
-      documents: parsed.documents,
+      documents,
       recent: parsed.recent.filter((entry) => typeof entry === 'string'),
     }
   } catch {

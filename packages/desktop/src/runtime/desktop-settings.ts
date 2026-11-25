@@ -177,6 +177,30 @@ export function saveDesktopSettings(update: DesktopSettingsFile): void {
   })
 }
 
+/**
+ * 在锁内做 read-modify-write。容器字段（sessionTitles / projectSettings /
+ * contextWindowOverrides / trustedProjectHooks / recentProjects …）必须走这里：
+ * 在锁外 `loadDesktopSettings()` 再整体 `saveDesktopSettings()`，两个窗口都会
+ * 基于同一份旧值追加，后写的那个会覆盖前一个——`saveDesktopSettings` 的字段级
+ * 合并不适用于 Record/数组内部的条目。
+ *
+ * 返回 null 表示没有变化，此时不落盘。
+ */
+export function updateDesktopSettings(
+  mutate: (current: DesktopSettingsFile) => Partial<DesktopSettingsFile> | null,
+): void {
+  withSettingsLock(() => {
+    const current = loadDesktopSettings()
+    const patch = mutate(current)
+    if (!patch) return
+    const file = settingsPath()
+    const data: DesktopSettingsFile = { ...current, ...patch }
+    const tmp = `${file}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8')
+    fs.renameSync(tmp, file)
+  })
+}
+
 let searchProviderOriginal: string | undefined
 let searchProviderCaptured = false
 

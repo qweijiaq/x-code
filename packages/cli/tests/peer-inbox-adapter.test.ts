@@ -62,6 +62,18 @@ describe('peer inbox adapter ownership transfer', () => {
     expect(service.inbox.claimAccepted(1)?.messages[0]?.text).toBe('message-0')
   })
 
+  it('releases ownership when the injected queue callback throws instead of returning false', () => {
+    const service = serviceWithAccepted(1)
+    expect(
+      transferAcceptedToAgentQueue(service, () => {
+        throw new Error('agent queue exploded')
+      }),
+    ).toBe(0)
+    // 异常路径同样不能把消息困在 claim 里，否则要等到 expiresAt 才能再投递。
+    expect(service.inbox.getSnapshot().accepted).toBe(1)
+    expect(service.inbox.claimAccepted(1)?.messages[0]?.text).toBe('message-0')
+  })
+
   it('blocks claims for goal and maintenance owners but not interactive turns', () => {
     expect(blocksPeerClaim('goal')).toBe(true)
     expect(blocksPeerClaim('compact')).toBe(true)

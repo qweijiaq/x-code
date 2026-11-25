@@ -80,6 +80,39 @@ function spans(value: unknown): FileSpan[] {
   })
 }
 
+/** `rename` 的 `locs` 是**按文件分组**的 `FileSpanWithContext`（
+ *  `{ file, locs: Span[] }`），与 `references` 的扁平 `FileSpan[]` 不同。
+ *  扁平化后每段补上所属文件，否则所有编辑都会退化成 line 1 / offset 1，
+ *  应用重命名时会改坏每个文件的第一行。 */
+function renameSpans(value: unknown): FileSpan[] {
+  if (!Array.isArray(value)) return []
+  const out: FileSpan[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const entry = item as Record<string, unknown>
+    const file = entry.file
+    if (typeof file !== 'string') continue
+    const nested = entry.locs
+    if (Array.isArray(nested)) {
+      for (const part of nested) {
+        if (!part || typeof part !== 'object') continue
+        const span = part as Record<string, unknown>
+        if (!isPosition(span.start)) continue
+        out.push({
+          file,
+          start: span.start as Position,
+          ...(isPosition(span.end) ? { end: span.end as Position } : {}),
+          ...(typeof span.lineText === 'string' ? { lineText: span.lineText } : {}),
+          ...(typeof span.contextText === 'string' ? { contextText: span.contextText } : {}),
+        })
+      }
+      continue
+    }
+    if (isPosition(entry.start)) out.push(item as FileSpan)
+  }
+  return out
+}
+
 function diagnosticList(value: unknown): unknown[] {
   if (Array.isArray(value)) return value
   if (value && typeof value === 'object') {
@@ -377,13 +410,15 @@ export class TypeScriptService {
   ): Promise<LspRenameEdit[]> {
     const absolute = path.resolve(this.root, filePath)
     await this.open(absolute)
-    const body = await this.request<{ locs?: unknown } | null>(
-      'rename',
-      { file: absolute, line, offset: column, findInComments: false, findInStrings: false },
-      signal,
-    )
+    const body = await this.request<{
+      locs?: unknown
+      info?: { canRename?: boolean; localizedErrorMessage?: string }
+    } | null>('rename', { file: absolute, line, offset: column, findInComments: false, findInStrings: false }, signal)
+    if (body?.info && body.info.canRename === false) {
+      throw new Error(body.info.localizedErrorMessage || 'This symbol cannot be renamed')
+    }
     return Promise.all(
-      spans(body?.locs)
+      renameSpans(body?.locs)
         .slice(0, limit)
         .map(async (span) => ({
           ...(await this.toLocation(span)),

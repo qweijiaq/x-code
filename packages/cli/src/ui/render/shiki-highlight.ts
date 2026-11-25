@@ -167,8 +167,13 @@ function shikiLangId(fenceId: string): string {
 function ensureLang(shikiId: string, fenceId: string): boolean {
   if (loadedLangs.has(shikiId)) return true
   if (!highlighter) return false
+  // 自有属性判断：围栏 id 来自模型输出/粘贴内容，`constructor` / `toString` 之类
+  // 会命中原型上的属性（truthy，`!loader` 判不住），紧接着 `loader()` 同步抛
+  // TypeError。而本函数在 `highlightCodeShiki` 的 try 之前被调用，异常会逸出，
+  // 违背「永不抛异常 / 绝不让渲染崩溃」的契约并打断渲染循环。
+  if (!Object.hasOwn(LANG_LOADERS, fenceId)) return false
   const loader = LANG_LOADERS[fenceId]
-  if (!loader) return false
+  if (typeof loader !== 'function') return false
   let pending = pendingLangs.get(shikiId)
   if (!pending) {
     const h = highlighter
@@ -212,7 +217,13 @@ function paintLine(tokens: ShikiToken[], themeFg: string | null): string {
   for (const t of tokens) {
     if (!t.content) continue
     const color = t.color?.toLowerCase()
-    const key = !color || color === themeFg ? null : `${color}${t.fontStyle && t.fontStyle & FONT_BOLD ? 'b' : ''}`
+    const isBold = Boolean(t.fontStyle && t.fontStyle & FONT_BOLD)
+    // 用 `|b` 后缀标记 bold，而不是直接拼 `b`：大量主题色本身就以 `b` 结尾
+    // （如 one-dark 的 `#e5c07b`），那种 key 会被误判成 bold，`slice(0, -1)` 又把
+    // 颜色截成 5 位非法 hex，chalk 的 `hex()` 对非法输入返回 null，随后
+    // `fn.bold(...)` 抛 TypeError——整段代码的 shiki 高亮被静默吞掉。
+    // hex 里不可能出现 `|`，所以后缀是无歧义的；非 bold 的 key 就是纯颜色。
+    const key = !color || color === themeFg ? null : isBold ? `${color}|b` : color
     if (key !== pendingKey) {
       out += flush(pending, pendingKey)
       pending = ''
@@ -226,8 +237,8 @@ function paintLine(tokens: ShikiToken[], themeFg: string | null): string {
 function flush(text: string, key: string | null): string {
   if (!text) return ''
   if (key === null) return text
-  const bold = key.endsWith('b')
-  const hex = bold ? key.slice(0, -1) : key
+  const bold = key.endsWith('|b')
+  const hex = bold ? key.slice(0, -2) : key
   const fn = c.hex(hex)
   return bold ? fn.bold(text) : fn(text)
 }

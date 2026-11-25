@@ -12,6 +12,13 @@ export type ExternalContentPolicy = 'off' | 'approve'
 /** 会把外部内容带进模型上下文的工具。 */
 export const EXTERNAL_CONTENT_TOOLS = new Set(['webFetch', 'webSearch', 'readDocument'])
 
+/** MCP 工具名形如 `<server>__<tool>`（见 mcp/name-mangling.ts，刻意没有 `mcp__`
+ *  伞形前缀），字面量集合永远覆盖不到，因此按命名模式识别。内置工具名是
+ *  camelCase，不含 `__`，不会误判。 */
+export function isMcpToolName(toolName: string): boolean {
+  return toolName.includes('__')
+}
+
 /** taint 后需要重新批准的破坏性工具。 */
 export const TAINT_SENSITIVE_TOOLS = new Set([
   'shell',
@@ -39,7 +46,7 @@ export function shouldRequireExternalContentApproval(
 }
 
 export function isExternalContentTool(toolName: string): boolean {
-  return EXTERNAL_CONTENT_TOOLS.has(toolName)
+  return EXTERNAL_CONTENT_TOOLS.has(toolName) || isMcpToolName(toolName)
 }
 
 export interface ExternalContentTarget {

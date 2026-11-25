@@ -55,7 +55,9 @@ export function createLibraryController(options: LibraryControllerOptions): Libr
       return searchLibrary(query, {
         limit,
         path: scope,
-        semantic: settings.librarySemantic !== false,
+        // 与 stats()/index() 保持同一默认值（未配置即关闭）；
+        // 用 !== false 会让缺省时的 UI 显示与实际行为相反。
+        semantic: settings.librarySemantic === true,
       })
     },
 

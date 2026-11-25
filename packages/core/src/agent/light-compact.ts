@@ -26,21 +26,72 @@ type ToolResultPartLike = {
   output?: { type?: string; value?: unknown }
 }
 
+/** 多模态 tool-result 的 `content` 形态：`value` 是 part 数组，文本藏在
+ *  `{ type: 'text', text }` 里。 */
+function contentPartsStartWithSentinel(value: unknown): boolean {
+  if (!Array.isArray(value)) return false
+  return value.some(
+    (part) =>
+      part != null &&
+      typeof part === 'object' &&
+      (part as { type?: string }).type === 'text' &&
+      typeof (part as { text?: unknown }).text === 'string' &&
+      (part as { text: string }).text.startsWith(LOOP_GUARD_SENTINEL),
+  )
+}
+
 function isToolResultDropTarget(part: ToolResultPartLike): boolean {
   if (part?.type !== 'tool-result') return false
   const output = part.output
   if (!output) return false
-  if (output.type === 'text' && typeof output.value === 'string') {
-    return output.value.startsWith(LOOP_GUARD_SENTINEL)
+  // loop-guard 的结果由 `pushToolResult(..., isError = true)` 产生，
+  // `toolResultMessage()` 会把 isError 的文本包成 `{ type: 'error-text' }`。
+  // 只认 `text` 会让收集端永远收集不到 id，整个丢弃器形同虚设。
+  if (output.type === 'text' || output.type === 'error-text') {
+    return typeof output.value === 'string' && output.value.startsWith(LOOP_GUARD_SENTINEL)
+  }
+  if (output.type === 'content') {
+    return contentPartsStartWithSentinel(output.value)
   }
   return false
 }
 
-function hasDropTargetResult(msg: ModelMessage): boolean {
-  if (msg.role !== 'tool') return false
+/** 一条消息里命中丢弃目标的 toolCallId 列表（`collectLoopGuardedIds` 与
+ *  按 part 裁剪共用同一判定，避免两份定义漂移）。 */
+function dropTargetIdsOfMessage(msg: ModelMessage): string[] {
+  if (msg.role !== 'tool') return []
   const parts = msg.content as unknown as ToolResultPartLike[]
-  if (!Array.isArray(parts)) return false
-  return parts.some(isToolResultDropTarget)
+  if (!Array.isArray(parts)) return []
+  const ids: string[] = []
+  for (const part of parts) {
+    if (isToolResultDropTarget(part) && typeof part.toolCallId === 'string') ids.push(part.toolCallId)
+  }
+  return ids
+}
+
+/** 只移除命中 `idsToRemove` 的 tool-result part。
+ *  一轮并行工具调用会产生「一条 tool 消息含多个 tool-result part」的结构，
+ *  整条丢弃会连带干掉未被 guard 的兄弟结果，留下孤儿 `tool_use`（provider 直接 400）。
+ *  无需改动时原样返回，全部 part 都被移除时返回 null。 */
+function pruneDropTargetParts(msg: ModelMessage, idsToRemove: Set<string>): ModelMessage | null {
+  if (msg.role !== 'tool') return msg
+  const parts = msg.content as unknown as ToolResultPartLike[]
+  if (!Array.isArray(parts)) return msg
+
+  let changed = false
+  const kept = parts.filter((part) => {
+    if (!isToolResultDropTarget(part)) return true
+    // 没有 toolCallId 的 guard part 不会留下孤儿 `tool_use`，直接一并移除。
+    if (typeof part.toolCallId !== 'string' || idsToRemove.has(part.toolCallId)) {
+      changed = true
+      return false
+    }
+    return true
+  })
+
+  if (!changed) return msg
+  if (kept.length === 0) return null
+  return { ...msg, content: kept } as ModelMessage
 }
 
 /** 从一条 assistant 消息里移除给定 id 集合的 tool-call part。
@@ -69,14 +120,7 @@ function stripToolCallParts(msg: ModelMessage, idsToRemove: Set<string>): ModelM
 function collectLoopGuardedIds(messages: ModelMessage[]): Set<string> {
   const ids = new Set<string>()
   for (const msg of messages) {
-    if (msg.role !== 'tool') continue
-    const parts = msg.content as unknown as ToolResultPartLike[]
-    if (!Array.isArray(parts)) continue
-    for (const part of parts) {
-      if (isToolResultDropTarget(part) && typeof part.toolCallId === 'string') {
-        ids.add(part.toolCallId)
-      }
-    }
+    for (const id of dropTargetIdsOfMessage(msg)) ids.add(id)
   }
   return ids
 }
@@ -99,11 +143,12 @@ export function lightCompactMessages(messages: ModelMessage[]): LightCompactResu
   const out: ModelMessage[] = []
   let dropped = 0
   for (const msg of messages) {
-    if (hasDropTargetResult(msg)) {
+    const pruned = pruneDropTargetParts(msg, idsToRemove)
+    if (pruned == null) {
       dropped++
       continue
     }
-    const stripped = stripToolCallParts(msg, idsToRemove)
+    const stripped = stripToolCallParts(pruned, idsToRemove)
     if (stripped == null) {
       dropped++
       continue
@@ -145,25 +190,19 @@ export function lightCompactTrackedMessages(entries: readonly TrackedModelMessag
   const out: TrackedModelMessage[] = []
   let dropped = 0
   for (const entry of entries) {
-    const message = entry.message
-    if (hasDropTargetResult(message)) {
-      const ids = Array.isArray(message.content)
-        ? (message.content as ToolResultPartLike[])
-            .filter(isToolResultDropTarget)
-            .map((part) => part.toolCallId)
-            .filter((id): id is string => typeof id === 'string')
-        : []
-      if (ids.some((id) => idsToRemove.has(id))) {
-        dropped++
-        continue
-      }
+    // 按 part 裁剪：tainted（peer 引用）的 guard part 不在 idsToRemove 里，
+    // 因此会被保留下来——绝不能把最后一条 peer 证据整条丢出活跃转录。
+    const pruned = pruneDropTargetParts(entry.message, idsToRemove)
+    if (pruned == null) {
+      dropped++
+      continue
     }
-    const stripped = stripToolCallParts(message, idsToRemove)
+    const stripped = stripToolCallParts(pruned, idsToRemove)
     if (stripped == null) {
       dropped++
       continue
     }
-    out.push(stripped === message ? entry : { ...entry, message: stripped })
+    out.push(stripped === entry.message ? entry : { ...entry, message: stripped })
   }
   return { trackedMessages: out, dropped }
 }

@@ -110,11 +110,15 @@ Usage:
       // ripgrep 需要两个标志才能让“.”跨行匹配换行：-U 开启多行，
       // --multiline-dotall 让 `.` 越过行边界。
       if (multiline) args.push('--multiline', '--multiline-dotall')
-      if (type) args.push('--type', type)
-      if (globPattern) args.push('--glob', globPattern)
+      // 取值来自模型输入：用 `=` 绑定，避免以 `-` 开头的值被 clap 当成新选项。
+      if (type) args.push(`--type=${type}`)
+      if (globPattern) args.push(`--glob=${globPattern}`)
 
-      args.push(pattern)
-      args.push(searchPath ?? process.cwd())
+      // pattern / 路径同样来自模型输入，可能以 "-" 开头。用 -e 显式声明“这是
+      // 搜索模式”，并用 -- 终止选项解析，否则 `--pre=/tmp/evil.sh` 之类的
+      // pattern 会被 ripgrep 当成自身选项（--pre 会对每个文件执行外部程序）。
+      args.push('-e', pattern)
+      args.push('--', searchPath ?? process.cwd())
 
       reportProgress(toolCallId, `Searching for /${pattern}/`)
       const { stdout } = await execFileAsync(rgPath, args, {

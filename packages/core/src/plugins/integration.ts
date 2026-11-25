@@ -41,7 +41,7 @@ import { loadAllPlugins } from './loader.js'
 import type { LoadResult, ResolvedContributions } from './loader.js'
 import { extractMcpServersBlock } from './mcp-contributions.js'
 import type { InlineMcpServers, LoadedPlugin } from './types.js'
-import { getPluginUserConfigEnv } from './user-config.js'
+import { resolvePluginUserConfigEnv } from './user-config.js'
 
 export interface PluginIntegrationOutput {
   /** 供 skill loader 扫描的额外 skill 目录，每个都打上所属插件 id。仅包含
@@ -194,7 +194,17 @@ async function resolvePluginMcpServers(
   // 既有服务器的 env 条目优先，这样作者可以在需要时按服务器覆盖某个
   // userConfig 值。
   try {
-    const pluginEnv = await getPluginUserConfigEnv(plugin.id)
+    // `resolvePluginUserConfigEnv` 会剔掉 `NODE_OPTIONS` / `LD_PRELOAD` /
+    // `PATH` 这类保留变量名（manifest 对 key 没有任何命名约束，用户在安装提示
+    // 里填的值会原样进入子进程环境），并把被丢弃的键报出来，让 `/plugin doctor`
+    // 能浮现，而不是静默吞掉。
+    const { env: pluginEnv, droppedKeys } = await resolvePluginUserConfigEnv(plugin.id)
+    for (const key of droppedKeys) {
+      out.mcpErrors.push({
+        pluginId: plugin.id,
+        message: `userConfig key "${key}" is a reserved environment variable name and was not exported`,
+      })
+    }
     if (Object.keys(pluginEnv).length > 0) {
       for (const name of Object.keys(servers)) {
         const cfg = servers[name]!

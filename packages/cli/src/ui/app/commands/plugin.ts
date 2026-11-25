@@ -47,9 +47,9 @@ export interface PluginCommandDeps {
 /** 解析 `/plugin enable|disable` 参数字符串，识别共享的
  *  `--scope=user|project` / `-s=user|project` 标志（与 parseSkillScopeFlag
  *  解析器同形）。默认 scope = 'user'，让简短调用保持简短。 */
-function parsePluginScopeFlag(arg: string): { id: string; scope: PluginScope } {
-  const { value, scope } = parseScopeFlag(arg, 'user')
-  return { id: value, scope }
+function parsePluginScopeFlag(arg: string): { id: string; scope: PluginScope; error?: string } {
+  const { value, scope, error } = parseScopeFlag(arg, 'user')
+  return error === undefined ? { id: value, scope } : { id: value, scope, error }
 }
 
 export function createPluginCommandHandler(deps: PluginCommandDeps) {
@@ -271,7 +271,14 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
   }
 
   async function pluginToggle(text: string, raw: string, enable: boolean): Promise<void> {
-    const { id, scope } = parsePluginScopeFlag(raw)
+    const { id, scope, error } = parsePluginScopeFlag(raw)
+    if (error) {
+      addCommandMessage(
+        text,
+        `Usage: \`/plugin ${enable ? 'enable' : 'disable'} <id> [--scope=user|project]\` — ${error}`,
+      )
+      return
+    }
     if (!id) {
       addCommandMessage(text, `Usage: \`/plugin ${enable ? 'enable' : 'disable'} <id> [--scope=user|project]\``)
       return
@@ -364,7 +371,17 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
       let unchanged = 0
       let failed = 0
       for (const rec of records) {
-        const result = await updateInstalledPlugin(rec, yes ? {} : { consent: confirmPlugin })
+        // 逐条兜住：单个插件抛错不能让整批更新中断——那会把已经积累的 lines
+        // 进度输出全部丢掉（异常直接冒出函数），用户看到的是“什么都没有”，
+        // 也违背 usage 文案承诺的 “sequential, skip-on-error”。
+        let result: Awaited<ReturnType<typeof updateInstalledPlugin>>
+        try {
+          result = await updateInstalledPlugin(rec, yes ? {} : { consent: confirmPlugin })
+        } catch (err) {
+          lines.push(`  ${rec.id}: failed — ${err instanceof Error ? err.message : String(err)}`)
+          failed++
+          continue
+        }
         if (result.status === 'failed') {
           lines.push(`  ${rec.id}: failed — ${result.error}`)
           failed++
@@ -582,7 +599,11 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
     if (sub === 'disable') return pluginToggle(text, rest, false)
     if (sub === 'search') return pluginSearch(text, rest)
     if (sub === 'update') return pluginUpdate(text, rest)
-    if (sub === 'refresh') return void pluginRefresh(text)
+    // 不要 `void`：刷新要等注册表真正重载完再返回，否则 App.tsx 里
+    // `await handlePlugin('/plugin refresh', 'refresh')` 会在旧贡献仍在注册表里时
+    // 继续下一步（读到旧贡献的竞态），而 pluginRefresh 里 try 之外的部分一旦抛错
+    // 就成了未处理拒绝、用户看不到任何反馈。其它子命令都是 `return xxx(...)`。
+    if (sub === 'refresh') return pluginRefresh(text)
     if (sub === 'doctor') return doctor(text)
 
     addCommandMessage(

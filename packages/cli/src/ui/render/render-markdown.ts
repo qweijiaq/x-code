@@ -114,6 +114,14 @@ function getListNumber(listDepth: number, orderedListNumber: number): string {
   }
 }
 
+/** 列表项标记：无序项是压暗的 U+2022 •，有序项是压暗的「N.」（按嵌套深度决定
+ *  阿拉伯数字 / 字母 / 罗马数字）。紧凑列表由 `text` 处理器发，松散列表由
+ *  `paragraph` 处理器发——两处共用本函数以免两种列表渲染出不同标记。 */
+function renderListMarker(listDepth: number, orderedListNumber: number | null): string {
+  if (orderedListNumber === null) return paint('textDim')(GLYPH_LIST_BULLET)
+  return paint('textDim')(`${getListNumber(listDepth, orderedListNumber)}.`)
+}
+
 function padAligned(
   content: string,
   displayWidth: number,
@@ -237,8 +245,17 @@ function formatToken(
         .map((t) => `${'  '.repeat(listDepth)}${formatToken(t, listDepth + 1, orderedListNumber, token)}`)
         .join('')
 
-    case 'paragraph':
-      return (token.tokens ?? []).map((t) => formatToken(t, 0, null, null)).join('') + EOL
+    case 'paragraph': {
+      // 松散列表（`- a\n\n- b`）里 marked 生成 list_item → paragraph → 行内 token，
+      // 于是列表标记只在 text 的直接父级是 list_item 时才输出，被插了一层
+      // paragraph 就整段丢失（符号 / 有序编号消失）。这里在 parent 是 list_item 时
+      // 由 paragraph 自己发标记，并把 paragraph 作为子 token 的 parent 传下去，
+      // 避免多个行内 token 各发一次标记。`listDepth` / `orderedListNumber` 一并
+      // 透传，嵌套在列表项里的行内格式因此不再退化。
+      const inline = (token.tokens ?? []).map((t) => formatToken(t, listDepth, orderedListNumber, token)).join('')
+      if (parent?.type === 'list_item') return `${renderListMarker(listDepth, orderedListNumber)} ${inline}${EOL}`
+      return inline + EOL
+    }
 
     case 'space':
       return EOL
@@ -258,10 +275,7 @@ function formatToken(
         // 方式压暗。标记刻意不上色——颜色保留给语义（Codex/Kimi 约定），
         // 而且 unicode 标记已经能让人一眼看出 marked.lexer 解析过这个列表
         // （否则用户在渲染前后都看到 `-`，会以为什么都没发生）。
-        const marker =
-          orderedListNumber === null
-            ? paint('textDim')(GLYPH_LIST_BULLET)
-            : paint('textDim')(`${getListNumber(listDepth, orderedListNumber)}.`)
+        const marker = renderListMarker(listDepth, orderedListNumber)
         const content = tx.tokens
           ? tx.tokens.map((t) => formatToken(t, listDepth, orderedListNumber, token)).join('')
           : tx.text

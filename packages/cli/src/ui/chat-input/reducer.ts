@@ -27,10 +27,17 @@ export function inputReducer(state: InputState, action: InputAction): InputState
     }
     case 'BACKSPACE_REF': {
       const { pos, deleteCount } = action
-      if (pos === 0) return state
+      // `inputReducer` 是导出的公共函数，不能假设调用方一定传入 `0 <= deleteCount
+      // <= pos`：`pos - deleteCount` 为负时 `slice(0, 负数)` 会按「从末尾倒数」的
+      // 语义工作——文本没被正确删除，`cursor` 还变成负值并一路传染到 `cursorRef`、
+      // 渲染切片和后续按键定位，属于静默的状态损坏。这里先 clamp 再判断是否真的
+      // 有内容被删除，没有则短路返回原 state（与 SET_CURSOR 的 bail-out 风格一致）。
+      const from = Math.max(0, Math.min(pos, state.text.length))
+      const to = Math.max(0, from - Math.max(0, deleteCount))
+      if (to === from) return state
       return {
-        text: state.text.slice(0, pos - deleteCount) + state.text.slice(pos),
-        cursor: pos - deleteCount,
+        text: state.text.slice(0, to) + state.text.slice(from),
+        cursor: to,
       }
     }
     case 'DELETE': {

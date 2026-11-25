@@ -33,9 +33,10 @@ describe('mediaTypeFor', () => {
     expect(knownMediaTypeFor('noext')).toBeNull()
   })
 
-  it('keeps the legacy unknown-extension fallback for compatibility', () => {
-    expect(mediaTypeFor('file.svg')).toBe('image/png')
-    expect(mediaTypeFor('noext')).toBe('image/png')
+  it('falls back to a neutral media type for unknown extensions', () => {
+    // 回退到 image/png 会让音频/视频/文本被按图片解析；回退值必须中性。
+    expect(mediaTypeFor('file.svg')).toBe('application/octet-stream')
+    expect(mediaTypeFor('noext')).toBe('application/octet-stream')
   })
 
   it('handles case-insensitive extensions', () => {

@@ -289,6 +289,45 @@ describe('isReadOnly', () => {
     expect(isReadOnly('Where-Object { $_.Length -gt 100 }')).toBe(true)
     expect(isReadOnly('ForEach-Object { $_.Name }')).toBe(true)
   })
+
+  it('rejects lowercase write cmdlets smuggled in a script block', () => {
+    // PowerShell 的 cmdlet 名不区分大小写：全小写的写 cmdlet 必须同样被拦下。
+    expect(isReadOnly('Get-ChildItem | ForEach-Object { set-content out.txt $_ }')).toBe(false)
+    expect(isReadOnly('foreach ($f in Get-ChildItem) { remove-item $f }')).toBe(false)
+  })
+
+  it('rejects the PowerShell call operator inside a script block', () => {
+    expect(isReadOnly('Get-Process | ForEach-Object { & calc.exe }')).toBe(false)
+    expect(isReadOnly('if (Test-Path x) { & "evil.exe" }')).toBe(false)
+    // `&&` / `>&` / `&>` 不是调用操作符，不能因此判为不安全。
+    expect(isReadOnly('Where-Object { $_.Name } && Get-ChildItem')).toBe(true)
+  })
+
+  it('does not let unbalanced braces swallow statement separators', () => {
+    // `{` 永不闭合时，`;` 之后的写入必须仍是独立的一段 —— 否则整条命令会在
+    // 白名单开头 token（`ls`）的掩护下被 always-allow 放行。
+    expect(splitShellCommands('ls { ; touch newfile')).toEqual(['ls {', 'touch newfile'])
+    expect(splitShellCommands('echo x { ; mv a b')).toEqual(['echo x {', 'mv a b'])
+    expect(splitShellCommands('cd /tmp; Get-ChildItem | Where-Object { $_.Name -like "*.ts" }')).toEqual([
+      'cd /tmp',
+      'Get-ChildItem',
+      'Where-Object { $_.Name -like "*.ts" }',
+    ])
+  })
+
+  it('does not treat git remote/tag writers as read-only', () => {
+    expect(isReadOnly('git remote add origin https://example.com/repo.git')).toBe(false)
+    expect(isReadOnly('git remote set-url origin https://example.com/repo.git')).toBe(false)
+    expect(isReadOnly('git remote remove origin')).toBe(false)
+    expect(isReadOnly('git tag v1.2.3')).toBe(false)
+    expect(isReadOnly('git tag -d v1.2.3')).toBe(false)
+    expect(isReadOnly('git tag -a -m "release" v1.2.3')).toBe(false)
+    // 只列出远程/标签的形态仍是只读的。
+    expect(isReadOnly('git remote')).toBe(true)
+    expect(isReadOnly('git remote -v')).toBe(true)
+    expect(isReadOnly('git tag')).toBe(true)
+    expect(isReadOnly('git tag -l "v1.*"')).toBe(true)
+  })
 })
 
 describe('isDestructive', () => {

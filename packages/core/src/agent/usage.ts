@@ -133,7 +133,10 @@ export function accumulateUsage(
   if (options.updateCurrentContext) {
     state.tokenUsage.currentContextTokens = attribution.usage.inputTokens + attribution.usage.outputTokens
   }
-  addDelta(state.usageBreakdown.bySource[attribution.source], attribution.usage)
+  // bySource 不总是由 createUsageBreakdown() 构造：恢复旧会话时会用磁盘上持久化的
+  // JSON 覆盖它，历史记录里可能缺少后加入的 source（例如 'vision'）。与 byModel 一致地补桶。
+  const sourceBucket = (state.usageBreakdown.bySource[attribution.source] ??= emptyUsageDelta())
+  addDelta(sourceBucket, attribution.usage)
   const modelBucket = (state.usageBreakdown.byModel[attribution.modelId] ??= emptyUsageDelta())
   addDelta(modelBucket, attribution.usage)
 }

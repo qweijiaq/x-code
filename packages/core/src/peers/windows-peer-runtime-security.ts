@@ -87,6 +87,13 @@ async function secureWindowsPeerRuntime(
     resolveResult = resolve
     rejectResult = reject
   })
+  // `result` 要等到 `brokerProcess.send(...)` 之后才被 await。若在那之前的 try
+  // 块里就失败了（spawn 出错、`child.stdin` 的 error 事件先经 `onError:
+  // settleError` 把 result reject，随后 `send()` 也 reject），catch 分支不会再
+  // 触碰 `result`，这个 rejection 就永久无人处理——Node 默认
+  // `--unhandled-rejections=throw` 会直接崩掉进程，把一次本可恢复的安全检查
+  // 失败放大成整体宕机。先挂一个吞掉的 handler。
+  result.catch(() => {})
   const settleError = (error: unknown): void => {
     if (settled) return
     settled = true

@@ -126,9 +126,9 @@ function isSensitivePath(pathValue: string, cwd: string): boolean {
   const absolute = path.resolve(cwd, pathValue)
   const resolved = resolveExistingPath(absolute)
   const relative = path.relative(resolveExistingPath(path.resolve(cwd)), resolved)
-  const outside = relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)
-  return outside || SENSITIVE_PATH_SEGMENT_RE.test(absolute) || SENSITIVE_PATH_SEGMENT_RE.test(resolved)
-  return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative))
+  const outsideProject = relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)
+  const matchesSensitiveSegment = SENSITIVE_PATH_SEGMENT_RE.test(absolute) || SENSITIVE_PATH_SEGMENT_RE.test(resolved)
+  return outsideProject || matchesSensitiveSegment
 }
 
 function pathInputs(toolName: string, input: Record<string, unknown>, cwd: string): string[] {
@@ -139,10 +139,13 @@ function pathInputs(toolName: string, input: Record<string, unknown>, cwd: strin
     glob: ['cwd'],
     grep: ['path'],
     listDir: ['dirPath'],
-    lspDiagnostics: ['filePath'],
-    lspDefinition: ['filePath'],
-    lspReferences: ['filePath'],
-    lspRename: ['filePath'],
+    // `root` 也要算进来：语言服务以 root 为 cwd 启动并回传该目录下的源码
+    // 诊断，只按 filePath（相对 cwd 解析）判定会把
+    // `root: ~/.ssh, filePath: "config"` 误判成工作区内读取。
+    lspDiagnostics: ['filePath', 'root'],
+    lspDefinition: ['filePath', 'root'],
+    lspReferences: ['filePath', 'root'],
+    lspRename: ['filePath', 'root'],
     readDocument: ['filePath', 'path'],
     documentSearch: ['path'],
     documentLibrary: ['path'],

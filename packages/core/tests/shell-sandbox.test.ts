@@ -29,7 +29,28 @@ describe('macOS shell sandbox profile', () => {
     expect(profile).toContain('/private/tmp')
     expect(profile).toContain('skill-runtime')
     expect(profile).toContain('.ssh')
-    expect(profile).toContain('desktop-secrets.json')
+    // 凭据整根按 ${X_CODE_HOME ?? ~/.x-code} 拒绝，而不是硬编码 ~/.x-code。
+    expect(profile).toContain(`(subpath "${process.env.X_CODE_HOME?.trim() || path.join(os.homedir(), '.x-code')}")`)
+    // skill-runtime 的放行必须排在凭据 deny 之后（SBPL 后者覆盖前者）。
+    expect(profile.lastIndexOf('skill-runtime')).toBeGreaterThan(profile.lastIndexOf('(deny file-read* file-write*'))
+  })
+
+  it('denies the X_CODE_HOME credential root when the variable overrides it', () => {
+    const previous = process.env.X_CODE_HOME
+    process.env.X_CODE_HOME = '/tmp/xc-home-override'
+    try {
+      const profile = sandboxProfileText({
+        enabled: true,
+        workspace: '/tmp/w',
+        allowNetwork: false,
+        includeExtensions: false,
+      })
+      expect(profile).toContain('(subpath "/tmp/xc-home-override")')
+      expect(profile).not.toContain(path.join(os.homedir(), '.x-code'))
+    } finally {
+      if (previous === undefined) delete process.env.X_CODE_HOME
+      else process.env.X_CODE_HOME = previous
+    }
   })
 
   it('omits the network deny when the user allows network', () => {

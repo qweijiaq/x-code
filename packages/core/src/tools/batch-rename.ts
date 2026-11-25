@@ -83,6 +83,23 @@ function computeName(name: string, index: number, options: z.infer<typeof inputS
   return `${options.prefix ?? ''}${base}${options.suffix ?? ''}${extension}`
 }
 
+/**
+ * prefix/suffix/find 都是模型可控的字符串，拼出的名字可能带 `/`、`\` 或 `..`，
+ * 直接交给 path.join 就能把文件挪出原目录（违反“绝不跨目录移动”的契约）。
+ * 这里要求目标名必须是同一个目录下的单层合法文件名。
+ */
+function targetNameProblem(nextName: string, directory: string): string | null {
+  if (nextName.length === 0) return 'empty target name'
+  if (nextName !== path.basename(nextName)) return 'target escapes directory'
+  if (/[/\\\0]/.test(nextName)) return 'target escapes directory'
+  if (nextName === '.' || nextName === '..') return 'target escapes directory'
+  if (nextName.startsWith('.')) return 'target name would hide the file'
+  const resolvedDir = path.resolve(directory)
+  const resolvedTarget = path.resolve(resolvedDir, nextName)
+  if (!resolvedTarget.startsWith(resolvedDir + path.sep)) return 'target escapes directory'
+  return null
+}
+
 export const batchRename = tool({
   description:
     'Rename files in a directory in place. Defaults to a dry run that only returns the plan. Never overwrites an ' +
@@ -113,7 +130,13 @@ export const batchRename = tool({
       for (const [index, file] of files.entries()) {
         abortSignal?.throwIfAborted()
         const nextName = computeName(file.name, index, input)
-        const target = path.join(path.dirname(file.filePath), nextName)
+        const directory = path.dirname(file.filePath)
+        const problem = targetNameProblem(nextName, directory)
+        if (problem) {
+          planned.push({ from: file.relative, to: nextName, conflict: problem })
+          continue
+        }
+        const target = path.join(directory, nextName)
         if (nextName === file.name) {
           planned.push({ from: file.relative, to: nextName })
           continue

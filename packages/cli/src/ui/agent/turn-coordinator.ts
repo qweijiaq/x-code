@@ -120,9 +120,15 @@ export function createTurnCoordinator(): TurnCoordinator {
   return {
     tryAcquire(owner, authority) {
       if (active) return null
-      active = createLease(owner, authority)
-      notify(active.lease)
-      return active.lease
+      // 把新租约存进局部变量再返回，而不是 `return active.lease`：`notify` 会同步
+      // 调用监听器，监听器完全可以在其中 `release()` 或 `releaseAndTryAcquire()`
+      // 改写 `active`。此时读的就不再是本次获取的租约——`active` 被释放则抛
+      // TypeError（该异常不受 notify 内部 try/catch 保护，直接打崩调用方），被
+      // 替换则调用方拿到一个并非自己获取成功的 lease，后续 `release()` 语义错乱。
+      const next = createLease(owner, authority)
+      active = next
+      notify(next.lease)
+      return next.lease
     },
 
     releaseAndTryAcquire(lease, nextOwner, nextAuthority) {

@@ -51,16 +51,25 @@ export function RewindPanel({ onClose, onRewound, initialMode = 'both' }: Props)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false
     void (async () => {
-      const response = await request('session:checkpoints', {})
-      if (!response.ok) {
-        setError(response.error.message)
-        return
+      try {
+        const response = await request('session:checkpoints', {})
+        if (cancelled) return
+        if (!response.ok) {
+          setError(response.error.message)
+          return
+        }
+        const list = (response.result as { checkpoints: RewindCheckpointView[] }).checkpoints
+        setCheckpoints(list)
+        setSelected(list.length > 0 ? list[list.length - 1].ckptId : null)
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
       }
-      const list = (response.result as { checkpoints: RewindCheckpointView[] }).checkpoints
-      setCheckpoints(list)
-      setSelected(list.length > 0 ? list[list.length - 1].ckptId : null)
     })()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -68,10 +77,27 @@ export function RewindPanel({ onClose, onRewound, initialMode = 'both' }: Props)
       setStats(null)
       return
     }
+    // 快速切换 checkpoint 时旧响应可能后到：用取消标记丢弃。
+    let cancelled = false
     void (async () => {
-      const response = await request('session:checkpoint-diff', { ckptId: selected })
-      setStats(response.ok ? (response.result as typeof stats) : null)
+      try {
+        const response = await request('session:checkpoint-diff', { ckptId: selected })
+        if (cancelled) return
+        if (response.ok) {
+          setStats(response.result as typeof stats)
+        } else {
+          setStats(null)
+          setError(response.error.message)
+        }
+      } catch (cause) {
+        if (cancelled) return
+        setStats(null)
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
     })()
+    return () => {
+      cancelled = true
+    }
   }, [selected])
 
   const restore = async (): Promise<void> => {
@@ -86,6 +112,8 @@ export function RewindPanel({ onClose, onRewound, initialMode = 'both' }: Props)
       }
       const result = response.result as RewindResultView
       onRewound(result.view, mode)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(false)
     }

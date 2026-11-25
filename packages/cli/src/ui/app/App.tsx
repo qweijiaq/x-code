@@ -555,7 +555,12 @@ export function App({
           ]
 
       const restoreAnswer = await askQuestion('What would you like to restore?', restoreOptions)
-      if (restoreAnswer === 'Cancel') {
+      // 只有显式命中某个选项才继续（与上面选择 checkpoint 的 `if (!picked)` 一致）。
+      // 这里过去只判断 `'Cancel'`，于是 Esc 及任何非选项答案都会落到下面：
+      // `restoreCode=false`、`restoreConversation=true` → `mode='conversation'` →
+      // 直接执行 `rewind()`，用户本想取消却被回滚了对话历史（破坏性操作）。
+      const recognized = restoreOptions.some((option) => option.label === restoreAnswer)
+      if (!recognized || restoreAnswer === 'Cancel') {
         addInfoMessage('Rewind cancelled.')
         return
       }

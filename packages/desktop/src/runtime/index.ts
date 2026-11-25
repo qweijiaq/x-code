@@ -981,9 +981,20 @@ parentPort.on('message', (event) => {
   }
 
   if (message.kind === 'request') {
-    void handleRequest(message.request).then((response) => {
-      port.postMessage({ kind: 'response', response })
-    })
+    const request = message.request as RuntimeRequest | undefined
+    // 入站校验：request 缺失/字段异常时不能进入 handleRequest——那里的 catch
+    // 分支还要读 request.id，会二次抛错变成进程级 unhandledRejection，
+    // 且渲染端永远收不到该 id 的回包（请求悬挂）。
+    if (!request || typeof request !== 'object' || typeof request.id !== 'string') return
+    void handleRequest(request)
+      .catch((error: unknown) => fail(request.id, 'request-failed', errorMessage(error)))
+      .then((response) => {
+        try {
+          port.postMessage({ kind: 'response', response })
+        } catch {
+          // 端口已关闭：丢弃回包，不能让它变成未捕获异常。
+        }
+      })
   }
 })
 

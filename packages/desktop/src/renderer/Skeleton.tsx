@@ -7,7 +7,7 @@ function Line({ width = '100%', height = 10 }: { width?: string; height?: number
 export function SidebarSkeleton({ rows = 4 }: { rows?: number }): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <div className="sk-sidebar" aria-label={t('加载中')} aria-busy="true">
+    <div className="sk-sidebar" role="status" aria-live="polite" aria-label={t('加载中')} aria-busy="true">
       {Array.from({ length: rows }, (_value, index) => (
         <div className="sk-sidebar-row" key={index}>
           <Line width={`${52 + ((index * 17) % 34)}%`} />
@@ -21,7 +21,7 @@ export function SidebarSkeleton({ rows = 4 }: { rows?: number }): React.JSX.Elem
 export function ChatSkeleton({ turns = 2 }: { turns?: number }): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <div className="sk-chat" aria-label={t('加载中')} aria-busy="true">
+    <div className="sk-chat" role="status" aria-live="polite" aria-label={t('加载中')} aria-busy="true">
       {Array.from({ length: turns }, (_value, index) => (
         <div className="sk-turn" key={index}>
           <div className="sk-bubble sk-bubble-user">
@@ -41,7 +41,7 @@ export function ChatSkeleton({ turns = 2 }: { turns?: number }): React.JSX.Eleme
 export function PanelSkeleton({ rows = 5 }: { rows?: number }): React.JSX.Element {
   const { t } = useTranslation()
   return (
-    <div className="sk-panel" aria-label={t('加载中')} aria-busy="true">
+    <div className="sk-panel" role="status" aria-live="polite" aria-label={t('加载中')} aria-busy="true">
       {Array.from({ length: rows }, (_value, index) => (
         <div className="sk-panel-row" key={index}>
           <Line width="28%" height={12} />
@@ -57,7 +57,14 @@ export function SettingsSkeleton(): React.JSX.Element {
   return (
     <>
       <div className="drawer-scrim" aria-hidden="true" />
-      <aside className="settings-drawer" data-testid="settings-skeleton" aria-label={t('加载中')} aria-busy="true">
+      <aside
+        className="settings-drawer"
+        data-testid="settings-skeleton"
+        role="status"
+        aria-live="polite"
+        aria-label={t('加载中')}
+        aria-busy="true"
+      >
         <header className="drawer-head">
           <span className="drawer-seal" aria-hidden="true">
             {t('设')}

@@ -81,8 +81,18 @@ export class McpOAuthProvider implements OAuthClientProvider {
    *  整个流程就失败了。预先启动服务器可保证注册与授权使用*同一个*具体的
    *  `http://127.0.0.1:<port>/callback`。 */
   async prepareForAuth(): Promise<void> {
+    // 先确保 callback server 就绪再置位：调用方（client.ts:connectWithOAuth）
+    // 是在 try/finally *之前*调用本方法的，一旦这里抛错（端口耗尽、listen
+    // 失败等），`finally` 里的 `setInteractive(false)` 永远不会执行，而 provider
+    // 由 loader 按服务器名长期缓存复用——它会永久停留在 interactive 状态，
+    // 之后每次 CLI 启动的被动连接都会未经提示直接打开浏览器。
+    try {
+      await this.ensureCallbackServer()
+    } catch (err) {
+      this.interactive = false
+      throw err
+    }
     this.interactive = true
-    await this.ensureCallbackServer()
   }
 
   // ── OAuthClientProvider ────────────────────────────────────────────────
@@ -195,6 +205,10 @@ export class McpOAuthProvider implements OAuthClientProvider {
   cancel(): void {
     this.callbackServer?.close()
     this.callbackServer = null
+    // 被丢弃的 waiter 会在超时/错误时 reject，且再没有人 await 它。挂一个
+    // no-op catch，避免它变成 unhandledRejection 把进程打崩（Node ≥15 默认
+    // `--unhandled-rejections=throw`）。
+    this.pendingCode?.catch(() => {})
     this.pendingCode = null
     this.memoryCodeVerifier = null
   }

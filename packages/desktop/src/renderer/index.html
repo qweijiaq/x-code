@@ -52,7 +52,8 @@
         overflow: hidden;
       }
       .boot-bar,
-      .boot-row {
+      .boot-row,
+      .boot-line {
         border-radius: 6px;
         background: linear-gradient(
           90deg,
@@ -116,28 +117,32 @@
       @media (prefers-reduced-motion: reduce) {
         .boot-bar,
         .boot-row,
+        .boot-line,
         .boot-turn {
           animation: none;
         }
       }
+      /* 显式 data-theme='light' 时必须能盖掉系统深色偏好，否则骨架屏是深色、
+         应用本体是浅色，出现割裂/闪烁。 */
       @media (prefers-color-scheme: dark) {
-        html,
-        body {
+        html:not([data-theme='light']),
+        html:not([data-theme='light']) body {
           background: #171613;
         }
-        .boot {
+        html:not([data-theme='light']) .boot {
           color: #ede7da;
         }
-        .boot-side {
+        html:not([data-theme='light']) .boot-side {
           background: #1d1b17;
           border-right-color: rgba(237, 231, 218, 0.12);
         }
-        .boot-top {
+        html:not([data-theme='light']) .boot-top {
           border-bottom-color: rgba(237, 231, 218, 0.08);
         }
-        .boot-bar,
-        .boot-row,
-        .boot-turn {
+        html:not([data-theme='light']) .boot-bar,
+        html:not([data-theme='light']) .boot-row,
+        html:not([data-theme='light']) .boot-line,
+        html:not([data-theme='light']) .boot-turn {
           background: linear-gradient(
             90deg,
             rgba(237, 231, 218, 0.05) 25%,
@@ -163,6 +168,7 @@
       }
       html[data-theme='dark'] .boot-bar,
       html[data-theme='dark'] .boot-row,
+      html[data-theme='dark'] .boot-line,
       html[data-theme='dark'] .boot-turn {
         background: linear-gradient(
           90deg,
@@ -179,7 +185,7 @@
   </head>
   <body>
     <div id="root">
-      <div class="boot" aria-busy="true">
+      <div class="boot" role="status" aria-live="polite" aria-busy="true" aria-label="加载中">
         <aside class="boot-side">
           <div class="boot-brand"></div>
           <div class="boot-row boot-w60"></div>

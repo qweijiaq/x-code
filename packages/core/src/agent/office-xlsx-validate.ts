@@ -265,6 +265,19 @@ function validateWorksheet(bytes: Uint8Array): WorksheetAllocation {
   return { rows: allocatedRows, cells: Math.max(cellTags, allocatedRows * maximumColumn) }
 }
 
+/** 入口声明的 `originalSize` 可以说谎：一个几十字节的 deflate 流能膨胀到 GB 级，
+ *  而 fflate 的 inflate 按真实输出动态扩容——`unzipSync` 在我们的 filter 校验
+ *  之前就已经把内容分配进内存了。解完之后必须用真实长度再复核一次。 */
+function assertActualUncompressedSize(files: Record<string, Uint8Array>): void {
+  let actual = 0
+  for (const file of Object.values(files)) {
+    actual += file.length
+    if (!Number.isSafeInteger(actual) || actual > MAX_OFFICE_UNCOMPRESSED_BYTES) {
+      throw new Error('Spreadsheet archive exceeds the safe decompression limit')
+    }
+  }
+}
+
 function requiredArchiveEntry(files: Record<string, Uint8Array>, name: string): Uint8Array {
   const value = files[name]
   if (!value) throw new Error(`Spreadsheet archive is missing ${name}`)
@@ -289,6 +302,7 @@ export function validateXlsxArchive(archive: Uint8Array): void {
       return entry.name === WORKBOOK_PATH || entry.name === WORKBOOK_RELATIONSHIPS_PATH
     },
   })
+  assertActualUncompressedSize(fixedFiles)
   const sheets = parseWorkbook(requiredArchiveEntry(fixedFiles, WORKBOOK_PATH))
   const relationships = parseWorkbookRelationships(requiredArchiveEntry(fixedFiles, WORKBOOK_RELATIONSHIPS_PATH))
   const targetPaths = new Set<string>()
@@ -300,6 +314,7 @@ export function validateXlsxArchive(archive: Uint8Array): void {
   }
 
   const worksheetFiles = unzipSync(archive, { filter: (entry) => targetPaths.has(entry.name) })
+  assertActualUncompressedSize(worksheetFiles)
   let allocatedRows = 0
   let allocatedCells = 0
   for (const target of targetPaths) {

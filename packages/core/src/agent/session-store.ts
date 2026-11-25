@@ -1707,32 +1707,42 @@ export interface SessionListEntry {
  *  和尾部（约 4KB，取最后一条 usage 行）——不做全文件加载——这样即使有数百个历史会话，
  *  选择器也能保持响应。没有可解析文件头的文件会被静默丢弃。 */
 /** 通过重写文件头行来重命名会话。转录正文逐字节保留；重写走与压缩快照相同的
- *  临时文件 + fsync + rename 路径。 */
+ *  临时文件 + fsync + rename 路径。
+ *
+ *  整个读-改-写必须跑在 `fileOperations` 链上：`filePath` 通常是【活动会话文件】
+ *  （desktop 的 session-controller 直接把 renameSessionFile 暴露给 UI），
+ *  `fs.readFile` 与 `fs.rename` 之间任何一条 usage / checkpoint / goal / memory /
+ *  delta 追加都会被这次 rename 静默覆盖丢失——恰好违背本文件 `fileOperations`
+ *  注释宣称的保证。 */
 export async function renameSession(filePath: string, name: string): Promise<string> {
   if (!filePath.endsWith('.jsonl')) throw new Error('Not a session file')
   const trimmed = name.trim().slice(0, 200)
   if (!trimmed) throw new Error('Session name cannot be empty')
-  const content = await fs.readFile(filePath, 'utf8')
-  const newline = content.indexOf('\n')
-  const headerText = newline === -1 ? content : content.slice(0, newline)
-  let header: HeaderEntry
-  try {
-    header = JSON.parse(headerText) as HeaderEntry
-  } catch {
-    throw new Error('Session file has no readable header')
-  }
-  if (header.kind !== 'header') throw new Error('Session file has no header')
-  const payload = JSON.stringify({ ...header, name: trimmed }) + (newline === -1 ? '\n' : content.slice(newline))
-  const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`)
-  try {
-    await writeTempSnapshot(tempPath, payload)
-    await fs.rename(tempPath, filePath)
-    await syncParentDirectory(filePath)
-  } catch (error) {
-    await fs.unlink(tempPath).catch(() => {})
-    throw error
-  }
-  return trimmed
+  return enqueueFileOperation(filePath, async () => {
+    const content = await fs.readFile(filePath, 'utf8')
+    const newline = content.indexOf('\n')
+    const headerText = newline === -1 ? content : content.slice(0, newline)
+    let header: HeaderEntry
+    try {
+      header = JSON.parse(headerText) as HeaderEntry
+    } catch {
+      throw new Error('Session file has no readable header')
+    }
+    if (header.kind !== 'header') throw new Error('Session file has no header')
+    const payload = JSON.stringify({ ...header, name: trimmed }) + (newline === -1 ? '\n' : content.slice(newline))
+    const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`)
+    try {
+      await writeTempSnapshot(tempPath, payload)
+      await fs.rename(tempPath, filePath)
+      await syncParentDirectory(filePath)
+      // 与 replaceWithSnapshot 对齐：文件已按 0o600 落盘，后续追加无需再 chmod。
+      chmodDone.add(filePath)
+    } catch (error) {
+      await fs.unlink(tempPath).catch(() => {})
+      throw error
+    }
+    return trimmed
+  })
 }
 
 /** 删除一个会话转录。UX 确认由调用方负责。 */

@@ -332,6 +332,9 @@ function normalizeRemoteModels(response: unknown): OpenAIChatGPTRuntimeModel[] {
   if (values.length > 0 && recognizedEntries === 0) {
     throw new Error('ChatGPT model catalog contained no valid model entries.')
   }
+  // 认证成功但目录为空 = 该账号没有模型权限，返回空列表是有意为之
+  // （见 tests/openai-chatgpt-models.test.ts「treats an authenticated empty
+  //  catalog as no model entitlement」），不要退化成 FALLBACK_MODELS。
   return normalized.sort((left, right) => left.priority - right.priority).map(({ model }) => model)
 }
 

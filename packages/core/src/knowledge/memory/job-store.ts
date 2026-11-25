@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { fileExists } from '../../utils.js'
+import { debugLog, errorMessage, fileExists } from '../../utils.js'
 import { atomicWriteFile, syncDirectory } from '../../utils/atomic-file.js'
 import { acquireFileLock } from '../../utils/file-lock.js'
 import type { FileLockLease } from '../../utils/file-lock.js'
@@ -26,6 +26,16 @@ export interface MemoryRunRecord {
   operations: number
   errorCategory?: string
   completedAt: string
+}
+
+/** 判定"这个待办文件本身是坏的"，与 I/O 故障区分开：只有前者才该被搬进
+ *  failed/ 隔离——EACCES/EBUSY 之类瞬时错误把合法 job 隔离掉会造成静默丢
+ *  数据（failed/ 里的同名文件会被 `enqueue()` 当作 duplicate，永远无法重试）。 */
+class CorruptJobError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CorruptJobError'
+  }
 }
 
 function validateJob(value: unknown): MemoryJob {
@@ -217,29 +227,20 @@ export class MemoryJobStore {
     const parsed: Array<{ name: string; job: MemoryJob }> = []
     for (const name of entries) {
       const source = path.join(this.pendingDir, name)
+      let job: MemoryJob
       try {
-        const stat = await fs.stat(source)
-        if (stat.size > MAX_JOB_BYTES) throw new Error('Memory job exceeds the durable queue size limit')
-        const job = validateJob(JSON.parse(await fs.readFile(source, 'utf-8')))
-        if (`${job.jobId}.json` !== name) throw new Error('Memory job ID does not match its filename')
-        if (job.nextAttemptAt && Date.parse(job.nextAttemptAt) > now) continue
-        parsed.push({ name, job })
-      } catch {
-        await fs.rename(source, path.join(this.failedDir, name)).catch(() => {})
-        await Promise.all([syncDirectory(this.pendingDir), syncDirectory(this.failedDir)])
-        const jobId = name.slice(0, -'.json'.length)
-        if (SAFE_JOB_ID_RE.test(jobId)) {
-          await this.appendRun({
-            jobId,
-            status: 'failed',
-            durationMs: 0,
-            tokens: 0,
-            operations: 0,
-            errorCategory: 'corrupt-job',
-            completedAt: new Date().toISOString(),
-          })
+        job = await this.readPendingJob(source, name)
+      } catch (error) {
+        if (!(error instanceof CorruptJobError)) {
+          // I/O 类故障：文件仍在磁盘上，留着下次轮询重试，不要隔离。
+          debugLog('memory.claim-job-io-failed', `${name}: ${errorMessage(error)}`)
+          continue
         }
+        await this.quarantineCorruptJob(name)
+        continue
       }
+      if (job.nextAttemptAt && Date.parse(job.nextAttemptAt) > now) continue
+      parsed.push({ name, job })
     }
     parsed.sort((a, b) => a.job.createdAt.localeCompare(b.job.createdAt) || a.job.jobId.localeCompare(b.job.jobId))
     for (const item of parsed) {
@@ -255,6 +256,60 @@ export class MemoryJobStore {
       }
     }
     return null
+  }
+
+  /** 读取并校验一个待办文件。只有内容层面的问题（JSON 语法、schema、文件名
+   *  不匹配、超大）才抛 {@link CorruptJobError}，其余异常原样上抛。 */
+  private async readPendingJob(source: string, name: string): Promise<MemoryJob> {
+    const stat = await fs.stat(source)
+    if (stat.size > MAX_JOB_BYTES) throw new CorruptJobError('Memory job exceeds the durable queue size limit')
+    let raw: string
+    try {
+      raw = await fs.readFile(source, 'utf-8')
+    } catch (error) {
+      // EACCES/EISDIR 等读取故障文件还在：不能当成损坏内容隔离。
+      throw new Error(`Cannot read memory job ${name}: ${errorMessage(error)}`, { cause: error })
+    }
+    let value: unknown
+    try {
+      value = JSON.parse(raw) as unknown
+    } catch (error) {
+      throw new CorruptJobError(`Memory job is not valid JSON: ${errorMessage(error)}`)
+    }
+    let job: MemoryJob
+    try {
+      job = validateJob(value)
+    } catch (error) {
+      throw new CorruptJobError(errorMessage(error))
+    }
+    if (`${job.jobId}.json` !== name) throw new CorruptJobError('Memory job ID does not match its filename')
+    return job
+  }
+
+  /** 把损坏的待办文件搬进 failed/ 隔离，并尽力记录一条 run。隔离本身与簿记
+   *  都是尽力而为：旧记录已存在时不覆盖（rename 在 POSIX 上会静默覆盖），
+   *  run 日志写失败也不能让整个 `claimNext()` 中断。 */
+  private async quarantineCorruptJob(name: string): Promise<void> {
+    const source = path.join(this.pendingDir, name)
+    const target = path.join(this.failedDir, name)
+    try {
+      if (await fileExists(target)) await fs.unlink(source).catch(() => {})
+      else await fs.rename(source, target)
+    } catch (error) {
+      debugLog('memory.quarantine-job-failed', `${name}: ${errorMessage(error)}`)
+    }
+    await Promise.all([syncDirectory(this.pendingDir), syncDirectory(this.failedDir)]).catch(() => {})
+    const jobId = name.slice(0, -'.json'.length)
+    if (!SAFE_JOB_ID_RE.test(jobId)) return
+    await this.appendRun({
+      jobId,
+      status: 'failed',
+      durationMs: 0,
+      tokens: 0,
+      operations: 0,
+      errorCategory: 'corrupt-job',
+      completedAt: new Date().toISOString(),
+    }).catch((error) => debugLog('memory.quarantine-run-log-failed', `${jobId}: ${errorMessage(error)}`))
   }
 
   async complete(job: MemoryJob): Promise<void> {

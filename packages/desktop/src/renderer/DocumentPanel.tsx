@@ -64,11 +64,21 @@ export function DocumentPanel({
   const [selectedHunks, setSelectedHunks] = useState<Set<number>>(new Set())
   const [applyingHunks, setApplyingHunks] = useState(false)
   const [diffNotice, setDiffNotice] = useState<string | null>(null)
+  const [ocrError, setOcrError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!focusPage) return
     document.getElementById(`doc-page-${focusPage}`)?.scrollIntoView({ block: 'start' })
   }, [focusPage, view?.pages])
+
+  // 切换到另一个文档时重置本地 diff 状态：否则 A 的 hunk/hash 会留在 B 的
+  // 面板里，点“应用所选”就会拿 A 的改动去改 B。
+  useEffect(() => {
+    setDiff(null)
+    setSelectedHunks(new Set())
+    setDiffNotice(null)
+    setOcrError(null)
+  }, [view?.path])
 
   const sheet = view?.sheets?.[Math.min(sheetIndex, Math.max(0, (view.sheets?.length ?? 1) - 1))]
 
@@ -114,10 +124,14 @@ export function DocumentPanel({
   }
 
   const missingTextPages = (view?.pages ?? []).filter((page) => !page.text)
+  const ocrFailure = (cause: unknown): string => t('OCR 失败：{{message}}', { message: String(cause) })
   const ocrOne = async (page: number): Promise<void> => {
     setOcrBusy({ done: 0, total: 1 })
+    setOcrError(null)
     try {
       await onOcrPage(page)
+    } catch (cause) {
+      setOcrError(ocrFailure(cause))
     } finally {
       setOcrBusy(null)
     }
@@ -126,11 +140,15 @@ export function DocumentPanel({
     const targets = (view?.pages ?? []).filter((page) => !page.text).map((page) => page.page)
     if (targets.length === 0) return
     setOcrBusy({ done: 0, total: targets.length })
+    setOcrError(null)
     try {
       for (const [index, page] of targets.entries()) {
         setOcrBusy({ done: index, total: targets.length })
         await onOcrPage(page)
       }
+    } catch (cause) {
+      // 失败要中止剩余页并给出提示，否则用户只会看到按钮转回可用。
+      setOcrError(ocrFailure(cause))
     } finally {
       setOcrBusy(null)
     }
@@ -169,15 +187,21 @@ export function DocumentPanel({
   const applySelected = async (): Promise<void> => {
     if (!diff) return
     setApplyingHunks(true)
-    const ok = await onApplyHunks(
-      [...selectedHunks].sort((a, b) => a - b),
-      diff.hash,
-    )
-    setApplyingHunks(false)
-    if (ok) {
-      setDiff(null)
-      setSelectedHunks(new Set())
-      setDiffNotice(null)
+    try {
+      const ok = await onApplyHunks(
+        [...selectedHunks].sort((a, b) => a - b),
+        diff.hash,
+      )
+      if (ok) {
+        setDiff(null)
+        setSelectedHunks(new Set())
+        setDiffNotice(null)
+      } else {
+        // hash 冲突/应用失败必须说清楚，否则用户以为已经生效。
+        setDiffNotice(t('应用改动失败，文件可能已被修改，请重新读取文档后再试。'))
+      }
+    } finally {
+      setApplyingHunks(false)
     }
   }
 
@@ -415,6 +439,7 @@ export function DocumentPanel({
                           {t('清除 OCR（{{count}} 页）', { count: view.ocrPages?.length ?? 0 })}
                         </button>
                       ) : null}
+                      {ocrError ? <span className="document-review-note">{ocrError}</span> : null}
                     </div>
                   ) : null}
                   {view.pages.map((page) => (

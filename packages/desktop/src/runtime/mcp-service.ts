@@ -115,9 +115,8 @@ export class McpService {
     const trimmed = name.trim()
     if (!trimmed) throw new Error('服务器名称不能为空')
     if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('服务器配置必须是 JSON 对象')
-    if (await serverExists(trimmed, 'user', this.workspace)) {
-      await removeServerFromConfig(trimmed, 'user', this.workspace)
-    }
+    // 不再“先删后写”：writeServerToConfig 本身会校验并覆盖同名条目，
+    // 先删会让一次写盘/校验失败连带丢掉用户的旧配置。
     await writeServerToConfig(trimmed, config as McpServerConfig, 'user', this.workspace)
     await this.reload()
   }

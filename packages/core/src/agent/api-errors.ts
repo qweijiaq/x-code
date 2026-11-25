@@ -40,10 +40,15 @@ function extractErrorStatus(err: unknown, depth = 0): number {
  *  同时匹配 HTTP 413——`permanentErrorFetch` 会把上下文溢出响应改写成该状态码，
  *  以便 SDK 将其标记为不可重试。 */
 export function isContextTooLongError(err: unknown): boolean {
-  const msg = errorMessage(err)
+  // 与 classifyApiError 使用同一个提取器：AI SDK 的 TypeValidationError 把真实的
+  // 提供商消息藏在 `.value` / `responseBody` 里，只读 `err.message` 会漏掉它。
+  const msg = extractErrorMessage(err)
   if (extractHttpStatus(msg) === 413) return true
+  // 提供商的大小写并不统一（"Prompt Is Too Long"、"Maximum Context Length"），
+  // 模式表全为小写，因此这里必须先归一化——与 isImageDataError 保持一致。
+  const lower = msg.toLowerCase()
   for (const pattern of CONTEXT_TOO_LONG_PATTERNS) {
-    if (msg.includes(pattern)) return true
+    if (lower.includes(pattern)) return true
   }
   return false
 }
@@ -252,10 +257,13 @@ function isMalformedToolHistoryError(msg: string): boolean {
   )
 }
 
-/** 从 "Anthropic API key is missing" 中提取提供商名 → "Anthropic"。 */
+/** 从 "Anthropic API key is missing" 中提取提供商名 → "Anthropic"。
+ *  不加锚点：真实消息常带前缀（"(request id: …) Anthropic API key is missing"），
+ *  锚定 `^` 会让它退化成猜出来的 "PROVIDER_API_KEY" ——一个并不存在的变量名。
+ *  识别不出时返回空串，由调用方输出不含猜测变量名的通用文案。 */
 function extractProviderName(msg: string): string {
-  const m = msg.match(/^(\w+)\s+API key/i)
-  return m ? m[1]! : 'Provider'
+  const m = msg.match(/\b([A-Za-z][\w-]*)\s+API key\b/i)
+  return m ? m[1]! : ''
 }
 
 /**
@@ -372,7 +380,9 @@ export function classifyApiError(err: unknown): ClassifiedError {
   if (isMissingApiKeyError(msg)) {
     const provider = extractProviderName(msg)
     return {
-      message: `${provider} API key is not set. Please set the corresponding environment variable (e.g. ${provider.toUpperCase()}_API_KEY).`,
+      message: provider
+        ? `${provider} API key is not set. Please set the corresponding environment variable (e.g. ${provider.toUpperCase()}_API_KEY).`
+        : 'The provider API key is not set. Configure the key for this provider with /model or `xc init`.',
       retryable: false,
     }
   }

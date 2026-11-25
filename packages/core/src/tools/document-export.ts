@@ -81,6 +81,20 @@ async function assertWritableOutput(output: string): Promise<void> {
   await fs.mkdir(path.dirname(output), { recursive: true })
 }
 
+/** 把“不覆盖已有文件”交给文件系统保证：渲染可能耗时数秒，前置 `fs.access`
+ *  检查到这里之间是 TOCTOU 窗口，`fs.writeFile` 的默认 'w' 会静默清空并覆盖
+ *  期间出现的同名文件。'wx' 让创建与判存成为同一次原子操作。 */
+async function writeNewFile(target: string, bytes: Uint8Array): Promise<void> {
+  try {
+    await fs.writeFile(target, bytes, { flag: 'wx' })
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') {
+      throw new Error(`Output already exists; refusing to overwrite: ${target}`)
+    }
+    throw err
+  }
+}
+
 async function renderDocx(html: string, title: string): Promise<Buffer> {
   if (process.platform !== 'darwin') {
     throw new Error('DOCX export uses macOS textutil; this platform is not supported yet.')
@@ -120,16 +134,16 @@ export const documentExport = tool({
       reportProgress(toolCallId, `Rendering ${format.toUpperCase()}`)
       const html = await toHtml(content, contentFormat ?? 'markdown', documentTitle)
 
+      let bytes: Uint8Array
       if (format === 'pdf') {
         if (!pdfRenderer) {
           return '[PDF export needs the desktop app (Electron renderer). Use format:"docx" or run from X-Code Desktop.]'
         }
-        const bytes = await pdfRenderer(html, documentTitle)
-        await fs.writeFile(resolved, bytes)
+        bytes = await pdfRenderer(html, documentTitle)
       } else {
-        const bytes = await renderDocx(html, documentTitle)
-        await fs.writeFile(resolved, bytes)
+        bytes = await renderDocx(html, documentTitle)
       }
+      await writeNewFile(resolved, bytes)
       abortSignal?.throwIfAborted()
       const stats = await fs.stat(resolved)
       return `Exported ${format.toUpperCase()} → ${resolved} (${Math.max(1, Math.round(stats.size / 1024))} KB)${workspaceOutputNote(resolved)}`

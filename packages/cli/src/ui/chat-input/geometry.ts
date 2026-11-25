@@ -1,4 +1,4 @@
-import { sliceByWidth, visualWidth } from '../render/text-width.js'
+import { nextGraphemeBoundary, sliceByWidth, visualWidth } from '../render/text-width.js'
 
 type VisualLine = { text: string; rawLineIdx: number; startCol: number }
 
@@ -25,7 +25,11 @@ export function buildVisualLines(rawLines: string[], vpWidth: number): VisualLin
     let pos = 0
     while (pos < line.length) {
       const chunk = sliceByWidth(line.slice(pos), vpWidth)
-      const advance = chunk.length > 0 ? chunk.length : line.length - pos
+      // `sliceByWidth` 可能返回空串（视口比行首那个宽字符还窄）：此时必须至少前进
+      // 一个 grapheme。退回 `line.length - pos` 会把该行剩余内容整段丢掉——只
+      // push 一条 `text: ''` 的视觉行，用户输入的文本在 UI 上「凭空消失」，
+      // `locateVisualCursor` 也会算出错误的光标位置。
+      const advance = chunk.length > 0 ? chunk.length : Math.max(1, nextGraphemeBoundary(line, pos) - pos)
       visualLines.push({ text: chunk, rawLineIdx: r, startCol: pos })
       pos += advance
     }

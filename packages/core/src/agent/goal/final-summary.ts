@@ -8,10 +8,19 @@ export interface RunFinalSummaryInput {
 }
 
 export async function runFinalSummaryTurn(input: RunFinalSummaryInput): Promise<string> {
-  const result = await input.runAgentTurn(buildFinalSummaryPrompt(input.goal, input.reason), {
-    silent: true,
-    finalSummary: true,
-  })
-  const summary = result.text?.trim()
+  let summary: string | undefined
+  try {
+    const result = await input.runAgentTurn(buildFinalSummaryPrompt(input.goal, input.reason), {
+      silent: true,
+      finalSummary: true,
+    })
+    summary = result.text?.trim()
+  } catch (error) {
+    // 摘要轮失败绝不能中断 finalization：调用方的 `clearPendingTransition` +
+    // `updateGoalStatus` 必须执行，否则 goal 会卡在 active 并残留 pending
+    // transition。主循环 turn 同样有 try/catch 兜底，这里与之对称。
+    const reason = error instanceof Error ? error.message : String(error)
+    summary = `${input.reason}: final summary turn failed: ${reason}`
+  }
   return summary || `${input.reason}: final summary turn completed without a text response.`
 }

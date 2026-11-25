@@ -28,6 +28,13 @@ interface StoreShape {
 export class McpPermissionStore {
   private persisted: Set<string> | null = null
   private session = new Set<string>()
+  /** 共享的加载 Promise：判空是同步的而那行 `await` 之前不会赋值，多个并发
+   *  调用会各读一次文件，最后完成的赋值会整体替换掉先完成的那份 Set——
+   *  期间 `approvePermanently` 加进去的条目就此在内存中消失。 */
+  private loadPromise: Promise<void> | null = null
+  /** 本实例的写入串行化链 + 用于生成唯一 tmp 名的序号。 */
+  private writeChain: Promise<void> = Promise.resolve()
+  private writeSeq = 0
 
   /** 预加载持久化文件。可选——检查反正会惰性加载。 */
   async preload(): Promise<void> {
@@ -66,19 +73,51 @@ export class McpPermissionStore {
 
   private async ensurePersistedLoaded(): Promise<void> {
     if (this.persisted !== null) return
-    this.persisted = await readPersisted()
+    this.loadPromise ??= readPersisted().then((loaded) => {
+      // 已有并发写入产生的内存集合时取并集，避免丢掉刚授予的项。
+      this.persisted = this.persisted ? new Set([...this.persisted, ...loaded]) : loaded
+    })
+    await this.loadPromise
   }
 
-  private async writePersisted(): Promise<void> {
+  private writePersisted(): Promise<void> {
+    if (!this.persisted) return Promise.resolve()
+    const task = this.writeChain.then(() => this.writePersistedNow())
+    this.writeChain = task.catch(() => {})
+    return task
+  }
+
+  private async writePersistedNow(): Promise<void> {
     if (!this.persisted) return
-    await fs.mkdir(userXcodeDir(), { recursive: true })
-    const tmp = permissionsFile() + '.tmp'
-    const payload: StoreShape = { alwaysAllow: [...this.persisted].sort() }
-    // 0600——仅用户可读。与 mcp-auth.json 姿态一致
-    // （同样的注意事项：Windows 忽略 mode 位，但文件在 ~/.x-code 下，
-    // 所以实际泄露面限于以同一用户运行的其他应用）。
-    await fs.writeFile(tmp, JSON.stringify(payload, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 })
-    await fs.rename(tmp, permissionsFile())
+    await fs.mkdir(userXcodeDir(), { recursive: true, mode: 0o700 })
+    // 写前与磁盘取并集：多个 CLI 会话 / Desktop 进程并发批准不同工具时，整体
+    // 覆盖是 last-writer-wins，后写的一方会把先写的一方的授权整条抹掉。
+    const onDisk = await readPersisted()
+    const merged = new Set([...onDisk, ...this.persisted])
+    this.persisted = merged
+
+    const payload: StoreShape = { alwaysAllow: [...merged].sort() }
+    // 唯一 tmp 名：固定名会让同一轮里两个并发 "always allow" 交叉写入同一个
+    // 文件（产生半截 JSON），第二次 rename 又会因 tmp 已被移走而 ENOENT。
+    const tmp = `${permissionsFile()}.tmp-${process.pid}-${(this.writeSeq++).toString(36)}`
+    try {
+      // 0600——仅用户可读。与 mcp-auth.json 姿态一致（同样的注意事项：
+      // Windows 忽略 mode 位，但文件在 ~/.x-code 下，所以实际泄露面限于以
+      // 同一用户运行的其他应用）。
+      //
+      // 'wx' 独占创建：`mode` 只在**创建**时生效，复用上次崩溃残留的 0644
+      // 同名 tmp（或被预先放好的符号链接）会让权限位保持原样。
+      await fs.writeFile(tmp, JSON.stringify(payload, null, 2) + '\n', {
+        encoding: 'utf-8',
+        mode: 0o600,
+        flag: 'wx',
+      })
+      if (process.platform !== 'win32') await fs.chmod(tmp, 0o600)
+      await fs.rename(tmp, permissionsFile())
+    } finally {
+      // rename 成功后 tmp 已不存在；失败时清掉残留，避免污染下一次写入。
+      await fs.rm(tmp, { force: true }).catch(() => {})
+    }
   }
 }
 

@@ -180,6 +180,15 @@ export async function scanCodeFiles(root: string): Promise<Array<{ path: string;
   return files.sort((a, b) => a.path.localeCompare(b.path))
 }
 
+/** 把从 `from` 起尚未处理的候选文件标记为"本轮未确认删除，需保留"。
+ *  扫描因上限提前 break 时，后面的文件仍在磁盘上，只是这一轮没扫到。 */
+function markUnprocessed(candidates: ReadonlyArray<{ path: string }>, from: number, into: Set<string>): void {
+  for (let index = from; index < candidates.length; index++) {
+    const candidate = candidates[index]
+    if (candidate) into.add(candidate.path)
+  }
+}
+
 export async function indexCode(
   target: string,
   options: { semantic?: boolean; onProgress?: (progress: CodeIndexProgress) => void } = {},
@@ -204,6 +213,10 @@ export async function indexCode(
   const files: CodeFile[] = []
   const chunks: CodeChunk[] = []
   const pendingEmbedding: CodeChunk[] = []
+  // 本轮扫描到、但没能产出 chunk 的文件（瞬时读错误、目录/字符上限截断、空
+  // 文件）。它们仍然在磁盘上，绝不能当作"已删除"从索引里剔除：否则每次运行
+  // 都在第 N 个文件截断，靠后的文件永远进不了索引。
+  const keptWithoutChunks = new Set<string>()
   let characters = 0
   let indexed = 0
   let skipped = 0
@@ -213,10 +226,12 @@ export async function indexCode(
   for (const [position, candidate] of candidates.entries()) {
     if (files.length >= MAX_CODE_FILES) {
       note = `File limit reached (${MAX_CODE_FILES}); remaining files were not indexed.`
+      markUnprocessed(candidates, position, keptWithoutChunks)
       break
     }
     if (characters >= MAX_CODE_CHARS) {
       note = `Character budget reached (${MAX_CODE_CHARS}); remaining files were not indexed.`
+      markUnprocessed(candidates, position, keptWithoutChunks)
       break
     }
     options.onProgress?.({ phase: 'read', processed: position, total: candidates.length, chunks: chunks.length })
@@ -231,8 +246,13 @@ export async function indexCode(
       const oldChunks = previousChunksByPath.get(candidate.path) ?? []
       chunks.push(...oldChunks)
       characters += existing.characters
-      for (const chunk of oldChunks) {
-        if (chunk.vectorIndex === undefined && reusable.has(chunk.hash)) pendingEmbedding.push(chunk)
+      // 复用分支只为缺向量的块补嵌（例如上次语义后端不可用时没嵌成）。
+      // `reusable` 是"已有向量"的哈希表，本轮 embed 阶段又会用 `!vectorsByHash.has`
+      // 过滤一遍，所以这里必须是 `!reusable.has(...)`，否则这些块永远回填不上。
+      if (options.semantic) {
+        for (const chunk of oldChunks) {
+          if (chunk.vectorIndex === undefined && !reusable.has(chunk.hash)) pendingEmbedding.push(chunk)
+        }
       }
       skipped++
       continue
@@ -241,10 +261,15 @@ export async function indexCode(
     try {
       const text = await fs.readFile(candidate.path, 'utf8')
       const raws = chunkCode(text)
-      if (raws.length === 0) continue
+      if (raws.length === 0) {
+        // 空文件/只剩空白：文件存在，只是没有可索引内容。保留其既有条目。
+        keptWithoutChunks.add(candidate.path)
+        continue
+      }
       const charCount = raws.reduce((total, chunk) => total + chunk.text.length, 0)
       if (characters + charCount > MAX_CODE_CHARS) {
         note = `Character budget reached (${MAX_CODE_CHARS}); ${candidate.path} was not indexed.`
+        markUnprocessed(candidates, position, keptWithoutChunks)
         break
       }
       files.push({
@@ -270,16 +295,23 @@ export async function indexCode(
       characters += charCount
       indexed++
     } catch (error) {
+      // EACCES/EBUSY/EIO 之类瞬时错误：文件还在，只是这次读不到。保留既有条目。
+      keptWithoutChunks.add(candidate.path)
       errors.push(`${candidate.path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
   const knownPaths = new Set(files.map((file) => file.path))
-  const removed = previous.files.filter(
-    (file) => file.path.startsWith(root + path.sep) && !knownPaths.has(file.path),
-  ).length
+  const isUnderIndexRoot = (filePath: string): boolean => filePath.startsWith(root + path.sep)
+  // "已删除"只包括本轮未复现、且不是因为错误/上限/空文件而跳过的条目。
+  const removedPaths = new Set(
+    previous.files
+      .filter((file) => isUnderIndexRoot(file.path) && !knownPaths.has(file.path) && !keptWithoutChunks.has(file.path))
+      .map((file) => file.path),
+  )
+  const removed = removedPaths.size
   for (const file of previous.files) {
-    if (file.path.startsWith(root + path.sep) && !knownPaths.has(file.path)) continue
+    if (removedPaths.has(file.path)) continue
     if (!knownPaths.has(file.path)) {
       files.push(file)
       characters += file.characters
@@ -289,7 +321,10 @@ export async function indexCode(
 
   const vectorsByHash = new Map(reusable)
   let semantic = false
-  if (options.semantic && pendingEmbedding.length > 0 && vectorsByHash.size < chunks.length) {
+  // 不要比较 `vectorsByHash.size` 与 `chunks.length`：前者只覆盖往轮已嵌的块，
+  // 与本轮块总数没有可比性。索引基本未变时该不等式恒不成立，新块会被静默丢掉
+  // 向量。下面已经用 `unique` 去重，为空自然不进入循环。
+  if (options.semantic && pendingEmbedding.length > 0) {
     const unique = new Map<string, CodeChunk>()
     for (const chunk of pendingEmbedding) if (!vectorsByHash.has(chunk.hash)) unique.set(chunk.hash, chunk)
     const list = [...unique.values()]

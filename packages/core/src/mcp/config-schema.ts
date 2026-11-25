@@ -52,7 +52,9 @@ const serverSchema = z
     if (hasCommand && typeof v.headers !== 'undefined') {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: '`headers` is only valid for HTTP servers' })
     }
-    if (hasUrl && (v.args || v.env || v.cwd)) {
+    // 用 `typeof !== 'undefined'` 而非真值判断：`cwd: ""` / `env: {}` 这类
+    // 空值同样是"配置了一个 stdio 专属字段"，真值判断会把它们放过。
+    if (hasUrl && (typeof v.args !== 'undefined' || typeof v.env !== 'undefined' || typeof v.cwd !== 'undefined')) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: '`args`/`env`/`cwd` are only valid for stdio servers' })
     }
     if ((v.type === 'stdio' && !hasCommand) || (v.type === 'http' && !hasUrl)) {
@@ -60,7 +62,14 @@ const serverSchema = z
     }
   })
 
-const MAX_MCP_SERVERS = 128
+/** `mcpServers` 块的上限，与 `parseServersBlock` / config writer 共用。 */
+export const MAX_MCP_SERVERS = 128
+
+/** 服务器名必须与 loader 接受的条件完全一致（1-128 字符、无控制字符），
+ *  否则 writer 会把一个下次启动就被丢弃的条目写进磁盘。 */
+export function isValidServerName(name: string): boolean {
+  return name.length > 0 && name.length <= 128 && !/[\u0000-\u001f\u007f]/.test(name)
+}
 
 export const mcpServersSchema = z
   .record(z.string().min(1).max(128), serverSchema)
@@ -101,7 +110,7 @@ export function parseServersBlock(raw: unknown): {
     errors.push({ name: '*', message: `At most ${MAX_MCP_SERVERS} MCP servers are allowed` })
   }
   for (const [name, entry] of entries.slice(0, MAX_MCP_SERVERS)) {
-    if (!name || name.length > 128 || /[\u0000-\u001f\u007f]/.test(name)) {
+    if (!isValidServerName(name)) {
       errors.push({ name, message: 'MCP server name must be 1-128 characters without control characters' })
       continue
     }

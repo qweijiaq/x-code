@@ -32,6 +32,11 @@ export class LruCache<V> {
   }
 
   set(key: string, value: V): void {
+    // 先移除同名条目：覆盖写时 size 不会增长，若先做容量淘汰会白扔掉一个
+    // 仍有效的条目（maxEntries=3、set(a,b,c) 后再 set('c',v) 会淘汰 a）；
+    // 同时 Map 对已存在的 key 执行 set 会保留**原有**插入位置，不删除的话
+    // 这次写入不会被记为最近使用，与 LRU 语义相反。
+    this.map.delete(key)
     if (this.map.size >= this.maxEntries) {
       const oldest = this.map.keys().next().value
       if (oldest !== undefined) this.map.delete(oldest)

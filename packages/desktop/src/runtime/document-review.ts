@@ -102,13 +102,21 @@ async function writeAtomically(filePath: string, text: string): Promise<void> {
   const temp = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.review.tmp`)
   try {
     await fs.writeFile(temp, text, { mode: stats.mode })
+  } catch (error) {
+    // 写临时文件失败（ENOSPC/EDQUOT/目录不可写）时绝不能就地写入：
+    // 那会先截断用户原有内容，磁盘仍满就留下一个半写入的文件。
+    await fs.unlink(temp).catch(() => {})
+    throw error
+  }
+  try {
     await fs.rename(temp, filePath)
   } catch (error) {
     await fs.unlink(temp).catch(() => {})
-    // Windows 可能拒绝覆盖已有文件的 rename；此时内容已
-    // 完全校验，因此回退到就地写入。
+    const code = (error as NodeJS.ErrnoException).code
+    // 只有 Windows 的覆盖语义失败（EPERM/EEXIST/ENOTEMPTY/EBUSY）才回退到
+    // 就地写入；此处内容已完整校验，回退是安全的。
+    if (code !== 'EPERM' && code !== 'EEXIST' && code !== 'ENOTEMPTY' && code !== 'EBUSY') throw error
     await fs.writeFile(filePath, text, { mode: stats.mode })
-    if (!(error instanceof Error)) throw error
   }
 }
 

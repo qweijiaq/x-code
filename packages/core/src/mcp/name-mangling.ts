@@ -74,8 +74,17 @@ export function buildCallableName(serverName: string, rawToolName: string, exist
         return candidate
       }
     }
-    // 病态情形：直接追加一个近似随机的后缀，姑且一试。
-    return name.slice(0, MCP_MAX_NAME_LEN - 9) + '_' + shortHash(name + Date.now(), 8)
+    // 病态情形：继续用**确定性**输入加长哈希并校验唯一性。
+    // 不能用 `Date.now()` 之类的时间输入——同一个 (server, tool) 在不同进程/
+    // 不同毫秒会映射到不同名字，破坏 prompt caching、以工具名为键的权限规则
+    // 和日志关联；也不能返回一个仍可能重复的名字——调用方（mcp/registry、
+    // agent/browser/registry）会据此认为已拿到唯一名，导致同名工具被静默覆盖。
+    for (let len = 8; len <= 16; len++) {
+      const suffix = '_' + shortHash(`${serverName}::${rawToolName}::${len}`, len)
+      const candidate = name.slice(0, MCP_MAX_NAME_LEN - suffix.length) + suffix
+      if (!existing.has(candidate)) return candidate
+    }
+    throw new Error(`Unable to generate a unique tool name for MCP tool "${serverName}/${rawToolName}"`)
   }
 
   return name

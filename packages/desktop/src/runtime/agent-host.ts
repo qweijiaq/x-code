@@ -206,7 +206,12 @@ import type { RuntimeBootstrap } from './bootstrap.js'
 import { CodeIndexWatcher } from './code-index-watcher.js'
 import { testProviderConnection } from './connection-test.js'
 import { createDemoModel } from './demo-model.js'
-import { applySearchProviderPreference, loadDesktopSettings, saveDesktopSettings } from './desktop-settings.js'
+import {
+  applySearchProviderPreference,
+  loadDesktopSettings,
+  saveDesktopSettings,
+  updateDesktopSettings,
+} from './desktop-settings.js'
 import type { ProjectOverrides } from './desktop-settings.js'
 import { recentDocuments } from './document-store.js'
 import { createGitController } from './git-controller.js'
@@ -673,9 +678,12 @@ export class AgentHost {
 
   private rememberWorkspace(workspace: string, persistLast = true): void {
     const resolved = path.resolve(workspace)
-    const existing = loadDesktopSettings().recentProjects ?? []
-    const next = [resolved, ...existing.filter((entry) => path.resolve(entry) !== resolved)].slice(0, 20)
-    saveDesktopSettings({ recentProjects: next, ...(persistLast ? { lastWorkspace: resolved } : {}) })
+    // 锁内读改写：另一个窗口可能同时追加自己的最近项目。
+    updateDesktopSettings((current) => {
+      const existing = current.recentProjects ?? []
+      const next = [resolved, ...existing.filter((entry) => path.resolve(entry) !== resolved)].slice(0, 20)
+      return { recentProjects: next, ...(persistLast ? { lastWorkspace: resolved } : {}) }
+    })
   }
 
   /** 只读打开会话，不替换当前 loopState；用于另一个标签正在运行时浏览历史。 */
@@ -1360,20 +1368,21 @@ export class AgentHost {
 
   setAutoChecks(enabled: boolean): { enabled: boolean } {
     const workspace = path.resolve(this.requireBootstrap().workspace)
-    const settings = loadDesktopSettings()
-    const overrides = settings.projectSettings?.[workspace]
     // 项目覆盖存在时，写全局值会被它遮蔽，按钮看起来失效。这里优先更新
-    // 当前项目的覆盖；没有覆盖才写全局默认。
-    if (overrides?.autoChecks !== undefined) {
-      saveDesktopSettings({
-        projectSettings: {
-          ...(settings.projectSettings ?? {}),
-          [workspace]: { ...overrides, autoChecks: enabled },
-        },
-      })
-    } else {
-      saveDesktopSettings({ autoChecks: enabled })
-    }
+    // 当前项目的覆盖；没有覆盖才写全局默认。整段在锁内完成，避免并发
+    // 写入的另一个窗口覆盖刚写下的 projectSettings。
+    updateDesktopSettings((settings) => {
+      const overrides = settings.projectSettings?.[workspace]
+      if (overrides?.autoChecks !== undefined) {
+        return {
+          projectSettings: {
+            ...(settings.projectSettings ?? {}),
+            [workspace]: { ...overrides, autoChecks: enabled },
+          },
+        }
+      }
+      return { autoChecks: enabled }
+    })
     // 关闭自动检查时同时关闭自动修复，避免用户重新打开自动检查后
     // 意外恢复一个之前开着的修复循环。
     if (!enabled) {
@@ -1406,26 +1415,31 @@ export class AgentHost {
   }): Promise<SettingsActionResult> {
     if (this.activeTurn && update.modelId !== undefined) throw new Error('turn-busy')
     const workspace = path.resolve(this.requireBootstrap().workspace)
+    // 只读快照，用于下面的内存状态回落（taskMode）；写入本身在锁内完成。
     const settings = loadDesktopSettings()
-    const next: ProjectOverrides = { ...(settings.projectSettings?.[workspace] ?? {}) }
+    let next: ProjectOverrides = {}
 
-    if (update.modelId !== undefined) {
-      if (update.modelId === null || !update.modelId.trim()) delete next.modelId
-      else next.modelId = update.modelId.trim()
-    }
-    if (update.taskMode !== undefined) {
-      if (update.taskMode === null || !isTaskMode(update.taskMode)) delete next.taskMode
-      else next.taskMode = update.taskMode
-    }
-    if (update.autoChecks !== undefined) {
-      if (update.autoChecks === null) delete next.autoChecks
-      else next.autoChecks = update.autoChecks
-    }
+    updateDesktopSettings((current) => {
+      next = { ...(current.projectSettings?.[workspace] ?? {}) }
 
-    const projectSettings = { ...(settings.projectSettings ?? {}) }
-    if (Object.keys(next).length === 0) delete projectSettings[workspace]
-    else projectSettings[workspace] = next
-    saveDesktopSettings({ projectSettings })
+      if (update.modelId !== undefined) {
+        if (update.modelId === null || !update.modelId.trim()) delete next.modelId
+        else next.modelId = update.modelId.trim()
+      }
+      if (update.taskMode !== undefined) {
+        if (update.taskMode === null || !isTaskMode(update.taskMode)) delete next.taskMode
+        else next.taskMode = update.taskMode
+      }
+      if (update.autoChecks !== undefined) {
+        if (update.autoChecks === null) delete next.autoChecks
+        else next.autoChecks = update.autoChecks
+      }
+
+      const projectSettings = { ...(current.projectSettings ?? {}) }
+      if (Object.keys(next).length === 0) delete projectSettings[workspace]
+      else projectSettings[workspace] = next
+      return { projectSettings }
+    })
 
     if (next.taskMode && isTaskMode(next.taskMode) && next.taskMode !== this.taskMode) {
       this.taskMode = next.taskMode
@@ -2221,11 +2235,12 @@ export class AgentHost {
   async setProjectHooksTrusted(trusted: boolean): Promise<HooksView> {
     if (this.activeTurn) throw new Error('turn-busy')
     const workspace = path.resolve(this.requireBootstrap().workspace)
-    const settings = loadDesktopSettings()
-    const next = new Set(settings.trustedProjectHooks ?? [])
-    if (trusted) next.add(workspace)
-    else next.delete(workspace)
-    saveDesktopSettings({ trustedProjectHooks: [...next] })
+    updateDesktopSettings((current) => {
+      const next = new Set(current.trustedProjectHooks ?? [])
+      if (trusted) next.add(workspace)
+      else next.delete(workspace)
+      return { trustedProjectHooks: [...next] }
+    })
     await this.reloadExtensions(this.modelId)
     return this.hooksView()
   }
@@ -3374,10 +3389,13 @@ export class AgentHost {
     if (tokens !== null && (!Number.isSafeInteger(tokens) || tokens < MIN_CONTEXT_WINDOW_OVERRIDE)) {
       throw new Error(`上下文上限不能小于 ${MIN_CONTEXT_WINDOW_OVERRIDE} tokens`)
     }
-    const overrides = { ...(loadDesktopSettings().contextWindowOverrides ?? {}) }
-    if (tokens === null) delete overrides[id]
-    else overrides[id] = tokens
-    saveDesktopSettings({ contextWindowOverrides: overrides })
+    let overrides: Record<string, number> = {}
+    updateDesktopSettings((current) => {
+      overrides = { ...(current.contextWindowOverrides ?? {}) }
+      if (tokens === null) delete overrides[id]
+      else overrides[id] = tokens
+      return { contextWindowOverrides: overrides }
+    })
     setModelContextWindowOverrides(overrides)
     this.send({ type: 'app:state', state: this.getState() })
     void this.emitSettings()
@@ -4316,10 +4334,9 @@ export class AgentHost {
       })
       const title = cleanSessionTitle(text)
       if (!title) return
-      const current = loadDesktopSettings()
-      saveDesktopSettings({
+      updateDesktopSettings((current) => ({
         sessionTitles: { ...(current.sessionTitles ?? {}), [state.sessionId]: title },
-      })
+      }))
       this.send({ type: 'session:title', sessionId: state.sessionId, title })
     } catch {
       // 标题生成是尽力而为。

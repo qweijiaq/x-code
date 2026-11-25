@@ -10,7 +10,11 @@ export const enterPlanMode = tool({
     topic: z
       .string()
       .min(1)
-      .max(60)
+      // 与 plan-storage.ts 的 SLUG_MAX_LEN 保持一致：更长的显式 slug 不会被截断。
+      .max(40)
+      // 显式 slug 会绕过 makePlanFilePath 里的 slugify 直接进 path.join，
+      // 因此必须在这里就排除路径分隔符、`..` 与控制字符。
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Use lowercase letters, digits and single hyphens only.')
       .optional()
       .describe('Optional 3-5 word lowercase English filename slug, hyphen-separated.'),
   }),

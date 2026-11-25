@@ -89,7 +89,10 @@ export function parseSkillInstallCommand(command: string): SkillInstallRequest {
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index]!
     if (token === '--skill' || token === '-s') {
-      skillName = tokens[++index]
+      const value = tokens[++index]
+      // 缺值时不能静默退化成“没指定技能”，那会安装来源里的全部技能。
+      if (value === undefined || value === '') throw new Error('--skill 缺少技能名')
+      skillName = value
       continue
     }
     if (token.startsWith('--skill=')) {
@@ -287,6 +290,17 @@ export async function installSkillsFromCommand(command: string): Promise<CopiedS
       }
     } else if (skillDirs.length > MAX_SKILLS) {
       throw new Error(`来源包含 ${skillDirs.length} 个技能，请用 --skill <name> 指定要安装的技能`)
+    } else if (skillDirs.length > 1 && !request.all) {
+      // 未带 --all 时只装仓库根目录的那个技能；否则会静默一次装入多个
+      // 未经用户挑选的第三方技能。--all 才是“全装”的显式开关。
+      const rootSkill = skillDirs.find((dir) => path.resolve(dir) === path.resolve(root))
+      if (!rootSkill) {
+        const available = skillDirs.map(skillNameOf).join('、')
+        throw new Error(
+          `来源包含 ${skillDirs.length} 个技能，请用 --skill <name> 指定，或加 --all 安装全部：${available}`,
+        )
+      }
+      selected = [rootSkill]
     }
 
     const copied: CopiedSkill[] = []

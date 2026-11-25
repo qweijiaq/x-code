@@ -24,6 +24,7 @@ import {
   saveProviderKey,
   saveSearchKey,
   searchSecretStatus,
+  secretRoundTripProbe,
   secretStorageKind,
   setSecretCipher,
 } from '../src/runtime/secrets.js'
@@ -140,6 +141,31 @@ describe('desktop API-key storage', () => {
     // 从磁盘重新读取时会经由加密器解密。
     await loadSecrets()
     expect(providerSecretStatus('anthropic')).toMatchObject({ source: 'stored', hint: '••••wxyz' })
+  })
+
+  it('the smoke round-trip probe never touches the stored credentials', async () => {
+    await saveProviderKey('anthropic', 'sk-real-0001')
+    const before = fs.readFileSync(secretsFile(), 'utf8')
+
+    const probe = await secretRoundTripProbe()
+
+    expect(probe).toEqual({ available: false, encrypted: false, roundTrip: true })
+    // 探测必须在隔离的临时文件里进行：真实条目、env、缓存都不能变。
+    expect(fs.readFileSync(secretsFile(), 'utf8')).toBe(before)
+    expect(process.env.ANTHROPIC_API_KEY).toBe('sk-real-0001')
+    expect(providerSecretStatus('anthropic')).toMatchObject({ source: 'stored', hint: '••••0001' })
+  })
+
+  it('reports safeStorage encryption from the probe without rewriting storage', async () => {
+    setSecretCipher(mockCipher())
+    await saveProviderKey('anthropic', 'sk-real-0002')
+    const before = fs.readFileSync(secretsFile(), 'utf8')
+
+    const probe = await secretRoundTripProbe()
+
+    expect(probe).toEqual({ available: true, encrypted: true, roundTrip: true })
+    expect(fs.readFileSync(secretsFile(), 'utf8')).toBe(before)
+    expect(providerSecretStatus('anthropic')).toMatchObject({ source: 'stored', hint: '••••0002' })
   })
 
   it('migrates legacy plaintext entries to enc on load', async () => {

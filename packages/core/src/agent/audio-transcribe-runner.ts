@@ -240,9 +240,24 @@ function clearIdleTimer(): void {
   idleTimer = null
 }
 
+let exitHookRegistered = false
+
+/** 宿主进程正常退出时 idle 定时器永远不会再触发，whisper 子进程（原生内存里可能
+ *  还压着 ggml 模型）会变成孤儿。退出钩子只用同步操作（SIGTERM），是最低成本的
+ *  兜底；`disposeWhisperProcess()` 仍是首选的显式释放入口。 */
+function ensureExitHook(): void {
+  if (exitHookRegistered) return
+  exitHookRegistered = true
+  process.once('exit', () => {
+    disposeWhisperProcess()
+  })
+}
+
 function scheduleIdleTermination(client: WhisperProcessClient): void {
-  clearIdleTimer()
+  // 守卫必须在清理之前：传入已陈旧的 client 时，清理会误删当前活跃 client 的
+  // idle 定时器，使它既不被 unref 也不再有回收机会。
   if (processClient !== client || !client.alive) return
+  clearIdleTimer()
   client.unref()
   idleTimer = setTimeout(() => {
     idleTimer = null
@@ -314,6 +329,7 @@ function withWhisperClient<T>(
       options.abortSignal?.throwIfAborted()
       clearIdleTimer()
       if (!processClient?.alive) processClient = new WhisperProcessClient()
+      ensureExitHook()
       const client = processClient
       try {
         return await operation(client, { ...options, timeoutMs: remainingMs })

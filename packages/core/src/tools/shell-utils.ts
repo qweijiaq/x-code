@@ -18,8 +18,19 @@ export function splitShellCommands(cmd: string): string[] {
   // `Select-Object @{N='Directory';E={$_.Name}},Count` 在哈希里有一个 `;`，
   // 那是*字段分隔符*，不是语句边界。没有深度追踪，拆分器会把字面量拦腰
   // 切断，尾部（`E={$_.Name}},Count`）会被当成一条单独命令，从而触发只读
-  // 检查、强制一次不必要的提示。POSIX 的 `{ … ; }` 花括号组也被同一条规则
-  // 捕获 —— 这是可接受的副作用，因为内容仍会被 isDestructive 端到端扫描。
+  // 检查、强制一次不必要的提示。
+  //
+  // 但花括号豁免只在整段**配对平衡**时才成立：`ls { ; touch newfile` 的
+  // `{` 永远不会闭合，`;` 被当成字面量吞进同一段，于是该段以白名单的 `ls`
+  // 开头、`isDestructive` 也扫不到 `touch`，直接被 always-allow 放行，而
+  // bash 仍会执行 `touch`。收尾时 braceDepth > 0 就退回不追踪花括号的保守
+  // 拆分。
+  const tracked = splitOnce(cmd, true)
+  return tracked.braceDepth === 0 ? tracked.parts : splitOnce(cmd, false).parts
+}
+
+/** 单次拆分。`trackBraces` 为 false 时花括号不再豁免分隔符（保守模式）。 */
+function splitOnce(cmd: string, trackBraces: boolean): { parts: string[]; braceDepth: number } {
   const parts: string[] = []
   let current = ''
   let inSingleQuote = false
@@ -38,10 +49,10 @@ export function splitShellCommands(cmd: string): string[] {
       inDoubleQuote = !inDoubleQuote
       current += ch
     } else if (!inSingleQuote && !inDoubleQuote) {
-      if (ch === '{') {
+      if (trackBraces && ch === '{') {
         braceDepth++
         current += ch
-      } else if (ch === '}' && braceDepth > 0) {
+      } else if (trackBraces && ch === '}' && braceDepth > 0) {
         braceDepth--
         current += ch
       } else if (braceDepth > 0) {
@@ -72,7 +83,7 @@ export function splitShellCommands(cmd: string): string[] {
   }
   if (current.trim()) parts.push(current)
 
-  return parts.map((p) => p.trim()).filter(Boolean)
+  return { parts: parts.map((p) => p.trim()).filter(Boolean), braceDepth }
 }
 
 /** 可以安全自动放行的 Unix/PowerShell 命令 */
@@ -166,8 +177,10 @@ const READ_ONLY_COMMANDS = [
   'Test-Path',
 ]
 
-/** 只读的 Git 子命令 */
-const READ_ONLY_GIT_SUBCOMMANDS = ['status', 'log', 'diff', 'show', 'remote', 'tag', 'stash list', 'reflog']
+/** 只读的 Git 子命令。`remote` / `tag` 刻意不在这里：它们不带参数时只是列出，
+ *  但 `git remote add|set-url|remove` 会改写 `.git/config`、`git tag v1.2.3`
+ *  会创建或删除引用，都属于写操作。它们的只读形态由下面两个严格正则单独判定。 */
+const READ_ONLY_GIT_SUBCOMMANDS = ['status', 'log', 'diff', 'show', 'stash list', 'reflog']
 
 // 为性能预编译正则。`/i` 标志让匹配不区分大小写，于是 `Get-ChildItem` /
 // `get-childitem` / `GET-CHILDITEM` 都能命中 —— PowerShell 本身不区分大小写，
@@ -182,6 +195,11 @@ const TSC_READ_ONLY_FLAG_RE = /(?:^|\s)(?:--noemit|--showconfig|--version|-v|--h
 const TSC_WRITE_FLAG_RE =
   /(?:^|\s)(?:-b|--build|--incremental|--tsbuildinfofile|--generatetrace|--outdir|--outfile|--emitdeclarationonly)(?=\s|=|$)/i
 const READ_ONLY_GIT_BRANCH_RE = /^\s*git\s+branch(?:\s+--show-current|\s+--list(?:\s+(?!-)\S+)*)?\s*$/i
+// `git remote` / `git tag` 只有“列出来”的形态是只读的：bare、`-v/--verbose`
+// 与 `-l/--list [pattern]`。`git tag <name>` 会创建引用，因此必须要求显式
+// `-l`，绝不能把裸参数当只读。
+const READ_ONLY_GIT_REMOTE_RE = /^\s*git\s+remote(?:\s+(?:-v|--verbose))?\s*$/i
+const READ_ONLY_GIT_TAG_RE = /^\s*git\s+tag(?:\s+(?:-l|--list)(?:\s+(?!-)\S+)*)?\s*$/i
 
 const DESTRUCTIVE_PATTERNS: RegExp[] = [
   // ── 文件系统破坏 ──
@@ -268,11 +286,56 @@ const PS_CONTROL_FLOW_RE = /^\s*(?:if|elseif|else|for|foreach|while|switch|try|c
 const PS_CALL_OP_RE = /&\s*["'$./\\]/
 const PS_DOT_SOURCING_RE = /(?:^|[\s;{(])\.\s+\S/
 
+// 不属于 `&&` / `>&` / `&>` 的裸 `&`：既是 PowerShell 的调用操作符
+// （`& calc.exe`、`& $cmd`），在 POSIX 里也是后台分隔符。原先只识别
+// `& <引号/$/./反斜杠>` 形态，`& calc.exe` 这种不带路径符号的调用完全逃过
+// 检查，脚本块里因此可以直接执行任意程序。
+const PS_BARE_AMP_RE = /(?<![<>&])&(?![&>])/
+
 // Verb-Noun token 形状（查找 + 严格校验）。FIND 匹配任何带 `-` 的东西，包括
 // `x-code-cli` 这类路径；STRICT 强制 Verb（首字母大写）和 Noun（首字母大写），
 // 路径会因此失败。
 const VERB_NOUN_FIND_RE = /\b[A-Za-z]+(?:-[A-Za-z0-9]+)+\b/g
 const VERB_NOUN_STRICT_RE = /^[A-Z][a-z]+(?:-[A-Z][A-Za-z0-9]*)+$/
+/** 全小写写法（`set-content`）：PowerShell 的 cmdlet 名不区分大小写，
+ *  `set-content` 与 `Set-Content` 完全等价，必须同样按 cmdlet 处理。 */
+const VERB_NOUN_LOWERCASE_RE = /^[a-z]+-[a-z0-9]+$/
+
+/**
+ * 把一个 Verb-Noun 形状的 token 归类：
+ *
+ *  - `readonly`：命中只读白名单（不区分大小写）。
+ *  - `unsafe`：大写 Verb-Noun 但不在白名单里，或全小写形状的未知 cmdlet。
+ *    全小写必须按 cmdlet 处理 —— 原实现只认首字母大写的严格形状，于是
+ *    `set-content` / `remove-item` 被静默 `continue` 掉，既不计入 found 也
+ *    不触发非只读判定，`ForEach-Object { set-content out.txt $_ }` 直接被
+ *    always-allow 放行。未知小写形状按不安全处理（宁可多问一次）。
+ *  - `path`：`x-code-cli`、`my-file.txt`、`src/my-file` 这类路径片段。
+ */
+function classifyCmdletToken(name: string, prevChar: string, nextChar: string): 'readonly' | 'unsafe' | 'path' {
+  if (READ_ONLY_CMDLET_SET.has(name.toLowerCase())) return 'readonly'
+  if (VERB_NOUN_STRICT_RE.test(name)) return 'unsafe'
+  if (!VERB_NOUN_LOWERCASE_RE.test(name)) return 'path'
+  // 紧邻 `/`、`\`、`.`、`:` 的说明是路径片段（`src/my-file`、`my-file.txt`），
+  // 不是 cmdlet。
+  if (/[/\\.:]/.test(prevChar) || /[/\\.:]/.test(nextChar)) return 'path'
+  return 'unsafe'
+}
+
+/** 扫描段内的 Verb-Noun token，汇总成三态结论。
+ *  `none` 表示没找到任何 cmdlet —— 由调用方决定保守方向。 */
+function scanCmdlets(cmd: string): 'readonly' | 'unsafe' | 'none' {
+  let found = 0
+  for (const match of cmd.matchAll(VERB_NOUN_FIND_RE)) {
+    const name = match[0]
+    const start = match.index ?? 0
+    const kind = classifyCmdletToken(name, cmd[start - 1] ?? '', cmd[start + name.length] ?? '')
+    if (kind === 'path') continue
+    found++
+    if (kind === 'unsafe') return 'unsafe'
+  }
+  return found > 0 ? 'readonly' : 'none'
+}
 
 /**
  * 对 PowerShell 控制流段，当且仅当其内部每个 cmdlet 都在只读集合里、且该段
@@ -290,16 +353,9 @@ const VERB_NOUN_STRICT_RE = /^[A-Z][a-z]+(?:-[A-Z][A-Za-z0-9]*)+$/
 function isReadOnlyControlFlow(cmd: string): boolean {
   if (!PS_CONTROL_FLOW_RE.test(cmd)) return false
   if (PS_CALL_OP_RE.test(cmd)) return false
+  if (PS_BARE_AMP_RE.test(cmd)) return false
   if (PS_DOT_SOURCING_RE.test(cmd)) return false
-
-  let found = 0
-  for (const match of cmd.matchAll(VERB_NOUN_FIND_RE)) {
-    const name = match[0]
-    if (!VERB_NOUN_STRICT_RE.test(name)) continue
-    found++
-    if (!READ_ONLY_CMDLET_SET.has(name.toLowerCase())) return false
-  }
-  return found > 0
+  return scanCmdlets(cmd) === 'readonly'
 }
 
 /** 引号/转义感知的扫描，找出把看似只读的命令变成写或任意执行的 shell 语法：
@@ -391,12 +447,10 @@ function hasWriteFlags(cmd: string): boolean {
 function hasUnsafeScriptBlock(c: string): boolean {
   if (!c.includes('{')) return false
   if (PS_CALL_OP_RE.test(c) || PS_DOT_SOURCING_RE.test(c)) return true
-  for (const match of c.matchAll(VERB_NOUN_FIND_RE)) {
-    const name = match[0]
-    if (!VERB_NOUN_STRICT_RE.test(name)) continue
-    if (!READ_ONLY_CMDLET_SET.has(name.toLowerCase())) return true
-  }
-  return false
+  // 裸 `&` 是调用操作符/后台分隔符：`ForEach-Object { & calc.exe }` 的
+  // `calc.exe` 点号前既不是行首也不是分隔符，几条正则都命不中它。
+  if (PS_BARE_AMP_RE.test(c)) return true
+  return scanCmdlets(c) === 'unsafe'
 }
 
 /** 检查子命令是否只读（可安全自动放行） */
@@ -407,6 +461,8 @@ export function isReadOnly(cmd: string): boolean {
   if (hasUnsafeScriptBlock(c)) return false
   if (READ_ONLY_REGEX.test(c)) return true
   if (READ_ONLY_GIT_BRANCH_RE.test(c)) return true
+  if (READ_ONLY_GIT_REMOTE_RE.test(c)) return true
+  if (READ_ONLY_GIT_TAG_RE.test(c)) return true
   if (TSC_COMMAND_RE.test(c) && TSC_READ_ONLY_FLAG_RE.test(c) && !TSC_WRITE_FLAG_RE.test(c)) return true
   return isReadOnlyControlFlow(c)
 }

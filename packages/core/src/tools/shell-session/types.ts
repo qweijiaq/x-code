@@ -326,11 +326,12 @@ export interface ShellSessionController extends ShellSessionEventSource {
   dispose(reason: TerminationReason, budget?: TerminationBudget): Promise<TerminateAllResult>
 }
 
-export type ShellEventPayload = ShellSessionEvent extends infer Event
-  ? Event extends ShellSessionEvent
-    ? Omit<Event, keyof ShellSessionEventBase>
-    : never
-  : never
+// 分发必须由 naked 类型参数完成：`ShellSessionEvent extends infer Event ? ...`
+// 的检查类型是具体联合，不会分发；而 `Omit` 本身也不是分发式的，`keyof (A | B)`
+// 只返回各成员的公共键。两者叠加会让 ShellEventPayload 退化成只剩 `kind`。
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
+
+export type ShellEventPayload = DistributiveOmit<ShellSessionEvent, keyof ShellSessionEventBase>
 
 export const DEFAULT_TERMINATION_BUDGET: TerminationBudget = {
   gracefulMs: 1_000,

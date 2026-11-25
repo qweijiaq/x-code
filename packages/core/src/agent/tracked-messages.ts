@@ -2,7 +2,12 @@ import type { ModelMessage } from 'ai'
 
 import type { ExecutionAuthority, MessageProvenance, TrackedModelMessage } from '../types/index.js'
 import type { LoopState } from './loop-state.js'
-import { createTrackedMessage, deriveContextSecurity, provenanceForAuthority } from './provenance.js'
+import {
+  createTrackedMessage,
+  deriveContextSecurity,
+  effectiveExecutionAuthority,
+  provenanceForAuthority,
+} from './provenance.js'
 
 const ARRAY_INDEX = /^(0|[1-9]\d*)$/
 
@@ -10,8 +15,13 @@ function isArrayIndex(property: PropertyKey): property is string {
   return typeof property === 'string' && ARRAY_INDEX.test(property)
 }
 
+/** 派生 provenance 之前必须先把已派生的 `contextSecurity` 合进 authority——与
+ *  `tool-execution.ts`（253/354/404）和 `session-store.ts`（1296/1874）保持一致。
+ *  只读 `state.executionAuthority` 会在「新污染 entry 已追加、但下一次外部刷新还没
+ *  发生」的窗口里继续用过期的 clean authority，把受 peer 影响的内容标成
+ *  `{ authority: 'user', derivedFromPeer: false }`，形成污点传播漏报。 */
 function currentAuthority(state: LoopState): ExecutionAuthority {
-  return state.executionAuthority
+  return effectiveExecutionAuthority(state.executionAuthority, state.contextSecurity)
 }
 
 function recalculate(state: LoopState): void {
@@ -81,9 +91,16 @@ export function createModelMessageView(state: LoopState): ModelMessage[] {
         const index = Number(property)
         const message = value as ModelMessage
         const existing = state.trackedMessages[index]
-        state.trackedMessages[index] = existing
-          ? { ...existing, message }
-          : createTrackedMessage(message, provenanceForAuthority(currentAuthority(state), message.role))
+        // 只有「原样重写同一条消息对象」才保留原 entry 的 entryId 与 provenance。
+        // Array 原型的 unshift/splice 靠逐个下标 `set(i + 1, get(i))` 搬移消息：
+        // 若这里无条件沿用 existing，那么每个下标保留的都是【原下标】的 provenance，
+        // 而内容已经换成别处搬来的消息——一条本应 derivedFromPeer 的 peer 污染消息
+        // 会落到持有 clean provenance 的下标上，recalculate() 因此漏报 peer 影响，
+        // firstTaintedEntryId / canonicalTranscriptDigest 的审计语义也随之失效。
+        state.trackedMessages[index] =
+          existing?.message === message
+            ? existing
+            : createTrackedMessage(message, provenanceForAuthority(currentAuthority(state), message.role))
         recalculate(state)
         return true
       }

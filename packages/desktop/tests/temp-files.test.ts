@@ -49,6 +49,21 @@ describe('temp deliverable moves', () => {
     expect(fs.readFileSync(result.moved[0]!.to, 'utf8')).toBe('new')
   })
 
+  it('refuses symlinks dropped in the temp directory', async () => {
+    // /tmp/x.txt -> 别处敏感文件：软链本身是“临时文件”，但复制过来就等于
+    // 任意文件读取。
+    const target = path.join(scratch, 'real-secret.txt')
+    fs.writeFileSync(target, 'secret')
+    const link = path.join(sources, 'link.txt')
+    fs.symlinkSync(target, link)
+
+    const result = await moveTempFilesIntoWorkspace([link], workspace)
+
+    expect(result.moved).toEqual([])
+    expect(result.errors).toHaveLength(1)
+    expect(fs.readFileSync(target, 'utf8')).toBe('secret')
+  })
+
   it('reports outside-workspace sources and directories without moving them', async () => {
     const outside = path.join(os.homedir(), 'xcode-test-outside', 'already-here.txt')
     const directory = path.join(sources, 'folder')

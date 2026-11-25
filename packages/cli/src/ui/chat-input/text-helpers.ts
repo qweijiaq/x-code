@@ -3,7 +3,7 @@
 // 帧、滚动区 diff、markdown 表格布局的唯一事实来源。下面的辅助函数建立在这些原语
 // 之上。
 import { GLYPH_ELLIPSIS } from '../render/terminal-glyphs.js'
-import { charWidth, visualWidth } from '../render/text-width.js'
+import { charWidth, graphemes, visualWidth } from '../render/text-width.js'
 import type { Cell } from './cells.js'
 
 export function truncateCellRow(cells: Cell[], maxWidth: number): Cell[] {
@@ -75,7 +75,20 @@ export function truncatePathFromStart(p: string, maxCols: number): string {
   // 仅 basename 就溢出：尾裁剪它（罕见——basename 很少超过终端宽度，但单个超长
   // 文件名不该让渲染崩溃）。
   if (visualWidth(basename) >= maxCols - 1) {
-    return '…' + basename.slice(basename.length - Math.max(1, maxCols - 1))
+    // 按字素簇从尾部回填而不是 `slice(length - N)`：`basename.length` 是 UTF-16
+    // 码元数，CJK/emoji 的 basename 会被截出孤立代理项（乱码），且 2 列宽的字符
+    // 按码元数目预算会让结果宽度翻倍溢出，触发调用方（补全菜单、permission
+    // 提示）所在帧的终端自动换行。
+    const keep = Math.max(1, maxCols - 1)
+    const gs = graphemes(basename)
+    let tail = ''
+    for (let i = gs.length - 1; i >= 0; i--) {
+      const next = gs[i]! + tail
+      if (visualWidth(next) > keep) break
+      tail = next
+    }
+    // `keep` 连一个完整字素都放不下（maxCols <= 2）时保留一个 ASCII 点，宽度恒为 1。
+    return '…' + (tail || '.')
   }
   let acc = basename
   for (let i = segs.length - 2; i >= 0; i--) {

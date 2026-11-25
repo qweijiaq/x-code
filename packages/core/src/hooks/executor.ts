@@ -59,19 +59,11 @@ export async function executeHook(
 ): Promise<HookDecision> {
   const timeoutMs = Math.min(hook.entry.timeout ?? opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
 
-  const vars = buildVariableContext({
-    pluginDir: hook.pluginDir,
-    cwd: event.session.cwd,
-    pluginId: hook.pluginId,
-  })
-  const expandedCommand = expandVariables(pickPlatformCommand(hook.entry), vars)
-  const stdinPayload = JSON.stringify(buildStdinPayload(hook, event))
-
   // 把所属插件的 userConfig 值合并进 hook 的环境变量。
   // 需要 manifest 中声明的 API key 的 hook 脚本可直接读
   // `process.env[KEY]`，无需任何胶水代码 —— 命令字符串中的 `${env:KEY}`
-  // 替换也基于这份合并后的环境解析。读取出错时静默失败
-  // （尚未设置 userConfig ⇒ 空映射）。
+  // 替换也基于这份合并后的环境解析（因此必须在展开**之前**读取）。
+  // 读取出错时静默失败（尚未设置 userConfig ⇒ 空映射）。
   let pluginEnv: Record<string, string> = {}
   try {
     pluginEnv = await getPluginUserConfigEnv(hook.pluginId)
@@ -79,13 +71,24 @@ export async function executeHook(
     debugLog('hooks.user-config-read-failed', `${hook.pluginId}: ${String(err)}`)
   }
 
+  const sandbox = isExtensionSandboxActive() ? getShellSandbox() : null
+  // Hook 作者依赖继承的环境来获取 PATH 和 locale，但
+  // 形如凭证的变量不应泄漏进沙箱化的 hook。插件的
+  // 自有 userConfig 值则特意在之后重新加入。
+  const inherited = sanitizeShellEnv(process.env, sandbox ?? { ...getShellSandbox(), enabled: false })
+  const vars = buildVariableContext({
+    pluginDir: hook.pluginDir,
+    cwd: event.session.cwd,
+    pluginId: hook.pluginId,
+  })
+  const expandedCommand = expandVariables(pickPlatformCommand(hook.entry), {
+    ...vars,
+    env: { ...inherited, ...pluginEnv },
+  })
+  const stdinPayload = JSON.stringify(buildStdinPayload(hook, event))
+
   try {
-    const sandbox = isExtensionSandboxActive() ? getShellSandbox() : null
     const wrapped = sandbox ? wrapShellSpawn('/bin/sh', ['-c', expandedCommand], sandbox) : null
-    // Hook 作者依赖继承的环境来获取 PATH 和 locale，但
-    // 形如凭证的变量不应泄漏进沙箱化的 hook。插件的
-    // 自有 userConfig 值则特意在之后重新加入。
-    const inherited = sanitizeShellEnv(process.env, sandbox ?? { ...getShellSandbox(), enabled: false })
     const result = await execa(wrapped?.executable ?? expandedCommand, wrapped?.args ?? [], {
       shell: !wrapped,
       input: stdinPayload,

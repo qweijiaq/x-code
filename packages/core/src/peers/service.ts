@@ -44,6 +44,10 @@ export interface PreparedPeerSend {
  *  漏掉队列尾部的更新，让 sender 永远停在 held。排队为空时立即返回。 */
 const FINAL_UPDATE_SHUTDOWN_BUDGET_MS = 2_000
 
+/** 单条 final update 投递的硬上限。调用方不传 deadline 时（心跳 flush、
+ *  `decideHeld()`）也必须有时限，否则一个挂住的 socket 会永久占住 claim。 */
+const FINAL_UPDATE_TIMEOUT_MS = 100
+
 export type SendMessageResult =
   | { success: true; status: 'delivered' | 'held'; messageId: string; heldUntil?: string }
   | { success: false; code: string; reason: string; messageId?: string }
@@ -283,7 +287,13 @@ export function createPeerService(options: PeerServiceOptions = {}): PeerService
         ? ({ kind: 'refuse', reason: 'rate-limit' } as const)
         : decideInboundDisposition({
             policy: config.inbound,
-            receiverPermissionClass: registration?.permissionClass ?? 'bypass',
+            // 缺省必须 fail-closed：`registration` 在端口已可接收请求、但
+            // `writeRegistration()` 还没执行完的窗口里是 undefined，此时若
+            // 缺省成 'bypass'，`decideInboundDisposition` 的 auto 策略会把来自
+            // bypass 对端的消息直接 accept，而不是等本会话真实的权限类别（很可
+            // 能是 prompted）来判定。取值链与 `start()` 里的注册逻辑保持一致。
+            receiverPermissionClass:
+              registration?.permissionClass ?? options.getPermissionClass?.() ?? options.permissionClass ?? 'prompted',
             senderPermissionClass,
             dialogExpiryMs: config.dialogExpiryMs,
             now: now().getTime(),
@@ -411,25 +421,24 @@ export function createPeerService(options: PeerServiceOptions = {}): PeerService
   ): Promise<boolean> => {
     const update = claim.updates[0]
     if (!update || !identity) return false
-    const remaining = deadlineAt === undefined ? undefined : deadlineAt - Date.now()
-    if (remaining !== undefined && remaining <= 0) return false
-    const timeoutMs = remaining === undefined ? undefined : Math.max(1, Math.min(100, remaining))
-    const controller = timeoutMs === undefined ? undefined : new AbortController()
+    // `deadlineAt` 缺省时也必须给出上限：`PeerTransport.request` 的 `timeoutMs`
+    // 是可选参数，接口层没有默认超时保证。心跳（15s 周期）与 `decideHeld()`
+    // 都是不带 deadline 调用本函数的，一旦某个对端 socket 挂住，这个 await 可能
+    // 永不返回——claim 一直被占用导致 final update 永久无法投递，且心跳每 15s
+    // 再叠一个新的 flush 循环，in-flight 请求无限堆积。
+    const remaining = Math.max(0, (deadlineAt ?? Date.now() + FINAL_UPDATE_TIMEOUT_MS) - Date.now())
+    if (remaining <= 0) return false
+    const timeoutMs = Math.max(1, Math.min(FINAL_UPDATE_TIMEOUT_MS, remaining))
+    const controller = new AbortController()
     let signalTimeout!: () => void
-    const timeout =
-      timeoutMs === undefined
-        ? undefined
-        : new Promise<null>((resolve) => {
-            signalTimeout = () => resolve(null)
-          })
-    const timer =
-      timeoutMs === undefined
-        ? undefined
-        : setTimeout(() => {
-            controller!.abort()
-            signalTimeout()
-          }, timeoutMs)
-    timer?.unref()
+    const timeout = new Promise<null>((resolve) => {
+      signalTimeout = () => resolve(null)
+    })
+    const timer = setTimeout(() => {
+      controller.abort()
+      signalTimeout()
+    }, timeoutMs)
+    timer.unref()
     try {
       const targetInstanceId = update.target.address.slice('peer:'.length)
       const candidate = await registry.read(targetInstanceId)
@@ -455,11 +464,11 @@ export function createPeerService(options: PeerServiceOptions = {}): PeerService
             status: update.status,
             ...(update.reason ? { reason: update.reason } : {}),
           },
-          ...(timeoutMs === undefined ? {} : { timeoutMs }),
-          ...(controller ? { signal: controller.signal } : {}),
+          timeoutMs,
+          signal: controller.signal,
         })
         .catch(() => null)
-      const response = timeout ? await Promise.race([request, timeout]) : await request
+      const response = await Promise.race([request, timeout])
       return (
         response !== null &&
         response.type === 'delivery-update-ack' &&
@@ -469,7 +478,7 @@ export function createPeerService(options: PeerServiceOptions = {}): PeerService
     } catch {
       return false
     } finally {
-      if (timer) clearTimeout(timer)
+      clearTimeout(timer)
     }
   }
 

@@ -287,11 +287,16 @@ async function readEpub(filePath: string, maxChars: number): Promise<DocumentRea
 
 // ─── MOBI / PalmDOC ─────────────────────────────────────────────────────────
 
-/** PalmDOC LZ77 解压缩。为测试而导出。 */
-export function palmDocDecompress(input: Uint8Array): Uint8Array {
+/** PalmDOC LZ77 解压缩。为测试而导出。
+ *
+ *  `maxOutputBytes` 是解压预算：每个 back-reference 至少产出 3 字节、最多 10 字节，
+ *  未加限制时单条记录就能把输出放大数倍（配合 100MB 的源文件上限相当于解压炸弹）。
+ *  调用方传入头部声明的正文长度作为预算——反正超出的部分随后也会被截掉。 */
+export function palmDocDecompress(input: Uint8Array, maxOutputBytes?: number): Uint8Array {
+  const budget = maxOutputBytes === undefined ? Number.POSITIVE_INFINITY : Math.max(0, maxOutputBytes)
   const output: number[] = []
   let index = 0
-  while (index < input.length) {
+  while (index < input.length && output.length < budget) {
     const byte = input[index++]!
     if (byte === 0) {
       output.push(0)
@@ -339,9 +344,14 @@ async function readMobi(filePath: string, maxChars: number): Promise<DocumentRea
   if (buffer.length < 86) throw new Error('MOBI file is too small')
   const recordCount = buffer.readUInt16BE(76)
   if (recordCount < 2 || recordCount > 100_000) throw new Error('MOBI file has an invalid record table')
+  // PalmDB recordInfoList 每项 8 字节：offset(4) + attributes(1) + uniqueID(3)。
+  // 按 4 字节步长读会把 record0 的 attributes/uniqueID 当成 record1 的偏移量，
+  // 真实 MOBI 文件的记录边界会全部错乱。先整表越界检查，否则 readUInt32BE 会抛
+  // 裸的 Range [OFFSET_OUT_OF_RANGE]。
+  if (78 + recordCount * 8 > buffer.length) throw new Error('MOBI record table is truncated')
   const offsets: number[] = []
   for (let i = 0; i < recordCount; i++) {
-    const offset = buffer.readUInt32BE(78 + i * 4)
+    const offset = buffer.readUInt32BE(78 + i * 8)
     if (offset <= 0 || offset >= buffer.length) throw new Error('MOBI record offset is invalid')
     offsets.push(offset)
   }
@@ -359,9 +369,14 @@ async function readMobi(filePath: string, maxChars: number): Promise<DocumentRea
   if (textRecords === 0 || textRecords >= recordCount) throw new Error('MOBI text record count is invalid')
 
   const chunks: Uint8Array[] = []
-  for (let i = 1; i <= textRecords; i++) {
+  // 头部声明的正文长度就是解压预算：超出部分随后本来也会被截掉，先挡住可以
+  // 避免被构造出来的记录放大成数倍内存。
+  let remaining = textLength
+  for (let i = 1; i <= textRecords && remaining > 0; i++) {
     const record = buffer.subarray(offsets[i]!, recordEnd(i))
-    chunks.push(compression === 1 ? record : palmDocDecompress(record))
+    const chunk = compression === 1 ? record : palmDocDecompress(record, remaining)
+    chunks.push(chunk)
+    remaining -= Math.min(chunk.length, remaining)
   }
   const combined = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)))
   const decoded = combined.subarray(0, Math.min(combined.length, textLength)).toString(findMobiEncoding(record0))

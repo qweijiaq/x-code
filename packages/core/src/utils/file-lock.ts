@@ -4,6 +4,7 @@ import { flock } from 'fs-ext-extra-prebuilt'
 
 import fs from 'node:fs/promises'
 import os from 'node:os'
+import path from 'node:path'
 
 export interface FileLockLease {
   release(): Promise<void>
@@ -28,6 +29,17 @@ interface OwnerMetadata {
 }
 
 const KERNEL_LOCK_PROTOCOL = 2
+/** ENOENT 重试上限：只用于吸收“旧版本刚好 unlink 了锁文件”的瞬时竞态。 */
+const MAX_ENOENT_RETRIES = 5
+
+async function parentDirectoryExists(lockPath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(path.dirname(lockPath))
+    return stat.isDirectory()
+  } catch {
+    return false
+  }
+}
 
 function flockAsync(fd: number, operation: 'exnb' | 'un'): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -105,14 +117,28 @@ export async function acquireFileLock(
   const staleMs = options.staleMs ?? 30_000
   const retryMs = options.retryMs ?? 25
   const deadline = Date.now() + (options.waitMs ?? 0)
+  let enoentRetries = 0
   while (true) {
     if (options.signal?.aborted) throw options.signal.reason ?? new Error('File lock acquisition aborted')
     let opened: Awaited<ReturnType<typeof openLockFile>>
     try {
       opened = await openLockFile(lockPath)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
-      throw error
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      // 父目录不存在时 ENOENT 是永久性错误（'wx+' 与 'r+' 都会失败）：直接抛出。
+      // 否则这个分支会变成无退避的热自旋，waitMs / timeoutError / signal 全部失效。
+      if (!(await parentDirectoryExists(lockPath))) throw error
+      // 剩下的 ENOENT 只可能是“旧版本刚 unlink 了锁文件”的瞬时竞态：退避后重试，
+      // 并同时受 deadline 与重试次数约束，绝不忙等。至少给一次退避机会，这样
+      // waitMs=0 的调用方也能等到瞬时竞态自行消失。
+      enoentRetries += 1
+      if (enoentRetries > MAX_ENOENT_RETRIES) throw error
+      if (enoentRetries > 1 && Date.now() >= deadline) {
+        if (options.timeoutError) throw new Error(options.timeoutError)
+        return null
+      }
+      await retryDelay(Math.max(retryMs, 1) * enoentRetries, options.signal)
+      continue
     }
     const { handle, created } = opened
     try {

@@ -324,10 +324,18 @@ async function lspReferencesForChanged(changed: readonly string[], notes: string
 }
 
 async function gitChangedFiles(cwd: string): Promise<string[]> {
-  const { stdout } = await execFileAsync('git', ['-C', cwd, 'status', '--porcelain'], {
-    timeout: 10_000,
-    maxBuffer: 2 * 1024 * 1024,
-  })
+  // `--untracked-files=all`：默认（normal）会把一个新建目录折叠成 `dir/` 一项，
+  // 而目录没有扩展名，会被下面的 `isCodeIndexFile` 直接丢掉——"新加一个目录"
+  // 正是最常见的场景，影响分析会因此空报。`core.quotepath=off` 让非 ASCII 路径
+  // 不再被转义成八进制串，否则解析出的绝对路径根本不存在。
+  const { stdout } = await execFileAsync(
+    'git',
+    ['-c', 'core.quotepath=off', '-C', cwd, 'status', '--porcelain', '-uall'],
+    {
+      timeout: 10_000,
+      maxBuffer: 2 * 1024 * 1024,
+    },
+  )
   const files: string[] = []
   for (const line of stdout.split('\n')) {
     if (!line.trim()) continue

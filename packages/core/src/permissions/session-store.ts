@@ -160,7 +160,14 @@ const POWERSHELL_LAUNCHER_RE = /^(?:powershell(?:\.exe)?|pwsh(?:\.exe)?)\b/i
 
 // 从带引号的 PowerShell 内部提取首个 cmdlet 或命令名。
 // 处理 Verb-Noun cmdlet（Get-Process）和普通命令（git、npm）。
-const PS_INNER_CMD_RE = /["']?\s*(?:&\s*\{?\s*)?([A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+|[a-z][a-z0-9._-]*)/
+//
+// 必须锚定在内部脚本的**开头**：脚本中部出现的变量名（`"$x = 1; git push"`）、
+// 路径片段（`"C:\tools\invoke-build.ps1"`）都不是用户批准的命令，落到磁盘上
+// 会变成语义不可预期的前缀规则。锚定后若不匹配则返回 null，调用方回退到
+// 精确规则。末尾的 `(?=[\s"']|$)` 要求取到的是完整 token，避免把 `C:` 这类
+// 驱动器前缀截成单字母。
+const PS_INNER_CMD_RE =
+  /^["']?\s*(?:&\s*\{?\s*)?([A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+|[A-Za-z][A-Za-z0-9._-]*)(?=[\s"']|$)/
 
 /**
  * 提取适用于前缀匹配规则的命令前缀。
@@ -559,6 +566,21 @@ function stripSafeEnvVars(command: string): string {
   return cmd.trim()
 }
 
+/**
+ * 判断一条前缀规则能否安全地参与 POSIX 段的前缀匹配。
+ *
+ * 启动器提取器（`extractPowershellPrefix`）会从 `powershell -c "git status"`
+ * 这类命令里提取出**单 token** 前缀 `git`。若拿它做 `startsWith('git ')` 匹配，
+ * 一次针对它的“不再询问”批准就会静默放行 `git push --force`、`git reset --hard`
+ * 等全部原生 git 子命令——远超用户批准的范围。
+ *
+ * 因此只有两段式前缀（`git commit`）或 Verb-Noun cmdlet（`Get-Process`，它本身
+ * 就是完整前缀）才可以复用；裸单 token 规则不参与段前缀匹配。
+ */
+function isReusablePrefixPattern(pattern: string): boolean {
+  return pattern.includes(' ') || VERB_NOUN_CMDLET_RE.test(pattern)
+}
+
 // ─── 存储 ───
 
 class SessionPermissionStore {
@@ -619,7 +641,7 @@ class SessionPermissionStore {
       for (const rule of this.rules) {
         if (rule.tool !== toolName) continue
         if (rule.cwd !== executionCwd) continue
-        if (rule.type === 'prefix' && segPrefix) {
+        if (rule.type === 'prefix' && segPrefix && isReusablePrefixPattern(rule.pattern)) {
           if (segPrefix === rule.pattern || segPrefix.startsWith(rule.pattern + ' ')) {
             segMatched = true
             break

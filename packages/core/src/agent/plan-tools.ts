@@ -7,7 +7,7 @@ import { extractText } from '../utils/message-helpers.js'
 import { markExpectedCacheMiss } from './cache-stats.js'
 import type { LoopState } from './loop-state.js'
 import { toolErrorString } from './messages.js'
-import { makePlanFilePath, readPlan, writePlan } from './plan-storage.js'
+import { generateTaskSlug, makePlanFilePath, readPlan, writePlan } from './plan-storage.js'
 
 type PushToolResult = (
   state: LoopState,
@@ -137,7 +137,11 @@ export async function handleEnterPlanMode(
   if (!state.currentPlanPath) {
     const topic = (input.topic as string | undefined)?.trim()
     const fallbackText = lastUserMessageText(state.messages)
-    const explicitSlug = topic && topic.length > 0 ? topic : state.taskSlug || undefined
+    // `topic` 是模型可控的工具入参，直接当 slug 用会让 `../../../../.ssh/authorized_keys`
+    // 之类的值把计划文件写到项目之外——而 plan 模式下被放行的写入目标正是这个路径。
+    // state.taskSlug 走的已经是 generateTaskSlug，这里与之对齐。
+    const topicSlug = topic && topic.length > 0 ? generateTaskSlug(topic) : ''
+    const explicitSlug = topicSlug || state.taskSlug || undefined
     state.currentPlanPath = makePlanFilePath(fallbackText, { slug: explicitSlug })
   }
   callbacks.onPlanModeChange('plan')
@@ -210,7 +214,10 @@ export async function handleExitPlanMode(
       savedPath = await writePlan(planPath, planBody)
       state.currentPlanPath = savedPath
     } catch {
-      // 非致命——批准对话框使用内存中的正文。
+      // 非致命——批准对话框使用内存中的正文。但必须让下游知道磁盘上没有副本：
+      // 否则批准成功后还会告诉模型“计划已保存在 <path>”，它会去读一个不存在
+      // 或陈旧的文件。
+      savedPath = null
     }
   }
 
@@ -219,7 +226,9 @@ export async function handleExitPlanMode(
     state.permissionMode = 'acceptEdits'
     state.systemPromptCache = null
     markExpectedCacheMiss(state, 'permission-mode-change')
-    const persisted = savedPath ?? state.currentPlanPath
+    // 右操作数 `state.currentPlanPath` 是死代码：没有 override 时 savedPath 已经是
+    // planPath，有 override 时失败必须表现为“未落盘”（见上面的 catch）。
+    const persisted = savedPath
     state.currentPlanPath = null
     callbacks.onPlanModeChange('acceptEdits')
     pushToolResult(
@@ -229,7 +238,9 @@ export async function handleExitPlanMode(
       'exitPlanMode',
       [
         'Plan approved by user. Plan mode has been exited.',
-        persisted ? `The approved plan is saved at: ${persisted}` : '',
+        persisted
+          ? `The approved plan is saved at: ${persisted}`
+          : 'The approved plan could not be written to disk — work from the plan text the user approved, do not try to read a plan file.',
         'You can now edit files and run shell commands. Start implementing the plan.',
         '',
         'For multi-step plans, call **todoWrite** first to break the plan into a',
@@ -247,7 +258,9 @@ export async function handleExitPlanMode(
         'You have exited plan mode. You can now make edits, run tools, and take actions.',
         'Write tools (writeFile, edit) are now auto-approved (acceptEdits mode); shell commands',
         'still go through normal permission classification.',
-        persisted ? `The plan file is located at ${persisted} if you need to reference it.` : '',
+        persisted
+          ? `The plan file is located at ${persisted} if you need to reference it.`
+          : 'The plan file could not be written to disk; do not rely on reading it.',
       ]
         .filter(Boolean)
         .join('\n'),

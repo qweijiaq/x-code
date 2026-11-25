@@ -874,7 +874,27 @@ class InMemoryPeerInbox implements PeerInbox {
 
   private enqueueDeliveryNotification(update: PeerDeliveryUpdate): void {
     const key = update.messageId
-    if (this.deliveryUpdates.has(key)) return
+    const pending = this.deliveryUpdates.get(key)
+    if (pending) {
+      if (pending.status === update.status) return
+      // 状态推进（`held-final-status-unknown` → 真实的 delivered/denied/expired）：
+      // `expireOutbound` 会先把 held 记录终态化为 unknown 并入队一条通知，而
+      // `recordDeliveryUpdate` 明确允许随后解析出真实状态。按 messageId 做「首写
+      // 胜出」会把真实状态直接丢掉，发送方永远只看得到 unknown——而且行为还取决
+      // 于那条 unknown 通知是否已被 commit（commit 后 map 里没有该 key，又会上报）。
+      // 因此只在状态完全相同时去重，状态不同必须覆盖并重新排队。
+      this.deliveryUpdates.set(key, cloneDeliveryUpdate(update))
+      // 若该 key 正被某个 claim 持有，先把它从 claim 里摘掉：`commitQueueClaim`
+      // 只遍历 `claim.keys` 并从 values 里删除，留着会让刚刚写入的新状态被那次
+      // 陈旧投递的 commit 一并删掉。
+      for (const claim of this.deliveryUpdateClaims.values()) {
+        const index = claim.keys.indexOf(key)
+        if (index >= 0) claim.keys.splice(index, 1)
+      }
+      this.removeKey(this.deliveryUpdateQueue, key)
+      this.deliveryUpdateQueue.push(key)
+      return
+    }
     if (this.deliveryUpdates.size >= this.limits.deliveryNotifications) {
       const evicted = this.deliveryUpdateQueue.shift()
       if (evicted) this.deliveryUpdates.delete(evicted)

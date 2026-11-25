@@ -65,6 +65,26 @@ describe('document access policy', () => {
     expect(() => access.assert(link)).toThrow('document-path-not-allowed')
   })
 
+  it('rejects a not-yet-existing file reached through a workspace directory symlink', async () => {
+    // “另存为/新建文档”会请求一个尚不存在的路径；realpath 抛 ENOENT 时
+    // 必须解析最深的已存在祖先，否则字面路径会骗过工作区前缀校验。
+    const workspace = await tempDir('xcode-doc-access-workspace-')
+    const outside = await tempDir('xcode-doc-access-outside-')
+    const link = path.join(workspace, 'dir')
+    await fs.symlink(outside, link)
+    const access = createDocumentAccess({ workspaceRoot: () => workspace, recentPaths: () => [] })
+
+    expect(() => access.assert(path.join(link, 'authorized_keys'))).toThrow('document-path-not-allowed')
+  })
+
+  it('allows a not-yet-existing file inside the workspace', async () => {
+    const workspace = await tempDir('xcode-doc-access-workspace-')
+    const access = createDocumentAccess({ workspaceRoot: () => workspace, recentPaths: () => [] })
+    const draft = path.join(workspace, 'new.md')
+
+    expect(access.assert(draft)).toBe(physicalPath(draft))
+  })
+
   it('evicts the oldest grants when the cap is reached', async () => {
     const workspace = await tempDir('xcode-doc-access-workspace-')
     const first = path.join(await tempDir('xcode-doc-access-first-'), 'a.md')

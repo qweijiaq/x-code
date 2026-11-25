@@ -4024,6 +4024,7 @@ export function App(): React.JSX.Element {
     dismissedMentionRef,
     pickMention,
     paletteCommands,
+    builtinCommands: commandsWithHelp,
     paletteIndex,
     setPaletteIndex,
     setInput,

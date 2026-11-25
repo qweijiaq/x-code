@@ -308,12 +308,24 @@ export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }:
 
       // 无标记粘贴回退：内部换行很可能是剪贴板内容。排除尾随 Return，这样 `abc\r`
       // 会打字然后提交。
+      //
+      // 长度判定必须放在剥掉尾随换行之后：一次 stdin 事件携带「整行文本 + `\r`」
+      // （ConPTY / Windows Terminal 把整行与回车合并投递，或按住退格后快速粘贴一行
+      // 时都会出现）且长度 ≥ PASTE_SIZE_THRESHOLD 时，整块（含 `\r`）会被 queueText
+      // 吞进缓冲；100ms 后 flushPending 把 `\r` 归一化成 `\n`、因含换行判定为粘贴，
+      // 于是 return 键永远不会被分发——用户的「提交」静默丢失。
+      const body = chunk.replace(/\r\n$|\r$|\n$/, '')
+      const hadTrailingNewline = body.length !== chunk.length
       if (
         !inputDecoder.inPaste() &&
         !chunk.includes('\x1b') &&
-        (chunk.length >= PASTE_SIZE_THRESHOLD || /[\r\n][\s\S]+/.test(chunk))
+        (body.length >= PASTE_SIZE_THRESHOLD || /[\r\n][\s\S]+/.test(body))
       ) {
-        queueText(chunk)
+        queueText(body)
+        // 正文内部不含换行时，尾随换行就是「提交」意图：正文留在粘贴缓冲里等
+        // dispatchKey 里的 flushPending 处理，回车走正常按键路径。多行粘贴自带
+        // 尾随换行时则不能分发 return，否则会误提交整段粘贴内容。
+        if (hadTrailingNewline && !/[\r\n]/.test(body)) dispatchKey('return')
         return
       }
 

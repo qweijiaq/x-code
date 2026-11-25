@@ -57,9 +57,13 @@ export function buildUserConfigValues(fields: UserConfigItem[], provided?: UserC
   const merged: PluginUserConfig = {}
   for (const field of fields) {
     const value = provided && Object.hasOwn(provided, field.key) ? provided[field.key] : undefined
-    if (value !== undefined && !(field.sensitive === true && value === '')) {
+    // 敏感字段显式提交空值 ⇒ 保留已存储的值。core 的 setPluginUserConfig 是
+    // `{...existing, ...values}` 合并写入，回落到 manifest default 会把用户
+    // 真实密钥覆盖成占位默认值。
+    const keepStored = field.sensitive === true && value === ''
+    if (!keepStored && value !== undefined) {
       merged[field.key] = coerceUserConfigValue(field.type, value)
-    } else if (field.default !== undefined) {
+    } else if (!keepStored && field.default !== undefined) {
       merged[field.key] = field.default
     }
   }

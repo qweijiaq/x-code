@@ -66,7 +66,17 @@ export async function startCallbackServer(options: StartOptions = {}): Promise<R
       return
     }
     // 用一个虚拟 base 解析——我们只关心 pathname + search。
-    const u = new URL(req.url, 'http://localhost')
+    // `new URL()` 对畸形的请求行（absolute-form、非法字符、`http://[bad`）会同步
+    // 抛 TypeError，而这里处于 http.createServer 的同步回调中，抛出去不会被任何
+    // Promise 捕获，会变成 uncaughtException 直接终止 CLI——本地任意进程/浏览器
+    // 发一个坏请求就能触发。必须捕获并按 400 返回。
+    let u: URL
+    try {
+      u = new URL(req.url, 'http://localhost')
+    } catch {
+      response.writeHead(400).end('bad request')
+      return
+    }
     if (u.pathname !== expectedPath) {
       response.writeHead(404).end('not found')
       return
@@ -134,17 +144,26 @@ export async function startCallbackServer(options: StartOptions = {}): Promise<R
     resolveOnce = null
     rejectOnce = null
   }, timeoutMs)
-  // 任一 resolve 路径都清除定时器。
-  void waiter.finally(() => clearTimeout(timeoutHandle))
 
   let closed = false
-  const close = () => {
+  const close = (): void => {
     if (closed) return
     closed = true
     server.close()
   }
-  // 处理完（单个）回调后自动关闭。
-  void waiter.finally(close)
+  // 任一 settle 路径（成功 / 超时 / OAuth error / server error）都要清理定时器
+  // 并关闭监听器。必须用 `then(onFulfilled, onRejected)` 显式吞掉 rejection：
+  // `.finally()` 派生的是一个**新** Promise 并原样向下传播 rejection，`void`
+  // 只是丢弃引用，并没有安装 handler——在 Node ≥15 默认
+  // `--unhandled-rejections=throw` 下，一次 OAuth 超时就会把 CLI 打崩。
+  const onSettled = (): void => {
+    clearTimeout(timeoutHandle)
+    close()
+  }
+  void waiter.then(onSettled, onSettled)
+  // listen 阶段失败时调用方拿不到 waiter（异常直接从 startCallbackServer 抛出），
+  // 这里兜底标记为已处理，避免 waiter 本体变成 unhandledRejection。
+  waiter.catch(() => {})
 
   return { url, waitForCallback: () => waiter, close }
 }

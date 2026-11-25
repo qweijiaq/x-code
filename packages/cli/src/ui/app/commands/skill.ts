@@ -10,11 +10,12 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import {
-  USER_XCODE_DIR,
+  XCODE_DIR,
   getScopedDisabledSkills,
   reloadSkillRegistry,
   setSkillDisabled,
   skillSettingsPath,
+  userXcodeDir,
 } from '@x-code-cli/core'
 import type { AgentOptions, SkillDefinition, SkillSettingsScope } from '@x-code-cli/core'
 
@@ -35,12 +36,41 @@ function extractSkillName(content: string): string | null {
   return match ? match[1].trim() : null
 }
 
+/** 远端 SKILL.md 里声明的 `name` 会被直接当作目录名，所以必须先过白名单：
+ *  否则 `name: ../../../.ssh` 之类能让 `path.join` 逃逸出 skills 根目录，在用户
+ *  可写的任意位置建目录并写入 SKILL.md（任意目录创建 + 文件覆盖）。 */
+const SKILL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+function isValidSkillName(name: string): boolean {
+  if (!SKILL_NAME_RE.test(name)) return false
+  // `..` 段会改变解析后的落点；尾随 `.` 在 Windows 上会被静默剥离，使实际落盘
+  // 路径与校验用的路径不一致。两者一律拒绝。
+  return !name.includes('..') && !name.endsWith('.')
+}
+
+/** `child` 是否严格位于 `root` 之内。用 `path.relative` 判定，以便同时正确处理
+ *  Windows 的盘符与反斜杠。 */
+function isInside(root: string, child: string): boolean {
+  const rel = path.relative(root, child)
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+}
+
+/** 判断路径是否已存在（用于冲突检测）。 */
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.access(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** 把技能参数拆成 `(name, scope)`，识别 `--scope=user` / `--scope=project` /
  *  `-s=user` 等。无标志的裸参数返回 `scope: undefined`，让调用方可按技能来源取
- *  默认。未知 scope 字符串被忽略（scope 保持 undefined）——让解析器保持宽容。 */
-function parseSkillScopeFlag(arg: string): { name: string; scope?: SkillSettingsScope } {
-  const { value, scope } = parseScopeFlag(arg)
-  return { name: value, scope }
+ *  默认。非法 scope 值或缺值会带回 `error`，由调用方中止而不是静默回落。 */
+function parseSkillScopeFlag(arg: string): { name: string; scope?: SkillSettingsScope; error?: string } {
+  const { value, scope, error } = parseScopeFlag(arg)
+  return error === undefined ? { name: value, scope } : { name: value, scope, error }
 }
 
 export function createSkillCommandHandler(deps: SkillCommandDeps) {
@@ -71,12 +101,36 @@ export function createSkillCommandHandler(deps: SkillCommandDeps) {
         addCommandMessage(text, 'Invalid SKILL.md: missing `name` in frontmatter.')
         return
       }
+      if (!isValidSkillName(name)) {
+        addCommandMessage(
+          text,
+          `Invalid SKILL.md: \`name\` must match \`/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/\` (no path separators, no \`..\`). Got \`${name}\`.`,
+        )
+        return
+      }
 
-      const skillDir = path.join(USER_XCODE_DIR, 'skills', name)
+      // 用 userXcodeDir()（尊重 X_CODE_HOME）而不是冻结的 USER_XCODE_DIR：
+      // 加载器扫描的是 `path.join(userXcodeDir(), 'skills')`，两者错开会让沙箱 /
+      // 按用户隔离环境下的安装落在一个 `/skill refresh` 永远读不到的位置。
+      const skillsRoot = path.resolve(userXcodeDir(), 'skills')
+      const skillDir = path.resolve(skillsRoot, name)
+      // 白名单之外的第二道闸：即便名字合法，也确认解析结果仍落在 skills 根目录内。
+      if (!isInside(skillsRoot, skillDir)) {
+        addCommandMessage(text, `Refusing to install skill \`${name}\`: it resolves outside \`${skillsRoot}\`.`)
+        return
+      }
       const skillFile = path.join(skillDir, 'SKILL.md')
+      // 同名技能不静默覆盖——`fs.writeFile` 会直接截断用户已有的 SKILL.md。
+      if (await pathExists(skillFile)) {
+        addCommandMessage(
+          text,
+          `Skill **${name}** is already installed at \`${skillFile}\`.\nRun \`/skill uninstall ${name}\` first if you want to replace it.`,
+        )
+        return
+      }
       try {
         await fs.mkdir(skillDir, { recursive: true })
-        await fs.writeFile(skillFile, content, 'utf-8')
+        await fs.writeFile(skillFile, content, { encoding: 'utf-8', flag: 'wx' })
       } catch (err) {
         addCommandMessage(text, `Failed to save skill: ${err instanceof Error ? err.message : String(err)}`)
         return
@@ -92,7 +146,7 @@ export function createSkillCommandHandler(deps: SkillCommandDeps) {
     if (sub === 'list') {
       const skills = options.skillRegistry?.listAll() ?? []
       if (skills.length === 0) {
-        const skillsPath = path.join(USER_XCODE_DIR, 'skills', '<name>', 'SKILL.md')
+        const skillsPath = path.join(userXcodeDir(), 'skills', '<name>', 'SKILL.md')
         addCommandMessage(
           text,
           `No skills loaded. Place SKILL.md files in \`${skillsPath}\` then run \`/skill refresh\` (or restart).`,
@@ -155,7 +209,11 @@ export function createSkillCommandHandler(deps: SkillCommandDeps) {
         addCommandMessage(text, `Usage: \`/skill ${sub} <name> [--scope=user|project]\``)
         return
       }
-      const { name: bareName, scope } = parseSkillScopeFlag(name)
+      const { name: bareName, scope, error } = parseSkillScopeFlag(name)
+      if (error) {
+        addCommandMessage(text, `Usage: \`/skill ${sub} <name> [--scope=user|project]\` — ${error}`)
+        return
+      }
       const entry = options.skillRegistry?.getEntry(bareName)
       if (!entry) {
         addCommandMessage(
@@ -229,8 +287,22 @@ export function createSkillCommandHandler(deps: SkillCommandDeps) {
         )
         return
       }
-      const baseDir = entry.source === 'user' ? USER_XCODE_DIR : path.join(process.cwd(), '.x-code')
-      const skillDir = path.join(baseDir, 'skills', name)
+      // 用注册表里的实际目录，而不是重新推算 `<baseDir>/skills/<name>`：
+      // findSkillDirs 支持 `skills/@scope/<name>/SKILL.md` 这类嵌套布局以及
+      // `XC_SKILLS_DIR` 覆盖，重算出的路径往往并不存在，而 `fs.rm({ force: true })`
+      // 会静默 no-op 却照样向用户报告“已卸载”。删除前还要确认它确实落在某个
+      // skills 根目录之下，避免手输含 `..` 的名字时递归删到别处。
+      const skillDir = path.resolve(entry.dir)
+      const skillsRoots = [path.resolve(userXcodeDir(), 'skills'), path.resolve(process.cwd(), XCODE_DIR, 'skills')]
+      const override = process.env.XC_SKILLS_DIR
+      if (override) skillsRoots.push(path.resolve(override))
+      if (!skillsRoots.some((root) => isInside(root, skillDir))) {
+        addCommandMessage(
+          text,
+          `Refusing to remove \`${skillDir}\`: it is not inside a skills directory. Remove it manually if this is intentional.`,
+        )
+        return
+      }
       try {
         await fs.rm(skillDir, { recursive: true, force: true })
       } catch (err) {

@@ -40,7 +40,15 @@ async function readStore(): Promise<TrustedStore> {
     const raw = await fs.readFile(trustedFile(), 'utf-8')
     const parsed = JSON.parse(raw) as unknown
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as TrustedStore).trusted)) {
-      return parsed as TrustedStore
+      // 过滤形状非法的条目：`path.resolve(null)` 会抛 ERR_INVALID_ARG_TYPE，
+      // 而 `isProjectTrusted` 在 loader 里位于 try/catch 之外——一个被手工编辑
+      // 过 / 半损坏的 trusted-projects.json（`{"trusted":[null]}`）会让 CLI
+      // 启动崩溃，而不是安全地回落到"未信任"。
+      const trusted = (parsed as TrustedStore).trusted.filter(
+        (entry): entry is TrustedEntry =>
+          !!entry && typeof entry.path === 'string' && typeof entry.trustedAt === 'string',
+      )
+      return { trusted }
     }
   } catch {
     // 文件缺失或格式错误——从干净状态开始

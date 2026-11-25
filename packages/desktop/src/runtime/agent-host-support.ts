@@ -176,15 +176,20 @@ export async function directoryStats(dir: string): Promise<{ bytes: number; file
 }
 
 export function realpathAllowMissing(target: string): string {
+  // 逐段向上回退，只解析“最深的已存在祖先”，把尚不存在的后缀拼回去。
+  // 只有 ENOENT 才允许回退：ELOOP（链接成环）、EACCES（无权限）、ENOTDIR
+  // 说明这段路径不可信，继续回退会把未解析的字面路径返回给调用方，
+  // 工作区前缀校验会被绕过（符号链接逃逸）。
   const suffix: string[] = []
   let current = target
   while (true) {
     try {
-      return path.join(fs.realpathSync.native(current), ...suffix.reverse())
-    } catch {
+      return path.join(fs.realpathSync.native(current), ...suffix)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       const parent = path.dirname(current)
       if (parent === current) return target
-      suffix.push(path.basename(current))
+      suffix.unshift(path.basename(current))
       current = parent
     }
   }

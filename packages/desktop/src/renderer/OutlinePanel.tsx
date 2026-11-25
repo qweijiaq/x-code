@@ -36,7 +36,7 @@ export function OutlinePanel({ entries, onJump }: OutlinePanelProps): JSX.Elemen
     let current: OutlineGroup | null = null
     for (const entry of entries) {
       if (entry.role !== 'user' && entry.role !== 'assistant') continue
-      if (entry.role === 'user' || !current) {
+      if (entry.role === 'user') {
         current = {
           id: entry.id,
           question: entry,
@@ -46,6 +46,9 @@ export function OutlinePanel({ entries, onJump }: OutlinePanelProps): JSX.Elemen
         result.push(current)
         continue
       }
+      // 只由 user 条目开分组：开场系统提示后的首条 assistant，或前导消息被
+      // 过滤掉时的 assistant，不能被当成“提问”（语义相反，点击也跳到回答）。
+      if (!current) continue
       current.answers.push({ entry, label: t('回答 {{n}}', { n: ++answers }) })
     }
     return result

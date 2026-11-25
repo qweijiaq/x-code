@@ -25,7 +25,11 @@ export function knownMediaTypeFor(filePath: string): string | null {
 /**
  * @deprecated 请使用 knownMediaTypeFor() 并处理 null。此兼容性回退仅保留
  * 一个发布周期；摄取代码不得使用它。
+ *
+ * 未知扩展名的回退值必须是中性的：以前回退到 `image/png` 会让音频/视频/文本
+ * 文件被下游按图片解析（`{ type: 'file', mediaType: 'image/png' }`），报错
+ * 位置离真实原因很远且没有任何日志线索。
  */
 export function mediaTypeFor(filePath: string): string {
-  return knownMediaTypeFor(filePath) ?? 'image/png'
+  return knownMediaTypeFor(filePath) ?? 'application/octet-stream'
 }

@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 
 import type { AllowRule } from '@x-code-cli/core'
@@ -5,6 +6,30 @@ import type { AllowRule } from '@x-code-cli/core'
 import type { PermissionRuleType, PermissionRuleView } from '../shared/protocol.js'
 
 const RULE_TYPES: PermissionRuleType[] = ['exact', 'prefix', 'tool']
+
+/** 比较用的路径归一化：解析符号链接与大小写差异（macOS 上 `/var` 与
+ *  `/private/var`、Windows 盘符大小写、通过链接打开的工作区）。不存在的
+ *  尾部逐级回退到最深的已存在祖先，因此“尚未创建”的工作区也能匹配。 */
+function comparablePath(input: string): string {
+  const resolved = path.resolve(input)
+  const tail: string[] = []
+  let current = resolved
+  let result = resolved
+  for (;;) {
+    try {
+      result = path.join(fs.realpathSync.native(current), ...tail)
+      break
+    } catch (error) {
+      // 只有“不存在”才值得继续向上回退；其它错误保留字面路径。
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') break
+      const parent = path.dirname(current)
+      if (parent === current) break
+      tail.unshift(path.basename(current))
+      current = parent
+    }
+  }
+  return process.platform === 'win32' ? result.toLowerCase() : result
+}
 
 export function permissionRuleLabel(rule: AllowRule): string {
   if (rule.type === 'tool') return `${rule.tool}:*`
@@ -25,9 +50,9 @@ export function toPermissionRuleView(rule: AllowRule): PermissionRuleView {
 /** 某个项目 permissions.json 中存储的规则；shell 规则属于其
  *  获批的项目，因此只显示绑定到 `workspace` 的那些。 */
 export function visiblePermissionRules(rules: AllowRule[], workspace: string): PermissionRuleView[] {
-  const root = path.resolve(workspace)
+  const root = comparablePath(workspace)
   return rules
-    .filter((rule) => rule.tool !== 'shell' || rule.cwd === root)
+    .filter((rule) => rule.tool !== 'shell' || (rule.cwd !== undefined && comparablePath(rule.cwd) === root))
     .map(toPermissionRuleView)
     .sort((a, b) => a.tool.localeCompare(b.tool) || a.type.localeCompare(b.type) || a.pattern.localeCompare(b.pattern))
 }

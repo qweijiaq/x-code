@@ -350,7 +350,9 @@ export async function installSkillHubSkill(
 }
 
 function safeEntryPath(root: string, name: string): string | null {
-  const normalized = name.replace(/\\/g, '/')
+  // zip 里的目录条目通常以 '/' 结尾（如 `assets/`），先剥掉再分段，否则
+  // 空段会让所有正常技能包都被判成“不安全的路径”。
+  const normalized = name.replace(/\\/g, '/').replace(/\/+$/, '')
   if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) return null
   const segments = normalized.split('/')
   if (segments.some((segment) => segment === '..' || segment === '.' || segment === '')) return null

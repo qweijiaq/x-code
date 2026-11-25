@@ -5,6 +5,7 @@
 // 平台分支，也不需要为 PowerShell 手写引号转义。
 import { type ResultPromise, execa } from 'execa'
 
+import { existsSync } from 'node:fs'
 import os from 'node:os'
 
 import { sanitizeShellEnv, wrapShellSpawn } from '../utils/shell-sandbox.js'
@@ -99,16 +100,34 @@ function createPowerShellProvider(executable: string): ShellProvider {
   }
 }
 
+/**
+ * 从 `SHELL` 里识别 bash/zsh，并确认它真的能被 spawn。
+ *
+ * 用捕获组取 shell 名再小写化（原实现用 `/i` 匹配、却用大小写敏感的
+ * `endsWith('zsh')` 判断类型，`/bin/ZSH` 会被误判成 bash），同时接受
+ * `bash.exe` 这种带扩展名的 Windows 路径。路径不存在时返回 null：MSYS2/Cygwin
+ * 的 `SHELL` 常是 Unix 风格路径（`/bin/bash`），Node 在 win32 上不做 MSYS 路径
+ * 转换，直接交给 execa 只会 ENOENT。
+ */
+function resolvePosixShell(value: string | undefined): { path: string; type: 'bash' | 'zsh' } | null {
+  const match = value?.match(/[/\\](bash|zsh)(?:\.exe)?$/i)
+  if (!value || !match) return null
+  if (!existsSync(value)) return null
+  return { path: value, type: match[1]!.toLowerCase() === 'zsh' ? 'zsh' : 'bash' }
+}
+
 export function getShellProvider(): ShellProvider {
   if (os.platform() === 'win32') {
-    // Git Bash / MSYS2 / Cygwin 会把 SHELL 设成 Unix 风格路径。有它的话优先
-    // 用它，这样 Unix 工具生态能按预期工作。
-    const shell = process.env.SHELL
-    if (shell && /\b(bash|zsh)$/i.test(shell)) {
-      return createPosixProvider(shell, shell.endsWith('zsh') ? 'zsh' : 'bash')
-    }
+    // Git Bash / MSYS2 / Cygwin 会把 SHELL 设成 Unix 风格路径。路径可用时优先
+    // 用它，这样 Unix 工具生态能按预期工作；不可用则回落到 PowerShell，避免
+    // 整条命令因 ENOENT 失败。
+    const detected = resolvePosixShell(process.env.SHELL)
+    if (detected) return createPosixProvider(detected.path, detected.type)
     return createPowerShellProvider('powershell.exe')
   }
   const userShell = process.env.SHELL ?? '/bin/bash'
-  return createPosixProvider(userShell, userShell.endsWith('zsh') ? 'zsh' : 'bash')
+  return createPosixProvider(
+    userShell,
+    resolvePosixShell(userShell)?.type ?? (/zsh$/i.test(userShell) ? 'zsh' : 'bash'),
+  )
 }

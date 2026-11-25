@@ -56,7 +56,11 @@ function prune(dir: string): void {
 }
 
 export function savePastedImage(data: string, mime: string): { path: string } {
-  const extension = EXTENSIONS[mime]
+  // MIME 大小写不敏感、可能带 `;charset=…`；同时必须做存在性检查——
+  // 直接 EXTENSIONS[mime] 会让 'constructor'/'toString' 等继承键命中
+  // Object.prototype 上的函数，绕过校验并把畸形文件名写进磁盘。
+  const normalized = (mime ?? '').toLowerCase().split(';')[0]?.trim() ?? ''
+  const extension = Object.prototype.hasOwnProperty.call(EXTENSIONS, normalized) ? EXTENSIONS[normalized] : undefined
   if (!extension) throw new Error(`不支持的图片格式：${mime || '未知'}`)
   const buffer = Buffer.from(data, 'base64')
   if (buffer.length === 0) throw new Error('粘贴的图片内容为空')

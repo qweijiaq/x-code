@@ -60,6 +60,8 @@ export function ManualPanel({ onClose }: ManualPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const english = i18n.language === 'en'
   const [doc, setDoc] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
   const [query, setQuery] = useState('')
   const [activeId, setActiveId] = useState('')
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -69,16 +71,23 @@ export function ManualPanel({ onClose }: ManualPanelProps): React.JSX.Element {
   useEffect(() => {
     let cancelled = false
     setDoc(null)
+    setLoadError(false)
     const loader = english
       ? import('../../../../docs/desktop-manual.en.md?raw')
       : import('../../../../docs/desktop-manual.md?raw')
-    void loader.then((module) => {
-      if (!cancelled) setDoc(module.default)
-    })
+    loader
+      .then((module) => {
+        if (!cancelled) setDoc(module.default)
+      })
+      .catch(() => {
+        // 动态 import 失败（构建产物缺失、被 CSP 拦截）时不能只留一个
+        // 永久的「加载手册…」，要给出错误和重试入口。
+        if (!cancelled) setLoadError(true)
+      })
     return () => {
       cancelled = true
     }
-  }, [english])
+  }, [english, reloadKey])
 
   const { title, sections } = useMemo(() => parseManual(doc ?? ''), [doc])
   const localAssets = useMemo(() => Object.values(shots), [])
@@ -158,7 +167,14 @@ export function ManualPanel({ onClose }: ManualPanelProps): React.JSX.Element {
             {filtered.length === 0 ? <div className="settings-empty">{t('没有匹配的章节')}</div> : null}
           </nav>
           <div className="manual-content" ref={contentRef}>
-            {doc === null ? (
+            {loadError ? (
+              <div className="settings-empty">
+                {t('手册加载失败，请重试。')}{' '}
+                <button className="settings-btn" onClick={() => setReloadKey((key) => key + 1)}>
+                  {t('重试')}
+                </button>
+              </div>
+            ) : doc === null ? (
               <div className="settings-empty">{t('加载手册…')}</div>
             ) : active ? (
               <MarkdownView text={withShots(`## ${active.title}\n\n${active.body}`)} localAssets={localAssets} />

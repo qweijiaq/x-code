@@ -65,12 +65,16 @@ export function readPersistedRules(cwd: string): AllowRule[] {
     return []
   }
 
-  let data: { version?: unknown; allow?: unknown }
+  let parsedFile: unknown
   try {
-    data = JSON.parse(raw) as { version?: unknown; allow?: unknown }
+    parsedFile = JSON.parse(raw)
   } catch {
     return []
   }
+  // `null` / 数组 / 标量都是合法 JSON：`JSON.parse('null')` 会返回 null，
+  // 直接读 `data.allow` 会抛未捕获的 TypeError 并把整条加载链路打挂。
+  if (!parsedFile || typeof parsedFile !== 'object' || Array.isArray(parsedFile)) return []
+  const data = parsedFile as { version?: unknown; allow?: unknown }
   if (!Array.isArray(data.allow)) return []
 
   const projectCwd = path.resolve(cwd)

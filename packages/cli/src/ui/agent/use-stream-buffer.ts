@@ -35,6 +35,12 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { DisplayMessage, ModelMessage } from '@x-code-cli/core'
 import { debugLog } from '@x-code-cli/core'
 
+/** 行首 ``` 的数量（围栏开 / 闭各算一）。 */
+function countFenceLines(text: string): number {
+  const fences = text.match(/^```/gm)
+  return fences ? fences.length : 0
+}
+
 /** `text` 是否以一个开放的多行 markdown 结构结尾，而渲染器需要完整结构才能
  *  正确格式化？
  *
@@ -51,13 +57,18 @@ import { debugLog } from '@x-code-cli/core'
  *  对 `> line\n` 引用也一样（每个解析成 `▎ line\n`）。微小的代价——带惰性续行
  *  的多行列表项会把续行渲染成单独的缩进段落——在 AI 输出里很少见，而流式体验
  *  的收益很大：列表项在模型发出时一项一项出现，而不是作为一个完成块弹出。 */
-export function hasOpenCodeFence(text: string): boolean {
-  const fences = text.match(/^```/gm)
-  return !!fences && fences.length % 2 !== 0
+export function hasOpenCodeFence(text: string, fenceCarry = 0): boolean {
+  // `fenceCarry` 是「已经提交出去、但仍未闭合」的围栏奇偶性（0 或 1）。强制中间
+  // 提交会把开栏那一行连同代码一起送走，此后缓冲里只剩围栏内部的行——若不计入
+  // carry，模型发出闭栏时缓冲里的 ``` 计数为奇数，会被误判成「围栏刚打开」，于是
+  // 闭栏之后的全部正文都滞留在缓冲里直到回合结束才一次性吐出（长代码块之后流式
+  // UX 完全失效），而 flush 出的那条消息以 ``` 开头又会被渲染器当成开栏，把正文
+  // 整段渲染成代码块。
+  return (fenceCarry + countFenceLines(text)) % 2 !== 0
 }
 
-export function hasOpenMarkdownBlock(text: string): boolean {
-  if (hasOpenCodeFence(text)) return true
+export function hasOpenMarkdownBlock(text: string, fenceCarry = 0): boolean {
+  if (hasOpenCodeFence(text, fenceCarry)) return true
 
   const lines = text.split('\n')
   // 剥掉 `split('\n')` 为以换行结尾的文本产生的那一个尾随 ''——那是 split 的
@@ -77,13 +88,13 @@ export function hasOpenMarkdownBlock(text: string): boolean {
  *
  *  从末尾向后扫描，这样第一个命中就是最新的安全切割点（无需遍历每个换行去
  *  追踪最大值）。 */
-export function findSafeBoundary(text: string): number {
+export function findSafeBoundary(text: string, fenceCarry = 0): number {
   let scan = text.length
   while (scan > 0) {
     const found = text.lastIndexOf('\n', scan - 1)
     if (found < 0) return -1
     const prefix = text.slice(0, found + 1)
-    if (!hasOpenMarkdownBlock(prefix)) {
+    if (!hasOpenMarkdownBlock(prefix, fenceCarry)) {
       return found + 1
     }
     scan = found
@@ -162,6 +173,10 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
   const pendingChunksRef = useRef<string[]>([])
   /** 触发延迟发出的定时器。无待处理时为空。 */
   const emitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 已提交出去但仍未闭合的代码围栏数（0 或 1）。强制中间提交会把开栏行随代码
+   *  一起送走，缓冲里于是只剩围栏内部的行；把这个奇偶性计入判定，闭栏到达时才
+   *  能识别出「围栏已关闭」，让闭栏之后的正文恢复逐行提交。 */
+  const fenceCarryRef = useRef(0)
 
   const drainPending = useCallback(() => {
     if (emitTimerRef.current !== null) {
@@ -193,13 +208,17 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
       if (!delta) return
       debugLog('buffer.append', `chars=${delta.length} bytes=${Buffer.byteLength(delta, 'utf8')}`)
       bufferRef.current += delta
-      const boundary = findSafeBoundary(bufferRef.current)
+      const boundary = findSafeBoundary(bufferRef.current, fenceCarryRef.current)
       if (boundary > 0) {
         const chunk = bufferRef.current.slice(0, boundary)
         bufferRef.current = bufferRef.current.slice(boundary)
+        fenceCarryRef.current = (fenceCarryRef.current + countFenceLines(chunk)) % 2
         debugLog('buffer.commit', `chars=${chunk.length}`)
         queueChunk(chunk)
-      } else if (bufferRef.current.length > CODE_FENCE_COMMIT_THRESHOLD && hasOpenCodeFence(bufferRef.current)) {
+      } else if (
+        bufferRef.current.length > CODE_FENCE_COMMIT_THRESHOLD &&
+        hasOpenCodeFence(bufferRef.current, fenceCarryRef.current)
+      ) {
         // 大型开放代码围栏——在最后一个换行处强制一次中间提交，这样终端不必
         // 一次性预滚动 100+ 空行。找到最后一个不属于 `\n\n` 对的 `\n`（那些由
         // 上面的 findSafeBoundary 处理）并在那里切割。
@@ -207,6 +226,8 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
         if (lastNL > 0) {
           const chunk = bufferRef.current.slice(0, lastNL + 1)
           bufferRef.current = bufferRef.current.slice(lastNL + 1)
+          // 围栏奇偶性跟着已提交的内容走，缓冲里留下的行不再自带开栏行。
+          fenceCarryRef.current = (fenceCarryRef.current + countFenceLines(chunk)) % 2
           debugLog('buffer.commit', `chars=${chunk.length} (fence-split)`)
           queueChunk(chunk)
         }
@@ -226,6 +247,8 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
     }
     const remainder = bufferRef.current
     bufferRef.current = ''
+    // 回合结束：剩余内容整体送出，围栏状态不再跨越本轮。
+    fenceCarryRef.current = 0
     if (remainder) pendingChunksRef.current.push(remainder)
     if (pendingChunksRef.current.length === 0) return
     const chunks = pendingChunksRef.current
@@ -242,6 +265,7 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
     }
     pendingChunksRef.current = []
     bufferRef.current = ''
+    fenceCarryRef.current = 0
   }, [])
 
   useEffect(
@@ -250,6 +274,7 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
       emitTimerRef.current = null
       pendingChunksRef.current = []
       bufferRef.current = ''
+      fenceCarryRef.current = 0
     },
     [],
   )

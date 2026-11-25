@@ -14,6 +14,7 @@ import {
   createGoal as createCoreGoal,
   createGoalRunCoordinator,
   createLoopState,
+  errorMessage,
   generateTaskSlug,
   markExpectedCacheMiss,
   pauseGoal as pauseCoreGoal,
@@ -252,15 +253,27 @@ export function useGoalController({
           try {
             await executeGoalLoop(state, goal.id, signal, lease)
           } finally {
-            if (loopStateRef.current) {
-              await appendGoalState(loopStateRef.current)
+            // 这个 finally 里是 I/O（写会话日志、setState）：一旦抛错，runner 回调
+            // 从未正常返回，`goalRunnerActive` 会永久停在 true（UI 一直显示“目标
+            // 运行中”），异常还会一路抛给调用方形成 unhandled rejection。所以收尾
+            // 本身必须自带兜底。
+            try {
+              if (loopStateRef.current) {
+                await appendGoalState(loopStateRef.current)
+                setState((previous) => ({
+                  ...previous,
+                  goalStatus: loopStateRef.current?.goal ? { ...loopStateRef.current.goal } : null,
+                  goalRunnerActive: false,
+                }))
+              } else {
+                setState((previous) => ({ ...previous, goalRunnerActive: false }))
+              }
+            } catch (error) {
               setState((previous) => ({
                 ...previous,
-                goalStatus: loopStateRef.current?.goal ? { ...loopStateRef.current.goal } : null,
                 goalRunnerActive: false,
+                error: `Goal run could not be finalized: ${errorMessage(error)}`,
               }))
-            } else {
-              setState((previous) => ({ ...previous, goalRunnerActive: false }))
             }
           }
         })

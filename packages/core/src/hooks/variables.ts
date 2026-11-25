@@ -32,6 +32,23 @@ export interface VariableContext {
   cwd: string
   homedir?: string
   sep?: string
+  /** `${env:NAME}` 的取值来源。缺省回落到 `process.env`（保持既有行为）；
+   *  执行器会传入“已 sanitize 的继承环境 + 插件 userConfig”的合并映射。 */
+  env?: NodeJS.ProcessEnv
+  /** 判定一个环境变量名是否形似凭据。命中的变量**绝不**把值内联进命令串
+   *  （命令串会以 argv 形式出现，`ps` 可见、也可被 `curl` 外传），而是退化成
+   *  shell 层的间接引用，值只经子进程 env 传递。 */
+  isSensitiveEnvName?: (key: string) => boolean
+}
+
+/** 形似凭据的环境变量名。与 `utils/shell-sandbox.ts` 的
+ *  `SECRET_ENV_PATTERN` 保持同一组关键词：那边决定“要不要从子进程 env 里剥掉”，
+ *  这里决定“要不要内联进命令行”——两者必须一致，否则沙箱脱敏会被
+ *  `${env:NAME}` 展开绕过。 */
+const SENSITIVE_ENV_NAME = /(API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE[_-]?KEY)/i
+
+export function isSensitiveEnvName(key: string): boolean {
+  return SENSITIVE_ENV_NAME.test(key)
 }
 
 /** 由当前进程 + 调用方上下文派生的默认变量。
@@ -62,14 +79,21 @@ export function buildVariableContext(input: { pluginDir: string; cwd: string; pl
 /** 展开 `${pluginDir}` / `${pluginDataDir}` / `${cwd}` / `${homedir}` /
  *  `${sep}` / `${env:NAME}` 引用。未知模式保持原样。 */
 export function expandVariables(source: string, ctx: VariableContext): string {
+  const sensitive = ctx.isSensitiveEnvName ?? isSensitiveEnvName
   return source.replace(/\$\{([^}]+)\}/g, (whole, expr: string) => {
     const colonIdx = expr.indexOf(':')
     if (colonIdx > 0) {
       const ns = expr.slice(0, colonIdx)
       const key = expr.slice(colonIdx + 1)
-      if (ns === 'env') return process.env[key] ?? ''
-      // 未知命名空间 —— 保持原样
-      return whole
+      if (ns !== 'env') return whole // 未知命名空间 —— 保持原样
+      if (sensitive(key)) {
+        // 凭据类变量不内联：命令串最终会作为 argv 交给 shell（沙箱下更是
+        // `sandbox-exec -p … /bin/sh -c "<含密钥的命令>"`），在进程列表里可读、
+        // 也能被 `curl` 原样外传，等于绕过 sanitizeShellEnv 的脱敏。改成 shell
+        // 层的间接引用后，值只通过子进程 env 到达脚本。
+        return process.platform === 'win32' ? `%${key}%` : `"\${${key}}"`
+      }
+      return (ctx.env ?? process.env)[key] ?? ''
     }
     switch (expr) {
       case 'pluginDir':

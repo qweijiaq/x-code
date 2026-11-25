@@ -106,6 +106,9 @@ export function createStorageController(host: StorageControllerHost): StorageCon
           if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
           const target = path.join(dir, entry.name)
           if (pinned.has(target) || target === active) continue
+          // 清理期间用户可能启动了 turn 或切到了别的会话（IPC 事件仍可处理），
+          // 那些刚变成活动/写入中的文件不能按旧快照判定删除。
+          if (host.isBusy() && target === host.activeSessionPath()) continue
           try {
             const stat = await fs.promises.stat(target)
             if (stat.mtimeMs > cutoff) continue

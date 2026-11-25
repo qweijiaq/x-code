@@ -39,6 +39,13 @@ const CAPS: Record<string, ProviderCapabilities> = {
   zhipu: { image: true, pdf: true, audio: false, filesApi: true, toolImageTransport: 'user-message' },
   deepseek: { image: true, pdf: false, audio: false, filesApi: true, toolImageTransport: 'user-message' },
   custom: { image: false, pdf: false, audio: false, filesApi: false, toolImageTransport: 'unsupported' },
+  // 网关型 provider：底层是 Chat Completions 兼容端点，工具角色只收文本，
+  // 因此图片必须随后续的 user 消息送出。缺这些条目会让 `capabilitiesOf`
+  // 落进 NO_CAPABILITIES，把本可看图的模型当纯文本用。
+  opencode: { image: true, pdf: false, audio: false, filesApi: false, toolImageTransport: 'user-message' },
+  'opencode-go': { image: true, pdf: false, audio: false, filesApi: false, toolImageTransport: 'user-message' },
+  opendesign: { image: true, pdf: false, audio: false, filesApi: false, toolImageTransport: 'user-message' },
+  'opendesign-go': { image: true, pdf: false, audio: false, filesApi: false, toolImageTransport: 'user-message' },
 }
 
 const NO_CAPABILITIES: ProviderCapabilities = {

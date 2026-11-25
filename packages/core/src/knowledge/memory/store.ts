@@ -515,6 +515,19 @@ function incomingWins(existing: MemoryFact, evidence: MemoryOperation['evidence'
   return evidenceRank(incoming.kind) >= evidenceRank(existing.metadata.evidence)
 }
 
+/** 校验 metadata patch 里那些会在 `refreshTopic → parseMemoryTopic` 阶段抛错的
+ *  字段：`description: ""` 会让 frontmatter 渲染出空值、再被 `requiredString`
+ *  判为缺失；`summary` 超过 120 tokens 也直接抛错。这些属于"这一条 operation
+ *  的输入有问题"，应当降级为 failed notice，而不是让整批操作失败。 */
+function isPatchPersistable(patch: TopicMetadataPatch | undefined): boolean {
+  if (!patch) return true
+  if (patch.description !== undefined && !cleanLine(redactMemoryText(patch.description))) return false
+  if (patch.summary !== undefined && estimateTextTokenCount(cleanLine(redactMemoryText(patch.summary))) > 120) {
+    return false
+  }
+  return true
+}
+
 function hasOversizeIndexValue(patch: TopicMetadataPatch | undefined): boolean {
   if (!patch) return false
   return [
@@ -652,284 +665,300 @@ export class MemoryStore {
 
       for (const operation of operations.slice(0, 8)) {
         const factsById = rebuildFacts()
-        if (
-          operation.evidence.length === 0 ||
-          operation.evidence.some(
-            (evidence) =>
-              !VALID_EVIDENCE.has(evidence.kind) ||
-              !evidence.sourceId.trim() ||
-              !Number.isFinite(Date.parse(evidence.occurredAt)) ||
-              (context !== undefined &&
-                (evidence.occurredAt !== context.sourceOccurredAt ||
-                  evidence.sourceId !== `memory-job:${context.jobId}:${evidence.kind}`)),
-          )
-        ) {
-          notices.push({ action: 'failed', error: 'Invalid or unbound memory evidence' })
-          continue
-        }
-        if (operation.action === 'delete') {
-          reason = 'forget'
+        // `catch` 里 TS 会丢掉 `operation` 的判别式收窄，这里先把可上报的 id
+        // 取出来，供失败通知使用。
+        const failedIds = operation.action === 'delete' ? {} : { topicId: operation.topicId, factId: operation.factId }
+        // 单条 operation 出错只能降级为该条的失败通知：这个循环体没有别的
+        // 兜底，异常一冒泡就会让整批（含其余合法操作）失败并 reject
+        // withWriterLock，绕开下面精心设计的 notices 降级路径。
+        try {
           if (
-            operation.remove.some((target) => quarantinedTopicIds.has(target.topicId)) ||
-            operation.topicPatches?.some((item) => quarantinedTopicIds.has(item.topicId))
+            operation.evidence.length === 0 ||
+            operation.evidence.some(
+              (evidence) =>
+                !VALID_EVIDENCE.has(evidence.kind) ||
+                !evidence.sourceId.trim() ||
+                !Number.isFinite(Date.parse(evidence.occurredAt)) ||
+                (context !== undefined &&
+                  (evidence.occurredAt !== context.sourceOccurredAt ||
+                    evidence.sourceId !== `memory-job:${context.jobId}:${evidence.kind}`)),
+            )
           ) {
-            notices.push({ action: 'failed', error: 'Cannot automatically modify a quarantined topic' })
+            notices.push({ action: 'failed', error: 'Invalid or unbound memory evidence' })
             continue
           }
-          if (
-            operation.remove.some((target) => {
-              const topic = topics.get(target.topicId)
-              return Boolean(topic && target.expectedTopicHash && target.expectedTopicHash !== topic.hash)
-            })
-          ) {
-            notices.push({ action: 'failed', error: 'Forget target changed since extraction' })
-            continue
-          }
-          for (const target of operation.remove) {
-            const topic = topics.get(target.topicId)
-            if (!topic) continue
-            if (target.expectedTopicHash && target.expectedTopicHash !== topic.hash) {
-              notices.push({ action: 'failed', topicId: target.topicId, error: 'Topic changed since extraction' })
-              continue
-            }
-            if (!target.factId) {
-              for (const fact of topic.facts) {
-                deleted.push({ topicId: topic.metadata.id, factId: fact.metadata.id, previousHash: fact.hash })
-                notices.push({ action: 'forgotten', topicId: topic.metadata.id, factId: fact.metadata.id })
-              }
-              topics.delete(topic.metadata.id)
-              deletes.add(topic.path)
-              continue
-            }
-            const fact = topic.facts.find((item) => item.metadata.id === target.factId)
-            if (!fact) continue
-            touched.add(topic.metadata.id)
-            removeFactBlocks(topic, new Set([target.factId]))
-            deleted.push({ topicId: topic.metadata.id, factId: fact.metadata.id, previousHash: fact.hash })
-            notices.push({ action: 'forgotten', topicId: topic.metadata.id, factId: fact.metadata.id })
-            const refreshed = refreshTopic(topic, now)
-            if (refreshed.facts.length === 0 && !hasManualContent(refreshed)) {
-              topics.delete(topic.metadata.id)
-              deletes.add(topic.path)
-            } else {
-              topics.set(topic.metadata.id, refreshed)
-            }
-          }
-          for (const topicPatch of operation.topicPatches ?? []) {
-            const topic = topics.get(topicPatch.topicId)
-            if (!topic) continue
-            const resultingType = topicPatch.patch.type ?? topic.metadata.type
-            const resultingPinned = topicPatch.patch.pinned ?? topic.metadata.pinned
+          if (operation.action === 'delete') {
+            reason = 'forget'
             if (
-              hasOversizeIndexValue(topicPatch.patch) ||
-              (resultingPinned &&
-                resultingType !== 'user' &&
-                resultingType !== 'portfolio' &&
-                resultingType !== 'feedback')
+              operation.remove.some((target) => quarantinedTopicIds.has(target.topicId)) ||
+              operation.topicPatches?.some((item) => quarantinedTopicIds.has(item.topicId))
             ) {
-              notices.push({ action: 'failed', topicId: topicPatch.topicId, error: 'Invalid topic metadata patch' })
+              notices.push({ action: 'failed', error: 'Cannot automatically modify a quarantined topic' })
               continue
             }
-            applyPatch(topic.metadata, topicPatch.patch)
-            topics.set(topic.metadata.id, refreshTopic(topic, now))
-            touched.add(topic.metadata.id)
-            metadataOnlyChange = true
+            if (
+              operation.remove.some((target) => {
+                const topic = topics.get(target.topicId)
+                return Boolean(topic && target.expectedTopicHash && target.expectedTopicHash !== topic.hash)
+              })
+            ) {
+              notices.push({ action: 'failed', error: 'Forget target changed since extraction' })
+              continue
+            }
+            for (const target of operation.remove) {
+              const topic = topics.get(target.topicId)
+              if (!topic) continue
+              if (target.expectedTopicHash && target.expectedTopicHash !== topic.hash) {
+                notices.push({ action: 'failed', topicId: target.topicId, error: 'Topic changed since extraction' })
+                continue
+              }
+              if (!target.factId) {
+                for (const fact of topic.facts) {
+                  deleted.push({ topicId: topic.metadata.id, factId: fact.metadata.id, previousHash: fact.hash })
+                  notices.push({ action: 'forgotten', topicId: topic.metadata.id, factId: fact.metadata.id })
+                }
+                topics.delete(topic.metadata.id)
+                deletes.add(topic.path)
+                continue
+              }
+              const fact = topic.facts.find((item) => item.metadata.id === target.factId)
+              if (!fact) continue
+              touched.add(topic.metadata.id)
+              removeFactBlocks(topic, new Set([target.factId]))
+              deleted.push({ topicId: topic.metadata.id, factId: fact.metadata.id, previousHash: fact.hash })
+              notices.push({ action: 'forgotten', topicId: topic.metadata.id, factId: fact.metadata.id })
+              const refreshed = refreshTopic(topic, now)
+              if (refreshed.facts.length === 0 && !hasManualContent(refreshed)) {
+                topics.delete(topic.metadata.id)
+                deletes.add(topic.path)
+              } else {
+                topics.set(topic.metadata.id, refreshed)
+              }
+            }
+            for (const topicPatch of operation.topicPatches ?? []) {
+              const topic = topics.get(topicPatch.topicId)
+              if (!topic) continue
+              const resultingType = topicPatch.patch.type ?? topic.metadata.type
+              const resultingPinned = topicPatch.patch.pinned ?? topic.metadata.pinned
+              if (
+                hasOversizeIndexValue(topicPatch.patch) ||
+                !isPatchPersistable(topicPatch.patch) ||
+                (resultingPinned &&
+                  resultingType !== 'user' &&
+                  resultingType !== 'portfolio' &&
+                  resultingType !== 'feedback')
+              ) {
+                notices.push({ action: 'failed', topicId: topicPatch.topicId, error: 'Invalid topic metadata patch' })
+                continue
+              }
+              applyPatch(topic.metadata, topicPatch.patch)
+              topics.set(topic.metadata.id, refreshTopic(topic, now))
+              touched.add(topic.metadata.id)
+              metadataOnlyChange = true
+            }
+            continue
           }
-          continue
-        }
 
-        if (quarantinedTopicIds.has(operation.topicId)) {
-          notices.push({
-            action: 'failed',
-            topicId: operation.topicId,
-            factId: operation.factId,
-            error: 'Cannot automatically overwrite a quarantined topic',
-          })
-          continue
-        }
-        if (!MEMORY_ID_RE.test(operation.factId)) {
-          notices.push({
-            action: 'failed',
-            topicId: operation.topicId,
-            factId: operation.factId,
-            error: 'Invalid fact ID',
-          })
-          continue
-        }
-        const operationTarget = topics.get(operation.topicId)
-        const resultingType = operation.topicPatch?.type ?? operationTarget?.metadata.type
-        if (
-          (operation.topicPatch?.pinned ?? operationTarget?.metadata.pinned) === true &&
-          resultingType !== 'user' &&
-          resultingType !== 'portfolio' &&
-          resultingType !== 'feedback'
-        ) {
-          notices.push({
-            action: 'failed',
-            topicId: operation.topicId,
-            factId: operation.factId,
-            error: 'Only stable user, portfolio, or feedback topics may be pinned',
-          })
-          continue
-        }
-        if (
-          (!operationTarget &&
-            (!operation.topicPatch?.type ||
-              !operation.topicPatch.description ||
-              !operation.topicPatch.addAliases?.length ||
-              !operation.topicPatch.addKeywords?.length)) ||
-          hasOversizeIndexValue(operation.topicPatch) ||
-          !canonicalText(operation.content) ||
-          operation.content.includes('<!-- x-memory:') ||
-          Buffer.byteLength(operation.content, 'utf-8') > 8 * 1024
-        ) {
-          notices.push({
-            action: 'failed',
-            topicId: operation.topicId,
-            factId: operation.factId,
-            error: 'Invalid fact content or incomplete new-topic metadata',
-          })
-          continue
-        }
-        let factId = operation.factId
-        if (!factsById.has(factId)) {
-          const slotCandidates = findSlotCandidates(factId, operation.topicId, topics.values())
-          if (slotCandidates.length > 1) {
+          if (quarantinedTopicIds.has(operation.topicId)) {
+            notices.push({
+              action: 'failed',
+              topicId: operation.topicId,
+              factId: operation.factId,
+              error: 'Cannot automatically overwrite a quarantined topic',
+            })
+            continue
+          }
+          if (!MEMORY_ID_RE.test(operation.factId)) {
+            notices.push({
+              action: 'failed',
+              topicId: operation.topicId,
+              factId: operation.factId,
+              error: 'Invalid fact ID',
+            })
+            continue
+          }
+          const operationTarget = topics.get(operation.topicId)
+          const resultingType = operation.topicPatch?.type ?? operationTarget?.metadata.type
+          if (
+            (operation.topicPatch?.pinned ?? operationTarget?.metadata.pinned) === true &&
+            resultingType !== 'user' &&
+            resultingType !== 'portfolio' &&
+            resultingType !== 'feedback'
+          ) {
+            notices.push({
+              action: 'failed',
+              topicId: operation.topicId,
+              factId: operation.factId,
+              error: 'Only stable user, portfolio, or feedback topics may be pinned',
+            })
+            continue
+          }
+          if (
+            (!operationTarget &&
+              (!operation.topicPatch?.type ||
+                !operation.topicPatch.description ||
+                !operation.topicPatch.addAliases?.length ||
+                !operation.topicPatch.addKeywords?.length)) ||
+            hasOversizeIndexValue(operation.topicPatch) ||
+            !isPatchPersistable(operation.topicPatch) ||
+            !canonicalText(operation.content) ||
+            operation.content.includes('<!-- x-memory:') ||
+            Buffer.byteLength(operation.content, 'utf-8') > 8 * 1024
+          ) {
+            notices.push({
+              action: 'failed',
+              topicId: operation.topicId,
+              factId: operation.factId,
+              error: 'Invalid fact content or incomplete new-topic metadata',
+            })
+            continue
+          }
+          let factId = operation.factId
+          if (!factsById.has(factId)) {
+            const slotCandidates = findSlotCandidates(factId, operation.topicId, topics.values())
+            if (slotCandidates.length > 1) {
+              notices.push({
+                action: 'failed',
+                topicId: operation.topicId,
+                factId,
+                error: 'Multiple existing facts match the same semantic slot',
+              })
+              continue
+            }
+            if (slotCandidates.length === 1) factId = slotCandidates[0]!.metadata.id
+          }
+          const existingMatches = factsById.get(factId) ?? []
+          const existing = existingMatches[0]
+          const expectedTarget = topics.get(operation.topicId)
+          if (operation.expectedTopicHash && operation.expectedTopicHash !== expectedTarget?.hash) {
             notices.push({
               action: 'failed',
               topicId: operation.topicId,
               factId,
-              error: 'Multiple existing facts match the same semantic slot',
+              error: 'Topic changed since extraction',
             })
             continue
           }
-          if (slotCandidates.length === 1) factId = slotCandidates[0]!.metadata.id
-        }
-        const existingMatches = factsById.get(factId) ?? []
-        const existing = existingMatches[0]
-        const expectedTarget = topics.get(operation.topicId)
-        if (operation.expectedTopicHash && operation.expectedTopicHash !== expectedTarget?.hash) {
-          notices.push({
-            action: 'failed',
-            topicId: operation.topicId,
-            factId,
-            error: 'Topic changed since extraction',
-          })
-          continue
-        }
-        if (
-          operation.action === 'replace-conflict' &&
-          operation.remove.some((target) => {
-            if (quarantinedTopicIds.has(target.topicId)) return true
-            const topic = topics.get(target.topicId)
-            return !topic || target.expectedTopicHash !== topic.hash
-          })
-        ) {
-          notices.push({
-            action: 'failed',
-            topicId: operation.topicId,
-            factId,
-            error: 'Conflict target changed since extraction',
-          })
-          continue
-        }
-        if (existing && !incomingWins(existing.fact, operation.evidence)) {
-          notices.push({
-            action: 'failed',
-            topicId: operation.topicId,
-            factId,
-            error: 'Older or weaker evidence cannot replace the current fact',
-          })
-          continue
-        }
-        const safeContent = redactMemoryText(operation.content)
-        const nextHash = memoryContentHash(canonicalText(safeContent))
-        if (existing && existing.fact.hash === nextHash) {
-          const metadata = factMetadata(operation.evidence)
           if (
-            existing.fact.metadata.observedAt === metadata.observedAt &&
-            existing.fact.metadata.evidence === metadata.evidence &&
-            !operation.topicPatch
+            operation.action === 'replace-conflict' &&
+            operation.remove.some((target) => {
+              if (quarantinedTopicIds.has(target.topicId)) return true
+              const topic = topics.get(target.topicId)
+              return !topic || target.expectedTopicHash !== topic.hash
+            })
           ) {
+            notices.push({
+              action: 'failed',
+              topicId: operation.topicId,
+              factId,
+              error: 'Conflict target changed since extraction',
+            })
             continue
           }
-          const markerPattern = new RegExp(
-            `<!--\\s*x-memory:\\s*\\{[^\\n]*"id"\\s*:\\s*"${factId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^\\n]*\\}\\s*-->`,
+          if (existing && !incomingWins(existing.fact, operation.evidence)) {
+            notices.push({
+              action: 'failed',
+              topicId: operation.topicId,
+              factId,
+              error: 'Older or weaker evidence cannot replace the current fact',
+            })
+            continue
+          }
+          const safeContent = redactMemoryText(operation.content)
+          const nextHash = memoryContentHash(canonicalText(safeContent))
+          if (existing && existing.fact.hash === nextHash) {
+            const metadata = factMetadata(operation.evidence)
+            if (
+              existing.fact.metadata.observedAt === metadata.observedAt &&
+              existing.fact.metadata.evidence === metadata.evidence &&
+              !operation.topicPatch
+            ) {
+              continue
+            }
+            const markerPattern = new RegExp(
+              `<!--\\s*x-memory:\\s*\\{[^\\n]*"id"\\s*:\\s*"${factId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^\\n]*\\}\\s*-->`,
+            )
+            existing.topic.body = existing.topic.body.replace(markerPattern, () => {
+              metadata.id = factId
+              return `<!-- x-memory: ${JSON.stringify(metadata)} -->`
+            })
+            applyPatch(existing.topic.metadata, operation.topicPatch)
+            topics.set(existing.topic.metadata.id, refreshTopic(existing.topic, now))
+            touched.add(existing.topic.metadata.id)
+            metadataOnlyChange = true
+            notices.push({
+              action: 'updated',
+              topicId: existing.topic.metadata.id,
+              factId,
+              content: existing.fact.content,
+            })
+            continue
+          }
+
+          if (existing || operation.action === 'replace-conflict') reason = 'replace-conflict'
+          const removals = new Map<string, Set<string>>()
+          for (const match of existingMatches) {
+            const ids = removals.get(match.topic.metadata.id) ?? new Set<string>()
+            ids.add(match.fact.metadata.id)
+            removals.set(match.topic.metadata.id, ids)
+          }
+          if (operation.action === 'replace-conflict') {
+            for (const target of operation.remove) {
+              const topic = topics.get(target.topicId)
+              if (!topic || (target.expectedTopicHash && target.expectedTopicHash !== topic.hash)) continue
+              const ids = removals.get(target.topicId) ?? new Set<string>()
+              ids.add(target.factId)
+              removals.set(target.topicId, ids)
+            }
+          }
+          for (const [topicId, ids] of removals) {
+            const topic = topics.get(topicId)
+            if (!topic) continue
+            touched.add(topicId)
+            for (const id of ids) {
+              const fact = topic.facts.find((item) => item.metadata.id === id)
+              if (fact) deleted.push({ topicId, factId: id, previousHash: fact.hash })
+            }
+            removeFactBlocks(topic, ids)
+            const refreshed = refreshTopic(topic, now, operation.action === 'replace-conflict')
+            if (topicId !== operation.topicId && refreshed.facts.length === 0 && !hasManualContent(refreshed)) {
+              topics.delete(topicId)
+              deletes.add(topic.path)
+            } else {
+              topics.set(topicId, refreshed)
+            }
+          }
+
+          let target = topics.get(operation.topicId)
+          if (!target) target = newTopic(this.memoryRoot, operation.topicId, operation.topicPatch, now)
+          applyPatch(target.metadata, operation.topicPatch)
+          appendFact(target, factId, safeContent, operation.evidence)
+          target = refreshTopic(
+            target,
+            now,
+            operation.action === 'replace-conflict' && operation.topicPatch?.description === undefined,
           )
-          existing.topic.body = existing.topic.body.replace(markerPattern, () => {
-            metadata.id = factId
-            return `<!-- x-memory: ${JSON.stringify(metadata)} -->`
-          })
-          applyPatch(existing.topic.metadata, operation.topicPatch)
-          topics.set(existing.topic.metadata.id, refreshTopic(existing.topic, now))
-          touched.add(existing.topic.metadata.id)
-          metadataOnlyChange = true
-          notices.push({
-            action: 'updated',
-            topicId: existing.topic.metadata.id,
+          topics.set(target.metadata.id, target)
+          touched.add(target.metadata.id)
+          changed.push({
+            topicId: target.metadata.id,
             factId,
-            content: existing.fact.content,
+            ...(existing ? { previousHash: existing.fact.hash } : {}),
+            nextHash,
           })
-          continue
+          notices.push({
+            action: existing ? 'updated' : 'remembered',
+            topicId: target.metadata.id,
+            factId,
+            content: canonicalText(safeContent),
+          })
+        } catch (error) {
+          notices.push({
+            action: 'failed',
+            ...failedIds,
+            error: errorMessage(error),
+          })
         }
-
-        if (existing || operation.action === 'replace-conflict') reason = 'replace-conflict'
-        const removals = new Map<string, Set<string>>()
-        for (const match of existingMatches) {
-          const ids = removals.get(match.topic.metadata.id) ?? new Set<string>()
-          ids.add(match.fact.metadata.id)
-          removals.set(match.topic.metadata.id, ids)
-        }
-        if (operation.action === 'replace-conflict') {
-          for (const target of operation.remove) {
-            const topic = topics.get(target.topicId)
-            if (!topic || (target.expectedTopicHash && target.expectedTopicHash !== topic.hash)) continue
-            const ids = removals.get(target.topicId) ?? new Set<string>()
-            ids.add(target.factId)
-            removals.set(target.topicId, ids)
-          }
-        }
-        for (const [topicId, ids] of removals) {
-          const topic = topics.get(topicId)
-          if (!topic) continue
-          touched.add(topicId)
-          for (const id of ids) {
-            const fact = topic.facts.find((item) => item.metadata.id === id)
-            if (fact) deleted.push({ topicId, factId: id, previousHash: fact.hash })
-          }
-          removeFactBlocks(topic, ids)
-          const refreshed = refreshTopic(topic, now, operation.action === 'replace-conflict')
-          if (topicId !== operation.topicId && refreshed.facts.length === 0 && !hasManualContent(refreshed)) {
-            topics.delete(topicId)
-            deletes.add(topic.path)
-          } else {
-            topics.set(topicId, refreshed)
-          }
-        }
-
-        let target = topics.get(operation.topicId)
-        if (!target) target = newTopic(this.memoryRoot, operation.topicId, operation.topicPatch, now)
-        applyPatch(target.metadata, operation.topicPatch)
-        appendFact(target, factId, safeContent, operation.evidence)
-        target = refreshTopic(
-          target,
-          now,
-          operation.action === 'replace-conflict' && operation.topicPatch?.description === undefined,
-        )
-        topics.set(target.metadata.id, target)
-        touched.add(target.metadata.id)
-        changed.push({
-          topicId: target.metadata.id,
-          factId,
-          ...(existing ? { previousHash: existing.fact.hash } : {}),
-          nextHash,
-        })
-        notices.push({
-          action: existing ? 'updated' : 'remembered',
-          topicId: target.metadata.id,
-          factId,
-          content: canonicalText(safeContent),
-        })
       }
 
       if (changed.length === 0 && deleted.length === 0 && !metadataOnlyChange) {

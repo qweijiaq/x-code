@@ -235,7 +235,18 @@ export class McpRegistry {
     // 失败让我们处于一致的 "此服务器一无所有" 状态，而不是旧的 + 无的混合。
     this.removeServerEntries(name)
 
-    const result = await connectOneServer(name, config, this.oauthFactory, opts.driveOAuth)
+    // 连接失败必须把条目收敛到明确状态：上面已经 `existing.client.close()` 并
+    // `removeServerEntries(name)`，若这里直接抛出，`this.servers` 里会留下一个
+    // **已关闭**的旧客户端、status 还停在旧的 `connected`（含过期 toolCount），
+    // `/mcp list` 显示"已连接"而 callTool 会把调用派发给死连接。
+    let result: ConnectResult
+    try {
+      result = await connectOneServer(name, config, this.oauthFactory, opts.driveOAuth)
+    } catch (err) {
+      if (existing) existing.status = { kind: 'failed', error: errorMessage(err) }
+      else this.servers.delete(name)
+      throw err
+    }
     this.installServer(result)
     return result.server
   }
@@ -274,12 +285,16 @@ export class McpRegistry {
     // 一定在其替换者 spawn 之前退出。
     await this.shutdown()
 
+    // 无参调用（"按现有配置重建"）的快照必须在这里取——下面几行会把
+    // `this.configs` 清空，之后 `?? this.configs` 拿到的是空 Map，于是既不
+    // 回填配置也不发起任何连接，registry 变空、summary 却报告全部 unchanged。
+    const effective = newConfigs ?? new Map(this.configs)
+
     // 重置内部状态。保留 OAuth 工厂，因为它来自 CLI 进程、不绑定任何单个配置。
     this.servers.clear()
     this.entries.clear()
     this.resources.clear()
     this.configs.clear()
-    const effective = newConfigs ?? new Map<string, McpServerConfig>()
     for (const [k, v] of effective) this.configs.set(k, v)
 
     // 并行重连——与初始启动相同的方式。每个失败都记为 `status: failed`，

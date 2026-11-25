@@ -93,10 +93,25 @@ function closeChannel(): void {
 
 function onRequest(request: PdfRenderRequest): void {
   queue = queue.then(async () => {
-    const response = await handleRequest(request)
-    const shouldClose = response.ok && response.result.type === 'destroy'
-    const sent = await send(response)
-    if (shouldClose || !sent) closeChannel()
+    // `handleRequest` 自带 try/catch，但 `send()`（端口已关闭时 postMessage 抛
+    // ERR_CLOSED_MESSAGE_PORT）与 `closeChannel()`（重复 close/disconnect）仍可能抛。
+    // 一旦本回调 reject：queue 变成 rejected promise，后续请求的回调被永久跳过
+    // （父端只能等 30s 超时），同时产生 unhandled rejection——在 worker_threads 里
+    // 直接触发 'error' 杀掉 worker。因此这里必须保证链路始终 resolve。
+    try {
+      const response = await handleRequest(request)
+      const shouldClose = response.ok && response.result.type === 'destroy'
+      const sent = await send(response)
+      if (shouldClose || !sent) closeChannel()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await send({ id: request.id, ok: false, error: `PDF render worker internal error: ${message}` }).catch(() => {})
+      try {
+        closeChannel()
+      } catch {
+        // 通道已经不可用——没有更多需要清理的东西。
+      }
+    }
   })
 }
 

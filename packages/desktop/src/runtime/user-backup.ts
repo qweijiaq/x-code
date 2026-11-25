@@ -49,9 +49,15 @@ function isFile(entry: fs.Dirent): boolean {
 }
 
 async function copyMissing(source: string, target: string): Promise<boolean> {
-  if (fs.existsSync(target)) return false
+  const exists = await fs.promises.stat(target).then(
+    () => true,
+    () => false,
+  )
+  if (exists) return false
   await fs.promises.mkdir(path.dirname(target), { recursive: true })
-  await fs.promises.cp(source, target, { recursive: true, errorOnExist: true, force: false })
+  // force:false 已保证不覆盖已有文件；不再使用 errorOnExist，否则一个已存在的
+  // 嵌套条目（并发导入、上次中断残留）会让整次导入中途失败且无法回滚。
+  await fs.promises.cp(source, target, { recursive: true, force: false, errorOnExist: false, dereference: false })
   return true
 }
 
@@ -77,7 +83,12 @@ export async function exportUserBackup(
     filter?: (entry: fs.Dirent) => boolean,
   ): Promise<void> => {
     const source = path.join(sourceRoot, name)
-    const entries = await fs.promises.readdir(source, { withFileTypes: true }).catch(() => [])
+    // 只把“目录不存在”当作空目录；EACCES/ENOTDIR/ELOOP 等读取失败必须抛出，
+    // 否则拼错路径/权限不足时会导出一个 counts 全 0 的“成功”备份。
+    const entries = await fs.promises.readdir(source, { withFileTypes: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return []
+      throw new Error(`无法读取备份源目录 ${name}：${(error as Error).message}`)
+    })
     const selected = entries.filter((entry) => {
       if (kind === 'files') return isFile(entry) && (filter ? filter(entry) : true)
       return (isDirectory(entry) || isFile(entry)) && (filter ? filter(entry) : true)

@@ -2,6 +2,7 @@
 //
 // 把 renderer 传来的 base64 WAV 落到 ~/.x-code/attachments，交给 core 的本地
 // whisper 转写，完成后删除临时文件。进度通过注入的 onNotice 回传。
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -19,7 +20,9 @@ export async function transcribeRecording(
   if (buffer.length > 50_000_000) throw new Error('录音超过 50MB')
   const dir = path.join(userXcodeDir(), 'attachments')
   await fs.promises.mkdir(dir, { recursive: true })
-  const file = path.join(dir, `recording-${Date.now()}.wav`)
+  // 时间戳 + 随机后缀：两次录音落在同一毫秒时会互相覆盖，先完成的一方
+  // 在 finally 里 unlink 还会删掉另一份仍在转写的文件。
+  const file = path.join(dir, `recording-${Date.now()}-${randomUUID().slice(0, 8)}.wav`)
   await fs.promises.writeFile(file, buffer, { mode: 0o600 })
   try {
     const result = await transcribeAudio(file, {

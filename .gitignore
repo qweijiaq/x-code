@@ -171,3 +171,4 @@ packages/desktop/build/whisper/*.bin
 docs/*
 !docs/desktop-manual.md
 !docs/desktop-manual.en.md
+.alma-snapshots

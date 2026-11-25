@@ -13,8 +13,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { getUserConfigPath } from '../config/index.js'
-import { XCODE_DIR } from '../utils.js'
-import { parseServerConfig } from './config-schema.js'
+import { XCODE_DIR, errorMessage } from '../utils.js'
+import { MAX_MCP_SERVERS, isValidServerName, parseServerConfig } from './config-schema.js'
 import { type McpServerConfig } from './types.js'
 
 export type ConfigScope = 'user' | 'project'
@@ -26,15 +26,22 @@ export function getConfigPath(scope: ConfigScope, cwd: string): string {
   return path.join(cwd, XCODE_DIR, 'config.json')
 }
 
-/** 读取给定 scope 解析后的 JSON 对象。文件不存在、为空或畸形时返回 `{}`
- *  ——调用方统一把这些情况当作"这里还没配置 MCP 服务器"。 */
+/** 读取给定 scope 解析后的 JSON 对象。只有"文件不存在"才返回 `{}`——调用方
+ *  把它当作"这里还没配置 MCP 服务器"。
+ *
+ *  其它读取错误必须抛出：本函数的返回值会被 `writeConfigObject` 整体写回
+ *  磁盘，把 EACCES / EISDIR / EIO 之类降级成 `{}` 会让 theme/model/security
+ *  等既有字段被静默销毁，正好违反文件头承诺的"不要覆盖并发编辑/损坏配置"。 */
 async function readConfigObject(scope: ConfigScope, cwd: string): Promise<Record<string, unknown>> {
   const file = getConfigPath(scope, cwd)
   let raw: string
   try {
     raw = await fs.readFile(file, 'utf-8')
-  } catch {
-    return {}
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    // ENOTDIR：路径中某一级是文件（父目录不存在的一种形态），等价于"没有配置"。
+    if (code === 'ENOENT' || code === 'ENOTDIR') return {}
+    throw new Error(`Cannot read config file at ${file}: ${errorMessage(error)}`, { cause: error })
   }
   try {
     const parsed = JSON.parse(raw) as unknown
@@ -88,6 +95,13 @@ export async function writeServerToConfig(
 ): Promise<{ path: string }> {
   // 先校验。通过 /mcp add-json 传入的坏 JSON 不应被写入、然后在下一次启动
   // 时爆炸——在入口处用清晰的 schema 错误快速失败。
+  //
+  // 名字与数量上限也必须在这里检查：loader 的 `parseServersBlock` 会丢弃
+  // 非法名字和超出 MAX_MCP_SERVERS 的条目，若这里放行，写入会"成功"但该
+  // 服务器在下次启动时静默消失。
+  if (!isValidServerName(name)) {
+    throw new Error('mcpServers name must be 1-128 characters without control characters')
+  }
   const validated = parseServerConfig(name, config)
 
   const obj = await readConfigObject(scope, cwd)
@@ -96,6 +110,9 @@ export async function writeServerToConfig(
     existing && typeof existing === 'object' && !Array.isArray(existing)
       ? { ...(existing as Record<string, unknown>) }
       : {}
+  if (!Object.hasOwn(servers, name) && Object.keys(servers).length >= MAX_MCP_SERVERS) {
+    throw new Error(`At most ${MAX_MCP_SERVERS} MCP servers are allowed`)
+  }
   servers[name] = validated
   obj.mcpServers = servers
   await writeConfigObject(scope, cwd, obj)

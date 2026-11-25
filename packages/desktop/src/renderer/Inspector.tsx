@@ -46,31 +46,37 @@ export function Inspector({ tab, onTab, onClose, children }: InspectorProps): Re
     setTimeout(() => tabRefs.current[next]?.focus(), 0)
   }
 
+  // 用 pointer capture 把 move/up/cancel 挂到元素本身：浏览器保证释放，
+  // 拖拽中卸载面板、切窗口（pointercancel）或触摸被打断都不会残留
+  // window 监听器，也不会对已卸载组件 setWidth。
   const startResize = (event: React.PointerEvent<HTMLDivElement>): void => {
     event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
     dragRef.current = { startX: event.clientX, startWidth: width }
-    const move = (moveEvent: PointerEvent): void => {
-      const drag = dragRef.current
-      if (!drag) return
-      const max = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, window.innerWidth - 360))
-      const next = Math.max(MIN_WIDTH, Math.min(max, drag.startWidth + (drag.startX - moveEvent.clientX)))
-      setWidth(next)
+  }
+
+  const resizeMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const drag = dragRef.current
+    if (!drag) return
+    const max = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, window.innerWidth - 360))
+    const next = Math.max(MIN_WIDTH, Math.min(max, drag.startWidth + (drag.startX - event.clientX)))
+    setWidth(next)
+  }
+
+  const endResize = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (!dragRef.current) return
+    dragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
     }
-    const stop = (): void => {
-      dragRef.current = null
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', stop)
-      setWidth((current) => {
-        try {
-          localStorage.setItem(WIDTH_KEY, String(Math.round(current)))
-        } catch {
-          // 宽度持久化只是便利功能。
-        }
-        return current
-      })
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', stop)
+    setWidth((current) => {
+      try {
+        localStorage.setItem(WIDTH_KEY, String(Math.round(current)))
+      } catch {
+        // 宽度持久化只是便利功能。
+      }
+      return current
+    })
   }
 
   return (
@@ -81,6 +87,9 @@ export function Inspector({ tab, onTab, onClose, children }: InspectorProps): Re
         aria-orientation="vertical"
         aria-label={t('调整侧栏宽度')}
         onPointerDown={startResize}
+        onPointerMove={resizeMove}
+        onPointerUp={endResize}
+        onPointerCancel={endResize}
       />
       <header className="inspector-head">
         <div className="inspector-tabs" role="tablist">

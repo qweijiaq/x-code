@@ -407,7 +407,19 @@ export class UnifiedShellSessionManager implements ShellSessionController {
           }),
         }
       }
-      if (!isCompositeTerminal(session)) await session.completion.promise
+      if (!isCompositeTerminal(session)) {
+        // 与观察循环同样的理由：root-exit 帧缺失时不能无界等待 completion。
+        const finalized = await this.waitForFinalize(session, request.turnAbortSignal)
+        if (!finalized) {
+          return {
+            kind: 'running',
+            result: await this.executionResult(session, session.unreadOutput.drain(), session.spawnMonotonicAt, {
+              waitInterrupted: true,
+              forceError: true,
+            }),
+          }
+        }
+      }
       return this.claimTerminalObservation(
         session,
         request.observerToolCallId,
@@ -988,7 +1000,25 @@ export class UnifiedShellSessionManager implements ShellSessionController {
           // 进程。只等 composite completion，就能让流 EOF 或有界的尾部输出
           // 宽限期结束，而不让一个永久已决议的唤醒源空转微任务队列。
           if (session.treeConfirmedExited) {
-            await session.completion.promise
+            // 但 root-exit 帧可能永远不到（帧丢失，或早于 activate 被丢弃），
+            // 而 isCompositeTerminal 还要求 rootExited 成立——无条件 await 会
+            // 永久挂在这里，且它持有 interactionLock，后续 interact/terminate
+            // 和 turn abort 都会被堵死。改成有界宽限 + abort 一起 race。
+            const finalized = await this.waitForFinalize(session, context.turnAbortSignal)
+            if (!finalized) {
+              this.exposeInitialNonTerminal(
+                session,
+                context,
+                context.turnAbortSignal?.aborted ? 'turn-abort' : 'deadline',
+              )
+              return {
+                kind: 'running',
+                result: await this.executionResult(session, session.unreadOutput.drain(), session.spawnMonotonicAt, {
+                  waitInterrupted: true,
+                  forceError: true,
+                }),
+              }
+            }
             continue
           }
 
@@ -1073,6 +1103,38 @@ export class UnifiedShellSessionManager implements ShellSessionController {
     })
     active.finished.resolve()
     if (session.activeInteraction === active) session.activeInteraction = undefined
+  }
+
+  /**
+   * 等待 composite completion，但绝不无界等待。
+   *
+   * 进程树已确认退出后，唯一还缺的是 root-exit 帧（provider 可能永远不发）。
+   * 这里用一次有界宽限（尾部输出宽限的若干倍）或 turn abort 兜底，返回
+   * `true` 表示 completion 已决议，`false` 表示超时/中止——调用方必须据此
+   * 返回非终态观察，而不是把 interactionLock 永久占住。
+   */
+  private async waitForFinalize(session: ShellSession, turnAbortSignal: AbortSignal | undefined): Promise<boolean> {
+    if (session.completion.settled) return true
+    if (turnAbortSignal?.aborted) return false
+    const graceMs = Math.max(250, this.trailingOutputGraceMs * 4)
+    return await new Promise<boolean>((resolve) => {
+      let done = false
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        turnAbortSignal?.removeEventListener('abort', onAbort)
+      }
+      const finish = (): void => {
+        if (done) return
+        done = true
+        cleanup()
+        resolve(session.completion.settled)
+      }
+      const timer = setTimeout(finish, graceMs)
+      timer.unref?.()
+      const onAbort = (): void => finish()
+      turnAbortSignal?.addEventListener('abort', onAbort, { once: true })
+      void session.completion.promise.then(finish, finish)
+    })
   }
 
   private exposeInitialNonTerminal(

@@ -469,8 +469,14 @@ async function pushSuccessfulToolResult(
       const effect = aggregatePostToolUse(decisions)
       if (effect.output !== undefined) effectiveOutput = effect.output
     } catch (err) {
-      if (ctx.options.abortSignal?.aborted) return
-      debugLog('agent.hook-post-tool-error', String(err))
+      // 绝不能在这里 `return`：`handleToolCall` 的外层 catch 看不到已被吞掉的异常，
+      // `processToolCalls` 也只会为「尚未分发」的调用补合成结果，于是这条 assistant
+      // tool_call 会变成孤儿，下一次请求撞上 tool_use without tool_result 400。
+      // 与 shell 分支保持一致：保留原始 output 继续落结果，只是不发 PostToolUse。
+      debugLog(
+        ctx.options.abortSignal?.aborted ? 'agent.hook-post-tool-aborted' : 'agent.hook-post-tool-error',
+        String(err),
+      )
     }
   }
   pushToolResult(
@@ -481,7 +487,7 @@ async function pushSuccessfulToolResult(
     effectiveOutput,
     isError,
     images,
-    !isManagedMemoryAccess(ctx.toolName, ctx.input, ctx.options.memoryService?.memoryRoot),
+    !isManagedMemoryAccess(ctx.toolName, ctx.input, ctx.options.memoryService?.memoryRoot, ctx.state.projectCwd),
   )
 }
 
@@ -560,7 +566,7 @@ function appendAndNotifyShellResult(
   appendTrackedMessage(ctx.state, toolResultMessage(ctx.toolCallId, ctx.toolName, output, undefined, isError))
   clearProgressReporter(ctx.toolCallId)
   lease?.ack()
-  if (!isManagedMemoryAccess(ctx.toolName, ctx.input, ctx.options.memoryService?.memoryRoot)) {
+  if (!isManagedMemoryAccess(ctx.toolName, ctx.input, ctx.options.memoryService?.memoryRoot, ctx.state.projectCwd)) {
     notifyShellResultNoThrow(ctx, output, isError)
   }
 }
@@ -825,7 +831,7 @@ async function checkToolPermission(ctx: HandlerCtx): Promise<boolean> {
 
   const isWriteOrShell = toolName === 'writeFile' || toolName === 'edit' || toolName === 'shell'
 
-  if (isWriteOrShell && isManagedMemoryMutation(toolName, input, options.memoryService?.memoryRoot)) {
+  if (isWriteOrShell && isManagedMemoryMutation(toolName, input, options.memoryService?.memoryRoot, state.projectCwd)) {
     pushToolResult(
       state,
       callbacks,
@@ -1098,18 +1104,7 @@ async function handleToolCall(
     control,
   }
 
-  // 把相对写入目标锚定到 projectCwd，让权限检查、checkpoint 快照与实际的 fs
-  // 写入都作用于同一文件。工具 schema 要求绝对路径，但没有任何东西强制它——
-  // 相对路径以前写的是 process.cwd()，而 beforeWrite 追踪的是
-  // path.resolve(projectCwd, filePath)，所以只要两者不同，/rewind 就捕获错文件。
-  if (
-    (ctx.toolName === 'writeFile' || ctx.toolName === 'edit') &&
-    typeof ctx.input.filePath === 'string' &&
-    ctx.input.filePath !== '' &&
-    !path.isAbsolute(ctx.input.filePath)
-  ) {
-    ctx.input = { ...ctx.input, filePath: path.resolve(ctx.state.projectCwd, ctx.input.filePath) }
-  }
+  anchorWriteTarget(ctx)
 
   if (!enforcePlanModeBoundary(ctx)) return
 
@@ -1152,6 +1147,16 @@ async function handleToolCall(
         }
         if (effect.args && typeof effect.args === 'object' && !Array.isArray(effect.args)) {
           ctx.input = effect.args as Record<string, unknown>
+          // 钩子可以改写 filePath。上面那两道关键校验（锚定到 projectCwd / plan 边界）
+          // 跑的是【改写前】的参数，normalizeEditInput 也不解析路径，因此必须在改写后
+          // 重跑一遍：否则相对路径会写到 process.cwd()（beforeWrite 追踪的是
+          // path.resolve(projectCwd, filePath)，正好是注释里说已修复的 /rewind 抓错
+          // 文件问题），而 plan 模式下还能把写入目标改到计划文件之外。shell 分支已示范
+          // 了同样的做法（钩子后重新 validateShellInput + canonicalCwdEquals 复核）。
+          if (ctx.toolName === 'writeFile' || ctx.toolName === 'edit') {
+            anchorWriteTarget(ctx)
+            if (!enforcePlanModeBoundary(ctx)) return
+          }
         }
       } catch (err) {
         if (ctx.options.abortSignal?.aborted) {
@@ -1289,6 +1294,19 @@ function sameResolvedPath(left: string, right: string): boolean {
   const a = path.normalize(resolvePhysicalPath(left))
   const b = path.normalize(resolvePhysicalPath(right))
   return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+}
+
+/** 把相对写入目标锚定到 projectCwd，让权限检查、checkpoint 快照与实际的 fs
+ *  写入都作用于同一文件。工具 schema 要求绝对路径，但没有任何东西强制它——
+ *  相对路径会写 `process.cwd()`，而 beforeWrite 追踪的是
+ *  `path.resolve(projectCwd, filePath)`，所以只要两者不同，/rewind 就捕获错文件。
+ *
+ *  必须是幂等且可重复调用的：PreToolUse 钩子改写参数之后要再跑一遍。 */
+function anchorWriteTarget(ctx: HandlerCtx): void {
+  if (ctx.toolName !== 'writeFile' && ctx.toolName !== 'edit') return
+  const filePath = ctx.input.filePath
+  if (typeof filePath !== 'string' || filePath === '' || path.isAbsolute(filePath)) return
+  ctx.input = { ...ctx.input, filePath: path.resolve(ctx.state.projectCwd, filePath) }
 }
 
 /** 针对过期历史、插件调用与直接分发器使用的纵深防御。工具可见性是 Plan 的

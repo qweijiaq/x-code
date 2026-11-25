@@ -49,6 +49,14 @@ export async function detectOfficeKindFromArchive(
       terminate()
       finish(abortSignal?.reason instanceof Error ? abortSignal.reason : new Error('Office validation aborted'))
     }
+    /** `filter` 里 `throw` 不会走 `(error, result) => finish(...)`：fflate 在同步
+     *  解析路径上调用 filter，异常会变成 uncaughtException，Promise 永不 settle，
+     *  解压也不会被 terminate() —— 上限防护实际失效。显式 settle 后再终止。 */
+    const limitExceeded = (message: string): false => {
+      finish(archiveLimitError(message))
+      terminate()
+      return false
+    }
     terminate = unzip(
       archive,
       {
@@ -57,14 +65,14 @@ export async function detectOfficeKindFromArchive(
         filter: (entry) => {
           entryCount++
           if (entryCount > MAX_OFFICE_ARCHIVE_ENTRIES) {
-            throw archiveLimitError('Office archive exceeds the safe entry-count limit')
+            return limitExceeded('Office archive exceeds the safe entry-count limit')
           }
           if (!Number.isSafeInteger(entry.originalSize) || entry.originalSize < 0) {
-            throw archiveLimitError('Office archive contains an invalid entry size')
+            return limitExceeded('Office archive contains an invalid entry size')
           }
           uncompressedBytes += entry.originalSize
           if (!Number.isSafeInteger(uncompressedBytes) || uncompressedBytes > MAX_OFFICE_UNCOMPRESSED_BYTES) {
-            throw archiveLimitError('Office archive exceeds the safe decompression limit')
+            return limitExceeded('Office archive exceeds the safe decompression limit')
           }
           const name = entry.name.replace(/^\/+/, '').toLowerCase()
           if (name === 'word/document.xml') detectedKinds.add('docx')

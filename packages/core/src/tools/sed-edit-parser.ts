@@ -6,8 +6,6 @@
 //
 // 只处理单文件、单表达式的替换。复杂管道、多文件 glob，以及非替换类的
 // sed 程序（d、y、a 等）都落到真实 shell 执行。
-import { randomBytes } from 'node:crypto'
-
 export type SedEditInfo = {
   filePath: string
   pattern: string
@@ -217,12 +215,99 @@ export function parseSedEditCommand(command: string): SedEditInfo | null {
   return { filePath, pattern, replacement, flags, extendedRegex }
 }
 
+/** sed RHS 的解析结果：字面量片段、反向引用（`\1`…`\9`）或整段匹配（`&`）。 */
+type SedReplacementPart = string | { group: number } | { whole: true }
+
+/** RHS 里反斜杠转义到真实字符的映射（GNU sed 语义）。 */
+const SED_REPLACEMENT_ESCAPES: Record<string, string> = {
+  n: '\n',
+  t: '\t',
+  r: '\r',
+  f: '\f',
+  v: '\v',
+  a: '\x07',
+  '\\': '\\',
+  '&': '&',
+  '/': '/',
+}
+
+/**
+ * 把 sed 的替换串解析成片段，交给函数式 replace 自己拼装结果。
+ *
+ * 直接把它当 JS 替换字符串用会有三处语义错位：`\1` 是 sed 的反向引用而 JS
+ * 里 `\` 只是字面量；`$&`/`` $` ``/`$'`/`$n` 在 JS 里是特殊序列而在 sed 里 `$`
+ * 是普通字符；`\n`/`\t` 在 GNU sed 的 RHS 里会产生真实换行/制表符。函数式
+ * 替换一次性绕开全部特殊序列。
+ */
+function parseSedReplacement(replacement: string): SedReplacementPart[] {
+  const parts: SedReplacementPart[] = []
+  let literal = ''
+  const flush = (): void => {
+    if (literal.length > 0) {
+      parts.push(literal)
+      literal = ''
+    }
+  }
+
+  let i = 0
+  while (i < replacement.length) {
+    const ch = replacement[i]!
+    if (ch === '\\') {
+      const next = replacement[i + 1]
+      if (next === undefined) {
+        literal += '\\'
+        i++
+        continue
+      }
+      if (next >= '1' && next <= '9') {
+        flush()
+        parts.push({ group: Number(next) })
+        i += 2
+        continue
+      }
+      // 无法识别的转义：GNU sed 直接丢掉反斜杠，保留字符本身。
+      literal += SED_REPLACEMENT_ESCAPES[next] ?? next
+      i += 2
+      continue
+    }
+    if (ch === '&') {
+      flush()
+      parts.push({ whole: true })
+      i++
+      continue
+    }
+    literal += ch
+    i++
+  }
+  flush()
+  return parts
+}
+
+/** 把解析好的 RHS 片段按一次匹配的捕获组重新拼成字符串。 */
+function buildSedReplacement(parts: SedReplacementPart[], match: string, groups: unknown[]): string {
+  let out = ''
+  for (const part of parts) {
+    if (typeof part === 'string') {
+      out += part
+    } else if ('whole' in part) {
+      out += match
+    } else {
+      const value = groups[part.group - 1]
+      out += typeof value === 'string' ? value : ''
+    }
+  }
+  return out
+}
+
 /** 在进程内对内容应用 sed s/…/…/flags 替换。 */
 export function applySedSubstitution(content: string, info: SedEditInfo): string {
+  // sed 是按行处理的：不带 g 时每一行各替换首个匹配，`^`/`$` 也是行首/行尾
+  // 锚点。用 String.replace 直接作用于全文只替换全文第一处，且 `^`/`$` 只匹配
+  // 整个字符串的首尾 —— `sed -i 's/^/\/\/ /' file` 只会给第一行加注释。因此
+  // 逐行应用，'m' 标志随之不再需要（每行内没有换行符）。
   let regexFlags = ''
   if (info.flags.includes('g')) regexFlags += 'g'
   if (info.flags.includes('i') || info.flags.includes('I')) regexFlags += 'i'
-  if (info.flags.includes('m') || info.flags.includes('M')) regexFlags += 'm'
 
   let jsPattern = info.pattern.replace(/\\\//g, '/')
 
@@ -247,16 +332,22 @@ export function applySedSubstitution(content: string, info: SedEditInfo): string
       .replace(new RegExp(PH_RPAREN, 'g'), ')')
   }
 
-  const salt = randomBytes(8).toString('hex')
-  const AMP_PH = `__ESC_AMP_${salt}__`
-  const jsReplacement = info.replacement
-    .replace(/\\\//g, '/')
-    .replace(/\\&/g, AMP_PH)
-    .replace(/&/g, '$$&')
-    .replace(new RegExp(AMP_PH, 'g'), '&')
+  const parts = parseSedReplacement(info.replacement)
 
   try {
-    return content.replace(new RegExp(jsPattern, regexFlags), jsReplacement)
+    const regex = new RegExp(jsPattern, regexFlags)
+    return content
+      .split('\n')
+      .map((line) =>
+        line.replace(regex, (...args: unknown[]) => {
+          const match = String(args[0])
+          // 回调尾部是 offset、string，以及（仅当正则含具名组时）groups 对象。
+          const hasNamedGroups = typeof args[args.length - 1] === 'object' && args[args.length - 1] !== null
+          const groupCount = args.length - 3 - (hasNamedGroups ? 1 : 0)
+          return buildSedReplacement(parts, match, args.slice(1, 1 + groupCount))
+        }),
+      )
+      .join('\n')
   } catch {
     return content
   }

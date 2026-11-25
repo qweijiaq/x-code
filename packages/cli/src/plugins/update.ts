@@ -24,6 +24,10 @@ export async function updateInstalledPlugin(
       source: record.source,
       marketplace: record.marketplace,
       expectedName: record.name,
+      // 沿用原记录的作用域：`installPlugin` 缺省为 `'user'` 并会覆盖注册表条目，
+      // 不传的话从一个 project 作用域安装的插件只要更新一次就会被静默改写成
+      // user 作用域，启用它的 settings.json 也随之错位（“更新后插件失效”）。
+      scope: record.installScope,
       ...(options.consent ? { consent: options.consent } : {}),
     })
     return result.manifest.version === record.version

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { MemoryPanelView, RequestMap, RequestMethod, RuntimeRequest, RuntimeResponse } from '../shared/protocol.js'
@@ -28,6 +28,8 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  /** openTopic 的请求序号：并发/乱序返回时只接受最后一次。 */
+  const openSeq = useRef(0)
 
   const applyPanel = (next: MemoryPanelView): void => {
     setPanel(next)
@@ -35,19 +37,38 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
 
   useEffect(() => {
     void (async () => {
-      const response = await request('memory:panel', {})
-      if (response.ok) setPanel(response.result as MemoryPanelView)
-      else setError(response.error.message)
+      try {
+        const response = await request('memory:panel', {})
+        if (response.ok) setPanel(response.result as MemoryPanelView)
+        else setError(response.error.message)
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
     })()
   }, [])
 
   const openTopic = async (id: string): Promise<void> => {
+    const seq = ++openSeq.current
     setSelected(id)
+    // 先清空草稿：否则旧主题正文会留在新主题的编辑器里，点保存就把 A 的
+    // 内容写进 B。
+    setDraft('')
     setDeleting(false)
     setError(null)
-    const response = await request('memory:topic', { id })
-    if (response.ok) setDraft((response.result as { content: string }).content)
-    else setError(response.error.message)
+    // 请求期间禁用保存/删除：草稿已清空，此时保存会把空内容写进新主题。
+    setBusy('topic')
+    try {
+      const response = await request('memory:topic', { id })
+      // 丢弃过期响应（用户又点了别的主题）。
+      if (seq !== openSeq.current) return
+      if (response.ok) setDraft((response.result as { content: string }).content)
+      else setError(response.error.message)
+    } catch (cause) {
+      if (seq !== openSeq.current) return
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      if (seq === openSeq.current) setBusy(null)
+    }
   }
 
   const save = async (): Promise<void> => {
@@ -63,6 +84,8 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
       }
       applyPanel(response.result as MemoryPanelView)
       onNotice(t('已保存记忆主题 {{id}}。', { id: selected }))
+    } catch (cause) {
+      setError(t('保存记忆主题失败：{{message}}', { message: cause instanceof Error ? cause.message : String(cause) }))
     } finally {
       setBusy(null)
     }
@@ -83,6 +106,8 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
       setDraft('')
       setDeleting(false)
       onNotice(t('已删除记忆主题。'))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(null)
     }
@@ -99,6 +124,8 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
       }
       applyPanel(response.result as MemoryPanelView)
       onNotice(t('已重新加载记忆。'))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(null)
     }

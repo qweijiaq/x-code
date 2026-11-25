@@ -471,10 +471,12 @@ async function fetchHttpJson(url: string, signal?: AbortSignal): Promise<string>
  *  规范 `.claude-plugin/marketplace.json`，对非标准布局回退到根级
  *  `marketplace.json`。无论成功与否，返回前都会删除该克隆。 */
 async function fetchViaShallowClone(source: string, signal?: AbortSignal): Promise<string> {
-  const cloneUrl = resolveCloneUrl(source)
+  // 订阅字符串由用户/远端市场控制：先过白名单，再用 `--` 终止选项解析，
+  // 否则 `ext::sh -c …` 或 `--upload-pack=…` 会直接变成命令执行。
+  const cloneUrl = assertSafeCloneUrl(resolveCloneUrl(source))
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'xc-marketplace-'))
   try {
-    await execa('git', ['clone', '--depth', '1', cloneUrl, tempDir], { signal, stdio: 'pipe' })
+    await execa('git', ['clone', '--depth', '1', '--', cloneUrl, tempDir], { signal, stdio: 'pipe' })
     const candidates = [
       path.join(tempDir, '.claude-plugin', 'marketplace.json'),
       path.join(tempDir, 'marketplace.json'),
@@ -498,13 +500,81 @@ async function fetchViaShallowClone(source: string, signal?: AbortSignal): Promi
 
 /** 把来源字符串转成 `git clone` 能理解的形式：
  *  `github:owner/repo` → `https://github.com/owner/repo.git`。其它形式
- *  原样透传（真实 git URL、ssh: 等）。 */
+ *  原样透传（真实 git URL、ssh: 等）。
+ *
+ *  **不做安全校验**——交给 `git clone` 之前必须先过 {@link assertSafeCloneUrl}。 */
 export function resolveCloneUrl(source: string): string {
   const m = source.match(/^github:([^/]+)\/(.+?)(?:\.git)?$/i)
   if (m) {
     return `https://github.com/${m[1]}/${m[2]}.git`
   }
   return source
+}
+
+// ── git 参数白名单 ────────────────────────────────────────────────────
+//
+// 市场订阅字符串（`known_marketplaces.json`）、远端 marketplace.json 里的
+// `source` 字段都由外部控制，最终会作为位置参数进入 `git clone`。`git` 的
+// URL 语法远比"一个网址"宽松，直接透传会打开两个洞：
+//
+//   1. **传输扩展**：`ext::sh -c '...'` 会让 git 通过 shell 执行任意命令，
+//      `fd::` / `/dev/stdin` 之类的伪协议同样会被接受。
+//   2. **选项注入**：以 `-` 开头的值（`--upload-pack=...`、`-b`）会被 git
+//      当作命令行选项解析——所以调用方在位置参数前必须加 `--` 终止符。
+//
+// 这里用白名单而不是黑名单：只放行真实世界里存在的仓库来源形式。
+
+/** `git clone` 接受的来源形式。本地绝对路径（POSIX / Windows 盘符 / UNC）
+ *  也放行——测试与离线安装依赖 `git clone /path`。 */
+const SAFE_CLONE_URL_PATTERNS: ReadonlyArray<RegExp> = [
+  /^https?:\/\//i,
+  /^ssh:\/\//i,
+  /^git:\/\//i,
+  /^git\+ssh:\/\//i,
+  /^git@[A-Za-z0-9._-]+:/,
+  /^file:\/\//i,
+  /^\//,
+  /^[A-Za-z]:[\\/]/,
+  /^\\\\/,
+]
+
+/** git 的传输扩展语法（`ext::sh -c …`、`fd::3`）：scheme 后面跟 `::` 而不是
+ *  `://`，被 `ext::` 命中时 git 会直接起一个 shell。 */
+const GIT_TRANSPORT_EXTENSION = /^[A-Za-z][A-Za-z0-9+.-]*::/
+
+/** 校验一个即将交给 `git clone` 的来源字符串，返回原值（便于内联使用）。
+ *  不合法时抛错——绝不"清洗后继续"，因为被清洗的字符串可能指向另一个仓库。 */
+export function assertSafeCloneUrl(url: string): string {
+  const candidate = url.trim()
+  if (candidate.length === 0) {
+    throw new Error('refusing to clone an empty source URL')
+  }
+  if (candidate !== url) {
+    throw new Error(`unsupported clone URL (leading/trailing whitespace): ${JSON.stringify(url)}`)
+  }
+  // 控制字符/空白：要么是注入尝试，要么本身就不是合法 URL。
+  if (/[\u0000-\u001f\u007f\s]/.test(candidate)) {
+    throw new Error(`unsupported clone URL (whitespace or control characters): ${JSON.stringify(url)}`)
+  }
+  if (GIT_TRANSPORT_EXTENSION.test(candidate)) {
+    throw new Error(`refusing to clone via git transport extension: ${candidate}`)
+  }
+  if (candidate.startsWith('-')) {
+    throw new Error(`refusing to clone a source that looks like a git option: ${candidate}`)
+  }
+  if (!SAFE_CLONE_URL_PATTERNS.some((pattern) => pattern.test(candidate))) {
+    throw new Error(`unsupported clone URL scheme: ${candidate} (only https/http/ssh/git/file URLs and local paths)`)
+  }
+  return candidate
+}
+
+/** 校验 `git clone --branch <ref>` 的 ref。分支名/tag 名/sha 只允许
+ *  `[A-Za-z0-9._/-]`，且不得以 `-` 开头（否则会被当成选项）。 */
+export function assertSafeGitRef(ref: string): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref) || ref.includes('..')) {
+    throw new Error(`unsupported git ref: ${JSON.stringify(ref)}`)
+  }
+  return ref
 }
 
 // ── 查找辅助函数 ──────────────────────────────────────────────────────
@@ -538,10 +608,15 @@ export async function lookupPlugin(
 
   const km = await readKnownMarketplaces()
   const known = km.marketplaces.find((m) => m.name === marketplaceName)
+  // 只解析"当前已订阅"的市场：缓存目录可能在 `marketplace remove` 之后仍留在
+  // 磁盘上，若只按目录存在性解析，`plugin install name@已退订市场` 会继续成功，
+  // `strictKnownMarketplaces` / `blockedPlugins` 也会被这条路径整体绕开。
+  if (!known) return undefined
+  if (km.blockedPlugins?.includes(pluginId) || km.blockedPlugins?.includes(pluginName)) return undefined
 
   try {
     const raw = await fs.readFile(marketplaceIndexPath(marketplaceName), 'utf-8')
-    const m = parseMarketplace(raw, marketplaceName, known ? contextForKnownEntry(known) : {})
+    const m = parseMarketplace(raw, marketplaceName, contextForKnownEntry(known))
     const entry = m.plugins.find((p) => p.name === pluginName)
     if (!entry) return undefined
     return { marketplace: m, entry }

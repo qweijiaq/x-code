@@ -300,8 +300,17 @@ export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Recor
     const { input, toolCallId, toolName, state, options, callbacks } = context
     const taskId = typeof input.taskId === 'string' ? input.taskId.trim() : ''
     const block = input.block === true
-    const timeoutMs = Math.min(300_000, Math.max(0, Number(input.timeoutMs ?? 30_000)))
-    const maxChars = Math.min(20_000, Math.max(100, Number(input.maxChars ?? 4_000)))
+    // Number(...) 对非法输入返回 NaN，而 Math.min/Math.max 会把这个 NaN 一路传下去：
+    // NaN 的超时让 waitForShell 的 deadline 恒不成立（block 变成无限轮询），
+    // NaN 的 maxChars 让尾部输出完全不截断。与 handleToolSearch 一致地先校验有限性。
+    const requestedTimeout = Number(input.timeoutMs)
+    const timeoutMs = Number.isFinite(requestedTimeout)
+      ? Math.min(300_000, Math.max(0, Math.floor(requestedTimeout)))
+      : 30_000
+    const requestedMaxChars = Number(input.maxChars)
+    const maxChars = Number.isFinite(requestedMaxChars)
+      ? Math.min(20_000, Math.max(100, Math.floor(requestedMaxChars)))
+      : 4_000
     let items = await collectBackgroundInfo(context)
     let item = items.find((entry) => entry.id === taskId)
     if (!item) {

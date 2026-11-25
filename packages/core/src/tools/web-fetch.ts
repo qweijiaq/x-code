@@ -161,6 +161,25 @@ function createValidatedLookup(allowHttpsFakeIp: boolean) {
 const strictAgent = new Agent({ connect: { lookup: createValidatedLookup(false) as never } })
 const httpsFakeIpAgent = new Agent({ connect: { lookup: createValidatedLookup(true) as never } })
 
+/**
+ * 默认抓取路径：所有请求都走带校验 lookup 的 dispatcher。
+ *
+ * 之前只有 fake-IP 兜底分支传了 dispatcher，正常抓取用的是 undici 的全局
+ * dispatcher（仓库里也没有 setGlobalDispatcher 调用），于是
+ * `createValidatedLookup` / `validateResolvedAddress` 在真实请求里是死代码：
+ * `validateFetchUrl` 只挡得住 IP 字面量和 localhost/.local 之类的主机名，
+ * 而“域名解析到内网/元数据地址”（DNS 重绑定、`evil.com -> 127.0.0.1`、
+ * `169.254.169.254`、`100.100.100.200`）完全不会被检查。
+ */
+const strictFetch: typeof fetch = async (input, init) =>
+  undiciFetch(
+    input as Parameters<typeof undiciFetch>[0],
+    {
+      ...init,
+      dispatcher: strictAgent,
+    } as Parameters<typeof undiciFetch>[1],
+  ) as unknown as Promise<Response>
+
 const fakeIpCompatibleFetch: typeof fetch = async (input, init) => {
   const url = input instanceof Request ? new URL(input.url) : new URL(String(input))
   const dispatcher = url.protocol === 'https:' ? httpsFakeIpAgent : strictAgent
@@ -240,8 +259,9 @@ export async function doFetch(
   if (customFetch) return fetchWithValidatedRedirects({ ...request, fetch: customFetch })
 
   try {
-    return await fetchWithValidatedRedirects(request)
+    return await fetchWithValidatedRedirects({ ...request, fetch: strictFetch })
   } catch (error) {
+    // 只有检测到 fake-IP 分流（Clash/Mihomo）时才放宽到 198.18.0.0/15。
     if (!isFakeIpDnsRejection(error)) throw error
     return fetchWithValidatedRedirects({ ...request, fetch: fakeIpCompatibleFetch })
   }

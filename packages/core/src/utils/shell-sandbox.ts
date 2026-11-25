@@ -53,7 +53,13 @@ function sbplString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
-function sensitivePaths(): string[] {
+/** 凭据位置。`xcodeRoot` 必须与 {@link userXcodeDir} 一致
+ *  （`${X_CODE_HOME ?? ~/.x-code}`）：硬编码 `home/.x-code` 会让设置了
+ *  `X_CODE_HOME` 的部署把**真正的**凭据目录（`desktop-secrets.json`、
+ *  `plugins/user-config.json`、`.env`、`config.json`、`settings.json`、
+ *  `auth/`、`mcp.json`）留在沙箱内命令可读的位置上，与“除凭据位置外处处
+ *  允许读取”的设计意图相反。整根拒绝，再单独放行不含凭据的 skill-runtime。 */
+function sensitivePaths(xcodeRoot: string): string[] {
   const home = os.homedir()
   return [
     path.join(home, '.ssh'),
@@ -65,8 +71,7 @@ function sensitivePaths(): string[] {
     path.join(home, '.npmrc'),
     path.join(home, '.pypirc'),
     path.join(home, 'Library', 'Keychains'),
-    path.join(home, '.x-code', 'desktop-secrets.json'),
-    path.join(home, '.x-code', 'plugins', 'user-config.json'),
+    xcodeRoot,
   ]
 }
 
@@ -75,6 +80,7 @@ function sensitivePaths(): string[] {
 export function sandboxProfileText(config: ShellSandboxConfig = current): string {
   const workspace = path.resolve(config.workspace)
   const temp = os.tmpdir()
+  // 与 userXcodeDir() 一致：凭据实际落在 ${X_CODE_HOME ?? ~/.x-code} 下。
   const xcodeRoot = process.env.X_CODE_HOME?.trim() || path.join(os.homedir(), '.x-code')
   const skillRuntime = path.join(xcodeRoot, 'skill-runtime')
   const lines = ['(version 1)', '(allow default)']
@@ -96,8 +102,12 @@ export function sandboxProfileText(config: ShellSandboxConfig = current): string
     '  (literal "/dev/stderr")',
     '  (literal "/dev/dtracehelper"))',
     '(deny file-read* file-write*',
-    ...sensitivePaths().map((entry) => `  (subpath ${sbplString(entry)})`),
+    ...sensitivePaths(xcodeRoot).map((entry) => `  (subpath ${sbplString(entry)})`),
     ')',
+    // 凭据整根拒绝之后，重新放行 skill-runtime（沙箱写入白名单在上方，会被
+    // 上面的 deny 覆盖）。技能脚本需要在这里读写依赖，而它不含任何凭据。
+    '(allow file-read* file-write*',
+    `  (subpath ${sbplString(skillRuntime)}))`,
   )
   return lines.join('\n')
 }

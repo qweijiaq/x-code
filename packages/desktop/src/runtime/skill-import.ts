@@ -12,10 +12,12 @@ function frontmatterName(raw: string): string | null {
 }
 
 function slugify(name: string): string {
+  // 先截断再去首尾分隔符，避免 64 字符边界留下尾部 '-'；点号必须一并剥离，
+  // 否则 '.' / '..' 会让 path.join 越出 skills 根目录。
   const slug = name
     .replace(/[^\p{L}\p{N}._-]+/gu, '-')
-    .replace(/^-+|-+$/g, '')
     .slice(0, 64)
+    .replace(/^[.-]+|[.-]+$/g, '')
   return slug || 'skill'
 }
 

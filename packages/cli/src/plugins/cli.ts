@@ -444,11 +444,24 @@ async function cliToggle(args: string[], enable: boolean): Promise<number> {
   // 的形式。默认 scope = 'user'。
   let scope: PluginScope = 'user'
   const positional: string[] = []
+  const action = enable ? 'enable' : 'disable'
   for (const a of args) {
-    const m = a.match(/^(?:--scope|-s)(?:=(.+))?$/)
+    // 只承认 `--scope=<value>`：带空格的形式（`--scope project`）在这里没法安全
+    // 处理——上面的正则过去会把裸 `--scope` 整词吃掉，`project` 于是作为位置参数
+    // 被丢弃，scope 静默回落成 user，用户的启停被写进错误的 settings.json。
+    if (a === '--scope' || a === '-s') {
+      console.error(`xc plugin ${action}: ${a} requires a value (use ${a}=user|project).`)
+      return 1
+    }
+    const m = a.match(/^(?:--scope|-s)=(.*)$/)
     if (m) {
-      const v = m[1]?.toLowerCase()
-      if (v === 'user' || v === 'project') scope = v
+      const v = m[1]!.trim().toLowerCase()
+      // 非法值不再按 user 执行——那会静默写错作用域，输出却声称成功。
+      if (v !== 'user' && v !== 'project') {
+        console.error(`xc plugin ${action}: invalid scope '${m[1]}' (expected user|project).`)
+        return 1
+      }
+      scope = v
       continue
     }
     positional.push(a)

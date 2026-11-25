@@ -107,11 +107,17 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const response = await request('goal:state', {})
-      if (cancelled) return
-      if (response.ok) onGoal(response.result as GoalView | null)
-      else setError(response.error.message)
-      setLoading(false)
+      try {
+        const response = await request('goal:state', {})
+        if (cancelled) return
+        if (response.ok) onGoal(response.result as GoalView | null)
+        else setError(response.error.message)
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
+      } finally {
+        // 没有 finally 时 IPC reject 会让面板永久停在骨架屏上。
+        if (!cancelled) setLoading(false)
+      }
     })()
     return () => {
       cancelled = true
@@ -190,6 +196,10 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
       const next = response.result as GoalView | null
       onGoal(next)
       return next
+    } catch (cause) {
+      // 调用点统一是 void run(...)，reject 会被静默丢弃（按钮转一下又变回可用）。
+      setError(cause instanceof Error ? cause.message : String(cause))
+      return undefined
     } finally {
       setBusy(false)
     }

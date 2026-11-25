@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { fileExists } from '../../utils.js'
+import { errorMessage, fileExists } from '../../utils.js'
 import { atomicWriteFile, syncDirectory } from '../../utils/atomic-file.js'
 import { acquireFileLock } from '../../utils/file-lock.js'
 import type { MemoryChange, MemorySchemaFile, MemoryTransactionManifest } from './types.js'
@@ -164,6 +164,16 @@ export class MemoryTransactionStore {
     await atomicWriteFile(path.join(transactionDir, 'MEMORY.md'), input.memoryContent)
     await atomicWriteFile(path.join(transactionDir, 'change.json'), JSON.stringify(change, null, 2) + '\n')
     await syncDirectory(transactionDir)
+    // COMMIT 落盘之前先校验：一旦标记了 COMMIT，这个目录就进入"已提交、必须
+    // 能应用"的状态，此时再发现 target/staged 非法只会让每次
+    // `withWriterLock()` 都重试并重复抛错，把整个内存库锁死。在这里失败可以
+    // 直接删掉目录干净回滚。
+    try {
+      this.validateTransaction(transactionDir, manifest, change)
+    } catch (error) {
+      await fs.rm(transactionDir, { recursive: true, force: true }).catch(() => {})
+      throw error
+    }
     await atomicWriteFile(path.join(transactionDir, 'COMMIT'), '')
     await this.applyCommittedTransaction(transactionDir, manifest, change)
     return targetGeneration
@@ -171,6 +181,7 @@ export class MemoryTransactionStore {
 
   private async recoverCommittedTransactionsLocked(): Promise<void> {
     const entries = await fs.readdir(this.transactionsDir, { withFileTypes: true }).catch(() => [])
+    const failures: string[] = []
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       if (!entry.isDirectory()) continue
       const dir = path.join(this.transactionsDir, entry.name)
@@ -184,11 +195,24 @@ export class MemoryTransactionStore {
         await fs.rm(dir, { recursive: true, force: true })
         continue
       }
-      const manifest = JSON.parse(
-        await fs.readFile(path.join(dir, 'manifest.json'), 'utf-8'),
-      ) as MemoryTransactionManifest
-      const change = JSON.parse(await fs.readFile(path.join(dir, 'change.json'), 'utf-8')) as MemoryChange
-      await this.applyCommittedTransaction(dir, manifest, change)
+      try {
+        const manifest = JSON.parse(
+          await fs.readFile(path.join(dir, 'manifest.json'), 'utf-8'),
+        ) as MemoryTransactionManifest
+        const change = JSON.parse(await fs.readFile(path.join(dir, 'change.json'), 'utf-8')) as MemoryChange
+        await this.applyCommittedTransaction(dir, manifest, change)
+      } catch (error) {
+        // 单个坏事务不能把全部读写打挂：本方法在每次 `withWriterLock()` 里都会
+        // 先跑一遍，一个永远无法应用的事务会让之后所有 commit/read 都失败。
+        // 把它移进隔离区后继续处理剩余事务，最后聚合上报一次。
+        failures.push(`${entry.name}: ${errorMessage(error)}`)
+        const quarantine = path.join(this.stateRoot, 'transactions-quarantine', entry.name)
+        await fs.mkdir(path.dirname(quarantine), { recursive: true })
+        await fs.rename(dir, quarantine).catch(() => {})
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(`Quarantined unappliable memory transactions: ${failures.join('; ')}`)
     }
   }
 

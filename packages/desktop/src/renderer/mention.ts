@@ -16,6 +16,22 @@ function isWhitespace(ch: string): boolean {
   return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r'
 }
 
+/** 与扫描规则保持一致的反转义：`\\` 与 `\<quote>` 还原成一个字符。 */
+function unescapeQuoted(raw: string, quote: string): string {
+  let out = ''
+  for (let index = 0; index < raw.length; index++) {
+    const ch = raw[index] ?? ''
+    const next = raw[index + 1]
+    if (ch === '\\' && (next === quote || next === '\\')) {
+      out += next
+      index++
+      continue
+    }
+    out += ch
+  }
+  return out
+}
+
 export function detectMention(text: string, cursor: number): MentionTrigger | null {
   if (cursor < 0 || cursor > text.length) return null
   let atIdx = text.lastIndexOf('@', Math.max(0, cursor - 1))
@@ -26,20 +42,32 @@ export function detectMention(text: string, cursor: number): MentionTrigger | nu
     }
     const quote = text[atIdx + 1]
     if (quote === '"' || quote === "'") {
+      // 只在当前行内寻找闭引号：未闭合的 token 不应跨越换行，否则 tokenEnd
+      // 会跳到后面任意一个同种引号处，调用方按 tokenEnd 替换文本时会吞掉
+      // 用户已经输入的内容。
       let closingQuote = -1
+      let lineEnd = text.length
+      // 连续反斜杠为偶数 ⇒ 该引号未被转义（`@"dir\\"` 的闭引号仍然有效）。
+      let backslashes = 0
       for (let index = atIdx + 2; index < text.length; index++) {
-        if (text[index] === quote && text[index - 1] !== '\\') {
+        const ch = text[index] ?? ''
+        if (ch === '\n' || ch === '\r') {
+          lineEnd = index
+          break
+        }
+        if (ch === quote && backslashes % 2 === 0) {
           closingQuote = index
           break
         }
+        backslashes = ch === '\\' ? backslashes + 1 : 0
       }
       const contentStart = atIdx + 2
-      const contentEnd = closingQuote >= 0 ? closingQuote : text.length
-      const tokenEnd = closingQuote >= 0 ? closingQuote + 1 : text.length
+      const contentEnd = closingQuote >= 0 ? closingQuote : lineEnd
+      const tokenEnd = closingQuote >= 0 ? closingQuote + 1 : contentEnd
       if (cursor >= contentStart && cursor <= tokenEnd) {
         return {
           atIdx,
-          query: text.slice(contentStart, Math.min(cursor, contentEnd)).split(`\\${quote}`).join(quote),
+          query: unescapeQuoted(text.slice(contentStart, Math.min(cursor, contentEnd)), quote),
           tokenEnd,
         }
       }

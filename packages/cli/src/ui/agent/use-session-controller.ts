@@ -186,32 +186,40 @@ export function useSessionController({
       const transition = await beginSessionTransition('clear')
       if (!transition.ok) return transition
       const { lease, previous } = transition
-      const nextState = createLoopState(permissionModeRef.current, {
-        projectCwd: previous?.projectCwd ?? process.cwd(),
-      })
-      loopStateRef.current = nextState
-      bindShellSessionEvents(nextState)
-      pendingToolsRef.current.clear()
-      permissionResolversRef.current = []
-      pendingQuestionRef.current = null
-      queuedMessagesRef.current = []
-      resetBuffer()
-      setState((previousState) => ({
-        ...initialAgentState,
-        modelId: previousState.modelId,
-        permissionMode: previousState.permissionMode,
-        messages: [
-          {
-            id: `cmd-${Date.now()}`,
-            role: 'user',
-            content: commandText,
-            timestamp: Date.now(),
-            kind: 'command-echo',
-          },
-        ],
-      }))
-      lease.release()
-      return { ok: true as const }
+      // 租约必须在 `finally` 里释放：下面的 `createLoopState` /
+      // `bindShellSessionEvents` / `setState` updater 任何一步抛错，`'clear'` 租约
+      // 就会永久挂住。`createTurnCoordinator` 只有在 `release()` 后才把 `active`
+      // 置空，所以此后所有 `tryAcquire` 都返回 null——提交、`/fork`、`/rewind`、
+      // `/clear` 全部卡在 “another turn is active”，用户只能重启进程才能恢复。
+      try {
+        const nextState = createLoopState(permissionModeRef.current, {
+          projectCwd: previous?.projectCwd ?? process.cwd(),
+        })
+        loopStateRef.current = nextState
+        bindShellSessionEvents(nextState)
+        pendingToolsRef.current.clear()
+        permissionResolversRef.current = []
+        pendingQuestionRef.current = null
+        queuedMessagesRef.current = []
+        resetBuffer()
+        setState((previousState) => ({
+          ...initialAgentState,
+          modelId: previousState.modelId,
+          permissionMode: previousState.permissionMode,
+          messages: [
+            {
+              id: `cmd-${Date.now()}`,
+              role: 'user',
+              content: commandText,
+              timestamp: Date.now(),
+              kind: 'command-echo',
+            },
+          ],
+        }))
+        return { ok: true as const }
+      } finally {
+        lease.release()
+      }
     },
     [
       beginSessionTransition,
@@ -232,33 +240,49 @@ export function useSessionController({
       const transition = await beginSessionTransition('resume')
       if (!transition.ok) return transition
       const { lease, previous } = transition
-      pendingToolsRef.current.clear()
-      queuedMessagesRef.current = []
-      resetBuffer()
-      loopStateRef.current = hydrateLoopState(loaded, permissionModeRef.current, previous?.projectCwd ?? process.cwd())
-      bindShellSessionEvents(loopStateRef.current)
-      const converted = modelMessagesToDisplay(loaded.messages)
-      setState((previousState) => ({
-        ...previousState,
-        activeToolCalls: [],
-        shellOutput: '',
-        error: null,
-        reconnectLabel: null,
-        todos: [],
-        queuedMessages: [],
-        restoredDraft: null,
-        // 恢复会话是“切换”而不是“追加”：旧 transcript 继续留在滚动区会
-        // 让用户误以为没有切换。ChatInput 已能处理 messages 变短的情况。
-        messages: converted,
-        usage: { ...loaded.tokenUsage },
-        usageBreakdown: loaded.usageBreakdown ? cloneUsageBreakdown(loaded.usageBreakdown) : createUsageBreakdown(),
-        cacheMissSummary: cloneCacheMissSummary(loaded.cacheMissSummary ?? scanCacheMisses(loaded.providerTurns ?? [])),
-        stepStats: loaded.stepStats.slice(),
-        goalStatus: loaded.goal ? { ...loaded.goal } : null,
-        peerInfluenced: loaded.contextSecurity.peerInfluenceActive,
-      }))
-      lease.release()
-      return { ok: true as const }
+      // 同 `clear`：`hydrateLoopState` / `modelMessagesToDisplay` 一旦抛错（会话文件
+      // 字段残缺、消息结构不符预期），租约不释放就会让 `'resume'` 永久占用协调器。
+      // 更糟的是此时 `beginSessionTransition` 已经把旧会话的 shell 全部销毁，而
+      // `loopStateRef.current` 仍指向 shell 已死的旧 state——会话处于半切换的损坏
+      // 状态。所以这里既要在 `finally` 释放租约，也要把异常转成面向用户的 reason。
+      try {
+        pendingToolsRef.current.clear()
+        queuedMessagesRef.current = []
+        resetBuffer()
+        loopStateRef.current = hydrateLoopState(
+          loaded,
+          permissionModeRef.current,
+          previous?.projectCwd ?? process.cwd(),
+        )
+        bindShellSessionEvents(loopStateRef.current)
+        const converted = modelMessagesToDisplay(loaded.messages)
+        setState((previousState) => ({
+          ...previousState,
+          activeToolCalls: [],
+          shellOutput: '',
+          error: null,
+          reconnectLabel: null,
+          todos: [],
+          queuedMessages: [],
+          restoredDraft: null,
+          // 恢复会话是“切换”而不是“追加”：旧 transcript 继续留在滚动区会
+          // 让用户误以为没有切换。ChatInput 已能处理 messages 变短的情况。
+          messages: converted,
+          usage: { ...loaded.tokenUsage },
+          usageBreakdown: loaded.usageBreakdown ? cloneUsageBreakdown(loaded.usageBreakdown) : createUsageBreakdown(),
+          cacheMissSummary: cloneCacheMissSummary(
+            loaded.cacheMissSummary ?? scanCacheMisses(loaded.providerTurns ?? []),
+          ),
+          stepStats: loaded.stepStats.slice(),
+          goalStatus: loaded.goal ? { ...loaded.goal } : null,
+          peerInfluenced: loaded.contextSecurity.peerInfluenceActive,
+        }))
+        return { ok: true as const }
+      } catch (error) {
+        return { ok: false as const, reason: errorMessage(error) }
+      } finally {
+        lease.release()
+      }
     },
     [
       beginSessionTransition,

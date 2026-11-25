@@ -8,6 +8,26 @@ import { hideBin } from 'yargs/helpers'
 
 import { VERSION } from './version.js'
 
+/** `--max-turns` / `--max-tokens` / `--max-cost` 的取值校验。
+ *
+ *  `type: 'number'` 只做 `Number()` 转换：`--max-turns abc` 得到 `NaN`，`0` 和
+ *  负数也照收。这些值原样透传到 `AgentOptions.maxTurns` / budget，而 core 的
+ *  循环条件是 `options.maxTurns === undefined || turn < options.maxTurns`——
+ *  `turn < NaN` 恒为 false，于是 `--print --max-turns abc` 会让 agent 循环一次都
+ *  不执行、静默产出空结果；NaN / 负数预算则恒不触发，用户以为已生效的上限形同
+ *  虚设（无人值守的 print 模式下尤其危险）。
+ *
+ *  yargs 会把这里抛出的错误当作校验失败：打印消息并以非零码退出。 */
+function positiveNumber(flag: string): (value: number | undefined) => number | undefined {
+  return (value) => {
+    if (value === undefined) return value
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error(`--${flag} requires a positive number (got ${String(value)})`)
+    }
+    return value
+  }
+}
+
 export async function parseCliArgs(args: string[] = hideBin(process.argv)) {
   return yargs(args)
     .scriptName('x-code')
@@ -125,6 +145,11 @@ export async function parseCliArgs(args: string[] = hideBin(process.argv)) {
     .alias('v', 'version')
     .help()
     .alias('h', 'help')
+    .coerce({
+      'max-turns': positiveNumber('max-turns'),
+      'max-tokens': positiveNumber('max-tokens'),
+      'max-cost': positiveNumber('max-cost'),
+    })
     .epilogue(
       '  xc watch [paths...] --on-change "<prompt>"   Re-run the agent when files change\n' +
         '  xc trace [--last N] [--json]   Show recent local turn traces\n' +

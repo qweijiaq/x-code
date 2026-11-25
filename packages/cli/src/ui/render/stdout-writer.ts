@@ -44,8 +44,12 @@ export type InkWrite = (data: string) => void
  * （…）作为截断标记——单单元格，看起来比三个点更紧凑，与 CC 的截断预览一致。
  */
 function truncatePreview(s: string, maxLen: number): string {
-  if (maxLen < 4 || s.length <= maxLen) return s
-  return s.slice(0, maxLen - 1) + GLYPH_ELLIPSIS
+  // 按视觉宽度而不是 UTF-16 码元数截断：CJK 每个字符占 2 个单元格，用 `s.length`
+  // 会把预算放大近一倍（maxLen=116 时输出 115 个汉字 = 230 单元格），触发终端
+  // 自动折行——正是本文件开头声明要规避的「行数回卷 / 符号被拼接」。
+  // `sliceByWidth` 同时保证不会把代理对（emoji）从中间切断。
+  if (maxLen < 4 || visualWidth(s) <= maxLen) return s
+  return sliceByWidth(s, maxLen - 1) + GLYPH_ELLIPSIS
 }
 
 function formatToolCall(tc: DisplayToolCall): string {

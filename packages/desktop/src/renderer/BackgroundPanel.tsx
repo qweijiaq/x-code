@@ -74,18 +74,28 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
   const [stopping, setStopping] = useState<string | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
-    const response = await request('background:list', {})
-    if (response.ok) {
-      const result = response.result as { sessions: BackgroundShellView[]; tasks?: BackgroundTaskView[] }
-      setSessions(result.sessions)
-      setTasks(result.tasks ?? [])
-      setError(null)
-    } else {
-      setError(response.error.message)
-    }
-    const sharedResponse = await request('background:shared', {})
-    if (sharedResponse.ok) {
-      setShared((sharedResponse.result as { items?: SharedBackgroundItem[] }).items ?? [])
+    // 两个请求互不依赖：并行发起，避免 2s 轮询的耗时翻倍；整体 try/catch
+    // 兜住 IPC reject（否则每 2s 产生一个 unhandled rejection，界面卡在旧列表）。
+    try {
+      const [response, sharedResponse] = await Promise.all([
+        request('background:list', {}),
+        request('background:shared', {}),
+      ])
+      if (response.ok) {
+        const result = response.result as { sessions: BackgroundShellView[]; tasks?: BackgroundTaskView[] }
+        setSessions(result.sessions)
+        setTasks(result.tasks ?? [])
+        setError(null)
+      } else {
+        setError(response.error.message)
+      }
+      if (sharedResponse.ok) {
+        setShared((sharedResponse.result as { items?: SharedBackgroundItem[] }).items ?? [])
+      } else {
+        setError(sharedResponse.error.message)
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     }
   }, [])
 
@@ -101,25 +111,32 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
     }
   }, [refresh])
 
-  const stop = async (shellId: string): Promise<void> => {
-    setStopping(shellId)
+  /** 停止类请求：外层 ok 与内层 result.ok 都要检查，否则用户点“停止”后
+   *  毫无反馈（任务照旧运行）。错误在 refresh 之后落 state，避免被
+   *  refresh 的成功分支清掉。 */
+  const stopRequest = async (
+    id: string,
+    method: 'background:stop' | 'background:stop-task',
+    params: RequestMap[typeof method]['params'],
+  ): Promise<void> => {
+    setStopping(id)
     try {
-      await request('background:stop', { shellId })
+      const response = await request(method, params)
+      let failure: string | null = null
+      if (!response.ok) failure = response.error.message
+      else if ((response.result as { ok?: boolean } | null)?.ok === false) failure = t('停止后台任务失败')
       await refresh()
+      if (failure) setError(failure)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setStopping(null)
     }
   }
 
-  const stopTask = async (taskId: string): Promise<void> => {
-    setStopping(taskId)
-    try {
-      await request('background:stop-task', { taskId })
-      await refresh()
-    } finally {
-      setStopping(null)
-    }
-  }
+  const stop = (shellId: string): Promise<void> => stopRequest(shellId, 'background:stop', { shellId })
+
+  const stopTask = (taskId: string): Promise<void> => stopRequest(taskId, 'background:stop-task', { taskId })
 
   const localIds = new Set([...sessions.map((session) => session.shellId), ...tasks.map((task) => task.id)])
   const sharedItems = shared.filter((item) => !localIds.has(item.id))

@@ -69,12 +69,23 @@ export function spawnWindowsPeerBrokerProcess(options: {
     const text = stripTerminalControls(bytes.toString('utf8'))
     if (text) debugLog(options.debugKey, text)
   })
-  child.once('error', fail)
-  child.once('close', (code, signal) => {
+  // 进程生命周期的统一终态：`'close'` 与 spawn 失败（只有 `'error'`，Node
+  // 明确不保证之后还会发 `'close'`/`'exit'`）都必须走这里，否则 `closed` 永不
+  // resolve——`await brokerProcess.closed` 以及
+  // `Promise.race([broker.closed, …])`（windows-named-pipe-transport）会永久
+  // 挂起，清理路径走不到，`exited` 也永远是 false，`send()` 会继续排队。
+  const finalize = (status: { code: number | null; signal: NodeJS.Signals | null }): void => {
+    if (exited) return
     exited = true
-    const status = { code, signal }
     resolveClosed(status)
     options.onClose?.(status)
+  }
+  child.once('error', (error) => {
+    finalize({ code: null, signal: null })
+    fail(error)
+  })
+  child.once('close', (code, signal) => {
+    finalize({ code, signal })
   })
 
   return {

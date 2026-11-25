@@ -19,6 +19,8 @@ export interface ComposerKeyDownOptions {
   dismissedMentionRef: RefObject<{ atIdx: number; query: string } | null>
   pickMention: (file: WorkspaceFileItem) => void
   paletteCommands: SlashCommand[]
+  /** 完整的内置命令注册表（不受输入前缀过滤影响），用于带参数提交时按名精确匹配。 */
+  builtinCommands: SlashCommand[]
   paletteIndex: number
   setPaletteIndex: Dispatch<SetStateAction<number>>
   setInput: Dispatch<SetStateAction<string>>
@@ -28,7 +30,7 @@ export interface ComposerKeyDownOptions {
   exportCurrentSession: (format: 'markdown' | 'json' | 'pdf') => Promise<void>
   customCommands: CustomCommandView[]
   runCustomCommand: (name: string, args: string) => Promise<void>
-  append: (message: { role: 'system'; text: string }) => void
+  append: (message: { role: 'system' | 'error'; text: string }) => void
   attachments: string[]
   submit: (prompt: string) => Promise<unknown>
 }
@@ -56,6 +58,7 @@ export function useComposerKeyDown(options: ComposerKeyDownOptions): (event: Com
     dismissedMentionRef,
     pickMention,
     paletteCommands,
+    builtinCommands,
     paletteIndex,
     setPaletteIndex,
     setInput,
@@ -164,17 +167,28 @@ export function useComposerKeyDown(options: ComposerKeyDownOptions): (event: Com
           void runCustomCommand(name, (match?.[2] ?? '').trim())
           return
         }
+        // paletteCommands 是按前缀过滤的，带参数时匹配不到任何条目；这里用
+        // 完整注册表按名字精确匹配，避免把合法命令误报成“未知命令”。
+        const builtin = name ? builtinCommands.find((command) => command.name === `/${name}`) : undefined
+        if (builtin) {
+          runSlashCommand(builtin)
+          return
+        }
         append({
           role: 'system',
           text: t('未知命令：{{command}}（输入 /help 查看命令）', { command: input.trim() }),
         })
-        setInput('')
+        // 保留输入内容，便于用户修正拼写后重试。
         return
       }
       if (!input.trim() && attachments.length === 0) return
       const prompt = input
       setInput('')
-      void submit(prompt)
+      void submit(prompt).catch((error: unknown) => {
+        // IPC reject 时输入已经清空，回填以免用户重写整段提示词。
+        setInput(prompt)
+        append({ role: 'error', text: t('发送失败：{{message}}', { message: String(error) }) })
+      })
     }
   }
 }

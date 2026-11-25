@@ -93,6 +93,7 @@ export async function streamChunksToUI(
           toolName,
           (chunk.input ?? {}) as Record<string, unknown>,
           options.memoryService?.memoryRoot,
+          state.projectCwd,
         )
       ) {
         suppressedMemoryAccessCallIds.add(toolCallId)

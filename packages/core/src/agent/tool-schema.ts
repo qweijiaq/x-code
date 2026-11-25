@@ -26,7 +26,13 @@ export function estimateToolDefinitionTokens(name: string, def: any): number {
       }
     }
   }
-  return estimateTextTokenCount(JSON.stringify(payload))
+  try {
+    return estimateTextTokenCount(JSON.stringify(payload))
+  } catch {
+    // 兜底：payload 含不可序列化内容（MCP/插件声明的循环引用、BigInt、
+    // 会抛错的 toJSON）时退化为 name + description 的下界估算。
+    return estimateTextTokenCount(`${name}${typeof def?.description === 'string' ? def.description : ''}`)
+  }
 }
 
 export function estimateToolSetTokens(tools: Record<string, unknown>): number {

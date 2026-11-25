@@ -20,6 +20,9 @@ export const MAX_TOOL_RESULT_BYTES = 50 * 1024
 /** 切片时的头:尾比例。0.2 保留前 20% + 后 80%。 */
 const DEFAULT_HEAD_RATIO = 0.2
 
+/** head-tail 模式下头部的最小字节预算（不超过 maxBytes 本身）。 */
+const MIN_HEAD_BYTES = 256
+
 export interface TruncateOptions {
   /** 截断生效前的最大行数。默认 {@link MAX_TOOL_RESULT_LINES}。 */
   maxLines?: number
@@ -106,8 +109,12 @@ function applyByteSlice(
   if (direction === 'head') return { sliced: sliceBytes(buf, maxBytes, 'head').toString('utf-8'), headEnd: null }
   if (direction === 'tail') return { sliced: sliceBytes(buf, maxBytes, 'tail').toString('utf-8'), headEnd: null }
 
-  const headBudget = Math.max(256, Math.floor(maxBytes * headRatio))
-  const tailBudget = maxBytes - headBudget
+  // 头部最小预算必须钳制在 maxBytes 之内：maxBytes 可以小到几字节
+  // （tool-execution 用 shellResultMaxBytes(maxOutputTokens) 传入，而
+  // normalizeMaxOutputTokens 的下限是 1），此时 `Math.max(256, …)` 会让
+  // head 直接吐出整段内容、tail 预算变成负数，双预算保证彻底失效。
+  const headBudget = Math.min(maxBytes, Math.max(Math.min(MIN_HEAD_BYTES, maxBytes), Math.floor(maxBytes * headRatio)))
+  const tailBudget = Math.max(0, maxBytes - headBudget)
   const head = sliceBytes(buf, headBudget, 'head').toString('utf-8')
   const tail = sliceBytes(buf, tailBudget, 'tail').toString('utf-8')
   return { sliced: head + tail, headEnd: head.length }

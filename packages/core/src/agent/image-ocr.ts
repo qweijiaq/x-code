@@ -62,6 +62,26 @@ function abortError(signal: AbortSignal): Error {
   return signal.reason instanceof Error ? signal.reason : new DOMException('The operation was aborted', 'AbortError')
 }
 
+/** OCR 失败时返回的占位串前缀。调用方必须用 `isOcrFailureText()` 检测，
+ *  否则一次瞬时故障（worker 崩溃、内存不足）会被当成识别正文写进文档，
+ *  甚至被内容哈希缓存长期记忆化。 */
+const OCR_FAILURE_PREFIX = '[OCR failed: '
+
+export function isOcrFailureText(value: string): boolean {
+  return value.startsWith(OCR_FAILURE_PREFIX)
+}
+
+/** 失败摘要：去掉绝对路径（缓存目录、用户目录等），并限长——原文透传会把
+ *  本机目录结构随文档内容一起暴露给模型与用户。 */
+function summarizeOcrError(error: unknown): string {
+  const summary = errorMessage(error)
+    .replace(/(?:[A-Za-z]:[\\/]|\/)[^\s:'"()]+/g, '<path>')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!summary) return 'unknown error'
+  return summary.length > 160 ? `${summary.slice(0, 157)}...` : summary
+}
+
 export function ocrImage(input: string | Buffer, options: { abortSignal?: AbortSignal } = {}): Promise<string> {
   const { abortSignal } = options
   if (abortSignal?.aborted) return Promise.reject(abortError(abortSignal))
@@ -82,7 +102,7 @@ export function ocrImage(input: string | Buffer, options: { abortSignal?: AbortS
     } catch (error) {
       if (worker) await terminateWorker(worker)
       abortSignal?.throwIfAborted()
-      return `[OCR failed: ${errorMessage(error)}]`
+      return `${OCR_FAILURE_PREFIX}${summarizeOcrError(error)}]`
     } finally {
       abortSignal?.removeEventListener('abort', onAbort)
     }

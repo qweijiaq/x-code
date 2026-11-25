@@ -20,10 +20,13 @@ const filePathSchema = z
   .string()
   .min(1)
   .max(4096)
-  .describe('File to inspect. Absolute paths are preferred; relative paths resolve against the project root.')
+  .describe(
+    'File to inspect. Absolute paths are preferred; relative paths resolve against the current working directory.',
+  )
 
 const rootSchema = z
   .string()
+  .min(1)
   .max(4096)
   .optional()
   .describe('Project root containing tsconfig.json. Omit to infer it from filePath.')
@@ -33,8 +36,16 @@ const positionSchema = {
   column: z.number().int().min(1).max(1_000_000).describe('1-based column (UTF-16 code unit)'),
 }
 
-function projectRoot(filePath: string, root?: string): string {
-  return path.resolve(root ?? inferProjectRoot(filePath))
+/** 同时归一化项目根与目标文件路径。
+ *
+ *  语言服务内部用 `path.resolve(this.root, filePath)` 定位文件，而 root 是
+ *  从 filePath 推断出来的（在 monorepo 里通常不是 cwd）。若把原始的相对
+ *  filePath 直接传下去，两者锚点不同就会拼出
+ *  `packages/core/packages/core/src/...` 这类并不存在的路径。因此在工具边界
+ *  先把 filePath 归一化成绝对路径。 */
+function resolveTarget(filePath: string, root?: string): { root: string; filePath: string } {
+  const absoluteFile = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath)
+  return { root: path.resolve(root ?? inferProjectRoot(absoluteFile)), filePath: absoluteFile }
 }
 
 export const lspDiagnostics = tool({
@@ -49,9 +60,10 @@ export const lspDiagnostics = tool({
   execute: async ({ filePath, root, limit }, { toolCallId, abortSignal }) => {
     try {
       reportProgress(toolCallId, 'Checking TypeScript diagnostics')
-      const service = getTypeScriptService(projectRoot(filePath, root))
-      const diagnostics = await service.diagnostics(filePath, abortSignal, limit ?? 120)
-      return truncateToolResult(formatDiagnostics(diagnostics, filePath), { maxLines: 400 })
+      const target = resolveTarget(filePath, root)
+      const service = getTypeScriptService(target.root)
+      const diagnostics = await service.diagnostics(target.filePath, abortSignal, limit ?? 120)
+      return truncateToolResult(formatDiagnostics(diagnostics, target.filePath), { maxLines: 400 })
     } catch (error) {
       return formatToolError('checking TypeScript diagnostics', error)
     }
@@ -71,8 +83,9 @@ export const lspDefinition = tool({
   execute: async ({ filePath, line, column, root, limit }, { toolCallId, abortSignal }) => {
     try {
       reportProgress(toolCallId, `Finding definition at ${path.basename(filePath)}:${line}:${column}`)
-      const service = getTypeScriptService(projectRoot(filePath, root))
-      const locations = await service.definition(filePath, line, column, abortSignal, limit ?? 60)
+      const target = resolveTarget(filePath, root)
+      const service = getTypeScriptService(target.root)
+      const locations = await service.definition(target.filePath, line, column, abortSignal, limit ?? 60)
       return truncateToolResult(formatLocations(locations, `No definition found at ${filePath}:${line}:${column}.`), {
         maxLines: 200,
       })
@@ -96,9 +109,10 @@ export const lspReferences = tool({
   execute: async ({ filePath, line, column, root, includeDeclaration, limit }, { toolCallId, abortSignal }) => {
     try {
       reportProgress(toolCallId, `Finding references at ${path.basename(filePath)}:${line}:${column}`)
-      const service = getTypeScriptService(projectRoot(filePath, root))
+      const target = resolveTarget(filePath, root)
+      const service = getTypeScriptService(target.root)
       const locations = await service.references(
-        filePath,
+        target.filePath,
         line,
         column,
         abortSignal,
@@ -128,8 +142,9 @@ export const lspRename = tool({
   execute: async ({ filePath, line, column, newName, root, limit }, { toolCallId, abortSignal }) => {
     try {
       reportProgress(toolCallId, `Previewing rename to ${newName}`)
-      const service = getTypeScriptService(projectRoot(filePath, root))
-      const edits = await service.rename(filePath, line, column, newName, abortSignal, limit ?? 200)
+      const target = resolveTarget(filePath, root)
+      const service = getTypeScriptService(target.root)
+      const edits = await service.rename(target.filePath, line, column, newName, abortSignal, limit ?? 200)
       return truncateToolResult(formatRename(edits, newName), { maxLines: 400 })
     } catch (error) {
       return formatToolError('previewing TypeScript rename', error)

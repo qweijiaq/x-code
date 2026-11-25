@@ -47,6 +47,15 @@ type FileShape = Record<string, StoredServerAuth>
 
 export class McpTokenStorage {
   private cache: FileShape | null = null
+  /** 共享的加载 Promise：并发调用者必须看到同一次读盘结果，否则后完成的
+   *  一次 `readFile` 会用"写入前的旧快照"覆盖掉刚 `setTokens` 的内存状态。 */
+  private loadPromise: Promise<void> | null = null
+  /** 本进程实际改动 / 删除过的 server 名。`flush()` 只把这部分合并进磁盘
+   *  快照，其余 key 以磁盘为准（CLI 与 Desktop 是两个进程，各持一份实例）。 */
+  private readonly dirtyServers = new Set<string>()
+  private readonly removedServers = new Set<string>()
+  /** 本进程内的写入串行化链。 */
+  private writeChain: Promise<void> = Promise.resolve()
 
   async get(serverName: string): Promise<StoredServerAuth | undefined> {
     await this.ensureLoaded()
@@ -58,6 +67,8 @@ export class McpTokenStorage {
     const entry = (this.cache![serverName] ??= { url })
     entry.url = url
     entry.clientInformation = info
+    this.dirtyServers.add(serverName)
+    this.removedServers.delete(serverName)
     await this.flush()
   }
 
@@ -67,6 +78,8 @@ export class McpTokenStorage {
     entry.url = url
     entry.tokens = tokens
     entry.tokensIssuedAt = new Date().toISOString()
+    this.dirtyServers.add(serverName)
+    this.removedServers.delete(serverName)
     await this.flush()
   }
 
@@ -74,6 +87,8 @@ export class McpTokenStorage {
     await this.ensureLoaded()
     if (this.cache![serverName]) {
       delete this.cache![serverName]
+      this.dirtyServers.delete(serverName)
+      this.removedServers.add(serverName)
       await this.flush()
     }
   }
@@ -115,19 +130,48 @@ export class McpTokenStorage {
 
   private async ensureLoaded(): Promise<void> {
     if (this.cache !== null) return
-    this.cache = await readFile()
+    // 只读一次：`loadMcpServers` 会并发为多个服务器构造 provider，各自
+    // 调 `tokens()` / `saveTokens()`。没有共享 Promise 时它们会各读一次文件，
+    // 而更早发起、更晚 resolve 的那次读取会把刚写入的 token 覆盖掉。
+    this.loadPromise ??= readFile().then((loaded) => {
+      // 已有内存改动（并发写入抢先完成）时不要用磁盘旧快照覆盖。
+      if (this.cache === null) this.cache = loaded
+    })
+    await this.loadPromise
   }
 
-  private async flush(): Promise<void> {
+  private flush(): Promise<void> {
+    if (!this.cache) return Promise.resolve()
+    const task = this.writeChain.then(() => this.writeNow())
+    this.writeChain = task.catch(() => {})
+    return task
+  }
+
+  private async writeNow(): Promise<void> {
     if (!this.cache) return
     try {
       await fs.mkdir(userXcodeDir(), { recursive: true })
-      const tmp = authFile() + '.tmp'
-      await fs.writeFile(tmp, JSON.stringify(this.cache, null, 2) + '\n', {
+      // 写前重新读盘并只合并本进程改动过的 key：跨进程场景（CLI 与 Desktop
+      // 各持一份单例）下整体覆盖会把对方刚写入的 entry 整条抹掉——用户在
+      // 另一个终端的 `/mcp logout` 或手工编辑同样会被静默回滚。
+      const merged: FileShape = { ...(await readFile()) }
+      for (const serverName of this.dirtyServers) {
+        const entry = this.cache[serverName]
+        if (entry) merged[serverName] = entry
+        else delete merged[serverName]
+      }
+      for (const serverName of this.removedServers) delete merged[serverName]
+
+      this.cache = merged
+      // 唯一 tmp 名：固定名在两个进程同时写时会交叉写入并产生半截 JSON。
+      const tmp = `${authFile()}.${process.pid}.tmp`
+      await fs.writeFile(tmp, JSON.stringify(merged, null, 2) + '\n', {
         encoding: 'utf-8',
         mode: 0o600,
       })
       await fs.rename(tmp, authFile())
+      this.dirtyServers.clear()
+      this.removedServers.clear()
     } catch (err) {
       debugLog('mcp.token-write-failed', String(err))
     }

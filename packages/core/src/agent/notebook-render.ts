@@ -67,14 +67,19 @@ export async function renderNotebookFile(
   abortSignal?: AbortSignal,
 ): Promise<{ text: string; complete: boolean }> {
   const raw = (await readFileWithinLimit(filePath, MAX_NOTEBOOK_SOURCE_BYTES, abortSignal)).toString('utf-8')
-  let parsed: { cells?: NotebookCell[] }
+  let parsed: unknown
   try {
-    parsed = JSON.parse(raw) as { cells?: NotebookCell[] }
+    parsed = JSON.parse(raw)
   } catch {
     return boundNotebookOutput(raw)
   }
+  // `null` 是合法的 JSON，但访问 `parsed.cells` 会抛 TypeError；非对象同理。
+  // 与解析失败一致地退化为原始文本兜底。
+  if (parsed === null || typeof parsed !== 'object') return boundNotebookOutput(raw)
 
-  const cells = Array.isArray(parsed.cells) ? parsed.cells : []
+  const cells = Array.isArray((parsed as { cells?: NotebookCell[] }).cells)
+    ? ((parsed as { cells?: NotebookCell[] }).cells as NotebookCell[])
+    : []
   const output: string[] = [`# Jupyter Notebook: ${filePath} (${cells.length} cell${cells.length === 1 ? '' : 's'})`]
   cells.forEach((cell, index) => {
     const type = cell.cell_type ?? 'unknown'

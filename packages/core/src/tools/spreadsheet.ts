@@ -19,6 +19,11 @@ import { reportProgress } from './progress.js'
 const MAX_ROWS = 100
 const MAX_COLUMNS = 50
 const MAX_CHART_POINTS = 30
+/** query 未指定 limit 时返回的行数。 */
+const DEFAULT_QUERY_LIMIT = 50
+/** 唯一支持的容器格式：ExcelJS 只处理 OOXML，回写 .xls（BIFF）或 .xlsm 会
+ *  产出损坏文件，且 .xlsm 的 VBA 会在覆盖时不可逆地丢失。 */
+const XLSX_EXTENSION = '.xlsx'
 
 type Cell = string | number | boolean | null
 
@@ -242,6 +247,18 @@ function matches(
   }
 }
 
+/** `count` 统计的是“填充单元格数”而不是数字个数：schema 允许省略
+ *  aggregates，缺省值就是 `{ op: 'count' }`，若走 aggregate() 的数字路径
+ *  （toNumber 会过滤掉文本/布尔），`groupBy` 不带 aggregates 这一最常见用法
+ *  会对每个分组返回 0。`columnIndex < 0` 时统计分组内的行数。 */
+function countFilled(bucket: Cell[][], columnIndex: number): number {
+  if (columnIndex < 0) return bucket.length
+  return bucket.filter((row) => {
+    const value = row[columnIndex]
+    return value !== null && value !== undefined && value !== ''
+  }).length
+}
+
 function aggregate(values: number[], op: (typeof AGGREGATE_OPS)[number]): number {
   if (op === 'count') return values.length
   if (values.length === 0) return 0
@@ -334,6 +351,12 @@ export const spreadsheet = tool({
 
       if (!input.filePath) throw new Error(`${input.action} needs a filePath.`)
       const filePath = path.resolve(input.filePath)
+      // 只接受 .xlsx：ExcelJS 读不了 .xls（BIFF），回写 .xlsm 会把 VBA 宏
+      // 不可逆地抹掉，写 .csv 也只是改后缀的假表格。宁可早失败也不产出一个
+      // 看似成功、实则损坏的文件。
+      if (path.extname(filePath).toLowerCase() !== XLSX_EXTENSION) {
+        throw new Error(`Only ${XLSX_EXTENSION} workbooks are supported; got "${path.basename(filePath)}".`)
+      }
 
       if (input.action === 'read') {
         reportProgress(toolCallId, `Reading ${path.basename(filePath)}`)
@@ -375,7 +398,7 @@ export const spreadsheet = tool({
                       .filter((value): value is number => value !== null)
                   : []
               const name = spec.as ?? `${spec.op}${columnIndex >= 0 ? `(${table.headers[columnIndex]})` : ''}`
-              record[name] = aggregate(numbers, spec.op)
+              record[name] = spec.op === 'count' ? countFilled(bucket, columnIndex) : aggregate(numbers, spec.op)
             }
             output.push(record)
           }
@@ -401,10 +424,15 @@ export const spreadsheet = tool({
             return input.descending ? -compared : compared
           })
         }
-        const limit = Math.min(input.limit ?? 50, MAX_ROWS)
+        const limit = input.limit ?? DEFAULT_QUERY_LIMIT
         return JSON.stringify(
           {
             sheet: table.sheet,
+            // 读取本身被截断时（>100 行），matched/sum/avg 只覆盖前 MAX_ROWS 行：
+            // 必须一并带回 totalRows/truncated，否则调用方会把“前 100 行的汇总”
+            // 当成整表汇总。
+            totalRows: table.totalRows,
+            truncated: table.truncated,
             matched: output.length,
             returned: Math.min(limit, output.length),
             rows: output.slice(0, limit),
@@ -425,6 +453,18 @@ export const spreadsheet = tool({
         .access(filePath)
         .then(() => true)
         .catch(() => false)
+      // 覆盖写是不可逆的：ExcelJS 回写只保留它能理解的部分（模板样式、图表、
+      // 数据透视表等会丢失），因此先落一份时间戳备份，再回写。时间戳刻意不含
+      // `:`，Windows 文件名不允许。
+      let backupPath: string | null = null
+      if (exists) {
+        const stamp = new Date()
+          .toISOString()
+          .replace(/[-:]/g, '')
+          .replace(/\.\d+Z$/, 'Z')
+        backupPath = `${filePath}.${stamp}.bak`
+        await fs.copyFile(filePath, backupPath)
+      }
       let workbook: ExcelJS.Workbook
       let sheet: ExcelJS.Worksheet
       if (exists) {
@@ -455,7 +495,8 @@ export const spreadsheet = tool({
         }
       }
       await workbook.xlsx.writeFile(filePath)
-      return `Wrote ${rows.length} row(s) to ${filePath} (${input.write.mode}).${workspaceOutputNote(filePath)}`
+      const backupNote = backupPath ? ` Backup of the previous file: ${backupPath}.` : ''
+      return `Wrote ${rows.length} row(s) to ${filePath} (${input.write.mode}).${backupNote}${workspaceOutputNote(filePath)}`
     } catch (err) {
       return formatToolError('working with the spreadsheet', err)
     }

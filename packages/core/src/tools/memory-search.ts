@@ -8,6 +8,8 @@ import type { MemoryService } from '../knowledge/memory/service.js'
 import { extractText } from '../utils/message-helpers.js'
 
 const MAX_TOPICS_PER_TURN = 5
+/** 单次搜索的默认结果上限（schema 的 maxResults 上限与之相同）。 */
+const MAX_RESULTS_PER_SEARCH = 5
 
 function latestUserText(state: LoopState): string {
   for (let index = state.messages.length - 1; index >= 0; index--) {
@@ -51,13 +53,24 @@ export function createMemorySearchTool(service: MemoryService, state: LoopState,
       const results = await service.search(args, {
         repositoryId,
       })
-      const bounded = results.filter((result) => {
-        if (exposedTopicIds.has(result.topicId)) return true
-        if (exposedTopicIds.size >= MAX_TOPICS_PER_TURN) return false
-        exposedTopicIds.add(result.topicId)
-        return true
-      })
-      return { results: bounded.slice(0, Math.min(args.maxResults ?? 5, remainingTopics)) }
+      // 单次遍历：配额只在某个 topic 确定会被返回时才占用。原实现先对整个
+      // results 做 filter（把配额用完）再 slice，于是 maxResults=1 时一次暴露
+      // 1 个 topic 却烧掉 5 个配额，下一次调用直接 'topic budget exhausted'，
+      // 与“每轮至多五个”的语义相反。
+      const limit = Math.max(
+        0,
+        Math.min(args.maxResults ?? MAX_RESULTS_PER_SEARCH, MAX_TOPICS_PER_TURN - exposedTopicIds.size),
+      )
+      const bounded: typeof results = []
+      for (const result of results) {
+        if (bounded.length >= limit) break
+        if (!exposedTopicIds.has(result.topicId)) {
+          if (exposedTopicIds.size >= MAX_TOPICS_PER_TURN) continue
+          exposedTopicIds.add(result.topicId)
+        }
+        bounded.push(result)
+      }
+      return { results: bounded }
     },
   })
 }

@@ -219,6 +219,11 @@ export async function getBrowserMcp(abortSignal?: AbortSignal): Promise<BrowserM
       Promise.allSettled([...pendingProfileReleases]).then(() => undefined),
       abortSignal,
     )
+    // 等待期间另一个调用方可能已经完成连接（此时 connecting 已在其 finally 里被
+    // 置空）。不重新检查就会再拉起一个 stdio 子进程：轻则与已缓存连接争抢 profile
+    // 租约，重则把 cached 覆盖掉，让第一个浏览器永久泄漏。
+    if (abortSignal?.aborted) throw abortReason(abortSignal)
+    if (cached) return cached
   }
 
   // 前一个调用方可能已取消了唯一在途的冷启动。先等那个子进程完成关闭，再拉起替换者；

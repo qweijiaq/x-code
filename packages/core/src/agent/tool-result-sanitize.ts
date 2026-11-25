@@ -47,6 +47,43 @@ type ToolResultLike = {
   }
 }
 
+/** 找到拥有一条 assistant tool_call（按 id）的消息下标；找不到返回 -1。 */
+function findToolCallOwnerIndex(messages: ModelMessage[], toolCallId: string): number {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]
+    if (!msg || msg.role !== 'assistant' || !Array.isArray(msg.content)) continue
+    const owner = (msg.content as Array<{ type?: string; toolCallId?: string }>).some(
+      (part) => part?.type === 'tool-call' && part.toolCallId === toolCallId,
+    )
+    if (owner) return i
+  }
+  return -1
+}
+
+/** 在 `ownerIndex` 这条 assistant 之后的连续 tool 消息块末尾插入合成结果。
+ *  就地修改数组。`parts` 为空时什么都不做。 */
+function insertToolResultsAfterOwner(
+  messages: ModelMessage[],
+  ownerIndex: number,
+  parts: ReadonlyArray<{
+    type: 'tool-result'
+    toolCallId: string
+    toolName: string
+    output: { type: 'text'; value: string }
+  }>,
+): void {
+  if (parts.length === 0) return
+  let insertAt = ownerIndex < 0 ? messages.length : ownerIndex + 1
+  while (insertAt < messages.length && messages[insertAt]?.role === 'tool') insertAt++
+  const preceding = messages[insertAt - 1]
+  if (preceding?.role === 'tool' && Array.isArray(preceding.content)) {
+    // 纵深防御：并入已有的 tool 消息，避免再发一条相邻的 tool ModelMessage。
+    ;(preceding.content as unknown[]).push(...(parts as unknown[]))
+    return
+  }
+  messages.splice(insertAt, 0, { role: 'tool', content: parts as never } as ModelMessage)
+}
+
 /**
  * 遍历 `messages`，双向调和 tool_call ↔ tool_result 配对。提供方严格要求：
  *   - 每条 assistant tool_call 都要有一条配对的 tool_result
@@ -204,17 +241,20 @@ export function repairOrphanToolCalls(messages: ModelMessage[]): void {
     })
   }
   if (orphanParts.length > 0) {
-    // 纵深防御：如果其他代码路径已经留下一条拖尾的 tool 消息（例如
-    // processToolCalls 推入了我们在上方没有触碰的真实结果），把孤儿片段并入它，
-    // 而不是再发一条相邻的 tool ModelMessage。
-    const tail = messages[messages.length - 1]
-    if (tail && tail.role === 'tool' && Array.isArray(tail.content)) {
-      ;(tail.content as unknown[]).push(...(orphanParts as unknown[]))
-    } else {
-      messages.push({
-        role: 'tool',
-        content: orphanParts as never,
-      } as ModelMessage)
+    // 合成结果必须紧跟拥有该 tool_call 的 assistant 批次，不能一律追加到数组
+    // 尾部：上面的反向孤儿调和会把中间的 tool 消息替换成 user 占位符，于是
+    // `assistant(A) → user → assistant → tool(A)` 里的 A 结果既不相邻、中间还夹了
+    // user 消息，Anthropic 仍会以 tool_use 未配对 400 拒绝请求。
+    const byOwner = new Map<number, typeof orphanParts>()
+    for (const part of orphanParts) {
+      const ownerIndex = findToolCallOwnerIndex(messages, part.toolCallId)
+      const bucket = byOwner.get(ownerIndex)
+      if (bucket) bucket.push(part)
+      else byOwner.set(ownerIndex, [part])
+    }
+    // 从后往前插入，这样尚未处理的（更靠前的）下标保持有效。
+    for (const ownerIndex of [...byOwner.keys()].sort((a, b) => b - a)) {
+      insertToolResultsAfterOwner(messages, ownerIndex, byOwner.get(ownerIndex)!)
     }
   }
 }

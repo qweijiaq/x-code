@@ -167,7 +167,10 @@ async function readTextResult(
     }
     if (!stopped) {
       consume(decoder.decode())
-      finishLine()
+      // 只有存在未终止的尾行时才收口。否则：以 \n 结尾的 N 行文件会多出一条
+      // 空的 N+1 行、空文件会返回 "1\t"，恰好 2000 行（阈值）的文件还会被
+      // 误判成“还有更多内容”，诱导一次毫无意义的重复读取。
+      if (lineParts.length > 0) finishLine()
     }
   } finally {
     stream.destroy()

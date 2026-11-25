@@ -166,36 +166,46 @@ export class PersistentShell {
         })
       }
 
+      // waiter 必须在注册 onAbort/timer **之前**挂到 this 上：否则 signal 已经
+      // abort 时 settle() 会因 `!waiter` 直接 return，既不 resolve 也不复位
+      // running，调用方的 await 永久挂起、整个持久 shell 报废，同时 timer
+      // 还挂着事件循环。
+      const waiter: Waiter = {
+        token,
+        resolve,
+        reject,
+        timer: null,
+        onAbort: null,
+        signal: options.signal,
+        startedAt,
+      }
+      this.waiter = waiter
+
+      // 先 settle 再 kill：killChild 会把 child 置空，之后的 exit 事件会被
+      // `this.child !== child` 守卫吞掉，所以收尾必须由这里完成。
       const onAbort = (): void => {
         // 终止整棵前台进程树；持久 shell 也一起重启，避免半条命令留在里面。
         const output = this.takeOutput()
-        this.killChild()
         settle({ output, aborted: true, signal: 'SIGKILL' })
+        this.killChild()
       }
 
       const timer =
         timeoutMs > 0
           ? setTimeout(() => {
               const output = this.takeOutput()
-              this.killChild()
               settle({ output, timedOut: true, signal: 'SIGKILL' })
+              this.killChild()
             }, timeoutMs)
           : null
+      waiter.timer = timer
+      waiter.onAbort = options.signal ? onAbort : null
 
       if (options.signal?.aborted) {
         onAbort()
         return
       }
       options.signal?.addEventListener('abort', onAbort, { once: true })
-      this.waiter = {
-        token,
-        resolve,
-        reject,
-        timer,
-        onAbort: options.signal ? onAbort : null,
-        signal: options.signal,
-        startedAt,
-      }
 
       if (this.buffer.length > maxOutputBytes) {
         this.buffer = this.buffer.slice(-maxOutputBytes)
@@ -315,7 +325,25 @@ export class PersistentShell {
   private killChild(): void {
     const child = this.child
     this.child = null
-    this.buffer = ''
+    // 显式收尾在途 waiter：child 被置空后，它自己的 'exit' 事件会被
+    // `this.child !== child` 守卫丢弃，waiting 方只能等 timeoutMs 兜底
+    // （默认 10 分钟）。dispose() 走的就是这条路径。
+    const pending = this.waiter
+    this.waiter = null
+    const output = this.takeOutput()
+    if (pending) {
+      if (pending.timer) clearTimeout(pending.timer)
+      if (pending.signal && pending.onAbort) pending.signal.removeEventListener('abort', pending.onAbort)
+      this.running = false
+      pending.resolve({
+        output,
+        exitCode: undefined,
+        signal: 'SIGKILL',
+        timedOut: false,
+        aborted: false,
+        shellExited: true,
+      })
+    }
     if (!child) return
     try {
       child.stdin.destroy()

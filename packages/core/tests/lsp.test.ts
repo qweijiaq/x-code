@@ -75,6 +75,16 @@ describe('TypeScriptService', () => {
     expect(await fs.readFile(path.join(projectRoot, 'a.ts'), 'utf8')).toContain('function add')
   }, 30_000)
 
+  it('maps every rename edit to its real position (tsserver groups locs per file)', async () => {
+    const edits = await service.rename('a.ts', 2, 17, 'sum')
+    // 3 处：声明、import、调用点。曾经全部退化成 line 1 / column 1。
+    expect(edits).toHaveLength(3)
+    expect(edits.every((item) => !(item.line === 1 && item.column === 1))).toBe(true)
+    expect(edits.some((item) => item.file.endsWith('a.ts') && item.line === 2 && item.column === 17)).toBe(true)
+    expect(edits.some((item) => item.file.endsWith('b.ts') && item.line === 1 && item.column === 10)).toBe(true)
+    expect(edits.some((item) => item.file.endsWith('b.ts') && item.line === 2 && item.column === 15)).toBe(true)
+  }, 30_000)
+
   it('sees edits made after a file was first opened', async () => {
     await service.references('b.ts', 2, 15)
     await fs.appendFile(path.join(projectRoot, 'b.ts'), 'export const later = add(3, 4)\n', 'utf8')

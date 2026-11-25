@@ -52,15 +52,23 @@ export function textToCells(text: string, style: string): Cell[] {
 export function ansiTextToCells(text: string): Cell[] {
   const cells: Cell[] = []
   const active: string[] = []
+  // 逐「字素簇」而不是逐 UTF-16 码元消费可见文本，与 `textToCells` 保持同一粒度：
+  // 按码元拆分会把辅助平面字符（emoji、CJK 扩展 B）拆成两个孤立代理项，
+  // `charWidth` 各返回 1，于是「一个 2 列宽字形」变成「2 个 1 列单元格」，与
+  // `textToCells` 生成的单个 2 列单元格混排时列对齐必然漂移；组合字符 / ZWJ 序列
+  // 同理会变成多个单元格，使行内单元格数超过实际列数。
+  const clusters = graphemes(text)
   let i = 0
-  while (i < text.length) {
-    const ch = text[i]!
-    if (ch === '\x1b' && text[i + 1] === '[') {
+  let s = 0
+  while (s < clusters.length) {
+    const cluster = clusters[s]!
+    if (cluster === '\x1b' && text[i + 1] === '[') {
       let j = i + 2
       while (j < text.length && !/[A-Za-z]/.test(text[j]!)) j++
       if (j >= text.length) {
         // 未终止——当作字面量处理并退出转义模式。
         i++
+        s++
         continue
       }
       const escape = text.slice(i, j + 1)
@@ -70,18 +78,24 @@ export function ansiTextToCells(text: string): Cell[] {
         active.push(escape)
       }
       // 非 SGR 的 CSI 序列直接跳过——它们本不该出现在预览行里，但我们不想让
-      // 它们变成可见文本。
-      i = j + 1
+      // 它们变成可见文本。按原始偏移跳过整条序列覆盖的所有字素簇。
+      const end = j + 1
+      while (s < clusters.length && i < end) {
+        i += clusters[s]!.length
+        s++
+      }
       continue
     }
-    const unit = text.charCodeAt(i)
+    const unit = cluster.charCodeAt(0)
     if (unit <= 0x1f || unit === 0x7f || (unit >= 0x80 && unit <= 0x9f)) {
-      i++
+      i += cluster.length
+      s++
       continue
     }
     const style = active.length === 0 ? S_NONE : '\x1b[0m' + active.join('')
-    cells.push({ char: ch, style, width: charWidth(ch) })
-    i++
+    cells.push({ char: cluster, style, width: charWidth(cluster) })
+    i += cluster.length
+    s++
   }
   return cells
 }

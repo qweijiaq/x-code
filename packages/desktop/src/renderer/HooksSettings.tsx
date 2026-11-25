@@ -17,17 +17,27 @@ export function HooksSettings({ onNotice }: { onNotice: (message: string | null)
   const [busy, setBusy] = useState<'user' | 'project' | 'trust' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const applyView = (next: HooksView): void => {
+  /** 只在受影响的 scope 上同步草稿：保存用户级 hooks 不该清掉用户正在
+   *  编辑的项目级草稿，切换信任状态更不该回滚任何草稿。 */
+  const applyView = (next: HooksView, syncDrafts: 'both' | 'user' | 'project' | 'none' = 'both'): void => {
     setView(next)
-    setUserDraft(JSON.stringify(next.configs.user ?? {}, null, 2))
-    setProjectDraft(JSON.stringify(next.configs.project ?? {}, null, 2))
+    if (syncDrafts === 'both' || syncDrafts === 'user') {
+      setUserDraft(JSON.stringify(next.configs.user ?? {}, null, 2))
+    }
+    if (syncDrafts === 'both' || syncDrafts === 'project') {
+      setProjectDraft(JSON.stringify(next.configs.project ?? {}, null, 2))
+    }
   }
 
   useEffect(() => {
     void (async () => {
-      const response = await request('hooks:get', {})
-      if (response.ok) applyView(response.result as HooksView)
-      else setError(response.error.message)
+      try {
+        const response = await request('hooks:get', {})
+        if (response.ok) applyView(response.result as HooksView)
+        else setError(response.error.message)
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
     })()
   }, [])
 
@@ -41,8 +51,11 @@ export function HooksSettings({ onNotice }: { onNotice: (message: string | null)
         setError(response.error.message)
         return
       }
-      applyView(response.result as HooksView)
+      // 信任开关不修改配置文件，因此不动任何草稿。
+      applyView(response.result as HooksView, 'none')
       onNotice(trusted ? t('已信任此项目的 hooks。') : t('已撤销此项目的 hooks 信任。'))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(null)
     }
@@ -73,8 +86,11 @@ export function HooksSettings({ onNotice }: { onNotice: (message: string | null)
         setError(response.error.message)
         return
       }
-      applyView(response.result as HooksView)
+      // 只同步被保存的那个 scope，另一份草稿可能正被编辑。
+      applyView(response.result as HooksView, scope)
       onNotice(scope === 'user' ? t('已保存用户级 hooks。') : t('已保存项目级 hooks。'))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(null)
     }

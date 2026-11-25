@@ -6,7 +6,9 @@ import { tool } from 'ai'
 
 import { z } from 'zod'
 
+import { SUPPORTED_AUDIO_EXTENSIONS } from '../agent/audio-formats.js'
 import type { WhisperModelName } from '../agent/audio-transcribe-models.js'
+import { WHISPER_MODELS } from '../agent/audio-transcribe-models.js'
 import { formatTranscription, isAudioFile, transcribeAudio } from '../agent/audio-transcribe.js'
 import { formatToolError } from '../utils/tool-errors.js'
 import { reportProgress } from './progress.js'
@@ -14,18 +16,24 @@ import { reportProgress } from './progress.js'
 const DEFAULT_MAX_CHARS = 50_000
 const HARD_MAX_CHARS = 200_000
 
+/** 描述与报错文案都从能力的唯一来源派生，避免声明与实际支持再次漂移。 */
+const SUPPORTED_EXTENSION_LIST = [...SUPPORTED_AUDIO_EXTENSIONS].map((ext) => ext.slice(1)).join('/')
+
+const WHISPER_MODEL_NAMES = Object.keys(WHISPER_MODELS) as [WhisperModelName, ...WhisperModelName[]]
+
 export const transcribe = tool({
   description:
     'Transcribe a local audio file to text with the on-device whisper engine (no network upload). Returns ' +
-    'timestamped segments by default, or plain text with format:"text". Supports mp3/wav/m4a/aac/flac/ogg/opus/wma. ' +
+    `timestamped segments by default, or plain text with format:"text". Supports ${SUPPORTED_EXTENSION_LIST}. ` +
     'Use readDocument for documents and images; use this when you specifically want a transcript with timestamps.',
   inputSchema: z.object({
     filePath: z.string().min(1).max(4096).describe('Absolute path to the audio file'),
     model: z
-      .string()
-      .max(20)
+      .enum(WHISPER_MODEL_NAMES)
       .optional()
-      .describe('Whisper model: tiny, base, small, medium, large-v3 (a .en variant is also available). Default tiny'),
+      .describe(
+        `Whisper model, one of: ${WHISPER_MODEL_NAMES.join(', ')}. Larger models are more accurate but need a bigger download. Default tiny`,
+      ),
     language: z
       .string()
       .max(10)
@@ -38,11 +46,11 @@ export const transcribe = tool({
     try {
       abortSignal?.throwIfAborted()
       if (!isAudioFile(filePath)) {
-        return `[Not an audio file: ${filePath}. Supported extensions are mp3, wav, m4a, aac, flac, ogg, opus, wma.]`
+        return `[Not an audio file: ${filePath}. Supported extensions are ${SUPPORTED_EXTENSION_LIST}.]`
       }
       reportProgress(toolCallId, `Transcribing ${filePath}`)
       const result = await transcribeAudio(filePath, {
-        model: model as WhisperModelName | undefined,
+        model,
         language,
         abortSignal,
         onProgress: (pct) => reportProgress(toolCallId, `Transcribing… ${pct}%`),

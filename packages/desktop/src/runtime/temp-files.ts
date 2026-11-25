@@ -54,8 +54,13 @@ export async function moveTempFilesIntoWorkspace(
       continue
     }
     try {
-      const stats = await fs.stat(source)
+      // lstat：源本身是软链就拒绝。否则 /tmp/x.txt -> ~/.ssh/id_rsa 这类链接
+      // 会被当成“临时文件”复制进工作区，等于把临时目录限制绕成任意文件读取。
+      const stats = await fs.lstat(source)
       if (!stats.isFile()) throw new Error('Not a regular file')
+      // 解析真实路径后再校验一次，避免 stat/copy 之间的 TOCTOU。
+      const real = await fs.realpath(source)
+      if (!isTempSourcePath(real)) throw new Error('Real path is outside the system temporary directory')
       await fs.mkdir(workspace, { recursive: true })
       const destination = await copyIntoWorkspace(source, workspace)
       await fs.chmod(destination, stats.mode & 0o777)

@@ -176,7 +176,12 @@ const LANG_LOOKUP: Record<string, Lang> = {
 export function detectLanguage(filePath: string): Lang | null {
   const m = /\.([a-zA-Z0-9]+)$/.exec(filePath)
   if (!m) return null
-  return LANG_LOOKUP[m[1]!.toLowerCase()] ?? null
+  // `Object.hasOwn` 而不是直接下标读取：扩展名正则只约束 `[a-zA-Z0-9]+`，所以
+  // `x.constructor` / `x.toString` 这类文件名会命中原型上的属性，取到 `Object`
+  // 构造函数（truthy，`?? null` 兜不住），后续 `RULES_BY_LANG[lang]()` 拿到
+  // undefined 并在调用时抛 TypeError，整条渲染路径崩溃。
+  const key = m[1]!.toLowerCase()
+  return Object.hasOwn(LANG_LOOKUP, key) ? LANG_LOOKUP[key] : null
 }
 
 /** 把 markdown 围栏语言标识（围栏代码块开头 ``` 后面的那部分）映射到我们
@@ -184,7 +189,10 @@ export function detectLanguage(filePath: string): Lang | null {
  *  调用方回退到纯（不高亮）文本。 */
 export function detectFenceLanguage(fenceLang: string | undefined): Lang | null {
   if (!fenceLang) return null
-  return LANG_LOOKUP[fenceLang.trim().toLowerCase()] ?? null
+  // 同 `detectLanguage`：围栏语言来自模型输出 / 粘贴内容，`valueOf` / `toString`
+  // 之类的值会命中原型属性并返回非 `Lang` 值。
+  const key = fenceLang.trim().toLowerCase()
+  return Object.hasOwn(LANG_LOOKUP, key) ? LANG_LOOKUP[key] : null
 }
 
 // ─── 分词 ───

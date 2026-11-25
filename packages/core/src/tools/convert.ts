@@ -39,13 +39,25 @@ function parsePages(spec: string, total: number): number[] {
   return [...pages].sort((a, b) => a - b)
 }
 
-async function ensureOutput(output: string): Promise<void> {
-  const exists = await fs
-    .access(output)
-    .then(() => true)
-    .catch(() => false)
-  if (exists) throw new Error(`Output already exists; refusing to overwrite: ${output}`)
+/** 原子地占住输出路径。
+ *
+ *  `fs.access` 有两个问题：与后续写入之间存在 TOCTOU 窗口（pdf-merge 可能跑
+ *  数十秒，期间出现的同名文件会被 'w' 直接截断覆盖），并且它会跟随符号链接
+ *  （指向不存在目标的软链接会让检查通过，写入则穿过链接落到任意路径）。
+ *  这里改用 'wx'：O_CREAT|O_EXCL 在文件存在**或是符号链接**时都会失败，
+ *  把“不存在”变成文件系统保证的语义。占位成功后调用方再写入实际内容，
+ *  失败时由调用方删除本次新建的产物，避免半截文件让重试永远被拒绝。
+ */
+async function claimOutput(output: string): Promise<void> {
   await fs.mkdir(path.dirname(output), { recursive: true })
+  try {
+    await fs.writeFile(output, new Uint8Array(0), { flag: 'wx' })
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') {
+      throw new Error(`Output already exists; refusing to overwrite: ${output}`)
+    }
+    throw err
+  }
 }
 
 async function totalSize(files: string[]): Promise<number> {
@@ -77,10 +89,12 @@ export const convert = tool({
     format: z.enum(['png', 'jpeg', 'tiff', 'bmp', 'gif']).optional().describe('image-convert output format'),
   }),
   execute: async (input, { toolCallId, abortSignal }) => {
+    const output = path.resolve(input.output)
+    let claimed = false
     try {
       abortSignal?.throwIfAborted()
-      const output = path.resolve(input.output)
-      await ensureOutput(output)
+      await claimOutput(output)
+      claimed = true
 
       if (input.action === 'pdf-merge') {
         if (!input.inputs || input.inputs.length < 2) throw new Error('pdf-merge needs at least two inputs.')
@@ -134,6 +148,9 @@ export const convert = tool({
       const stats = await fs.stat(output)
       return `Converted ${path.basename(source)} → ${output} (${Math.max(1, Math.round(stats.size / 1024))} KB)${workspaceOutputNote(output)}`
     } catch (err) {
+      // 失败 / 中止时删掉本次新建的产物，否则残留的半截文件会让重试永远被
+      // “Output already exists” 拒绝。
+      if (claimed) await fs.rm(output, { force: true }).catch(() => {})
       return formatToolError('converting files', err)
     }
   },

@@ -33,7 +33,13 @@ import { debugLog, errorMessage } from '../utils.js'
 import { atomicWriteFile } from '../utils/atomic-file.js'
 import { type ConsentPreview, buildConsentPreview, probePluginRoot } from './consent.js'
 import { ManifestParseError, discoverManifest, parseManifest } from './manifest.js'
-import { RESERVED_MARKETPLACE_NAMES, readKnownMarketplaces, resolveCloneUrl } from './marketplace.js'
+import {
+  RESERVED_MARKETPLACE_NAMES,
+  assertSafeCloneUrl,
+  assertSafeGitRef,
+  readKnownMarketplaces,
+  resolveCloneUrl,
+} from './marketplace.js'
 import { installedPluginsPath, pluginCacheDir, pluginCacheParent } from './paths.js'
 import type {
   InstalledPluginRecord,
@@ -247,14 +253,20 @@ async function fetchToTemp(source: PluginSource, signal?: AbortSignal): Promise<
   }
 
   if (source.kind === 'git' || source.kind === 'github') {
-    const cloneUrl = source.kind === 'git' ? source.url : resolveCloneUrl(`github:${source.owner}/${source.repo}`)
+    const cloneUrl = assertSafeCloneUrl(
+      source.kind === 'git' ? source.url : resolveCloneUrl(`github:${source.owner}/${source.repo}`),
+    )
     const args = ['clone', '--depth', '1']
-    if (source.ref) args.push('--branch', source.ref)
+    // ref 会被 `git clone --branch <ref>` 当作独立的位置参数吃下，必须先校验
+    // 形状（不得以 `-` 开头），否则 `--upload-pack=…` 之类的值会被解析成选项。
+    if (source.ref) args.push('--branch', assertSafeGitRef(source.ref))
     // 对 subdir 安装我们仍浅克隆整个仓库。真正的 sparse-checkout 在巨大
     // monorepo 上会更快，但 `--depth 1 --filter=blob:none --sparse` 序列
     // 在不同 git 版本间很脆弱；即使是大型 monorepo，depth-1 克隆通常也
     // 不到 100 MB。若日后成为痛点再重新考虑。
-    args.push(cloneUrl, tempDir)
+    //
+    // `--` 终止选项解析：来源字符串可能来自远端 marketplace.json。
+    args.push('--', cloneUrl, tempDir)
 
     try {
       await execa('git', args, { signal, stdio: 'pipe' })

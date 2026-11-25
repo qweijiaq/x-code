@@ -39,15 +39,31 @@ const userConfigItemSchema = z.object({
   description: z.string().optional(),
 })
 
+/** 贡献路径必须是**插件根内的相对路径**：拒绝绝对路径与任何 `..` 段。
+ *
+ *  运行期 loader 的 `resolveContributions()` 直接 `path.resolve(root, entry)`，
+ *  而“必须落在插件根内”的包含性检查此前只存在于面向作者的 `validatePlugin()`。
+ *  也就是说，一个来自市场的插件可以把 `hooks` / `mcpServers` 指向插件根之外的
+ *  任意 JSON 文件，并被当作本插件的 hooks/MCP 配置装载（hooks 会执行命令），
+ *  构成路径穿越 / 沙箱边界绕过。这里在 schema 层先拦一层。 */
+const RELATIVE_CONTRIBUTION_PATH = z
+  .string()
+  .min(1)
+  .refine((value) => !path.isAbsolute(value) && !path.win32.isAbsolute(value), 'must be a relative path')
+  .refine(
+    (value) => !value.split(/[\\/]+/).includes('..'),
+    'must not contain `..` segments (contribution paths have to stay inside the plugin root)',
+  )
+
 /** 有些贡献字段既接受相对路径（string），也接受内联对象——Claude Code 的
  *  `mcpServers` 和 `hooks` 就是这种。这里不校验内联对象的形状；那是 mcp /
  *  hooks 子系统的事，它们已有自己的 schema。 */
-const pathOrInline = z.union([z.string().min(1), z.record(z.string(), z.unknown())])
+const pathOrInline = z.union([RELATIVE_CONTRIBUTION_PATH, z.record(z.string(), z.unknown())])
 
 /** 贡献路径既接受单个 string，也接受 string 数组。Claude Code 的
  *  `skills` 就是这种形式：数组里每一项都是一个明确的 skill 目录（例如
  *  `./skills/engineering/tdd`），而不是共同的父目录。 */
-const pathOrPathList = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)])
+const pathOrPathList = z.union([RELATIVE_CONTRIBUTION_PATH, z.array(RELATIVE_CONTRIBUTION_PATH).min(1)])
 
 /** 插件名：小写字母、数字、短横线；必须以字母或数字开头。与 Claude Code /
  *  Codex / Gemini 一致，并保证名字在 Windows 上可用作文件系统路径组件。 */
@@ -76,8 +92,8 @@ const manifestSchema = z.object({
   license: z.string().optional(),
 
   skills: pathOrPathList.optional(),
-  agents: z.string().min(1).optional(),
-  commands: z.string().min(1).optional(),
+  agents: RELATIVE_CONTRIBUTION_PATH.optional(),
+  commands: RELATIVE_CONTRIBUTION_PATH.optional(),
   mcpServers: pathOrInline.optional(),
   hooks: pathOrInline.optional(),
 

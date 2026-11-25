@@ -27,6 +27,9 @@ let backend: TransformersModule | null | undefined
 let extractor: FeaturePipeline | null = null
 let lastError: string | null = null
 let lastAttempt = 0
+/** 共享的加载 Promise：并发调用者必须复用同一次 import / 模型加载。 */
+let backendPromise: Promise<TransformersModule | null> | null = null
+let extractorPromise: Promise<FeaturePipeline | null> | null = null
 
 // 非字面的动态 import 可让打包器和 tsc 不在构建时
 // 要求这个可选包。
@@ -34,25 +37,39 @@ const dynamicImport = new Function('specifier', 'return import(specifier)') as (
 
 async function loadBackend(): Promise<TransformersModule | null> {
   if (backend !== undefined) return backend
-  for (const specifier of ['@huggingface/transformers', '@xenova/transformers']) {
-    try {
-      const module = (await dynamicImport(specifier)) as TransformersModule
-      if (typeof module.pipeline === 'function') {
-        backend = module
-        return backend
+  // 共享同一个 import 结果：否则并发调用会各自 `import()` 同一个可选包。
+  backendPromise ??= (async () => {
+    for (const specifier of ['@huggingface/transformers', '@xenova/transformers']) {
+      try {
+        const module = (await dynamicImport(specifier)) as TransformersModule
+        if (typeof module.pipeline === 'function') {
+          backend = module
+          return backend
+        }
+      } catch {
+        // 尝试下一个包名。
       }
-    } catch {
-      // 尝试下一个包名。
     }
-  }
-  backend = null
-  return null
+    backend = null
+    return null
+  })()
+  return backendPromise
 }
 
 async function ensureExtractor(): Promise<FeaturePipeline | null> {
   if (extractor) return extractor
   if (lastError && Date.now() - lastAttempt < RETRY_COOLDOWN_MS) return null
   lastAttempt = Date.now()
+  // 并发调用（索引重建与语义搜索同时进行、embedTexts 被并行分批调用）共享
+  // 同一次加载：否则每个调用者都会各自 `pipeline(...)`，重复下载/加载约
+  // 100 MB 模型、内存翻倍，且后完成的赋值会覆盖并泄漏先创建的实例。
+  extractorPromise ??= createExtractor().finally(() => {
+    extractorPromise = null
+  })
+  return extractorPromise
+}
+
+async function createExtractor(): Promise<FeaturePipeline | null> {
   const module = await loadBackend()
   if (!module?.pipeline) {
     lastError = 'Embedding backend is not installed'

@@ -19,7 +19,7 @@
 // 继续下探。
 import path from 'node:path'
 
-import { mutateSettingsFile, readSettingsFile } from '../settings-io.js'
+import { mutateSettingsFile, readSettingsFileForRead } from '../settings-io.js'
 import { XCODE_DIR, userXcodeDir } from '../utils.js'
 import type { PluginScope } from './types.js'
 
@@ -35,9 +35,13 @@ interface PluginSettingsFile {
 }
 
 function enabledPluginsFrom(value: unknown): Record<string, boolean> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  // 无原型表：插件 id 来自磁盘上的记账文件，可能是 `__proto__` / `constructor`
+  // / `toString` 这类名字。用普通对象字面量会让 `__proto__` 赋值落到
+  // Object.prototype 的 setter 上被静默吞掉，也会让后面的 `in` 判存在性
+  // 对这些原型键永远返回 true。
+  const enabledPlugins = Object.create(null) as Record<string, boolean>
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return enabledPlugins
 
-  const enabledPlugins: Record<string, boolean> = {}
   for (const [pluginId, enabled] of Object.entries(value as Record<string, unknown>)) {
     if (typeof enabled === 'boolean') enabledPlugins[pluginId] = enabled
   }
@@ -50,7 +54,7 @@ export function settingsPathForScope(scope: PluginScope, cwd: string = process.c
 }
 
 async function readSettings(scope: PluginScope, cwd: string): Promise<PluginSettingsFile> {
-  const obj = await readSettingsFile(settingsPathForScope(scope, cwd))
+  const obj = await readSettingsFileForRead(settingsPathForScope(scope, cwd))
   return { enabledPlugins: enabledPluginsFrom(obj.enabledPlugins) }
 }
 
@@ -81,7 +85,9 @@ export class EnableState {
   resolve(pluginId: string): ResolvedEnableState {
     for (const scope of SCOPE_PRECEDENCE) {
       const table = this.perScope.get(scope) ?? {}
-      if (pluginId in table) {
+      // `Object.hasOwn` 而非 `in`：缺失作用域回退成 `{}` 时，`'constructor' in {}`
+      // 为真，会把原型键误当成用户的显式设置。
+      if (Object.hasOwn(table, pluginId)) {
         return { enabled: table[pluginId]!, decidedBy: scope }
       }
     }
@@ -108,6 +114,9 @@ export async function setPluginEnabled(
 ): Promise<'changed' | 'noop'> {
   const file = settingsPathForScope(scope, cwd)
   const changed = await mutateSettingsFile(file, (existing) => {
+    // 注意：这里整表重建 `enabledPlugins`，会连带丢掉其它插件条目里的非
+    // boolean 脏值（如 `"foo": "yes"`）。这类值本来就会被 loader 忽略，
+    // 且写回的文件仍是合法形状，因此接受这个副作用。
     const currentMap = enabledPluginsFrom(existing.enabledPlugins)
     if (currentMap[pluginId] === enabled) return false
     currentMap[pluginId] = enabled
@@ -127,7 +136,7 @@ export async function clearPluginEntry(
   const file = settingsPathForScope(scope, cwd)
   const changed = await mutateSettingsFile(file, (existing) => {
     const currentMap = enabledPluginsFrom(existing.enabledPlugins)
-    if (!(pluginId in currentMap)) return false
+    if (!Object.hasOwn(currentMap, pluginId)) return false
     delete currentMap[pluginId]
 
     if (Object.keys(currentMap).length === 0) delete existing.enabledPlugins

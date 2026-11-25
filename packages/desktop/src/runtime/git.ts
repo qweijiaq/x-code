@@ -149,9 +149,17 @@ export async function undoCheckpoint(checkpoint: GitCheckpoint): Promise<{
 
   let restored = 0
   if (checkpoint.stash) {
-    const result = await git(root, ['checkout', checkpoint.stash, '--', '.'])
-    if (result.code !== 0) {
-      return { restored: 0, deleted: 0, message: `git checkout failed: ${result.stderr.trim()}` }
+    // stash 的 tree 是“工作树快照”。`checkout <stash> -- .` 会把索引也写成
+    // 工作树内容（部分暂存的改动全变成 staged），而且不会清理本轮 `git add`
+    // 过的新文件。因此先把索引+工作树重置成工作树快照，再把索引单独恢复成
+    // checkpoint 抓到的索引快照（stash 的第二父提交）。
+    const worktree = await git(root, ['read-tree', '--reset', '-u', checkpoint.stash])
+    if (worktree.code !== 0) {
+      return { restored: 0, deleted: 0, message: `git read-tree failed: ${worktree.stderr.trim()}` }
+    }
+    const index = await git(root, ['read-tree', `${checkpoint.stash}^2`])
+    if (index.code !== 0) {
+      return { restored: 0, deleted: 0, message: `git read-tree failed: ${index.stderr.trim()}` }
     }
     restored = 1
   } else if (checkpoint.head) {

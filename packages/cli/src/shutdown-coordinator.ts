@@ -83,6 +83,21 @@ export async function runShutdownPhases(options: {
   const ordinaryPhaseTimedOut = !(await settleUntil(ordinary, ordinaryPhaseDeadline))
 
   const forceSync = options.forceSync ?? forceTerminateManagedShellsSync
-  const emergency = forceSync(options.reason, absoluteDeadline)
+  // 兜底阶段必须始终留有最小预算。`absoluteDeadline` 是相对 `startedAt` 算的，而
+  // 前面所有阶段的等待都依赖 setTimeout 触发——一旦事件循环被阻塞（清理钩子里的
+  // 同步工作、进程被挂起）或调用方传入较早的 `startedAt`，走到这里
+  // `performance.now()` 很可能已 >= absoluteDeadline。此时 forceSync 内部会对每个
+  // target 直接记 'deadline-exhausted' 并跳过 forceTreeSync，即一个 shell 都不会被
+  // 真正杀掉，随后 process.exit() 把托管 shell 留成孤儿进程。
+  const emergencyDeadline = Math.max(absoluteDeadline, performance.now() + timing.emergencyReserveMs)
+  let emergency: EmergencyTerminationResult
+  try {
+    emergency = forceSync(options.reason, emergencyDeadline)
+  } catch {
+    // 作为最后一道防线，绝不能因为 forceSync 抛错就让 runShutdownPhases reject：
+    // 那样 `process.exit()` 永远不会被调用，而 shutdownInProgress 已置为 true，
+    // 进程会永久挂住。
+    emergency = { reason: options.reason, requested: 0, results: [] }
+  }
   return { absoluteDeadline, shellPhaseTimedOut, ordinaryPhaseTimedOut, emergency }
 }

@@ -144,6 +144,8 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
   const [preview, setPreview] = useState(false)
   const [cursor, setCursor] = useState({ line: 1, column: 1, selected: 0 })
   const gutterRef = useRef<HTMLDivElement | null>(null)
+  /** openFile 的请求序号：连续快速点击两个文件时，只有最后一次的结果可以落 state。 */
+  const openSeqRef = useRef(0)
   const [newPath, setNewPath] = useState('')
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
   const dirty = read !== null && !read.binary && !read.truncated && draft !== original
@@ -235,24 +237,38 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
       onOpenDocument(entry.path)
       return
     }
+    const seq = ++openSeqRef.current
     setSelected(entry)
     setPreview(false)
     setCursor({ line: 1, column: 1, selected: 0 })
     setLoading(true)
     setError(null)
+    // 切换文件时先清空内容，避免“旧文件正文 + 新文件路径”的组合被保存下去。
+    setRead(null)
+    setDraft('')
+    setOriginal('')
     try {
       const response = await request('files:read', { path: entry.path })
+      if (seq !== openSeqRef.current) return
       if (!response.ok) {
         setError(response.error.message)
         setRead(null)
+        setDraft('')
+        setOriginal('')
         return
       }
       const result = response.result as FileReadView
       setRead(result)
       setDraft(result.binary ? '' : result.content)
       setOriginal(result.binary ? '' : result.content)
+    } catch (cause) {
+      if (seq !== openSeqRef.current) return
+      setError(cause instanceof Error ? cause.message : String(cause))
+      setRead(null)
+      setDraft('')
+      setOriginal('')
     } finally {
-      setLoading(false)
+      if (seq === openSeqRef.current) setLoading(false)
     }
   }
 

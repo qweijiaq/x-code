@@ -59,8 +59,22 @@ interface SlashCommandRouterOptions {
   exit: () => void
 }
 
-/** 路由一条斜杠命令。忙碌状态的准入仍归 App 管。 */
+/** 路由一条斜杠命令。忙碌状态的准入仍归 App 管。
+ *
+ *  所有命令分发的异常都在这里兜住：调用链是 `ChatInput.tsx` 的
+ *  `onSubmit(expanded)`（不 await、不 catch）→ `App.tsx` 的
+ *  `await routeSlashCommand(...)`，异常一旦向上冒泡就成了 unhandled rejection，
+ *  在 Node ≥15 的默认策略下会直接终止进程，TUI 还会残留在异常状态。统一转成一条
+ *  用户可见的 `Command failed: …`，也让各命令的错误路径呈现一致。 */
 export async function routeSlashCommand(text: string, router: SlashCommandRouterOptions): Promise<void> {
+  try {
+    await dispatchSlashCommand(text, router)
+  } catch (error) {
+    router.agent.addCommandResult(`Command failed: ${errorMessage(error)}`)
+  }
+}
+
+async function dispatchSlashCommand(text: string, router: SlashCommandRouterOptions): Promise<void> {
   const parts = text.slice(1).trim().split(/\s+/)
   const command = parts[0]?.toLowerCase() ?? ''
   const argument = parts.slice(1).join(' ')

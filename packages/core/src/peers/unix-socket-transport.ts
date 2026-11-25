@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 
-import { errorMessage } from '../utils.js'
+import { debugLog, errorMessage } from '../utils.js'
 import { NdjsonFrameDecoder, type PeerFrameV1, encodePeerFrame } from './protocol.js'
 import type { PeerTransport, PeerTransportServer } from './transport.js'
 
@@ -226,9 +226,16 @@ export function createUnixSocketTransport(dependencies: UnixSocketTransportOptio
                 socket.end()
               }
             } catch (error) {
-              const message = errorMessage(error)
+              // `code` 是与 `PEER_AUTH_FAILED` / `PEER_PROTOCOL_ERROR` 同级的
+              // 机器可读稳定码，且协议层限制 128 字符。原始异常消息很容易超长
+              // （`ENOENT: no such file or directory, open '/home/…'`），一旦超长
+              // `encodePeerFrame` 会在 writeFrame 内同步抛错并被 `.catch(() => {})`
+              // 吞掉——对端只会看到连接被直接关闭、require 侧得到
+              // PEER_CONNECTION_CLOSED，真实故障原因完全丢失；消息里的本机路径
+              // 也是对端不该看到的内部信息。详细原因只记本地日志。
               if (!socket.destroyed) {
-                await writeFrame(socket, errorFrame(message, 'Invalid peer frame')).catch(() => {})
+                debugLog('peers.invalid-frame', errorMessage(error))
+                await writeFrame(socket, errorFrame('PEER_INTERNAL_ERROR', 'Invalid peer frame')).catch(() => {})
                 socket.end()
               }
             }

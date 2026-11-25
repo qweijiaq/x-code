@@ -178,7 +178,9 @@ export async function captionImageBuffer(
   opts.onUsage?.({ modelId: attributedModelId(modelId, result.response?.modelId), usage: result.usage })
 
   const caption = result.text.trim()
-  captionCache.set(key, caption)
+  // 只缓存有效描述：空串会长期占据一个无 TTL 的缓存槽位，使同一图片在本进程内
+  // 后续调用永远命中空串、再也不会重试，而调用方会把空描述直接拼进 tool result。
+  if (caption) captionCache.set(key, caption)
   return caption
 }
 

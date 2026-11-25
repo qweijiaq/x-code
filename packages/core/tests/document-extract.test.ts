@@ -95,7 +95,8 @@ describe('readDocument MOBI', () => {
   function pdbWithText(text: string): Buffer {
     const name = Buffer.alloc(32)
     name.write('TestBook', 'latin1')
-    const header = Buffer.alloc(86)
+    // PalmDB 头 78 字节 + 2 条 record info（每条 8 字节：offset4 + attributes1 + uniqueID3）
+    const header = Buffer.alloc(94)
     name.copy(header, 0)
     header.writeUInt16BE(2, 76)
     const record0 = Buffer.alloc(16)
@@ -108,7 +109,7 @@ describe('readDocument MOBI', () => {
     const record0Offset = header.length
     const record1Offset = record0Offset + record0.length
     header.writeUInt32BE(record0Offset, 78)
-    header.writeUInt32BE(record1Offset, 82)
+    header.writeUInt32BE(record1Offset, 86)
     return Buffer.concat([header, record0, record1])
   }
 

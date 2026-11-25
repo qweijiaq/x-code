@@ -54,10 +54,19 @@ function plansDir(): string {
  *  当调用方已有预先算好的 slug（例如 agentLoop 的会话级 `taskSlug`）时，传入 `opts.slug`
  *  以跳过本地的 slugify 步骤——这对非 ASCII 任务文本很重要，因为那种情况 slugify 会返回空。 */
 export function makePlanFilePath(taskText: string, opts?: { slug?: string; now?: Date }): string {
-  const slug = opts?.slug ?? slugify(taskText)
+  // `opts.slug` 不是可信输入：enterPlanMode 的 `topic` 直接来自模型可控的工具入参
+  // （见 plan-tools.ts）。不过滤的话 `../../../../.ssh/authorized_keys` 会被
+  // `path.join` 规范化成计划目录之外的路径，且能绕过 SLUG_MAX_LEN 撞上
+  // ENAMETOOLONG / Windows 非法文件名字符。与本地 slugify 同等净化。
+  const slug = slugify(opts?.slug ?? taskText)
   const ts = formatTimestamp(opts?.now ?? new Date())
   const name = slug ? `${slug}-${ts}` : ts
-  return path.join(plansDir(), `${name}.md`)
+  const dir = plansDir()
+  const target = path.join(dir, `${name}.md`)
+  if (!path.resolve(target).startsWith(path.resolve(dir) + path.sep)) {
+    throw new Error(`unsafe plan file name: ${name}`)
+  }
+  return target
 }
 
 /** 为会话派生一个人类易读的文件名 slug。

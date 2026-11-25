@@ -98,12 +98,57 @@ function updateCheckCachePath(): string {
   return path.join(userXcodeDir(), 'cache', 'update-check.json')
 }
 
+/** 按 semver 的优先级比较（只做到更新提示够用的程度）。
+ *
+ *  早先的实现是 `split('.').map(Number)` 且只比前三段：`2.0.0-beta.1` 会得到
+ *  `Number('0-beta') === NaN`，`NaN !== 0` 恒为真于是直接 `return NaN`，调用方的
+ *  `NaN > 0` 也恒为 false —— beta 用户永远收不到更新提示。四段版本号
+ *  （`2.0.12.1`）同样被 `i < 3` 截断。 */
 function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
-  for (let i = 0; i < 3; i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0)
+  const pa = parseVersion(a)
+  const pb = parseVersion(b)
+  const len = Math.max(pa.core.length, pb.core.length)
+  for (let i = 0; i < len; i++) {
+    const diff = (pa.core[i] ?? 0) - (pb.core[i] ?? 0)
     if (diff !== 0) return diff
+  }
+  // 主版本段相同：带预发布后缀的一方更低（`1.0.0-beta` < `1.0.0`）。
+  if (pa.pre !== null && pb.pre === null) return -1
+  if (pa.pre === null && pb.pre !== null) return 1
+  if (pa.pre === null || pb.pre === null) return 0
+  return comparePrerelease(pa.pre, pb.pre)
+}
+
+function parseVersion(version: string): { core: number[]; pre: string | null } {
+  const [withoutBuild = ''] = version.trim().replace(/^v/i, '').split('+')
+  const [core = '', pre] = withoutBuild.split('-')
+  return {
+    // 非数字段按 0 处理，绝不产生 NaN 污染整个比较。
+    core: core.split('.').map((segment) => (/^\d+$/.test(segment) ? Number(segment) : 0)),
+    pre: pre === undefined || pre === '' ? null : pre,
+  }
+}
+
+function comparePrerelease(a: string, b: string): number {
+  const pa = a.split('.')
+  const pb = b.split('.')
+  const len = Math.max(pa.length, pb.length)
+  for (let i = 0; i < len; i++) {
+    const x = pa[i]
+    const y = pb[i]
+    // 前面的标识符都相同：段数更少的一方更低。
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    const nx = /^\d+$/.test(x) ? Number(x) : null
+    const ny = /^\d+$/.test(y) ? Number(y) : null
+    if (nx !== null && ny !== null) {
+      if (nx !== ny) return nx - ny
+      continue
+    }
+    // 数字标识符低于字母数字标识符。
+    if (nx !== null) return -1
+    if (ny !== null) return 1
+    if (x !== y) return x < y ? -1 : 1
   }
   return 0
 }
@@ -133,23 +178,35 @@ export async function checkForUpdate(): Promise<void> {
   // 从 npm 获取最新版本
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 3000)
+  // 该 timer 会持有 event loop——短命令路径上不 unref 会最多拖 3s 才退出。
+  timeout.unref?.()
   try {
     const res = await fetch(NPM_REGISTRY_URL, {
       signal: controller.signal,
       headers: { Accept: 'application/json' },
     })
     if (!res.ok) return
+    // 代理 / 网关返回 HTML 时 `res.json()` 会抛 SyntaxError。本函数的契约是
+    // “从不抛错”，此前只靠调用方的 `.catch` 兜底——任何新调用点漏加 catch 就会
+    // 变成 unhandled rejection（Node 默认 throw 策略下直接让 CLI 崩溃退出）。
     const data = (await res.json()) as { version?: string }
     const latest = data.version
     if (!latest) return
 
-    // 写缓存
-    fs.mkdirSync(path.dirname(cachePath), { recursive: true })
-    fs.writeFileSync(cachePath, JSON.stringify({ checkedAt: Date.now(), latest }), 'utf-8')
-
-    if (compareVersions(latest!, current) > 0) {
-      printUpdateHint(current, latest!)
+    // 写缓存（尽力而为）：`latest` 已经拿到了，缓存写入失败不该让本次提示丢失，
+    // 更不该让函数抛错。
+    try {
+      fs.mkdirSync(path.dirname(cachePath), { recursive: true })
+      fs.writeFileSync(cachePath, JSON.stringify({ checkedAt: Date.now(), latest }), 'utf-8')
+    } catch {
+      // 缓存是纯优化，忽略。
     }
+
+    if (compareVersions(latest, current) > 0) {
+      printUpdateHint(current, latest)
+    }
+  } catch {
+    // 网络 / 解析失败——静默放弃本次检查。
   } finally {
     clearTimeout(timeout)
   }

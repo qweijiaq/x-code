@@ -18,7 +18,7 @@ import {
   compressImage,
 } from '../utils/image-compress.js'
 import { LruCache, bufferFingerprint } from '../utils/lru-cache.js'
-import { ocrImage } from './image-ocr.js'
+import { isOcrFailureText, ocrImage } from './image-ocr.js'
 import { toolMediaUserMessage } from './messages.js'
 import type { ToolImage } from './messages.js'
 
@@ -251,7 +251,9 @@ async function ocrBuffer(buffer: Buffer, abortSignal?: AbortSignal): Promise<str
     Buffer.byteLength(rawText, 'utf-8') <= MAX_COMPAT_OCR_BYTES
       ? rawText
       : truncateUtf8(rawText, MAX_COMPAT_OCR_BYTES) + '\n[Local OCR output truncated at 256 KB.]'
-  ocrCache.set(key, text)
+  // 失败占位串不能进缓存：否则一次瞬时故障（worker 崩溃、内存不足）会被按内容
+  // 哈希永久记忆化，成为该图片在本进程内的“识别结果”。
+  if (!isOcrFailureText(text)) ocrCache.set(key, text)
   return text
 }
 

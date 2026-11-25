@@ -70,7 +70,13 @@ export function ContextSearchPanel({ onClose, onOpenPath, onOpenDocument, onOpen
         setError(response.error.message)
         return
       }
-      setResult(response.result as ContextSearchResponse)
+      const payload = response.result as ContextSearchResponse | undefined
+      setResult({ query: trimmed, results: payload?.results ?? [], notes: payload?.notes ?? [] })
+    } catch (cause) {
+      // 通道 reject 时不能让异常冒泡成 unhandled rejection，否则用户只看到
+      // loading 停下、结果还是上一次的。
+      setError(cause instanceof Error ? cause.message : String(cause))
+      setResult(null)
     } finally {
       setLoading(false)
     }

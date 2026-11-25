@@ -138,6 +138,10 @@ async function runOne(root: string, check: ProjectCheck): Promise<CheckResult> {
         timeout: CHECK_TIMEOUT_MS,
         maxBuffer: OUTPUT_BUFFER,
         env,
+        // Windows 下 npm/pnpm/yarn/bun 都是 .cmd 垫片，execFile 不经 shell
+        // 无法启动（Node 18.20.2+ 修复 CVE-2024-27980 后直接抛 EINVAL）。
+        // 参数固定为 `run <script>`，不含用户输入。
+        shell: process.platform === 'win32',
       },
       (error, stdout, stderr) => {
         const output = tail(`${stdout ?? ''}${stderr ?? ''}`)

@@ -32,7 +32,7 @@ const CSV_EXTENSIONS = new Set(['.csv', '.tsv'])
 
 /** 以绝对路径为键的提取页面文本；避免为每一次「加载更多」
  *  批次重新解析大 PDF。 */
-const pageTextCache = new Map<string, { at: number; pageTexts: Map<number, string> }>()
+const pageTextCache = new Map<string, { at: number; pageTexts: Map<number, string>; totalPages: number }>()
 
 function clampText(text: string, maxChars: number): string {
   return text.length > maxChars ? `${text.slice(0, maxChars)}\n... [preview truncated at ${maxChars} chars]` : text
@@ -255,13 +255,29 @@ async function renderPdfPages(
   }
 }
 
-async function pdfPageTexts(filePath: string): Promise<Map<number, string>> {
+/** 总页数只认解析器给出的 metadata.pages：页面文本会被 core 在
+ *  MAX_TEXT_CHARS 处截断（长 PDF 只有前几页有 `--- Page N ---` 块），
+ *  扫描版 PDF 甚至完全没有文本层。用它推导上界会让「加载更多」提前结束。 */
+function totalPagesOf(metadataPages: unknown, pageTexts: Map<number, string>): number {
+  const declared = Number(metadataPages ?? 0)
+  let highestTextPage = 0
+  for (const page of pageTexts.keys()) {
+    if (Number.isFinite(page) && page > highestTextPage) highestTextPage = page
+  }
+  const total = Math.max(Number.isFinite(declared) ? Math.floor(declared) : 0, highestTextPage, 1)
+  return total
+}
+
+async function pdfPageInfo(filePath: string): Promise<{ pageTexts: Map<number, string>; totalPages: number }> {
   const cached = pageTextCache.get(filePath)
-  if (cached && Date.now() - cached.at < PAGE_TEXT_CACHE_MS) return cached.pageTexts
+  if (cached && Date.now() - cached.at < PAGE_TEXT_CACHE_MS) {
+    return { pageTexts: cached.pageTexts, totalPages: cached.totalPages }
+  }
   const document = await readDocument(filePath, { maxChars: MAX_TEXT_CHARS, ocr: false })
   const pageTexts = parsePageTexts(document.text)
-  pageTextCache.set(filePath, { at: Date.now(), pageTexts })
-  return pageTexts
+  const totalPages = totalPagesOf(document.metadata.pages, pageTexts)
+  pageTextCache.set(filePath, { at: Date.now(), pageTexts, totalPages })
+  return { pageTexts, totalPages }
 }
 
 function clampBatch(start: number | undefined, count: number | undefined): { start: number; count: number } {
@@ -328,9 +344,10 @@ export async function openDocumentView(
   view.metadata = document.metadata
 
   if (extension === PDF_EXTENSION) {
-    const totalPages = Number(document.metadata.pages ?? 0)
     const pageTexts = parsePageTexts(document.text)
-    pageTextCache.set(resolved, { at: Date.now(), pageTexts })
+    // 与 loadDocumentPages 共用同一份总页数口径，避免分页上界两处不一致。
+    const totalPages = totalPagesOf(document.metadata.pages, pageTexts)
+    pageTextCache.set(resolved, { at: Date.now(), pageTexts, totalPages })
     const ocr = storedOcr(resolved)
     view.pageTexts = pageTextList(pageTexts, totalPages)
     view.totalPages = totalPages
@@ -368,8 +385,7 @@ export async function loadDocumentPages(
 ): Promise<{ pages: DocumentPageView[]; hasMore: boolean }> {
   const resolved = path.resolve(input)
   if (path.extname(resolved).toLowerCase() !== PDF_EXTENSION) return { pages: [], hasMore: false }
-  const pageTexts = await pdfPageTexts(resolved)
-  const totalPages = pageTexts.size > 0 ? Math.max(...pageTexts.keys()) : 1
+  const { pageTexts, totalPages } = await pdfPageInfo(resolved)
   const ocr = storedOcr(resolved)
   const rendered = await renderPdfPages(resolved, start, count, pageTexts, ocr, totalPages)
   if (rendered.error) throw new Error(rendered.error)

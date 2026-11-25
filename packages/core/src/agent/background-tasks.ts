@@ -87,12 +87,23 @@ export class BackgroundTaskRegistry {
     }
   }
 
-  private readStored(): BackgroundTaskSnapshot[] {
+  /** 读取其他窗口写入的共享快照。返回 null 表示“文件存在但读不出来”
+   *  （被截断、半写、手工改坏）——与“文件不存在”是两回事：前者必须跳过本次
+   *  持久化，否则本窗口会用不含其他窗口条目的内容把它们整体覆盖掉。 */
+  private readStored(): BackgroundTaskSnapshot[] | null {
+    if (!this.storePath) return []
+    let raw: string
     try {
-      const parsed = JSON.parse(fs.readFileSync(this.storePath!, 'utf-8'))
-      return Array.isArray(parsed) ? (parsed as BackgroundTaskSnapshot[]) : []
+      raw = fs.readFileSync(this.storePath, 'utf-8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+      return null
+    }
+    try {
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? (parsed as BackgroundTaskSnapshot[]) : null
     } catch {
-      return []
+      return null
     }
   }
 
@@ -100,23 +111,44 @@ export class BackgroundTaskRegistry {
     if (!this.storePath) return
     try {
       // 先读回其他窗口的快照再合并，避免后写的窗口整体覆盖另一个窗口。
+      const stored = this.readStored()
+      // 共享文件读不出来时宁可不写：用只有本窗口条目的内容覆盖它，会把其他
+      // 窗口的快照永久丢掉。
+      if (stored === null) return
       const own = [...this.entries.values()].map((entry) => ({
         ...entry.task,
         ...(entry.task.resultText ? { resultText: entry.task.resultText.slice(0, 2000) } : {}),
       }))
       const ownIds = new Set(own.map((task) => task.id))
-      const foreign = this.readStored().filter(
+      const foreign = stored.filter(
         (task) => task.ownerId !== undefined && task.ownerId !== this.ownerId && !ownIds.has(task.id),
       )
       const tasks = [...foreign, ...own].slice(-200)
       const dir = this.storePath.replace(/[\\/][^\\/]+$/, '')
       fs.mkdirSync(dir, { recursive: true })
-      // 直接写目标文件：Windows 上 rename 覆盖已存在文件可能返回 EPERM。
-      fs.writeFileSync(this.storePath, `${JSON.stringify(tasks, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 })
-      fs.chmodSync(this.storePath, 0o600)
+      this.writeStore(`${JSON.stringify(tasks, null, 2)}\n`)
     } catch {
       // 持久化只是便利功能；写入失败不影响正在运行的任务。
     }
+  }
+
+  /** 原子写入：同目录临时文件 + rename。另一个窗口在此期间读到的要么是旧文件，
+   *  要么是新文件，绝不会是半写的 JSON（那会让它对 readStored 返回 null 并跳过
+   *  持久化）。Windows 上目标被短暂占用时 rename 可能返回 EPERM/EBUSY，
+   *  该情况下退化为直接覆写，保持功能可用。 */
+  private writeStore(payload: string): void {
+    const target = this.storePath!
+    const temp = `${target}.${process.pid}.${randomUUID()}.tmp`
+    try {
+      fs.writeFileSync(temp, payload, { encoding: 'utf-8', mode: 0o600 })
+      fs.renameSync(temp, target)
+    } catch (error) {
+      fs.rmSync(temp, { force: true })
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY') throw error
+      fs.writeFileSync(target, payload, { encoding: 'utf-8', mode: 0o600 })
+    }
+    fs.chmodSync(target, 0o600)
   }
 
   start(input: BackgroundTaskStartInput): { task: BackgroundTaskSnapshot; signal: AbortSignal } {

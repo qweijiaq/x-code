@@ -215,6 +215,22 @@ async function loadOnePlugin(args: LoadOneArgs): Promise<void> {
  *     文件放在旁边。
  *
  *  之所以是 async，是因为约定探测需要 stat 目录。 */
+
+/** 把 manifest 声明的相对路径解析到插件根内，并二次校验不越界。
+ *
+ *  manifest schema 已经拒绝绝对路径与含 `..` 段的贡献路径，这里是纵深防御：
+ *  `hooks` / `mcpServers` 指向插件根之外的 JSON 会被当作本插件的配置装载
+ *  （hooks 会执行命令），而 releases 里可能存在用旧版本校验的 curator 索引、
+ *  或作者绕过 CLI 直接手写的 manifest。 */
+function resolveContributionPath(root: string, entry: string, field: string): string {
+  const resolved = path.resolve(root, entry)
+  const relative = path.relative(root, resolved)
+  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+    throw new Error(`manifest field \`${field}\` must stay inside the plugin root: ${entry}`)
+  }
+  return resolved
+}
+
 export async function resolveContributions(plugin: LoadedPlugin): Promise<ResolvedContributions> {
   const m = plugin.manifest
   const root = plugin.rootDir
@@ -224,17 +240,17 @@ export async function resolveContributions(plugin: LoadedPlugin): Promise<Resolv
   if (m.skills) {
     // 字符串是父目录；数组的每一项是明确的 skill 目录（Claude Code 兼容）。
     const declared = Array.isArray(m.skills) ? m.skills : [m.skills]
-    result.skillsDirs = declared.map((entry) => path.resolve(root, entry))
+    result.skillsDirs = declared.map((entry) => resolveContributionPath(root, entry, 'skills'))
   } else if (await isDir(path.join(root, 'skills'))) {
     result.skillsDirs = [path.join(root, 'skills')]
   }
   if (m.agents) {
-    result.agentsDir = path.resolve(root, m.agents)
+    result.agentsDir = resolveContributionPath(root, m.agents, 'agents')
   } else if (await isDir(path.join(root, 'agents'))) {
     result.agentsDir = path.join(root, 'agents')
   }
   if (m.commands) {
-    result.commandsDir = path.resolve(root, m.commands)
+    result.commandsDir = resolveContributionPath(root, m.commands, 'commands')
   } else if (await isDir(path.join(root, 'commands'))) {
     result.commandsDir = path.join(root, 'commands')
   }
@@ -242,7 +258,7 @@ export async function resolveContributions(plugin: LoadedPlugin): Promise<Resolv
   // mcpServers —— 要么已声明（路径 / 内联），要么从约定文件自动发现
   if (m.mcpServers !== undefined) {
     if (typeof m.mcpServers === 'string') {
-      result.mcpServers = { kind: 'path', path: path.resolve(root, m.mcpServers) }
+      result.mcpServers = { kind: 'path', path: resolveContributionPath(root, m.mcpServers, 'mcpServers') }
     } else {
       result.mcpServers = { kind: 'inline', data: m.mcpServers }
     }
@@ -261,7 +277,7 @@ export async function resolveContributions(plugin: LoadedPlugin): Promise<Resolv
   // hooks —— 同样的模式，约定文件为 `hooks/hooks.json`
   if (m.hooks !== undefined) {
     if (typeof m.hooks === 'string') {
-      result.hooks = { kind: 'path', path: path.resolve(root, m.hooks) }
+      result.hooks = { kind: 'path', path: resolveContributionPath(root, m.hooks, 'hooks') }
     } else {
       result.hooks = { kind: 'inline', data: m.hooks }
     }

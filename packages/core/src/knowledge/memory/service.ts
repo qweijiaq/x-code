@@ -38,6 +38,23 @@ export interface MemoryServiceOptions {
   onNotice?: (notice: MemoryWriteNotice) => void
 }
 
+/** 同一 `LoopState` 的会话 JSONL 追加按调用顺序串行化。
+ *
+ *  这些追加都是 fire-and-forget 的簿记：并发交错时 tombstone 可能先于它要
+ *  失效的 attachment 落盘，恢复会话重放时顺序就错了（已失效的记忆会复活）。
+ *  同时写入失败（磁盘满 / 权限）只落调试日志——Node ≥15 默认
+ *  `--unhandled-rejections=throw`，漏掉的 rejection 会直接退出进程，把整个
+ *  agent 回合打挂。 */
+const sessionRecordChains = new WeakMap<object, Promise<void>>()
+
+function appendSessionRecord(state: object, run: () => Promise<void>, failureTag: string): void {
+  const previous = sessionRecordChains.get(state) ?? Promise.resolve()
+  const next = previous.then(run).catch((error: unknown) => {
+    debugLog(failureTag, errorMessage(error))
+  })
+  sessionRecordChains.set(state, next)
+}
+
 function pinnedCoreSignature(topics: readonly MemoryTopic[]): string {
   return JSON.stringify(
     topics
@@ -66,6 +83,24 @@ function isWildcardMemoryQuery(value: string): boolean {
     /\b(?:all|every|everything)\b.*\b(?:memory|memories|preferences?|facts?)\b/.test(normalized) ||
     /\b(?:everything|all)\b.*\b(?:know|remember)\b.*\b(?:about me|about the user)\b/.test(normalized) ||
     /(?:列出|显示|枚举|导出).*(?:全部|所有|一切).*(?:记忆|偏好|事实)|(?:全部|所有).*(?:记忆|偏好)/.test(normalized)
+  )
+}
+
+/** 变更文件来自磁盘，可能是被截断/手工改坏的 JSON（仍能解析，但结构不对）。
+ *  直接 `[...change.changed, ...change.deleted]` 会抛 `TypeError: not iterable`
+ *  并把整个用户回合打挂，所以解析后必须校验结构。 */
+function isMemoryChange(value: unknown, generation: number): value is MemoryChange {
+  if (!value || typeof value !== 'object') return false
+  const change = value as Partial<MemoryChange>
+  if (change.generation !== generation || typeof change.reason !== 'string') return false
+  if (!Array.isArray(change.changed) || !Array.isArray(change.deleted)) return false
+  const hasStringFields = (entry: unknown, fields: readonly string[]): boolean =>
+    !!entry &&
+    typeof entry === 'object' &&
+    fields.every((field) => typeof (entry as Record<string, unknown>)[field] === 'string')
+  return (
+    change.changed.every((entry) => hasStringFields(entry, ['topicId', 'factId', 'nextHash'])) &&
+    change.deleted.every((entry) => hasStringFields(entry, ['topicId', 'factId', 'previousHash']))
   )
 }
 
@@ -214,7 +249,7 @@ export class MemoryService {
     this.lastTrace = retrieved.trace
     if (!addMemoryRecallAttachment(state, attachment)) return null
     state.memoryGeneration = this.index.generation
-    void appendMemoryRecall(state, attachment)
+    appendSessionRecord(state, () => appendMemoryRecall(state, attachment), 'memory.append-recall-failed')
     return attachment
   }
 
@@ -281,7 +316,7 @@ export class MemoryService {
     }
     this.lastTrace = state.lastMemoryRecallTrace
     state.memoryGeneration = this.index.generation
-    void appendMemoryRecall(state, attachment)
+    appendSessionRecord(state, () => appendMemoryRecall(state, attachment), 'memory.append-recall-failed')
     return attachment
   }
 
@@ -575,7 +610,11 @@ export class MemoryService {
       if (factIds.length > 0 || topicIds.length > 0) {
         const tombstone = { generation: toGeneration, factIds, topicIds }
         addMemoryRecallTombstone(state, tombstone)
-        void appendMemoryRecallDelete(state, tombstone)
+        appendSessionRecord(
+          state,
+          () => appendMemoryRecallDelete(state, tombstone),
+          'memory.append-recall-delete-failed',
+        )
       }
       state.systemPromptCache = null
       markExpectedCacheMiss(state, 'memory-context-change')
@@ -636,7 +675,7 @@ export class MemoryService {
     if (factIds.size || topicIds.size) {
       const tombstone = { generation: toGeneration, factIds: [...factIds], topicIds: [...topicIds] }
       addMemoryRecallTombstone(state, tombstone)
-      void appendMemoryRecallDelete(state, tombstone)
+      appendSessionRecord(state, () => appendMemoryRecallDelete(state, tombstone), 'memory.append-recall-delete-failed')
     }
     if (
       pinnedChanged ||
@@ -649,12 +688,30 @@ export class MemoryService {
   }
 
   private async readChange(generation: number): Promise<MemoryChange | null> {
+    const file = path.join(this.memoryRoot, '.state', 'changes', `${generation}.json`)
+    let raw: string
     try {
-      return JSON.parse(
-        await fs.readFile(path.join(this.memoryRoot, '.state', 'changes', `${generation}.json`), 'utf-8'),
-      ) as MemoryChange
-    } catch {
+      raw = await fs.readFile(file, 'utf-8')
+    } catch (error) {
+      // ENOENT 是常态（该代际本来就没有变更文件）；其它 IO 错误值得留痕。
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        debugLog('memory.read-change-failed', `${generation}: ${errorMessage(error)}`)
+      }
       return null
     }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw) as unknown
+    } catch (error) {
+      debugLog('memory.change-unparsable', `${generation}: ${errorMessage(error)}`)
+      return null
+    }
+    if (!isMemoryChange(parsed, generation)) {
+      // 返回 null 会让调用方走保守的 `collectChangedAttachmentIds()` 全量比对，
+      // 比拿半截数据去迭代安全得多。
+      debugLog('memory.change-invalid', `${generation}: unexpected change file shape`)
+      return null
+    }
+    return parsed
   }
 }

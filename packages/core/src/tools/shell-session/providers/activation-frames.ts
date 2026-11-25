@@ -3,6 +3,8 @@ import { StringDecoder } from 'node:string_decoder'
 import type { ManagedOutputCapture, ManagedProcessFrame } from '../provider.js'
 
 const ACTIVATION_OUTPUT_MAX_BYTES = 1024 * 1024
+/** activate() 排空缓冲时的投递上限，防止同步回推的 listener 造成死循环。 */
+const MAX_ACTIVATION_DRAIN_FRAMES = 100_000
 const ACTIVATION_HEAD_BYTES = Math.ceil(ACTIVATION_OUTPUT_MAX_BYTES / 2)
 const ACTIVATION_TAIL_BYTES = ACTIVATION_OUTPUT_MAX_BYTES - ACTIVATION_HEAD_BYTES
 
@@ -98,10 +100,24 @@ export class ActivationFrameBuffer {
     if (this.state !== 'buffering') return
     this.listener = listener
     this.state = 'flushing'
-    for (const frame of this.materialize()) listener(frame)
-    while (this.flushingFrames.length > 0) listener(this.flushingFrames.shift()!)
-    this.clearBufferedFrames()
-    this.state = 'active'
+    let delivered = 0
+    try {
+      for (const frame of this.materialize()) {
+        if (delivered++ >= MAX_ACTIVATION_DRAIN_FRAMES) break
+        listener(frame)
+      }
+      // listener 可能同步回推新帧（例如激活触发了一次读取），因此排空必须有界，
+      // 否则这个 while 会变成死循环。
+      while (this.flushingFrames.length > 0 && delivered++ < MAX_ACTIVATION_DRAIN_FRAMES) {
+        listener(this.flushingFrames.shift()!)
+      }
+    } finally {
+      // 无论投递是否抛错，状态都必须收敛并清空缓冲：否则 state 会永久停在
+      // 'flushing'，此后所有帧（含 root-exit / tree-exit）都会无限堆进
+      // flushingFrames 且永不投递，再调用 activate() 也会被静默忽略。
+      this.clearBufferedFrames()
+      if (this.state === 'flushing') this.state = 'active'
+    }
   }
 
   discard(): ManagedProcessFrame[] {
