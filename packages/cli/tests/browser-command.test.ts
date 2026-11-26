@@ -85,4 +85,51 @@ describe('/browser command', () => {
       'Interactive Browser Use is OFF; automatic local visual checks are ON.',
     )
   })
+
+  it('still applies the toggle when the config write throws', async () => {
+    const command = setup(false, true)
+    browserMocks.loadUserConfig.mockImplementation(() => {
+      throw new Error('EACCES: permission denied')
+    })
+
+    await command.handleBrowser('/browser check-off', 'check-off')
+
+    expect(command.options.browserVisualCheckEnabled).toBe(false)
+    expect(command.addCommandMessage).toHaveBeenCalledWith(
+      '/browser check-off',
+      'Automatic local visual checks OFF (this session only — config could not be saved).',
+    )
+  })
+
+  it('does not report a failed toggle when only the prompt-cache refresh throws', async () => {
+    const command = setup(false, false)
+    command.invalidateSystemPromptCache.mockImplementation(() => {
+      throw new Error('cache exploded')
+    })
+
+    await command.handleBrowser('/browser on', 'on')
+
+    // agent 已经切换成功：不能再报「Failed to enable」。
+    expect(command.addCommandMessage).toHaveBeenCalledWith(
+      '/browser on',
+      'Interactive browser agent ON (this session only).',
+    )
+    expect(command.addCommandResult.mock.calls[0]?.[0]).toContain('system prompt cache could not be refreshed')
+  })
+
+  it('gives up on a hung shared-browser shutdown instead of hanging the command', async () => {
+    vi.useFakeTimers()
+    try {
+      const command = setup(false, true)
+      browserMocks.shutdownBrowserMcp.mockImplementationOnce(() => new Promise<never>(() => {}))
+
+      const pending = command.handleBrowser('/browser check-off', 'check-off')
+      await vi.advanceTimersByTimeAsync(5_000)
+      await pending
+
+      expect(command.addCommandResult.mock.calls[0]?.[0]).toContain('could not be closed')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

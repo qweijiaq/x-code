@@ -131,6 +131,18 @@ export function useGoalController({
   submit,
 }: UseGoalControllerOptions) {
   const goalCoordinatorRef = useRef(createGoalRunCoordinator())
+  /** `resumeGoalRun` 已经取到手、但对应的 runner 还排在 `wake()` 队列里没开始跑的
+   *  turn 租约。`interrupt(goalId)` 会把这些待唤醒直接丢弃（pause / cancel / clear
+   *  都会触发），runner 于是永不执行——它 `finally` 里的 `lease.release()` 也就
+   *  永远不会跑，租约被 'goal' 持有者永久泄漏，此后所有 turn 都拿不到租约，同时
+   *  `goalRunnerActive` 卡在 true。所以在这条路径上显式释放。 */
+  const pendingResumeLeaseRef = useRef<TurnLease | null>(null)
+
+  const releasePendingResumeLease = useCallback(() => {
+    const pending = pendingResumeLeaseRef.current
+    pendingResumeLeaseRef.current = null
+    pending?.release()
+  }, [])
 
   const createGoalCallbacks = useCallback((): AgentCallbacks => {
     return {
@@ -362,10 +374,22 @@ export function useGoalController({
       abortControllerRef.current?.abort()
       drainPendingInteractions()
       await goalCoordinatorRef.current.interrupt(goal.id)
-      await appendGoalState(state)
+      // interrupt 会丢弃还没开始跑的待唤醒 runner：它的租约没人再负责释放。
+      releasePendingResumeLease()
+      // 写会话日志失败（磁盘 / 权限 / 流错误）时异常会直接抛给 pauseGoal /
+      // cancelGoal 的调用方，而 `goalRunnerActive` 会永远停在 true（UI 卡在「目标
+      // 运行中」且用户看不到错误）。本文件其它收尾路径都做了兜底，这里保持一致。
+      try {
+        await appendGoalState(state)
+      } catch (error) {
+        setState((previous) => ({
+          ...previous,
+          error: `Goal state could not be persisted: ${errorMessage(error)}`,
+        }))
+      }
       setState((previous) => ({ ...previous, goalStatus: { ...goal }, goalRunnerActive: false }))
     },
-    [abortControllerRef, drainPendingInteractions, setState],
+    [abortControllerRef, drainPendingInteractions, releasePendingResumeLease, setState],
   )
 
   const pauseGoal = useCallback(async (): Promise<GoalState | null> => {
@@ -397,7 +421,12 @@ export function useGoalController({
     try {
       await appendGoalState(state)
       setState((previous) => ({ ...previous, goalStatus: { ...goal }, goalRunnerActive: true }))
+      // runner 只在队列被排空时才执行；排队期间它持有的租约先登记在这里，被
+      // `interrupt` 丢弃时由 pause / cancel / clear 的收尾路径释放。
+      pendingResumeLeaseRef.current = lease
       goalCoordinatorRef.current.wake(goal.id, async (signal) => {
+        // runner 已经接手这次运行：释放责任回到下面的 finally。
+        pendingResumeLeaseRef.current = null
         try {
           await executeGoalLoop(state, goal.id, signal, lease)
         } catch (error) {
@@ -428,6 +457,7 @@ export function useGoalController({
       })
       return { status: 'resumed', goal }
     } catch (error) {
+      pendingResumeLeaseRef.current = null
       lease.release()
       return { status: 'failed', goal: null, reason: errorMessage(error) }
     }
@@ -458,11 +488,22 @@ export function useGoalController({
       abortControllerRef.current?.abort()
       drainPendingInteractions()
       await goalCoordinatorRef.current.interrupt(goalId)
+      // 同 stopGoalRun：被丢弃的待唤醒 runner 的租约要在这里补释放。
+      releasePendingResumeLease()
     }
     clearCoreGoal(state)
-    await appendGoalState(state)
+    // 写盘失败时不能把异常抛给 `/goal clear`，也不能让后面的 setState 永远执行
+    // 不到——那时 goal 已在内存中清除，UI 却仍显示「目标运行中」。
+    try {
+      await appendGoalState(state)
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        error: `Goal state could not be persisted: ${errorMessage(error)}`,
+      }))
+    }
     setState((previous) => ({ ...previous, goalStatus: null, goalRunnerActive: false }))
-  }, [abortControllerRef, drainPendingInteractions, loopStateRef, setState])
+  }, [abortControllerRef, drainPendingInteractions, loopStateRef, releasePendingResumeLease, setState])
 
   const steerGoal = useCallback(
     async (text: string): Promise<GoalState | null> => {
@@ -470,16 +511,27 @@ export function useGoalController({
       if (!state?.goal) return null
       const input = admitGoalInput(state, { goalId: state.goal.id, kind: 'user_steering', content: text })
       await appendGoalInput(state, input)
-      await appendGoalState(state)
+      // 写盘失败不能把异常抛给命令调用方（在 CLI 里就是一条 unhandled
+      // rejection），也不能静默：上报后继续尝试唤醒运行器。
+      try {
+        await appendGoalState(state)
+      } catch (error) {
+        setState((previous) => ({
+          ...previous,
+          error: `Goal state could not be persisted: ${errorMessage(error)}`,
+        }))
+      }
       setState((previous) => ({ ...previous, goalStatus: state.goal ? { ...state.goal } : null }))
       const outcome = await resumeGoalRun()
       if (outcome.status === 'failed') {
         // steering 已写进 goalInputs，但运行器没被唤醒，它就永远不会被消费。
-        // 不提示的话调用方（和用户）会以为「已插入并继续运行」。
+        // 不提示的话调用方（和用户）会以为「已插入并继续运行」；同时必须返回
+        // null，否则调用方走成功分支，报出与错误提示矛盾的「已排队」。
         setState((previous) => ({
           ...previous,
           error: `Goal steering is queued but the goal did not resume: ${outcome.reason ?? 'unknown reason'}`,
         }))
+        return null
       }
       return state.goal
     },
@@ -563,7 +615,18 @@ export function useGoalController({
               ),
             })
             await appendGoalInput(state, input)
-            await goalCoordinatorRef.current.run(goal.id, (signal) => executeGoalLoop(state, goal.id, signal, lease))
+            // 这次重跑没有外层调用者能接住异常：不兜住的话它的 reject 会跳过下面
+            // 的落盘与 UI 同步（很可能成为 unhandled rejection）。同时重跑期间要
+            // 把 `goalRunnerActive` 置真——否则 UI 显示「目标未运行」，与
+            // stopGoalRun / pauseActiveGoalOnAbort 的判定不一致。
+            setState((previous) => ({ ...previous, goalRunnerActive: true }))
+            try {
+              await goalCoordinatorRef.current.run(goal.id, (signal) => executeGoalLoop(state, goal.id, signal, lease))
+            } catch (error) {
+              setState((previous) => ({ ...previous, error: `Goal run failed: ${errorMessage(error)}` }))
+            } finally {
+              setState((previous) => ({ ...previous, goalRunnerActive: false }))
+            }
           }
         }
       }
@@ -599,6 +662,8 @@ export function useGoalController({
     try {
       pauseCoreGoal(loopStateRef.current)
       void goalCoordinatorRef.current.interrupt(loopStateRef.current.goal.id)
+      // 同 stopGoalRun：这条中断同样丢弃待唤醒的 runner，它的租约需要在这里补释放。
+      releasePendingResumeLease()
       setState((previous) => ({
         ...previous,
         goalStatus: loopStateRef.current?.goal ? { ...loopStateRef.current.goal } : null,
@@ -606,7 +671,7 @@ export function useGoalController({
     } catch {
       // 一个非活跃的终止目标不需要中止时的状态变更。
     }
-  }, [loopStateRef, setState])
+  }, [loopStateRef, releasePendingResumeLease, setState])
 
   return {
     runGoal,

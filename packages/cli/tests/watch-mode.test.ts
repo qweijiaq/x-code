@@ -97,6 +97,9 @@ describe('runWatchMode', () => {
     cleanups.push(() => exitMock.mockRestore())
 
     let finishRun: (() => void) | null = null
+    const finishCurrentRun = (): void => {
+      finishRun?.()
+    }
     printMock.mockImplementation(
       () =>
         new Promise<number>((resolve) => {
@@ -118,7 +121,9 @@ describe('runWatchMode', () => {
       expect(exitMock).toHaveBeenCalledWith(130)
       expect(output.join('')).not.toContain('run exited')
     } finally {
-      finishRun?.()
+      // 通过闭包调用：直接在 finally 里 `finishRun?.()` 会被 TS 的控制流分析
+      // 收窄成 null（赋值发生在 Promise executor 内部）。
+      finishCurrentRun()
       await expect(run).resolves.toBe(0)
     }
   })

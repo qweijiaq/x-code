@@ -33,12 +33,42 @@
 import { useCallback, useEffect, useRef } from 'react'
 
 import type { DisplayMessage, ModelMessage } from '@x-code-cli/core'
-import { debugLog } from '@x-code-cli/core'
+import { debugLog, errorMessage } from '@x-code-cli/core'
 
-/** 行首 ``` 的数量（围栏开 / 闭各算一）。 */
+/** 围栏行：CommonMark 允许 ``` 和 ~~~ 两种围栏字符，且围栏可以缩进最多 3 个
+ *  空格（列表项里的围栏是 AI 输出中的常见形态）。只认顶格 ``` 会把 `~~~` 围栏
+ *  和缩进围栏的奇偶性算成 0，于是围栏内的每一行都被当成安全边界提交，代码块
+ *  被逐行拆散渲染成正文。 */
+const FENCE_LINE_RE = /^ {0,3}(?:`{3,}|~{3,})/gm
+
+/** 围栏行的数量（围栏开 / 闭各算一）。用 `exec` 循环计数而不是 `match()`，
+ *  后者会为整个缓冲分配一个匹配数组。 */
 function countFenceLines(text: string): number {
-  const fences = text.match(/^```/gm)
-  return fences ? fences.length : 0
+  const re = new RegExp(FENCE_LINE_RE.source, FENCE_LINE_RE.flags)
+  let count = 0
+  while (re.exec(text) !== null) count++
+  return count
+}
+
+/** `text` 中每个围栏行的起始偏移（升序）。 */
+function fenceLineOffsets(text: string): number[] {
+  const re = new RegExp(FENCE_LINE_RE.source, FENCE_LINE_RE.flags)
+  const offsets: number[] = []
+  let match: RegExpExecArray | null
+  while ((match = re.exec(text)) !== null) offsets.push(match.index)
+  return offsets
+}
+
+/** `offsets`（升序）中 <= `position` 的元素个数——即某个前缀里包含的围栏行数。 */
+function countOffsetsAtOrBefore(offsets: number[], position: number): number {
+  let low = 0
+  let high = offsets.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (offsets[mid]! <= position) low = mid + 1
+    else high = mid
+  }
+  return low
 }
 
 /** `text` 是否以一个开放的多行 markdown 结构结尾，而渲染器需要完整结构才能
@@ -46,8 +76,11 @@ function countFenceLines(text: string): number {
  *
  *  我们只持有那些在中途被拆分会真正破坏视觉渲染的结构：
  *
- *  - 代码围栏：行首 ``` 的数量为奇数 = 围栏开放。在开放围栏内切割会把部分代码
- *    渲染成普通散文，并丢失等宽块上下文。
+ *  - 代码围栏：围栏行（顶格或缩进 <= 3 空格的 ``` / ~~~）的数量为奇数 = 围栏
+ *    开放。在开放围栏内切割会把部分代码渲染成普通散文，并丢失等宽块上下文。
+ *    两种围栏字符各自闭合在 CommonMark 里有明确规定，但跨提交只保留奇偶性
+ *    （见 `fenceCarry`）——把 ``` 和 ~~~ 混用成一对的情况在模型输出里可以忽略，
+ *    而漏算 `~~~` / 缩进围栏的代价是整个代码块被逐行拆散。
  *  - 表格：最后一个非空行以 `|` 开头。GFM 表格要求表头 + 分隔行 + 数据行在
  *    一次词法分析遍里；在表格中途切割会把不完整的行渲染成裸的 `| a | b |` 文本。
  *
@@ -87,15 +120,24 @@ export function hasOpenMarkdownBlock(text: string, fenceCarry = 0): boolean {
  *  渲染器一个它可以完整格式化的内容。
  *
  *  从末尾向后扫描，这样第一个命中就是最新的安全切割点（无需遍历每个换行去
- *  追踪最大值）。 */
+ *  追踪最大值）。每个候选位置都在 O(log 围栏数) 内判定：围栏奇偶性来自一次
+ *  预处理（围栏行偏移表 + 二分），表格判定只看该候选所在的那一行。旧实现对每个
+ *  候选换行都复制整个前缀并跑一遍全文围栏正则，在长代码围栏 / 长表格上（正是
+ *  需要持有的场景）每次增量都退化成 O(候选数 × 缓冲长度)，会卡住 UI 线程。 */
 export function findSafeBoundary(text: string, fenceCarry = 0): number {
+  const fenceOffsets = fenceLineOffsets(text)
   let scan = text.length
   while (scan > 0) {
     const found = text.lastIndexOf('\n', scan - 1)
     if (found < 0) return -1
-    const prefix = text.slice(0, found + 1)
-    if (!hasOpenMarkdownBlock(prefix, fenceCarry)) {
-      return found + 1
+    // 前缀（到该 `\n` 含）里的围栏数：奇数 = 围栏仍开放，不能在这里切。
+    if ((fenceCarry + countOffsetsAtOrBefore(fenceOffsets, found)) % 2 === 0) {
+      const lineStart = text.lastIndexOf('\n', found - 1) + 1
+      const lastLine = text.slice(lineStart, found)
+      // 非空且以 `|` 开头 = 表格里的行；GFM 表格必须在一次词法分析里拿全。
+      if (lastLine.trim() === '' || !lastLine.trimStart().startsWith('|')) {
+        return found + 1
+      }
     }
     scan = found
   }
@@ -106,10 +148,32 @@ export function findSafeBoundary(text: string, fenceCarry = 0): number {
 // 关闭。对长代码块（100+ 行）这会产生一次巨大的提交，其预滚动的 `\n` 会在终端
 // scrollback 中留下可见的空行。为避免这一点，当缓冲在开放代码围栏内超过这个
 // 阈值时，我们强制一次基于行的提交。markdown 渲染器的 `code` token 处理器
-// 输出原始文本，所以围栏内拆分在视觉上完全一致——唯一区别是第一个块带开头的
-// ```（被 marked.lexer 解析为 `code` token），后续块是纯文本行（由回退路径
-// 原样渲染）。
+// 输出原始文本，所以围栏内拆分在视觉上完全一致——但每条提交出去的消息必须
+// 自身围栏平衡（见 `balanceFenceChunk`），否则闭栏会被单独一条消息里的
+// marked.lexer 当成开栏，把其后的正文整段渲染成代码块。
 const CODE_FENCE_COMMIT_THRESHOLD = 800
+
+/** 补围栏用的字面量。语言提示不跨提交保存，所以补回的是无语言裸围栏——渲染器
+ *  对未知语言原样输出代码文本，与围栏内逐行提交的视觉效果一致。 */
+const FENCE_LINE = '```\n'
+
+/** 把一次提交的内容补成「围栏自平衡」的块。
+ *
+ *  每条 streamingChunk 消息都会被 marked 独立词法分析，跨消息的未闭合围栏因此
+ *  会被当成「本条消息里的开栏」：闭栏 ``` 落在后续消息里时，它把该消息余下的
+ *  全部正文渲染成代码块（`fenceCarry` 只修正「是否继续持有」的判定，修不了已经
+ *  拆开的消息）。所以在强制中间提交 / 冲刷这些会跨围栏切分的地方，把每条消息
+ *  补成自平衡的：
+ *
+ *  - `insideAtStart`：本条消息的起点仍在上一条消息遗留的围栏内，先补一个开栏，
+ *    否则本条里的闭栏会被解析成开栏；
+ *  - 补完之后若仍处于围栏内，再补一个闭栏收尾。 */
+export function balanceFenceChunk(chunk: string, insideAtStart: boolean): string {
+  const fences = countFenceLines(chunk) + (insideAtStart ? 1 : 0)
+  let text = insideAtStart ? FENCE_LINE + chunk : chunk
+  if (fences % 2 !== 0) text += FENCE_LINE
+  return text
+}
 
 /**
  * 安全网：从循环状态里最近的 assistant 消息中提取文本。用于当流没有产生任何
@@ -177,6 +241,12 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
    *  一起送走，缓冲里于是只剩围栏内部的行；把这个奇偶性计入判定，闭栏到达时才
    *  能识别出「围栏已关闭」，让闭栏之后的正文恢复逐行提交。 */
   const fenceCarryRef = useRef(0)
+  /** 最新的 `appendMessage`。延迟发出的定时器跨越 150ms 窗口，期间父组件可能
+   *  重渲染并传入新的回调；闭包捕获旧回调会让这次 emit 打到过期对象上。 */
+  const appendMessageRef = useRef(appendMessage)
+  useEffect(() => {
+    appendMessageRef.current = appendMessage
+  }, [appendMessage])
 
   const drainPending = useCallback(() => {
     if (emitTimerRef.current !== null) {
@@ -189,8 +259,14 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
     // 单个块 → 原样复用，避免不必要的 join 分配（段落干净落定后的常见情况）。
     const combined = chunks.length === 1 ? chunks[0] : chunks.join('')
     debugLog('buffer.emit', `chunks=${chunks.length} chars=${combined.length}`)
-    appendMessage(makeStreamChunkMessage(combined))
-  }, [appendMessage])
+    try {
+      appendMessageRef.current(makeStreamChunkMessage(combined))
+    } catch (error) {
+      // 定时器回调里的异常在 Node CLI 中是未捕获异常：会直接终止进程并连带丢掉
+      // 整段回复。提交失败只影响这一批文本，上报后继续，让后续增量照常流动。
+      debugLog('buffer.emit-failed', `${errorMessage(error)} chars=${combined.length}`)
+    }
+  }, [])
 
   const queueChunk = useCallback(
     (chunk: string) => {
@@ -212,24 +288,30 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
       if (boundary > 0) {
         const chunk = bufferRef.current.slice(0, boundary)
         bufferRef.current = bufferRef.current.slice(boundary)
+        const insideAtStart = fenceCarryRef.current === 1
         fenceCarryRef.current = (fenceCarryRef.current + countFenceLines(chunk)) % 2
         debugLog('buffer.commit', `chars=${chunk.length}`)
-        queueChunk(chunk)
+        // 切点之前已经提交出去的围栏还没有闭合时，这条消息自身必须补齐围栏：
+        // 否则它里面的闭栏会被当成开栏，把余下正文渲染成代码块。
+        queueChunk(balanceFenceChunk(chunk, insideAtStart))
       } else if (
         bufferRef.current.length > CODE_FENCE_COMMIT_THRESHOLD &&
         hasOpenCodeFence(bufferRef.current, fenceCarryRef.current)
       ) {
         // 大型开放代码围栏——在最后一个换行处强制一次中间提交，这样终端不必
-        // 一次性预滚动 100+ 空行。找到最后一个不属于 `\n\n` 对的 `\n`（那些由
-        // 上面的 findSafeBoundary 处理）并在那里切割。
+        // 一次性预滚动 100+ 空行。这里刻意用「最后一个换行」（含 `\n\n` 对里的
+        // 那一个）：安全边界分支刚好在本轮找不到任何安全点时才走到这里。
         const lastNL = bufferRef.current.lastIndexOf('\n')
         if (lastNL > 0) {
           const chunk = bufferRef.current.slice(0, lastNL + 1)
           bufferRef.current = bufferRef.current.slice(lastNL + 1)
+          const insideAtStart = fenceCarryRef.current === 1
           // 围栏奇偶性跟着已提交的内容走，缓冲里留下的行不再自带开栏行。
           fenceCarryRef.current = (fenceCarryRef.current + countFenceLines(chunk)) % 2
           debugLog('buffer.commit', `chars=${chunk.length} (fence-split)`)
-          queueChunk(chunk)
+          // 每条消息补成围栏自平衡：缓冲里剩下的行不再带开栏行，闭栏到来时会
+          // 落在后续某条消息里——不补齐的话它会被当成开栏。
+          queueChunk(balanceFenceChunk(chunk, insideAtStart))
         }
       }
     },
@@ -246,10 +328,11 @@ export function useStreamBuffer(appendMessage: (msg: DisplayMessage) => void): S
       emitTimerRef.current = null
     }
     const remainder = bufferRef.current
+    const insideAtStart = fenceCarryRef.current === 1
     bufferRef.current = ''
     // 回合结束：剩余内容整体送出，围栏状态不再跨越本轮。
     fenceCarryRef.current = 0
-    if (remainder) pendingChunksRef.current.push(remainder)
+    if (remainder) pendingChunksRef.current.push(balanceFenceChunk(remainder, insideAtStart))
     if (pendingChunksRef.current.length === 0) return
     const chunks = pendingChunksRef.current
     pendingChunksRef.current = []
