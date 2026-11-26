@@ -7,6 +7,7 @@ import type {
   HooksView,
   LoadedSessionView,
   ProjectSettingsView,
+  RuntimeEvent,
   RuntimeRequest,
   SessionListItem,
   SessionSearchResult,
@@ -39,7 +40,17 @@ function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> 
   return new Promise((resolve) => {
     const started = Date.now()
     const tick = (): void => {
-      if (predicate()) {
+      // 谓词常在 DOM 被卸载后访问已失效的元素；抛错若漏出 setTimeout
+      // 会变成未处理的 rejection，Promise 永不 settle，smoke 会一直挂到 CI 超时。
+      // 因此异常一律当作「未就绪」，让对应检查以失败而不是挂起结束。
+      let ready = false
+      try {
+        ready = predicate()
+      } catch {
+        resolve(false)
+        return
+      }
+      if (ready) {
         resolve(true)
         return
       }
@@ -58,6 +69,40 @@ function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boolean> 
 export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
   const { setInput, setAttachments, openDocument, closeInspector, activeSessionId } = context
   const reportProgress = (name: string): void => window.xcode.reportUiSmokeProgress(name)
+  /** smoke 会反复翻转用户的真实设置，中途任何一步都可能抛错。所有「恢复原值」
+   *  的动作都登记到这里，在 finally 里逆序执行 —— 否则异常路径会把
+   *  writeFile.alwaysAllow=true 之类的安全开关永久留在用户配置里。 */
+  const restoreRuns: Array<() => Promise<void>> = []
+  const registerRestore = (label: string, run: () => Promise<void>): (() => Promise<void>) => {
+    let done = false
+    const runner = async (): Promise<void> => {
+      if (done) return
+      done = true
+      try {
+        await run()
+      } catch (error) {
+        console.warn(`[ui-smoke] 恢复「${label}」失败`, error)
+      }
+    }
+    restoreRuns.push(runner)
+    return runner
+  }
+  /** 事件监听同样只在正常路径被 off 掉；统一登记，异常时也不会残留。 */
+  const listenerOffs: Array<() => void> = []
+  const onEvent = (listener: (event: RuntimeEvent) => void): (() => void) => {
+    const off = window.xcode.onEvent(listener)
+    listenerOffs.push(off)
+    return off
+  }
+  /** 原生 value setter 以 null 作为 this 调用会抛 Illegal invocation，
+   *  进而让整轮 smoke 只剩 checks.exception。统一判空后再写。 */
+  const setNativeValue = (element: HTMLInputElement | null, value: string): boolean => {
+    if (!element) return false
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    setter?.call(element, value)
+    element.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  }
   const checks: Record<string, UiSmokeCheck> = new Proxy({} as Record<string, UiSmokeCheck>, {
     set(target, property, value) {
       const stored = Reflect.set(target, property, value)
@@ -218,7 +263,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     }
 
     let text = ''
-    const offText = window.xcode.onEvent((event) => {
+    const offText = onEvent((event) => {
       if (event.type === 'agent:text-delta') text += event.delta
     })
     const agent = await window.xcode.request({
@@ -244,7 +289,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     const attachmentState: {
       event: { files: string[]; mediaParts: number; textBytes: number } | null
     } = { event: null }
-    const offAttach = window.xcode.onEvent((event) => {
+    const offAttach = onEvent((event) => {
       if (event.type === 'agent:attachments') attachmentState.event = event
     })
     const attachmentTurn = await window.xcode.request({
@@ -319,7 +364,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     let sawApproval = false
     let sawDiff = false
     let diffEdit: { toolCallId: string; filePath: string } | null = null
-    const offTool = window.xcode.onEvent((event) => {
+    const offTool = onEvent((event) => {
       if (event.type === 'approval:request' && event.kind === 'permission') {
         sawApproval = true
         void window.xcode.request({
@@ -372,7 +417,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     let diffApproved = false
     let activityDuringApproval = false
     let activityTextDuringApproval = ''
-    const offDiffDemo = window.xcode.onEvent((event) => {
+    const offDiffDemo = onEvent((event) => {
       if (event.type === 'approval:request' && event.kind === 'permission') {
         diffApproved = true
         setTimeout(() => {
@@ -464,7 +509,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     let sandboxHintShown = false
     let sandboxTerminalOpened = false
     let sandboxCommandRan = false
-    const offSandbox = window.xcode.onEvent((event) => {
+    const offSandbox = onEvent((event) => {
       if (event.type === 'approval:request' && event.kind === 'permission') {
         void window.xcode.request({
           id: crypto.randomUUID(),
@@ -505,7 +550,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
 
     let tempHint = false
     let tempMoved = false
-    const offTemp = window.xcode.onEvent((event) => {
+    const offTemp = onEvent((event) => {
       if (event.type === 'approval:request' && event.kind === 'permission') {
         void window.xcode.request({
           id: crypto.randomUUID(),
@@ -585,7 +630,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
 
     let subagentStart = false
     let subagentEnd = false
-    const offSubagent = window.xcode.onEvent((event) => {
+    const offSubagent = onEvent((event) => {
       if (event.type === 'agent:subagent') {
         if (event.phase === 'start') subagentStart = true
         if (event.phase === 'end') subagentEnd = true
@@ -661,7 +706,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     let questionCallId = ''
     let questionResult = ''
     let questionRequestId = ''
-    const offQuestion = window.xcode.onEvent((event) => {
+    const offQuestion = onEvent((event) => {
       if (event.type === 'agent:tool-call' && event.toolName === 'askUser') {
         questionCallId = event.toolCallId
       }
@@ -724,7 +769,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
 
     // 工具执行后模型不再输出时，界面要补一条说明而不是静默停住。
     let silentApproved = false
-    const offSilent = window.xcode.onEvent((event) => {
+    const offSilent = onEvent((event) => {
       if (event.type === 'approval:request' && event.kind === 'permission') {
         silentApproved = true
         void window.xcode.request({
@@ -748,7 +793,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
 
     let sawDenyApproval = false
     let deniedDiff = false
-    const offDeny = window.xcode.onEvent((event) => {
+    const offDeny = onEvent((event) => {
       if (event.type === 'approval:request' && event.kind === 'permission') {
         sawDenyApproval = true
         void window.xcode.request({
@@ -805,7 +850,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     })
     let sawCompression = false
     let compactText = ''
-    const offCompact = window.xcode.onEvent((event) => {
+    const offCompact = onEvent((event) => {
       if (event.type === 'agent:context-compressed') sawCompression = true
       if (event.type === 'agent:text-delta') compactText += event.delta
     })
@@ -1096,14 +1141,12 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     )
     let permissionAdded = false
     let permissionRemoved = false
+    let permissionInputsReady = false
     if (permissionTabMounted) {
       const permissionToolInput = document.querySelector<HTMLInputElement>('[data-testid="permission-tool"]')
       const permissionPatternInput = document.querySelector<HTMLInputElement>('[data-testid="permission-pattern"]')
-      const setPermissionValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-      setPermissionValue?.call(permissionToolInput, 'shell')
-      permissionToolInput?.dispatchEvent(new Event('input', { bubbles: true }))
-      setPermissionValue?.call(permissionPatternInput, 'echo smoke-perm')
-      permissionPatternInput?.dispatchEvent(new Event('input', { bubbles: true }))
+      permissionInputsReady =
+        setNativeValue(permissionToolInput, 'shell') && setNativeValue(permissionPatternInput, 'echo smoke-perm')
       await waitFor(
         () => document.querySelector<HTMLButtonElement>('[data-testid="permission-add"]')?.disabled === false,
         2000,
@@ -1122,8 +1165,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       )
     }
     checks.permissionRules = {
-      ok: permissionTabMounted && permissionAdded && permissionRemoved,
-      detail: `tab=${permissionTabMounted} add=${permissionAdded} remove=${permissionRemoved}`,
+      ok: permissionTabMounted && permissionInputsReady && permissionAdded && permissionRemoved,
+      detail: `tab=${permissionTabMounted} inputs=${permissionInputsReady} add=${permissionAdded} remove=${permissionRemoved}`,
     }
     const externalPolicyToggle = document.querySelector<HTMLButtonElement>(
       '[data-testid="external-content-policy"] button',
@@ -1213,6 +1256,13 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
 
     const writeTool = snapshot?.tools.find((tool) => tool.name === 'writeFile')
     if (writeTool) {
+      const restoreWriteTool = registerRestore('tools.writeFile.alwaysAllow', async () => {
+        await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'settings:set-tool-always-allow',
+          params: { name: 'writeFile', enabled: writeTool.alwaysAllow },
+        })
+      })
       const on = await window.xcode.request({
         id: crypto.randomUUID(),
         method: 'settings:set-tool-always-allow',
@@ -1229,6 +1279,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       const offValue = off.ok
         ? (off.result as SettingsActionResult).settings.tools.find((tool) => tool.name === 'writeFile')?.alwaysAllow
         : undefined
+      await restoreWriteTool()
       checks.toolAlwaysAllow = {
         ok: onValue === !writeTool.alwaysAllow && offValue === writeTool.alwaysAllow,
         detail: `before=${writeTool.alwaysAllow} toggled=${onValue} restored=${offValue}`,
@@ -1237,66 +1288,96 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       checks.toolAlwaysAllow = { ok: false, detail: 'writeFile tool missing' }
     }
 
-    const beforeAll = snapshot?.alwaysAllowAll ?? false
-    const enableAll = await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'settings:set-always-allow-all',
-      params: { enabled: !beforeAll },
-    })
-    const enableValue = enableAll.ok ? (enableAll.result as SettingsActionResult).settings.alwaysAllowAll : undefined
-    const restoreAll = await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'settings:set-always-allow-all',
-      params: { enabled: beforeAll },
-    })
-    const restoreValue = restoreAll.ok ? (restoreAll.result as SettingsActionResult).settings.alwaysAllowAll : undefined
-    checks.allowAll = {
-      ok: enableValue === !beforeAll && restoreValue === beforeAll,
-      detail: `before=${beforeAll} enabled=${enableValue} restored=${restoreValue}`,
+    // 下面三个开关都会翻转用户的真实设置。原值只来自 settings:get；
+    // snapshot 为 null 时不能拿 `?? false` / `?? true` 的默认值去「恢复」，
+    // 那等于用编造的值覆盖用户配置，因此直接跳过检查。
+    // 恢复动作先登记到 restoreRuns，再翻转开关：中途任何一步抛错，
+    // finally 仍会把它们还原。
+    const beforeAll = snapshot?.alwaysAllowAll
+    let enableValue: boolean | undefined
+    let restoreValue: boolean | undefined
+    if (typeof beforeAll === 'boolean') {
+      const restoreAllowAll = registerRestore('alwaysAllowAll', async () => {
+        const response = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'settings:set-always-allow-all',
+          params: { enabled: beforeAll },
+        })
+        restoreValue = response.ok ? (response.result as SettingsActionResult).settings.alwaysAllowAll : undefined
+      })
+      const enableAll = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'settings:set-always-allow-all',
+        params: { enabled: !beforeAll },
+      })
+      enableValue = enableAll.ok ? (enableAll.result as SettingsActionResult).settings.alwaysAllowAll : undefined
+      await restoreAllowAll()
+      checks.allowAll = {
+        ok: enableValue === !beforeAll && restoreValue === beforeAll,
+        detail: `before=${beforeAll} enabled=${enableValue} restored=${restoreValue}`,
+      }
+    } else {
+      checks.allowAll = { ok: false, detail: 'settings snapshot unavailable' }
     }
 
-    const browserBefore = snapshot?.browser.enabled ?? false
-    const browserOn = await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'settings:set-browser-enabled',
-      params: { enabled: !browserBefore },
-    })
-    const browserOnValue = browserOn.ok
-      ? (browserOn.result as SettingsActionResult).settings.browser.enabled
-      : undefined
-    const browserRestore = await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'settings:set-browser-enabled',
-      params: { enabled: browserBefore },
-    })
-    const browserRestoreValue = browserRestore.ok
-      ? (browserRestore.result as SettingsActionResult).settings.browser.enabled
-      : undefined
-    checks.browserAgent = {
-      ok: browserOnValue === !browserBefore && browserRestoreValue === browserBefore,
-      detail: `before=${browserBefore} enabled=${browserOnValue} restored=${browserRestoreValue}`,
+    const browserBefore = snapshot?.browser.enabled
+    let browserOnValue: boolean | undefined
+    let browserRestoreValue: boolean | undefined
+    if (typeof browserBefore === 'boolean') {
+      const restoreBrowser = registerRestore('browser.enabled', async () => {
+        const response = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'settings:set-browser-enabled',
+          params: { enabled: browserBefore },
+        })
+        browserRestoreValue = response.ok
+          ? (response.result as SettingsActionResult).settings.browser.enabled
+          : undefined
+      })
+      const browserOn = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'settings:set-browser-enabled',
+        params: { enabled: !browserBefore },
+      })
+      browserOnValue = browserOn.ok ? (browserOn.result as SettingsActionResult).settings.browser.enabled : undefined
+      await restoreBrowser()
+      checks.browserAgent = {
+        ok: browserOnValue === !browserBefore && browserRestoreValue === browserBefore,
+        detail: `before=${browserBefore} enabled=${browserOnValue} restored=${browserRestoreValue}`,
+      }
+    } else {
+      checks.browserAgent = { ok: false, detail: 'settings snapshot unavailable' }
     }
 
-    const visualBefore = snapshot?.browser.visualCheck ?? true
-    const visualOff = await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'settings:set-browser-visual-check',
-      params: { enabled: !visualBefore },
-    })
-    const visualOffValue = visualOff.ok
-      ? (visualOff.result as SettingsActionResult).settings.browser.visualCheck
-      : undefined
-    const visualRestore = await window.xcode.request({
-      id: crypto.randomUUID(),
-      method: 'settings:set-browser-visual-check',
-      params: { enabled: visualBefore },
-    })
-    const visualRestoreValue = visualRestore.ok
-      ? (visualRestore.result as SettingsActionResult).settings.browser.visualCheck
-      : undefined
-    checks.browserVisualCheck = {
-      ok: visualOffValue === !visualBefore && visualRestoreValue === visualBefore,
-      detail: `before=${visualBefore} toggled=${visualOffValue} restored=${visualRestoreValue}`,
+    const visualBefore = snapshot?.browser.visualCheck
+    let visualOffValue: boolean | undefined
+    let visualRestoreValue: boolean | undefined
+    if (typeof visualBefore === 'boolean') {
+      const restoreVisual = registerRestore('browser.visualCheck', async () => {
+        const response = await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'settings:set-browser-visual-check',
+          params: { enabled: visualBefore },
+        })
+        visualRestoreValue = response.ok
+          ? (response.result as SettingsActionResult).settings.browser.visualCheck
+          : undefined
+      })
+      const visualOff = await window.xcode.request({
+        id: crypto.randomUUID(),
+        method: 'settings:set-browser-visual-check',
+        params: { enabled: !visualBefore },
+      })
+      visualOffValue = visualOff.ok
+        ? (visualOff.result as SettingsActionResult).settings.browser.visualCheck
+        : undefined
+      await restoreVisual()
+      checks.browserVisualCheck = {
+        ok: visualOffValue === !visualBefore && visualRestoreValue === visualBefore,
+        detail: `before=${visualBefore} toggled=${visualOffValue} restored=${visualRestoreValue}`,
+      }
+    } else {
+      checks.browserVisualCheck = { ok: false, detail: 'settings snapshot unavailable' }
     }
 
     // 上面的标签页检查之后抽屉已关闭；在 Tools 标签页重新打开，
@@ -1432,8 +1513,19 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     document.querySelector<HTMLButtonElement>('.settings-drawer .btn-quiet')?.click()
     await waitFor(() => document.querySelector('.settings-drawer') === null, 2_000)
 
-    const writeAlways = snapshot?.tools.find((tool) => tool.name === 'writeFile')?.alwaysAllow ?? false
-    if (!writeAlways) {
+    // 这一整块会把 writeFile 的“自动允许”打开，跑完再关掉。开关必须在翻转之前
+    // 登记进 restoreRuns：中途任何检查抛错时，finally 仍会把它还原，否则
+    // 用户配置里会永久留下“写文件自动允许”的高危状态。
+    const writeAlwaysBefore = snapshot?.tools.find((tool) => tool.name === 'writeFile')?.alwaysAllow
+    let restoreWriteAlways: (() => Promise<void>) | null = null
+    if (writeAlwaysBefore === false) {
+      restoreWriteAlways = registerRestore('tools.writeFile.alwaysAllow', async () => {
+        await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'settings:set-tool-always-allow',
+          params: { name: 'writeFile', enabled: false },
+        })
+      })
       await window.xcode.request({
         id: crypto.randomUUID(),
         method: 'settings:set-tool-always-allow',
@@ -1442,7 +1534,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     }
     let autoApproval = false
     let autoDiff = false
-    const offAutoAllow = window.xcode.onEvent((event) => {
+    const offAutoAllow = onEvent((event) => {
       if (event.type === 'approval:request' && event.kind === 'permission') autoApproval = true
       if (event.type === 'agent:file-edit') autoDiff = true
     })
@@ -1687,7 +1779,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     closeInspector()
 
     let reviewApproved = false
-    const offReview = window.xcode.onEvent((event) => {
+    const offReview = onEvent((event) => {
       if (event.type === 'approval:request' && event.kind === 'permission') {
         reviewApproved = true
         void window.xcode.request({
@@ -1984,16 +2076,10 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         outlineClosed,
       detail: `mounted=${outlineMounted} questions=${outlineQuestions} collapsed=${answersInitiallyCollapsed} toggles=${outlineAnswerToggles} shown=${answersShown}/${answersHiddenAgain} closed=${outlineClosed}`,
     }
-    if (!writeAlways) {
-      await window.xcode.request({
-        id: crypto.randomUUID(),
-        method: 'settings:set-tool-always-allow',
-        params: { name: 'writeFile', enabled: false },
-      })
-    }
+    if (restoreWriteAlways) await restoreWriteAlways()
 
     let output = ''
-    const offShell = window.xcode.onEvent((event) => {
+    const offShell = onEvent((event) => {
       if (event.type === 'shell:output') output += event.data
     })
     const created = await window.xcode.request({
@@ -2863,7 +2949,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
 
     // 运行中可以切到其他会话浏览；运行会话继续在后台接收事件。
     const slowApproval: { request: { requestId: string; kind: string } | null } = { request: null }
-    const offSlowApproval = window.xcode.onEvent((event) => {
+    const offSlowApproval = onEvent((event) => {
       if (event.type === 'approval:request' && !slowApproval.request) {
         slowApproval.request = { requestId: event.requestId, kind: event.kind }
       }
@@ -2892,7 +2978,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     })
     let slowEnded = false
     const slowEvents: string[] = []
-    const offSlowEnd = window.xcode.onEvent((event) => {
+    const offSlowEnd = onEvent((event) => {
       if (event.type === 'agent:turn-end') slowEnded = true
       if (event.type.startsWith('agent:') || event.type === 'approval:request') {
         slowEvents.push(
@@ -3399,18 +3485,14 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       const createForm = document.querySelector('[data-testid="branch-create"]') !== null
       const taskForm = document.querySelector('[data-testid="branch-task-create"]') !== null
       const taskInput = document.querySelector<HTMLInputElement>('[data-testid="branch-task-input"]')
-      const setTaskValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-      setTaskValue?.call(taskInput, 'smoke task worktree')
-      taskInput?.dispatchEvent(new Event('input', { bubbles: true }))
+      const taskInputReady = setNativeValue(taskInput, 'smoke task worktree')
       const taskCreateEnabled = await waitFor(
         () => document.querySelector<HTMLButtonElement>('[data-testid="branch-task-button"]')?.disabled === false,
         2_000,
       )
       const parentPicker = document.querySelector('[data-testid="branch-parent-button"]') !== null
       const newBranchInput = document.querySelector<HTMLInputElement>('[data-testid="branch-new-input"]')
-      const setNewBranchValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-      setNewBranchValue?.call(newBranchInput, 'smoke-ui-new')
-      newBranchInput?.dispatchEvent(new Event('input', { bubbles: true }))
+      const newBranchInputReady = setNativeValue(newBranchInput, 'smoke-ui-new')
       const createEnabled = await waitFor(
         () => document.querySelector<HTMLButtonElement>('[data-testid="branch-create-button"]')?.disabled === false,
         2_000,
@@ -3423,8 +3505,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       )
       const branchCreateWindow = await waitForWindowCount(beforeBranchCreateWindow, 8_000)
       checks.branchCreateUi = {
-        ok: createEnabled && branchModalClosed && branchCreateWindow,
-        detail: `input=${createEnabled} closed=${branchModalClosed} window=${branchCreateWindow}`,
+        ok: newBranchInputReady && createEnabled && branchModalClosed && branchCreateWindow,
+        detail: `input=${newBranchInputReady}/${createEnabled} closed=${branchModalClosed} window=${branchCreateWindow}`,
       }
       document.querySelector<HTMLButtonElement>('.branch-card .shortcut-head .btn-quiet')?.click()
       worktreeUiOk =
@@ -3435,9 +3517,10 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         remoteRow &&
         createForm &&
         taskForm &&
+        taskInputReady &&
         taskCreateEnabled &&
         parentPicker
-      worktreeUiDetail = `remove=${removeReady} confirm=${confirmReady} cancel=${cancelled} prune=${prunePresent} remote=${remoteRow} create=${createForm} task=${taskForm && taskCreateEnabled} parent=${parentPicker}`
+      worktreeUiDetail = `remove=${removeReady} confirm=${confirmReady} cancel=${cancelled} prune=${prunePresent} remote=${remoteRow} create=${createForm} task=${taskForm && taskInputReady && taskCreateEnabled} parent=${parentPicker}`
     } else {
       checks.branchCreateUi = { ok: false, detail: 'picker missing' }
     }
@@ -3729,15 +3812,38 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
   } catch (error) {
     checks.exception = { ok: false, detail: error instanceof Error ? error.message : String(error) }
   } finally {
-    if (originalModelId) {
-      await window.xcode.request({
-        id: crypto.randomUUID(),
-        method: 'models:set',
-        params: { modelId: originalModelId },
-      })
+    // 清理顺序无关紧要，但必须逐个兜住异常：任何一步抛出都会让后面的恢复
+    // （以及末尾的 reportUiSmoke）永远不执行，主进程收不到结果，App 侧
+    // 也只能看到未处理的 rejection。
+    for (const off of listenerOffs.splice(0)) {
+      try {
+        off()
+      } catch {
+        // 监听已随组件卸载，忽略。
+      }
     }
-    applyTheme(originalTheme)
-    if (originalLanguage !== 'zh') await i18n.changeLanguage(originalLanguage)
+    for (const restore of restoreRuns.slice().reverse()) await restore()
+    try {
+      if (originalModelId) {
+        await window.xcode.request({
+          id: crypto.randomUUID(),
+          method: 'models:set',
+          params: { modelId: originalModelId },
+        })
+      }
+    } catch (error) {
+      console.warn('[ui-smoke] 恢复原模型失败', error)
+    }
+    try {
+      applyTheme(originalTheme)
+    } catch (error) {
+      console.warn('[ui-smoke] 恢复原主题失败', error)
+    }
+    try {
+      if (originalLanguage !== 'zh') await i18n.changeLanguage(originalLanguage)
+    } catch (error) {
+      console.warn('[ui-smoke] 恢复原语言失败', error)
+    }
   }
 
   const ok = Object.values(checks).every((check) => check.ok)

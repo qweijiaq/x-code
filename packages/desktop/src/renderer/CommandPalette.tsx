@@ -61,8 +61,15 @@ async function searchFiles(query: string): Promise<WorkspaceFileItem[]> {
     method: 'workspace:files',
     params: { query, limit: 8 },
   }
-  const response: RuntimeResponse = await window.xcode.request(request)
-  return response.ok ? (response.result as { files: WorkspaceFileItem[] }).files : []
+  try {
+    const response: RuntimeResponse = await window.xcode.request(request)
+    if (!response.ok) return []
+    // 主进程返回的 result 可能为 null 或结构不符，直接取 .files 会抛 TypeError。
+    return (response.result as { files?: WorkspaceFileItem[] } | null | undefined)?.files ?? []
+  } catch (cause) {
+    console.warn('[CommandPalette] workspace:files failed', cause)
+    return []
+  }
 }
 
 export function CommandPalette({

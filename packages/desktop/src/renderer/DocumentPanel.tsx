@@ -319,6 +319,8 @@ export function DocumentPanel({
                     <span className="document-diff-title">
                       {t('变更 +{{added}} −{{removed}}', { added: diff.additions, removed: diff.removals })}
                     </span>
+                    {/* 应用失败时 diff 仍然存在，提示只有在这里才看得见。 */}
+                    {diffNotice ? <span className="document-review-note">{diffNotice}</span> : null}
                     <button
                       className="settings-btn"
                       onClick={() => setSelectedHunks(new Set(diff.hunks.map((_, index) => index)))}

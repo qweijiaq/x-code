@@ -146,6 +146,10 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
   const gutterRef = useRef<HTMLDivElement | null>(null)
   /** openFile 的请求序号：连续快速点击两个文件时，只有最后一次的结果可以落 state。 */
   const openSeqRef = useRef(0)
+  /** 工作区令牌：切换工作区后，上一个仓库在途的 files:list / files:read 响应
+   *  必须整体作废，否则旧仓库的树和正文会写回新工作区的面板，用户一保存
+   *  就把旧内容按同名相对路径写进新仓库。 */
+  const workspaceTokenRef = useRef(0)
   const [newPath, setNewPath] = useState('')
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
   const dirty = read !== null && !read.binary && !read.truncated && draft !== original
@@ -177,9 +181,10 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
     })
   }
 
-  const loadDir = async (dir: string): Promise<boolean> => {
+  const loadDir = async (dir: string, token = workspaceTokenRef.current): Promise<boolean> => {
     try {
       const response = await request('files:list', { path: dir })
+      if (token !== workspaceTokenRef.current) return false
       if (!response.ok) {
         setError(response.error.message)
         return false
@@ -189,6 +194,7 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
       return true
     } catch (cause) {
       // 调用点都是 `void loadDir(...)`，reject 不接住就是静默的 unhandled rejection。
+      if (token !== workspaceTokenRef.current) return false
       setError(cause instanceof Error ? cause.message : String(cause))
       return false
     }
@@ -207,7 +213,10 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
   useEffect(() => {
     const changed = Boolean(workspaceRef.current) && workspaceRef.current !== workspace
     workspaceRef.current = workspace
+    const token = ++workspaceTokenRef.current
     if (changed) {
+      // 作废上一个工作区所有在途请求（files:read 靠 openSeqRef 判定）。
+      openSeqRef.current += 1
       setChildren({})
       setExpanded(new Set(['.']))
       setSelected(null)
@@ -217,7 +226,7 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
       setPreview(false)
       setError(null)
     }
-    void loadDir('.')
+    void loadDir('.', token)
   }, [workspace])
 
   useEffect(() => {
@@ -228,10 +237,11 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
       return
     }
     let cancelled = false
+    const token = workspaceTokenRef.current
     void (async () => {
       try {
         const response = await request('files:read', { path: initialPath })
-        if (cancelled) return
+        if (cancelled || token !== workspaceTokenRef.current) return
         if (!response.ok) {
           // 读不出来要给原因，否则面板只会停在空白状态。
           setError(response.error.message)
@@ -250,7 +260,9 @@ export function FilePanel({ workspace, initialPath, onOpenEditor, onOpenDocument
         setPreview(false)
         setCursor({ line: 1, column: 1, selected: 0 })
       } catch (cause) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
+        if (!cancelled && token === workspaceTokenRef.current) {
+          setError(cause instanceof Error ? cause.message : String(cause))
+        }
       }
     })()
     return () => {

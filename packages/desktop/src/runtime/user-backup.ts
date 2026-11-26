@@ -72,6 +72,10 @@ export async function exportUserBackup(
   const parent = path.resolve(destinationParent)
   const parentStat = await fs.promises.stat(parent).catch(() => null)
   if (!parentStat?.isDirectory()) throw new Error('备份目标文件夹不存在')
+  // 源目录本身读不到时，copyFolder 的 ENOENT 分支会把每个分类都当成空目录，
+  // 最终写出一份 counts 全 0 的“成功”备份——用户会以为数据已经备份好。
+  const sourceStat = await fs.promises.stat(sourceRoot).catch(() => null)
+  if (!sourceStat?.isDirectory()) throw new Error(`用户数据目录不存在或不可读：${sourceRoot}`)
   const target = path.join(parent, `x-code-backup-${timestamp()}`)
   await fs.promises.mkdir(target, { recursive: true })
   const counts = emptyCounts()
@@ -150,7 +154,13 @@ export async function importUserBackup(backupDir: string, targetRoot: string): P
 
   const restore = async (name: string, counter: keyof BackupCounts, filesOnly = false): Promise<void> => {
     const from = path.join(source, name)
-    const entries = await fs.promises.readdir(from, { withFileTypes: true }).catch(() => [])
+    // 与 exportUserBackup 同一原则：只有“目录不存在”算空目录，EACCES 等读取
+    // 失败必须抛出，否则导入会静默报告 imported/skipped 全 0 的“成功”，
+    // 调用方据此认为数据已恢复（并跳过 reloadExtensions）。
+    const entries = await fs.promises.readdir(from, { withFileTypes: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return []
+      throw new Error(`无法读取备份目录 ${name}：${(error as Error).message}`)
+    })
     const target = path.join(targetRoot, name)
     for (const entry of entries) {
       if (filesOnly ? !isFile(entry) : !(isFile(entry) || isDirectory(entry))) continue

@@ -21,13 +21,29 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    void window.xcode
-      .request({
-        id: crypto.randomUUID(),
-        method: 'renderer:error',
-        params: { message: error.message, stack: `${error.stack ?? ''}\n${info.componentStack ?? ''}` },
-      })
-      .catch(() => undefined)
+    // 本组件存在的意义就是「渲染崩溃时至少留下可用 UI」。这里同步抛出的任何
+    // 错误都不会被自身捕获：preload 桥缺失（window.xcode 为 undefined）或环境
+    // 里没有 crypto.randomUUID（非安全上下文/测试环境）都会让 React 直接卸载
+    // 整棵树 → 空白窗口。先探测再调用，并整体兜住异常。
+    try {
+      const bridge = window.xcode
+      if (typeof bridge?.request !== 'function') return
+      const id = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : `renderer-error-${Date.now()}`
+      void bridge
+        .request({
+          id,
+          method: 'renderer:error',
+          params: { message: error.message, stack: `${error.stack ?? ''}\n${info.componentStack ?? ''}` },
+        })
+        .then((response) => {
+          if (!response.ok) console.warn('[ErrorBoundary] 上报渲染错误失败', response.error.message)
+        })
+        .catch((cause: unknown) => {
+          console.warn('[ErrorBoundary] 上报渲染错误失败', cause)
+        })
+    } catch (cause) {
+      console.warn('[ErrorBoundary] 上报渲染错误失败', cause)
+    }
   }
 
   private exportDiagnostics = async (): Promise<void> => {

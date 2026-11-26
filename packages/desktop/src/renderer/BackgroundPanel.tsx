@@ -82,9 +82,14 @@ export function BackgroundPanel({ onClose }: { onClose: () => void }): React.JSX
         request('background:shared', {}),
       ])
       if (response.ok) {
-        const result = response.result as { sessions: BackgroundShellView[]; tasks?: BackgroundTaskView[] }
-        setSessions(result.sessions)
-        setTasks(result.tasks ?? [])
+        // result 可能是 null 或缺少字段：直接 setSessions(undefined) 会在下一次
+        // 渲染的 sessions.length / sessions.map 处崩溃（渲染期崩溃，try/catch 兜不住）。
+        const result = (response.result ?? {}) as {
+          sessions?: BackgroundShellView[]
+          tasks?: BackgroundTaskView[]
+        }
+        setSessions(Array.isArray(result.sessions) ? result.sessions : [])
+        setTasks(Array.isArray(result.tasks) ? result.tasks : [])
         setError(null)
       } else {
         setError(response.error.message)

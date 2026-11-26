@@ -129,10 +129,16 @@ export function createStorageController(host: StorageControllerHost): StorageCon
           if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
           const target = path.join(dir, entry.name)
           if (pinned.has(target) || target === active) continue
-          // 清理期间用户可能启动了 turn 或切到了别的会话（IPC 事件仍可处理），
-          // 那些刚变成活动/写入中的文件不能按旧快照判定删除。
-          if (host.isBusy() && target === host.activeSessionPath()) continue
           try {
+            // 清理期间用户可能启动了 turn 或切到了别的会话（IPC 事件仍可处理）。
+            // 一旦检测到 busy 就停止剩余删除：新 turn 会不断把文件变成“写入中”，
+            // 逐个比对一个活动路径挡不住后续文件；这里 break 而不是 throw，
+            // 避免丢掉前面已删除文件的计数。
+            if (host.isBusy()) break
+            // 不忙也要重新读取活动会话：用户可能刚切到某个旧会话，
+            // 而那个会话的文件按旧快照会被判成“可删”。
+            const currentActive = host.activeSessionPath()
+            if (currentActive && target === currentActive) continue
             const stat = await fs.promises.stat(target)
             if (stat.mtimeMs > cutoff) continue
             // 同理：扫描过程中的置顶操作也要能生效，删除前重读一次置顶集合。

@@ -332,7 +332,26 @@ export async function installSkillHubSkill(
   if (!response.ok) throw new Error(`SkillHub 下载失败：HTTP ${response.status}`)
   const declared = Number(response.headers.get('content-length') ?? 0)
   if (Number.isFinite(declared) && declared > MAX_ZIP_BYTES) throw new Error('技能包超过 20 MB')
-  const buffer = Buffer.from(await response.arrayBuffer())
+  // content-length 由服务端控制且可能缺失，不能作为唯一上限：必须边读边计数，
+  // 累计超限时立刻取消读取，否则恶意响应能让主进程一次性吃满内存（OOM）。
+  const body = response.body
+  if (!body) throw new Error('SkillHub 返回的技能包为空')
+  const reader = body.getReader()
+  const chunks: Buffer[] = []
+  let received = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    received += value.byteLength
+    if (received > MAX_ZIP_BYTES) {
+      await reader.cancel().catch(() => {
+        // 取消失败不影响报错，连接由 abort/timeout 兜底关闭。
+      })
+      throw new Error('技能包超过 20 MB')
+    }
+    chunks.push(Buffer.from(value))
+  }
+  const buffer = Buffer.concat(chunks)
   if (buffer.length > MAX_ZIP_BYTES) throw new Error('技能包超过 20 MB')
   if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
     throw new Error('SkillHub 返回的不是 zip 技能包')

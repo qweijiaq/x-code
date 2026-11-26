@@ -281,9 +281,12 @@ export function WorkspaceTree({
                                   }
                                   if (event.key === 'Escape') {
                                     event.preventDefault()
+                                    // 这里的复位必须留给 commitRename：setRenaming(null)
+                                    // 是异步生效的，紧随其后的 onBlur 会再调一次
+                                    // commitRename，若此处已把标记清掉，Esc 就会被
+                                    // 当成确认提交，把改名写盘。
                                     renameCancelRef.current = true
                                     setRenaming(null)
-                                    renameCancelRef.current = false
                                   }
                                 }}
                                 onBlur={() => {

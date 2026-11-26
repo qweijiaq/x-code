@@ -205,6 +205,16 @@ async function cloneRepo(source: Extract<SkillSource, { kind: 'git' }>): Promise
   }
 }
 
+/** 把 GitHub tree URL 里的 subpath 解析成 repo 内的路径：`../` 或绝对路径
+ *  会把 findSkillDirs 引到仓库之外（例如 /tree/main/../../../home/user），
+ *  从而把任意本地目录当成第三方技能复制进用户技能目录。越界直接返回 null。 */
+function resolveInsideRepo(repoDir: string, subpath: string): string | null {
+  const base = path.resolve(repoDir)
+  const target = path.resolve(base, subpath)
+  if (target !== base && !target.startsWith(base + path.sep)) return null
+  return target
+}
+
 async function findSkillDirs(root: string): Promise<string[]> {
   const found: string[] = []
   const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }]
@@ -272,7 +282,8 @@ export async function installSkillsFromCommand(command: string): Promise<CopiedS
 
   const repoDir = await cloneRepo(source)
   try {
-    const root = source.subpath ? path.join(repoDir, source.subpath) : repoDir
+    const root = source.subpath ? resolveInsideRepo(repoDir, source.subpath) : repoDir
+    if (!root) throw new Error(`技能路径不能超出仓库范围：${source.subpath}`)
     if (!fs.existsSync(root)) throw new Error(`仓库中不存在路径：${source.subpath}`)
 
     const skillDirs = await findSkillDirs(root)

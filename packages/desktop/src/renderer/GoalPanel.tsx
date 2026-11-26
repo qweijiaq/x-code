@@ -374,6 +374,10 @@ export function GoalPanel({ goal, onGoal, onClose }: Props): React.JSX.Element {
         setExportPath(path)
         setExportNotice({ kind: 'ok', text: t('已导出到 {{path}}', { path }) })
       }
+    } catch (cause) {
+      // 调用点是 `void exportReport()`：reject 不接住就是 unhandled rejection，
+      // 用户只看到「导出中…」转一下又恢复，不知道失败原因。
+      setExportNotice({ kind: 'error', text: cause instanceof Error ? cause.message : String(cause) })
     } finally {
       setExporting(false)
     }

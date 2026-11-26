@@ -41,22 +41,35 @@ export function ProjectSettings({ onSettings, onState, onNotice }: Props): React
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    // 主进程 handler 抛错时 Promise 会 reject：不接住就是 unhandled rejection，
+    // 且 view 永远是 null（UI 一直显示“…”）。Promise.all 一个失败全部失败，
+    // 所以必须整体兜住。卸载后也不能再 setState。
+    let mounted = true
     void (async () => {
-      const [projectResponse, stateResponse] = await Promise.all([
-        request('project:settings', {}),
-        request('app:state', {}),
-      ])
-      if (projectResponse.ok) {
-        const next = projectResponse.result as ProjectSettingsView
-        setView(next)
-        setModelId(next.overrides.modelId ?? next.effective.modelId)
-        setTaskMode(next.overrides.taskMode ?? next.effective.taskMode)
-        setAutoChecks(next.overrides.autoChecks ?? next.effective.autoChecks)
-      } else {
-        setError(projectResponse.error.message)
+      try {
+        const [projectResponse, stateResponse] = await Promise.all([
+          request('project:settings', {}),
+          request('app:state', {}),
+        ])
+        if (!mounted) return
+        if (projectResponse.ok) {
+          const next = projectResponse.result as ProjectSettingsView
+          setView(next)
+          setModelId(next.overrides.modelId ?? next.effective.modelId)
+          setTaskMode(next.overrides.taskMode ?? next.effective.taskMode)
+          setAutoChecks(next.overrides.autoChecks ?? next.effective.autoChecks)
+        } else {
+          setError(projectResponse.error.message)
+        }
+        if (stateResponse.ok) setLocalState(stateResponse.result as AppState)
+      } catch (cause) {
+        if (!mounted) return
+        setError(cause instanceof Error ? cause.message : String(cause))
       }
-      if (stateResponse.ok) setLocalState(stateResponse.result as AppState)
     })()
+    return () => {
+      mounted = false
+    }
   }, [])
 
   const save = async (): Promise<void> => {
@@ -177,10 +190,10 @@ export function ProjectSettings({ onSettings, onState, onNotice }: Props): React
       </div>
 
       <div className="settings-actions">
-        <button className="btn btn-quiet" disabled={busy !== null} onClick={() => void clear()}>
+        <button className="btn btn-quiet" disabled={busy !== null || view === null} onClick={() => void clear()}>
           {busy === 'clear' ? t('清除中…') : t('清除项目覆盖')}
         </button>
-        <button className="btn" disabled={busy !== null} onClick={() => void save()}>
+        <button className="btn" disabled={busy !== null || view === null} onClick={() => void save()}>
           {busy === 'save' ? t('保存中…') : t('保存项目设置')}
         </button>
       </div>

@@ -30,6 +30,10 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
   const [deleting, setDeleting] = useState(false)
   /** openTopic 的请求序号：并发/乱序返回时只接受最后一次。 */
   const openSeq = useRef(0)
+  /** 「当前独占请求」标识：save/remove/reload/openTopic 共用。只有最新一次
+   *  请求才有权清除 busy —— 否则在途的保存请求结束时会把用户刚点开主题
+   *  设置的 busy 清掉，保存按钮重新可用，一点就把空草稿写进新主题。 */
+  const exclusiveSeq = useRef(0)
 
   const applyPanel = (next: MemoryPanelView): void => {
     setPanel(next)
@@ -49,6 +53,7 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
 
   const openTopic = async (id: string): Promise<void> => {
     const seq = ++openSeq.current
+    const exclusive = ++exclusiveSeq.current
     setSelected(id)
     // 先清空草稿：否则旧主题正文会留在新主题的编辑器里，点保存就把 A 的
     // 内容写进 B。
@@ -67,12 +72,13 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
       if (seq !== openSeq.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      if (seq === openSeq.current) setBusy(null)
+      if (exclusive === exclusiveSeq.current) setBusy(null)
     }
   }
 
   const save = async (): Promise<void> => {
     if (!selected) return
+    const exclusive = ++exclusiveSeq.current
     setBusy('save')
     setError(null)
     onNotice(null)
@@ -87,12 +93,13 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
     } catch (cause) {
       setError(t('保存记忆主题失败：{{message}}', { message: cause instanceof Error ? cause.message : String(cause) }))
     } finally {
-      setBusy(null)
+      if (exclusive === exclusiveSeq.current) setBusy(null)
     }
   }
 
   const remove = async (): Promise<void> => {
     if (!selected) return
+    const exclusive = ++exclusiveSeq.current
     setBusy('delete')
     setError(null)
     try {
@@ -109,11 +116,12 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(null)
+      if (exclusive === exclusiveSeq.current) setBusy(null)
     }
   }
 
   const reload = async (): Promise<void> => {
+    const exclusive = ++exclusiveSeq.current
     setBusy('reload')
     setError(null)
     try {
@@ -127,7 +135,7 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(null)
+      if (exclusive === exclusiveSeq.current) setBusy(null)
     }
   }
 
@@ -178,6 +186,7 @@ export function MemorySettings({ onNotice }: { onNotice: (message: string | null
               <button
                 key={topic.id}
                 className={`memory-row ${selected === topic.id ? 'active' : ''}`}
+                disabled={busy !== null}
                 onClick={() => void openTopic(topic.id)}
               >
                 <span className="memory-type">{topic.type}</span>
