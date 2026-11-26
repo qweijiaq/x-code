@@ -1475,13 +1475,17 @@ void i18n.use(initReactI18next).init({
   returnNull: false,
 })
 
+// HMR 会重新执行本文件，先摘掉旧监听器，避免 i18next 单例上的监听器累积。
+i18n.off('languageChanged')
 i18n.on('languageChanged', (language) => {
+  const next = language === 'en' ? 'en' : 'zh'
   try {
-    localStorage.setItem('xcode.language', language === 'en' ? 'en' : 'zh')
+    // 值未变化时不写：其它窗口靠 storage 事件同步语言，重复写会来回触发切换。
+    if (localStorage.getItem('xcode.language') !== next) localStorage.setItem('xcode.language', next)
   } catch {
     // localStorage 可能不可用；本次会话仍然应用该切换。
   }
-  document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN'
+  document.documentElement.lang = next === 'en' ? 'en' : 'zh-CN'
 })
 
 document.documentElement.lang = storedLanguage === 'en' ? 'en' : 'zh-CN'

@@ -6,7 +6,11 @@
 
 export function encodeWav(chunks: readonly Float32Array[], sampleRate: number): ArrayBuffer {
   const sampleCount = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
-  const bytesPerSample = 2
+  // 头部各字段都由这三个常量推导，避免字面量散落各处后互相不一致。
+  const numChannels = 1
+  const bitsPerSample = 16
+  const bytesPerSample = bitsPerSample / 8
+  const blockAlign = numChannels * bytesPerSample
   const buffer = new ArrayBuffer(44 + sampleCount * bytesPerSample)
   const view = new DataView(buffer)
 
@@ -20,11 +24,11 @@ export function encodeWav(chunks: readonly Float32Array[], sampleRate: number): 
   writeString(12, 'fmt ')
   view.setUint32(16, 16, true)
   view.setUint16(20, 1, true) // PCM
-  view.setUint16(22, 1, true) // 单声道
+  view.setUint16(22, numChannels, true)
   view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * bytesPerSample, true)
-  view.setUint16(32, bytesPerSample, true)
-  view.setUint16(34, 16, true)
+  view.setUint32(28, sampleRate * blockAlign, true)
+  view.setUint16(32, blockAlign, true)
+  view.setUint16(34, bitsPerSample, true)
   writeString(36, 'data')
   view.setUint32(40, sampleCount * bytesPerSample, true)
 

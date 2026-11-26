@@ -80,6 +80,8 @@ function normalizeProjectSettings(raw: unknown): Record<string, ProjectOverrides
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
   const out: Record<string, ProjectOverrides> = {}
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    // 相对路径会随启动时的 cwd 漂移成不同键，覆盖设置静默失效：只接受绝对路径。
+    if (!path.isAbsolute(key)) continue
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue
     const entry = value as Record<string, unknown>
     const overrides: ProjectOverrides = {}
@@ -182,10 +184,11 @@ export function loadDesktopSettings(): DesktopSettingsFile {
           : [],
         sessionTitles: normalizeSessionTitles(data.sessionTitles),
         projectSettings: normalizeProjectSettings(data.projectSettings),
+        // 同上：相对路径按 cwd 解析会让同一个项目在不同启动下变成不同键。
         trustedProjectHooks: Array.isArray(data.trustedProjectHooks)
-          ? data.trustedProjectHooks
-              .filter((entry): entry is string => typeof entry === 'string')
-              .map((entry) => path.resolve(entry))
+          ? data.trustedProjectHooks.filter(
+              (entry): entry is string => typeof entry === 'string' && path.isAbsolute(entry),
+            )
           : [],
         contextWindowOverrides: normalizeContextWindowOverrides(data.contextWindowOverrides),
         searchProvider: normalizeSearchProvider(data.searchProvider),
@@ -202,15 +205,23 @@ export function loadDesktopSettings(): DesktopSettingsFile {
  * 用操作系统级 flock 把「重新读取 → 合并 → rename」包成原子段，避免两个
  * 窗口同时保存不同字段时后写覆盖前写。
  */
+let settingsLockDepth = 0
+
 function withSettingsLock<T>(fn: () => T): T {
+  // flock 关联的是 open file description，同进程另开一个 fd 同样互斥：如果
+  // mutate 回调里再次调用 save/update，会永久阻塞（且没有超时）。已经在锁内
+  // 就直接执行。mutate 回调本身仍然不应该嵌套调用这两个公开 API。
+  if (settingsLockDepth > 0) return fn()
   const file = settingsPath()
   fs.mkdirSync(path.dirname(file), { recursive: true })
   const lockFile = `${file}.lock`
   const fd = fs.openSync(lockFile, 'a+', 0o600)
+  settingsLockDepth += 1
   try {
     flockSync(fd, 'ex')
     return fn()
   } finally {
+    settingsLockDepth -= 1
     try {
       flockSync(fd, 'un')
     } catch {

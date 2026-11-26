@@ -43,7 +43,7 @@ export interface SlashCommandContext {
   setGoalOpen: Dispatch<SetStateAction<boolean>>
   setContextSearchOpen: Dispatch<SetStateAction<boolean>>
   setManualOpen: Dispatch<SetStateAction<boolean>>
-  append: (entry: { role: 'system'; text: string }) => void
+  append: (entry: { role: 'system' | 'error'; text: string }) => void
 }
 
 export function createSlashCommands(context: SlashCommandContext): SlashCommand[] {
@@ -84,7 +84,11 @@ export function createSlashCommands(context: SlashCommandContext): SlashCommand[
    *  命令既没有反馈也没有日志。 */
   const fireAndForget = (start: () => Promise<void>): void => {
     void start().catch((error: unknown) => {
-      append({ role: 'system', text: t('命令执行失败：{{message}}', { message: String(error) }) })
+      // `String(undefined)` 会得到 "undefined"，这里归一化成可读文案；
+      // 失败以 'error' 呈现，与 App.tsx 里其它 IPC 失败的样式保持一致。
+      const message =
+        error instanceof Error ? error.message : error === null || error === undefined ? t('未知错误') : String(error)
+      append({ role: 'error', text: t('命令执行失败：{{message}}', { message }) })
     })
   }
 

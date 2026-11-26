@@ -16,20 +16,9 @@ function isWhitespace(ch: string): boolean {
   return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r'
 }
 
-/** 与扫描规则保持一致的反转义：`\\` 与 `\<quote>` 还原成一个字符。 */
+/** 与 `core` 的 `detectAtToken` 保持一致：只反转义 `\<quote>`，不还原 `\\`。*/
 function unescapeQuoted(raw: string, quote: string): string {
-  let out = ''
-  for (let index = 0; index < raw.length; index++) {
-    const ch = raw[index] ?? ''
-    const next = raw[index + 1]
-    if (ch === '\\' && (next === quote || next === '\\')) {
-      out += next
-      index++
-      continue
-    }
-    out += ch
-  }
-  return out
+  return raw.split(`\\${quote}`).join(quote)
 }
 
 export function detectMention(text: string, cursor: number): MentionTrigger | null {

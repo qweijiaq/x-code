@@ -20,8 +20,26 @@ let port: BridgePort | null = null
 const pending = new Map<string, PendingMainRequest>()
 let sequence = 0
 
+/** 端口失效时立刻让所有在途请求失败，而不是各自等到 40s 超时。 */
+function failAllPending(error: Error): void {
+  for (const [id, entry] of pending) {
+    clearTimeout(entry.timer)
+    pending.delete(id)
+    entry.reject(error)
+  }
+}
+
 export function initMainBridge(nextPort: BridgePort): void {
+  if (port === nextPort) return
+  // 换端口意味着旧端口上的响应再也不会回来：先清干净在途请求。
+  if (port) failAllPending(new Error('Main bridge was re-initialized'))
   port = nextPort
+}
+
+/** shutdown 时调用：拒绝在途请求并断开端口，避免 pending/定时器滞留。 */
+export function disposeMainBridge(): void {
+  failAllPending(new Error('Main bridge is closed'))
+  port = null
 }
 
 export function requestMain<T>(method: MainRequestMethod, params: MainRequestParams, timeoutMs = 40_000): Promise<T> {

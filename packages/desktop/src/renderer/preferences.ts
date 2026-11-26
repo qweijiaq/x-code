@@ -10,23 +10,32 @@ export function draftStorageKey(sessionId: string | null): string {
 
 const LAST_DOCUMENTS_KEY = 'xcode.lastDocuments'
 
-export function readLastDocument(workspace: string): string | null {
-  if (!workspace) return null
+// localStorage 里的内容可能被手工改坏、被旧版本写成 `null`/数组等非普通对象；
+// 统一在这里收窄，避免下游 `parsed[workspace] = ...` 在严格模式下抛 TypeError
+// 导致「记住上次文档」永久失效且无法自愈。
+function readLastDocuments(): Record<string, unknown> {
   try {
     const raw = localStorage.getItem(LAST_DOCUMENTS_KEY)
-    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
-    const value = parsed[workspace]
-    return typeof value === 'string' && value.trim() ? value : null
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return parsed as Record<string, unknown>
   } catch {
-    return null
+    return {}
   }
+}
+
+export function readLastDocument(workspace: string): string | null {
+  if (!workspace) return null
+  const value = readLastDocuments()[workspace]
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return trimmed || null
 }
 
 export function rememberLastDocument(workspace: string, filePath: string): void {
   if (!workspace || !filePath) return
   try {
-    const raw = localStorage.getItem(LAST_DOCUMENTS_KEY)
-    const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {}
+    const parsed = readLastDocuments()
     parsed[workspace] = filePath
     localStorage.setItem(LAST_DOCUMENTS_KEY, JSON.stringify(parsed))
   } catch {
@@ -37,8 +46,7 @@ export function rememberLastDocument(workspace: string, filePath: string): void 
 export function forgetLastDocument(workspace: string, filePath: string): void {
   if (!workspace) return
   try {
-    const raw = localStorage.getItem(LAST_DOCUMENTS_KEY)
-    const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {}
+    const parsed = readLastDocuments()
     if (parsed[workspace] !== filePath) return
     delete parsed[workspace]
     localStorage.setItem(LAST_DOCUMENTS_KEY, JSON.stringify(parsed))

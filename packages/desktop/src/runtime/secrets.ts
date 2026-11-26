@@ -314,9 +314,24 @@ async function persistMigration(
   try {
     await withSecretsLock(async () => {
       const current = readRaw()
+      // 只覆盖仍然存在的条目：快照是加载时算的，期间别的窗口可能已经删掉了
+      // 某个 provider，直接合并会把已删除的 Key 原地复活。
+      const currentProviders = current.providers ?? {}
+      const currentSearch = current.search ?? {}
+      const migratedProviders: Record<string, StoredEntry> = {}
+      for (const [key, entry] of Object.entries(providers)) {
+        if (Object.hasOwn(currentProviders, key)) migratedProviders[key] = entry
+      }
+      const migratedSearch: Record<string, StoredEntry> = {}
+      for (const [key, entry] of Object.entries(search)) {
+        if (Object.hasOwn(currentSearch, key)) migratedSearch[key] = entry
+      }
+      if (Object.keys(migratedProviders).length === 0 && Object.keys(migratedSearch).length === 0) {
+        return
+      }
       writeRaw({
-        providers: { ...(current.providers ?? {}), ...providers },
-        search: { ...(current.search ?? {}), ...search },
+        providers: { ...currentProviders, ...migratedProviders },
+        search: { ...currentSearch, ...migratedSearch },
         baseUrls: current.baseUrls ?? {},
       })
     })
@@ -528,22 +543,30 @@ export async function secretRoundTripProbe(): Promise<{
   const value = `smoke-secret-${Date.now()}`
   const available = await cipher.available().catch(() => false)
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xcode-secret-probe-'))
-  const previousOverride = secretsPathOverride
-  secretsPathOverride = path.join(dir, 'desktop-secrets.json')
   try {
-    writeRaw({ providers: { anthropic: await encodeEntry(value) }, search: {}, baseUrls: {} })
-    let encrypted = false
-    try {
-      const raw = fs.readFileSync(secretsPath(), 'utf8')
-      encrypted = available && !raw.includes(value) && raw.includes('"enc"')
-    } catch {
-      encrypted = false
-    }
-    const decoded = await decodeEntries(readRaw().providers, ENV_BY_PROVIDER)
-    const roundTrip = decoded.values.get('anthropic') === value
-    return { available, encrypted, roundTrip }
+    // `secretsPathOverride` 是进程内的全局开关：探测期间若别的窗口保存 Key，
+    // 它的写入会落到临时文件里然后被删掉。整个窗口放进真实路径的锁内，
+    // 其它写入只能等探测结束后再进行。
+    return await withSecretsLock(async () => {
+      const previousOverride = secretsPathOverride
+      secretsPathOverride = path.join(dir, 'desktop-secrets.json')
+      try {
+        writeRaw({ providers: { anthropic: await encodeEntry(value) }, search: {}, baseUrls: {} })
+        let encrypted = false
+        try {
+          const raw = fs.readFileSync(secretsPath(), 'utf8')
+          encrypted = available && !raw.includes(value) && raw.includes('"enc"')
+        } catch {
+          encrypted = false
+        }
+        const decoded = await decodeEntries(readRaw().providers, ENV_BY_PROVIDER)
+        const roundTrip = decoded.values.get('anthropic') === value
+        return { available, encrypted, roundTrip }
+      } finally {
+        secretsPathOverride = previousOverride
+      }
+    })
   } finally {
-    secretsPathOverride = previousOverride
     fs.rmSync(dir, { recursive: true, force: true })
   }
 }

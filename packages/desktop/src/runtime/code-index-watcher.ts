@@ -41,17 +41,32 @@ export class CodeIndexWatcher {
     this.disposed = false
     if (process.platform === 'linux') {
       // Linux 的 fs.watch 不支持 recursive；轮询依赖 indexCode 的增量跳过。
-      this.poller = setInterval(() => this.schedule(), LINUX_POLL_MS)
+      this.startPolling()
       return
     }
     try {
       this.watcher = fs.watch(this.options.root, { recursive: true }, (_event, filename) => {
         if (isWatchedCodePath(filename?.toString())) this.schedule()
       })
-      this.watcher.on('error', () => undefined)
-    } catch {
+      this.watcher.on('error', (error) => {
+        // watcher 失效后不会再有任何回调，用户视角就是「自动索引静默停止」：
+        // 记一次告警并退化为轮询，保证仍有增量索引。
+        console.warn('[code-index] 文件监听失效，退化为轮询：', error)
+        this.watcher?.close()
+        this.watcher = null
+        this.startPolling()
+      })
+    } catch (error) {
+      console.warn('[code-index] fs.watch 不可用，退化为轮询：', error)
       this.watcher = null
+      this.startPolling()
     }
+  }
+
+  /** 轮询兜底：Linux 不支持递归 watcher，运行期 watcher 出错时也走这里。 */
+  private startPolling(): void {
+    if (this.poller || this.disposed) return
+    this.poller = setInterval(() => this.schedule(), LINUX_POLL_MS)
   }
 
   stop(): void {

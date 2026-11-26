@@ -152,8 +152,11 @@ export async function directoryStats(dir: string): Promise<{ bytes: number; file
     let entries: fs.Dirent[]
     try {
       entries = await fs.promises.readdir(current, { withFileTypes: true })
-    } catch {
-      return
+    } catch (error) {
+      // 目录尚未创建（ENOENT）时统计为 0 是正确的；但 EACCES/EMFILE 等
+      // 真实错误不能静默吞掉，否则存储面板会长期显示「占用 0」而无任何线索。
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
     }
     for (const entry of entries) {
       const target = path.join(current, entry.name)
@@ -181,14 +184,19 @@ export function realpathAllowMissing(target: string): string {
   // 说明这段路径不可信，继续回退会把未解析的字面路径返回给调用方，
   // 工作区前缀校验会被绕过（符号链接逃逸）。
   const suffix: string[] = []
-  let current = target
+  const absolute = path.resolve(target)
+  let current = absolute
   while (true) {
     try {
       return path.join(fs.realpathSync.native(current), ...suffix)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
       const parent = path.dirname(current)
-      if (parent === current) return target
+      if (parent === current) {
+        // 连根都无法解析：此时返回字面路径会让调用方的「工作区前缀比较」
+        // 原样通过（符号链接逃逸），必须让调用方按不可信路径处理。
+        throw new Error(`无法解析真实路径: ${absolute}`)
+      }
       suffix.unshift(path.basename(current))
       current = parent
     }

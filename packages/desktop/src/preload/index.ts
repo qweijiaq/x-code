@@ -4,7 +4,16 @@ import type { RuntimeEvent, RuntimeRequest, RuntimeResponse, UiSmokeResult, Xcod
 
 const bridge: XcodeBridge = {
   request(request: RuntimeRequest): Promise<RuntimeResponse> {
-    return ipcRenderer.invoke('runtime:request', request) as Promise<RuntimeResponse>
+    // invoke 可能 reject（通道未注册 / sender 窗口已销毁 / runtime 未就绪）。
+    // 调用方按 XcodeBridge.request 的契约（总是 resolve 成 { id, ok, error }）编写，
+    // 这里把 reject 收敛成错误响应，避免渲染进程出现 unhandled rejection。
+    return (ipcRenderer.invoke('runtime:request', request) as Promise<RuntimeResponse>).catch(
+      (error: unknown): RuntimeResponse => ({
+        id: request.id,
+        ok: false,
+        error: { code: 'ipc-failed', message: error instanceof Error ? error.message : String(error) },
+      }),
+    )
   },
   onEvent(listener: (event: RuntimeEvent) => void): () => void {
     const handler = (_event: Electron.IpcRendererEvent, payload: RuntimeEvent): void => listener(payload)

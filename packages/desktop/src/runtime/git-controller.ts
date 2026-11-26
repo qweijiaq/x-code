@@ -29,6 +29,17 @@ export interface GitController {
 }
 
 export function createGitController(host: GitControllerHost): GitController {
+  /** worktree 操作内部是「prune → list → 判断是否存在 → add」的检查后执行
+   *  序列（git.ts 的 openBranchWorktree / createBranchWorktree），渲染端重复
+   *  点击或并发请求会让两次 `git worktree add` 交错执行，出现
+   *  「already checked out」或多余的同级目录。这里对同一 workspace 的操作串行化。 */
+  let worktreeQueue: Promise<unknown> = Promise.resolve()
+  const serialize = <T>(task: () => Promise<T>): Promise<T> => {
+    const next = worktreeQueue.then(task, task)
+    worktreeQueue = next.catch(() => undefined)
+    return next
+  }
+
   return {
     async status() {
       return gitStatus(host.workspace(), host.latestCheckpoint())
@@ -40,16 +51,16 @@ export function createGitController(host: GitControllerHost): GitController {
       return gitBranches(host.workspace())
     },
     async openWorktree(branch, remoteRef) {
-      return openBranchWorktree(host.workspace(), branch, remoteRef)
+      return serialize(() => openBranchWorktree(host.workspace(), branch, remoteRef))
     },
     async createWorktree(branch, from, parentDir) {
-      return createBranchWorktree(host.workspace(), branch, from, parentDir)
+      return serialize(() => createBranchWorktree(host.workspace(), branch, from, parentDir))
     },
     async removeWorktree(targetPath, force) {
-      return removeBranchWorktree(host.workspace(), targetPath, force === true)
+      return serialize(() => removeBranchWorktree(host.workspace(), targetPath, force === true))
     },
     async prune() {
-      await pruneWorktrees(host.workspace())
+      await serialize(() => pruneWorktrees(host.workspace()))
       return { ok: true }
     },
   }

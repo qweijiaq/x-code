@@ -24,7 +24,7 @@ import {
   openDocumentView,
   recentDocuments,
 } from './document-view.js'
-import { handleMainResponse, initMainBridge, requestMain } from './main-bridge.js'
+import { disposeMainBridge, handleMainResponse, initMainBridge, requestMain } from './main-bridge.js'
 import { savePastedImage } from './pasted-images.js'
 import { ShellManager } from './shell.js'
 import { runSmoke } from './smoke.js'
@@ -44,8 +44,21 @@ const port: ParentPortLike = parentPort
 // 启动的 Electron 项目退化成纯 Node（app 为 undefined，窗口不出现）。
 // 需要 Node 语义的内部子进程（音频/PDF worker、tsserver）各自显式传入。
 
+/** 端口销毁后 `postMessage` 会抛错。事件通道的调用点常在 shell/PTY 回调栈里
+ *  （shutdown → disposeAll 之后仍可能触发），不在 handleRequest 的 try/catch
+ *  覆盖范围内，抛出去就是 utility 进程的未捕获异常。 */
+let portClosed = false
+/** 已收到 shutdown：后续请求不再进入 handleRequest。 */
+let shuttingDown = false
+
 function sendEvent(event: RuntimeEvent): void {
-  port.postMessage({ kind: 'event', event })
+  if (portClosed) return
+  try {
+    port.postMessage({ kind: 'event', event })
+  } catch {
+    // 主进程已销毁/端口已关闭：丢弃事件即可。
+    portClosed = true
+  }
 }
 
 function ok(id: string, result: unknown): RuntimeResponse {
@@ -976,7 +989,19 @@ parentPort.on('message', (event) => {
   }
 
   if (message.kind === 'shutdown') {
-    void host.shutdown().finally(() => shells.disposeAll())
+    if (shuttingDown) return
+    shuttingDown = true
+    // host.shutdown() reject 时 `.finally` 会继续透传 → 进程级 unhandledRejection
+    // （Electron 可能直接杀掉 utility 进程），这里显式兜住。
+    void host
+      .shutdown()
+      .catch((error: unknown) => {
+        sendEvent({ type: 'runtime:log', level: 'error', message: `shutdown failed: ${errorMessage(error)}` })
+      })
+      .finally(() => {
+        shells.disposeAll()
+        disposeMainBridge()
+      })
     return
   }
 
@@ -986,6 +1011,19 @@ parentPort.on('message', (event) => {
     // 分支还要读 request.id，会二次抛错变成进程级 unhandledRejection，
     // 且渲染端永远收不到该 id 的回包（请求悬挂）。
     if (!request || typeof request !== 'object' || typeof request.id !== 'string') return
+    if (shuttingDown) {
+      // shutdown 之后到达的请求：host 的原生模块/索引/PTY 都已释放，继续处理
+      // 只会产生难以定位的次生错误，这里直接回包拒绝。
+      try {
+        port.postMessage({
+          kind: 'response',
+          response: fail(request.id, 'shutting-down', 'runtime is shutting down'),
+        })
+      } catch {
+        // 端口已关闭：丢弃回包。
+      }
+      return
+    }
     void handleRequest(request)
       .catch((error: unknown) => fail(request.id, 'request-failed', errorMessage(error)))
       .then((response) => {

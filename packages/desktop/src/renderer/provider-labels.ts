@@ -12,6 +12,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   'opencode-go': 'OpenCode Go',
   opendesign: 'OpenDesign',
   'opendesign-go': 'OpenDesign Go',
+  ollama: 'Ollama (local)',
+  lmstudio: 'LM Studio (local)',
   custom: '自定义 / OpenAI-compatible',
 }
 
