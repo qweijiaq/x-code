@@ -7,15 +7,34 @@ import type { TestConnectionResult } from '../shared/protocol.js'
 const ENV_BY_PROVIDER = new Map<string, string>(PROVIDERS.map((provider) => [provider.name, provider.envKey]))
 ENV_BY_PROVIDER.set('custom', 'OPENAI_COMPATIBLE_API_KEY')
 
-/**
- * 通过真实 provider 注册表发送一个最小请求。这里提供的 key 或 base
- * URL 仅用于本次请求，之后恢复原状。
- */
-export async function testProviderConnection(
+/** 探测需要临时改写 process.env 才能让 registry 用上本次的 key / base URL，
+ *  因此同一时刻只能有一个探测在跑：并发时后启动的一次会把前一次写入的临时
+ *  key 当成“原值”回写（用户真实 key 被覆盖、临时 key 永久残留），还会出现
+ *  A 的 key 配上 B 的 base URL 的串包，测试结果本身也不可信。 */
+let probeQueue: Promise<unknown> = Promise.resolve()
+
+export function testProviderConnection(
   provider: string,
   key?: string,
   baseUrl?: string,
 ): Promise<TestConnectionResult> {
+  const run = probeQueue.then(
+    () => runConnectionTest(provider, key, baseUrl),
+    () => runConnectionTest(provider, key, baseUrl),
+  )
+  // 队列本身永不 reject，否则后续探测会被前一次的失败卡住。
+  probeQueue = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
+/**
+ * 通过真实 provider 注册表发送一个最小请求。这里提供的 key 或 base
+ * URL 仅用于本次请求，之后恢复原状。
+ */
+async function runConnectionTest(provider: string, key?: string, baseUrl?: string): Promise<TestConnectionResult> {
   const info = PROVIDERS.find((entry) => entry.name === provider)
   const envKey = ENV_BY_PROVIDER.get(provider)
   if (!envKey) {

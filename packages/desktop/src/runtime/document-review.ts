@@ -142,12 +142,24 @@ async function writeAtomically(filePath: string, text: string): Promise<void> {
   try {
     await fs.rename(temp, filePath)
   } catch (error) {
-    await fs.unlink(temp).catch(() => {})
     const code = (error as NodeJS.ErrnoException).code
     // 只有 Windows 的覆盖语义失败（EPERM/EEXIST/ENOTEMPTY/EBUSY）才回退到
     // 就地写入；此处内容已完整校验，回退是安全的。
-    if (code !== 'EPERM' && code !== 'EEXIST' && code !== 'ENOTEMPTY' && code !== 'EBUSY') throw error
-    await fs.writeFile(filePath, text, { mode: stats.mode })
+    if (code !== 'EPERM' && code !== 'EEXIST' && code !== 'ENOTEMPTY' && code !== 'EBUSY') {
+      await fs.unlink(temp).catch(() => {})
+      throw error
+    }
+    // 就地写入成功之前不能删临时文件：它是唯一一份完整内容。原地写入同样可能
+    // 失败（文件仍被占用、中途 ENOSPC），那时把 temp 留下来供用户恢复。
+    try {
+      await fs.writeFile(filePath, text, { mode: stats.mode })
+    } catch (writeError) {
+      throw new Error(
+        `无法写入 ${path.basename(filePath)}（${(writeError as NodeJS.ErrnoException).code ?? String(writeError)}）；` +
+          `完整内容已保留在临时文件：${temp}`,
+      )
+    }
+    await fs.unlink(temp).catch(() => {})
   }
 }
 

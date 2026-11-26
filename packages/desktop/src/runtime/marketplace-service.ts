@@ -7,7 +7,7 @@ import {
   readAllCachedMarketplaces,
   readKnownMarketplaces,
 } from '@x-code-cli/core'
-import type { Marketplace, MarketplaceEntry } from '@x-code-cli/core'
+import type { ConsentPreview, Marketplace, MarketplaceEntry } from '@x-code-cli/core'
 
 import type { MarketplaceEntryView, MarketplaceListView } from '../shared/protocol.js'
 
@@ -77,16 +77,46 @@ export async function listMarketplacePlugins(query = '', refresh = false): Promi
   }
 }
 
+/** 插件里真正有执行面（任意 shell / 任意子进程）的贡献。
+ *  renderer 的正常安装路径是 `plugins:preview` → `plugins:install`，用户先看到
+ *  [[ConsentPreview]] 才确认；而这条 `settings:marketplace-install` 通道没有
+ *  任何 UI 可以渲染预览，因此只在“没有可执行贡献”时才允许静默放行。 */
+function executableContribution(preview: ConsentPreview): string | null {
+  const surface: string[] = []
+  if (preview.hookEvents.length > 0) surface.push(`hooks（${preview.hookEvents.join(', ')}）`)
+  if (preview.inlineMcpServerNames.length > 0) surface.push(`MCP server（${preview.inlineMcpServerNames.join(', ')}）`)
+  if (preview.hasPathMcpServers) surface.push('MCP server（由文件声明）')
+  if (preview.hasPathHooks) surface.push('hooks（由文件声明）')
+  if (surface.length === 0) return null
+  return (
+    `插件 ${preview.pluginId} 会注入 ${surface.join('、')}，需要先预览并确认。` +
+    '请在「设置 → 插件」中用安装对话框重新安装该插件。'
+  )
+}
+
 export async function installMarketplacePluginInfo(id: string): Promise<{ pluginId: string; version: string }> {
   const found = await lookupPlugin(id)
   if (!found) throw new Error(`市场中未找到插件 ${id}`)
-  const result = await installPlugin({
-    source: found.entry.source,
-    marketplace: found.marketplace.name,
-    expectedName: found.entry.name,
-    scope: 'user',
-    consent: () => true,
-  })
+  // 不再无条件 `consent: () => true`：那等于让第三方市场的插件未经用户知情同意
+  // 就获得注入 hooks / 启动 MCP 的能力。这里用预览做闸门，拒绝时抛出可提示文案。
+  let refusal: string | null = null
+  let result: Awaited<ReturnType<typeof installPlugin>> | null = null
+  try {
+    result = await installPlugin({
+      source: found.entry.source,
+      marketplace: found.marketplace.name,
+      expectedName: found.entry.name,
+      scope: 'user',
+      consent: (preview) => {
+        refusal = executableContribution(preview)
+        return refusal === null
+      },
+    })
+  } catch (error) {
+    if (refusal) throw new Error(refusal)
+    throw new Error(`安装 ${id} 失败：${errorMessage(error)}`)
+  }
+  if (!result) throw new Error(`安装 ${id} 失败`)
   return { pluginId: result.pluginId, version: result.manifest.version }
 }
 

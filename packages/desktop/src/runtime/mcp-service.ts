@@ -67,8 +67,10 @@ function redactString(value: string): string {
   )
 }
 
-/** `--token` / `--api-key` / `--clientSecret` 这类型 flag 的值整体脱敏。 */
-const SECRET_FLAG = /^--?[a-z]*(?:key|token|secret|password|authorization|credential)s?$/i
+/** `--token` / `--api-key` / `--client-secret` / `--auth_token` / `--clientSecret`
+ *  这类型 flag 的值整体脱敏。中间的 `-`/`_`/数字必须允许，否则
+ *  `["--api-key", "sk-…"]` 这种相邻取值会被原样送给 renderer。 */
+const SECRET_FLAG = /^--?[a-z0-9_-]*(?:key|token|secret|password|authorization|credential)s?$/i
 /** `--header "Authorization: Bearer …"`：保留头名，值脱敏。 */
 const HEADER_FLAG = /^--?(?:h|header|headers)$/i
 const HEADER_VALUE = /^([A-Za-z0-9!#$%&'*+.^_`|~-]+:\s*)([\s\S]*)$/

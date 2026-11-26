@@ -30,6 +30,9 @@ export class CodeIndexWatcher {
   private poller: ReturnType<typeof setInterval> | null = null
   private running = false
   private disposed = false
+  /** 索引进行中又收到 watch 事件：run() 结束后必须补跑一次，否则这批变更
+   *  会被永久丢弃（尤其是最后一次事件，之后没有新变更就不会再触发）。 */
+  private pending = false
 
   constructor(private readonly options: CodeIndexWatcherOptions) {}
 
@@ -53,6 +56,7 @@ export class CodeIndexWatcher {
 
   stop(): void {
     this.disposed = true
+    this.pending = false
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     if (this.poller) clearInterval(this.poller)
@@ -62,7 +66,12 @@ export class CodeIndexWatcher {
   }
 
   private schedule(): void {
-    if (this.disposed || this.running) return
+    if (this.disposed) return
+    if (this.running) {
+      // 不排队就 return 会丢弃索引期间到达的全部事件。
+      this.pending = true
+      return
+    }
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
       this.timer = null
@@ -73,12 +82,18 @@ export class CodeIndexWatcher {
   private async run(): Promise<void> {
     if (this.disposed || this.running) return
     this.running = true
+    this.pending = false
     try {
       await this.options.onIndex()
     } catch {
       // 自动索引失败不打断应用；下一次文件变更会重试。
     } finally {
       this.running = false
+    }
+    if (this.pending && !this.disposed) {
+      // 本轮索引期间有新变更：补跑一次（走正常去抖路径）。
+      this.pending = false
+      this.schedule()
     }
   }
 }

@@ -3,7 +3,7 @@ import { flockSync } from 'fs-ext-extra-prebuilt'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { MIN_CONTEXT_WINDOW_OVERRIDE, WEB_SEARCH_PROVIDERS, userXcodeDir } from '@x-code-cli/core'
+import { MIN_CONTEXT_WINDOW_OVERRIDE, WEB_SEARCH_PROVIDERS, debugLog, userXcodeDir } from '@x-code-cli/core'
 
 export interface ProjectOverrides {
   modelId?: string
@@ -91,10 +91,63 @@ function normalizeProjectSettings(raw: unknown): Record<string, ProjectOverrides
   return out
 }
 
-export function loadDesktopSettings(): DesktopSettingsFile {
+/** 首次启动（文件不存在）时的默认值。形状必须与正常路径完全一致：
+ *  `saveDesktopSettings` / `updateDesktopSettings` 用 `{ ...current, ...patch }`
+ *  整体写回，缺一个字段就等于把用户已存的
+ *  sessionTitles / projectSettings / pinnedSessions / contextWindowOverrides
+ *  等静默清空（且不可恢复）。 */
+const EMPTY_SETTINGS: DesktopSettingsFile = {
+  disabledTools: [],
+  autoAllowedTools: [],
+  alwaysAllowAll: false,
+  recentProjects: [],
+  pinnedSessions: [],
+  archivedSessions: [],
+  sessionTitles: {},
+  projectSettings: {},
+  trustedProjectHooks: [],
+  contextWindowOverrides: {},
+  librarySemantic: false,
+  autoChecks: false,
+  autoFixChecks: false,
+  autoCodeIndex: false,
+  // 与正常路径的 `data.x !== false` 归一化保持一致。
+  shellSandbox: true,
+  shellSandboxNetwork: false,
+  shellSandboxExtensions: false,
+  notifications: true,
+  onboarded: false,
+}
+
+/** 把无法解析的文件搬成 `.bak`，绝不静默丢弃。 */
+function quarantineCorruptSettings(file: string, reason: unknown): void {
+  debugLog('settings.corrupt', reason instanceof Error ? reason.message : String(reason))
   try {
-    const parsed = JSON.parse(fs.readFileSync(settingsPath(), 'utf-8')) as unknown
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    let backup = `${file}.bak`
+    for (let index = 1; fs.existsSync(backup) && index < 100; index++) backup = `${file}.bak-${index}`
+    fs.renameSync(file, backup)
+  } catch (error) {
+    debugLog('settings.corrupt-backup-failed', error instanceof Error ? error.message : String(error))
+  }
+}
+
+export function loadDesktopSettings(): DesktopSettingsFile {
+  const file = settingsPath()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as unknown
+  } catch (error) {
+    // 只有「文件不存在」才是首次启动。其它 I/O 错误（EACCES/EBUSY/EIO…）必须
+    // 让写路径放弃落盘：用默认值顶替再写回，等于清空用户全部设置。
+    const code = (error as NodeJS.ErrnoException)?.code
+    if (code === 'ENOENT') return { ...EMPTY_SETTINGS }
+    if (code !== undefined) throw error
+    // 解析失败（无 errno）属于文件损坏：备份后按默认值启动，用户仍可找回。
+    quarantineCorruptSettings(file, error)
+    return { ...EMPTY_SETTINGS }
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    {
       const data = parsed as DesktopSettingsFile
       return {
         disabledTools: Array.isArray(data.disabledTools)
@@ -138,10 +191,10 @@ export function loadDesktopSettings(): DesktopSettingsFile {
         searchProvider: normalizeSearchProvider(data.searchProvider),
       }
     }
-  } catch {
-    // 文件缺失或格式损坏。
   }
-  return { disabledTools: [], autoAllowedTools: [], alwaysAllowAll: false, recentProjects: [] }
+  // 合法 JSON 但不是对象：同样按损坏处理（备份后重新开始）。
+  quarantineCorruptSettings(file, 'settings file is not a JSON object')
+  return { ...EMPTY_SETTINGS }
 }
 
 /**

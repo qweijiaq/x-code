@@ -9,12 +9,18 @@ let endedAt = 0
 let compositionTarget: EventTarget | null = null
 /** 待消费的 grace：确认候选词的那一次 Enter 会把它一次性消费掉。 */
 let graceTarget: EventTarget | null = null
+/** 组词是被 Enter 确认结束的（keydown(isComposing=true) 早于 compositionend）。
+ *  那种顺序下 grace 窗口不该再开：紧接着的 Enter 是真实提交。 */
+let endedByImeEnter = false
 
 function finishComposition(): void {
   if (!composing) return
   composing = false
   endedAt = performance.now()
-  graceTarget = compositionTarget
+  // 组词若已由 Enter 确认结束，下一次 Enter 是真实提交，不能再吞掉它
+  // （快速发送消息/保存设置时会静默失败）。
+  graceTarget = endedByImeEnter ? null : compositionTarget
+  endedByImeEnter = false
 }
 
 /** 事件是否发生在组词元素内部（不依赖 DOM 全局，便于在 node 环境下测试）。 */
@@ -32,6 +38,7 @@ if (typeof window !== 'undefined') {
       composing = true
       compositionTarget = event.target
       graceTarget = null
+      endedByImeEnter = false
     },
     true,
   )
@@ -73,6 +80,7 @@ if (typeof window !== 'undefined') {
 }
 
 interface ImeEventLike {
+  key?: string
   keyCode?: number
   isComposing?: boolean
   nativeEvent?: { isComposing?: boolean }
@@ -86,7 +94,12 @@ export function isImeEvent(event: ImeEventLike): boolean {
 
 /** Enter 是否应当视为“确认候选词”而不是提交动作。 */
 export function isImeEnter(event: ImeEventLike): boolean {
-  if (isImeEvent(event)) return true
+  if (isImeEvent(event)) {
+    // 记下“这次 Enter 结束了组词”。compositionend 可能稍后才到，届时
+    // finishComposition() 据此跳过武装 grace，避免吞掉 120ms 内的下一次 Enter。
+    if (event.key === 'Enter' || event.keyCode === 13) endedByImeEnter = true
+    return true
+  }
   if (!graceTarget) return false
   if (performance.now() - endedAt >= COMPOSITION_GRACE_MS) {
     graceTarget = null

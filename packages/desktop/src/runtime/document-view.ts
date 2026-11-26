@@ -25,6 +25,11 @@ const MAX_IMAGE_BYTES = 3 * 1024 * 1024
 const MAX_IMAGE_EDGE = 1800
 const PAGE_TEXT_CACHE_MS = 5 * 60_000
 
+/** core 在 visual 模式下唯一会产出的“非图片失败块”形状
+ *  （见 pdf-ingest 的 `[PDF page N could not be rendered locally: …]`）。
+ *  其余文本 part 都是正常内容，不能当作渲染失败。 */
+const PDF_PAGE_FAILURE = /^\[PDF page \d+ could not be rendered locally:/
+
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tif', '.tiff'])
 const PDF_EXTENSION = '.pdf'
 const SHEET_EXTENSIONS = new Set(['.xlsx'])
@@ -249,6 +254,7 @@ async function renderPdfPages(
   if (count <= 0 || boundedStart > totalPages) return { pages: [] }
   const pages: DocumentPageView[] = []
   const notices: string[] = []
+  let cutShort = false
   for (let first = boundedStart; first <= end; first += PDF_RENDER_CHUNK) {
     const last = Math.min(end, first + PDF_RENDER_CHUNK - 1)
     const result = await processPdf(filePath, {
@@ -260,15 +266,24 @@ async function renderPdfPages(
     })
     if (result.type === 'error') {
       notices.push(result.message)
+      cutShort = true
       continue
     }
     if (result.type !== 'content') {
       notices.push(`rendering stopped at page ${first}: ${result.reason}`)
+      cutShort = true
       break
     }
+    // 预算截断（continuation）时这一块剩余页本来就不会渲染，原因已经由
+    // core 记在 continuation 里，不能当成“渲染失败”。
+    if (result.continuation) cutShort = true
     for (const part of result.parts) {
       if (part.type !== 'image') {
-        if (part.type === 'text') notices.push(part.text)
+        // `mode: 'visual'` 下非图片 part 有两类：每页正文块 / 图片前的层级标签
+        // （正常输出，占绝大多数），以及真正的渲染失败块。只把后者算作 notice，
+        // 否则任何带文本层的 PDF 都会被报成 “Some page images could not be
+        // rendered”，甚至整批文本页被当成 error 抛出。
+        if (part.type === 'text' && PDF_PAGE_FAILURE.test(part.text)) notices.push(part.text)
         continue
       }
       const page = part.source?.page ?? first
@@ -276,6 +291,18 @@ async function renderPdfPages(
     }
   }
   const sorted = pages.sort((a, b) => a.page - b.page)
+  // 以“实际拿到图片的页码”和请求区间求差集，缺页才有据可依。只在整块都处理完
+  // （没有被预算截断）时计算，否则会把正常的 continuation 当成渲染失败。
+  if (!cutShort) {
+    const renderedPages = new Set(sorted.map((page) => page.page))
+    const missing: number[] = []
+    for (let page = boundedStart; page <= end; page++) {
+      if (!renderedPages.has(page)) missing.push(page)
+    }
+    if (missing.length > 0) {
+      notices.push(`missing page image(s): ${missing.slice(0, 20).join(', ')}${missing.length > 20 ? ' …' : ''}`)
+    }
+  }
   const note = notices.join(' ').slice(0, 600)
   if (notices.length === 0) return { pages: sorted }
   // 无论全失败还是部分失败都要报出来：只在「一张图都没渲染出来」时报错时，
@@ -401,7 +428,10 @@ export async function openDocumentView(
       } catch (error) {
         view.notes.push(`Page images could not be rendered: ${error instanceof Error ? error.message : String(error)}`)
       }
-      const lastLoaded = view.pages?.at(-1)?.page ?? batch.start - 1
+      // 进度以「本批请求到的最后页码」兜底推进：部分页面渲染失败时最后一张
+      // 成功图片的页码可能落后，若用它判定 hasMore，前端会反复请求同一批。
+      const requestedLast = Math.min(totalPages, batch.start + batch.count - 1)
+      const lastLoaded = Math.max(view.pages?.at(-1)?.page ?? batch.start - 1, requestedLast)
       view.hasMore = lastLoaded < totalPages
     }
   }
@@ -416,16 +446,36 @@ export async function loadDocumentPages(
 ): Promise<{ pages: DocumentPageView[]; hasMore: boolean }> {
   const resolved = path.resolve(input)
   if (path.extname(resolved).toLowerCase() !== PDF_EXTENSION) return { pages: [], hasMore: false }
-  const { pageTexts, totalPages } = await pdfPageInfo(resolved)
+  // 原始错误（含绝对路径、ENOENT）不该原样经 IPC 抛给 renderer，与
+  // openDocumentView 保持一致地包装成可读消息。
+  let pageTexts: Map<number, string>
+  let totalPages: number
+  try {
+    ;({ pageTexts, totalPages } = await pdfPageInfo(resolved))
+  } catch (error) {
+    throw new Error(
+      `无法读取 PDF 页信息：${path.basename(resolved)}（${error instanceof Error ? error.message : String(error)}）`,
+    )
+  }
   // start/count 经 IPC 原样从 renderer 传来——`count: number` 只是编译期类型。
   // 不复用 clampBatch 时：count 可以任意大（对长 PDF 触发上百次串行渲染 + 海量
   // base64 回传），非数字/NaN 则让 `for (let first = NaN; ...)` 直接不执行，
   // 前端只看到「没有更多页面」而没有任何错误信息。
   const batch = clampBatch(start, count)
   const ocr = storedOcr(resolved)
-  const rendered = await renderPdfPages(resolved, batch.start, batch.count, pageTexts, ocr, totalPages)
+  let rendered: Awaited<ReturnType<typeof renderPdfPages>>
+  try {
+    rendered = await renderPdfPages(resolved, batch.start, batch.count, pageTexts, ocr, totalPages)
+  } catch (error) {
+    throw new Error(
+      `渲染 PDF 页面失败：${path.basename(resolved)}（${error instanceof Error ? error.message : String(error)}）`,
+    )
+  }
   if (rendered.error) throw new Error(rendered.error)
-  const lastLoaded = rendered.pages.at(-1)?.page ?? batch.start - 1
+  // 与 openDocumentView 同一口径：部分页失败时也不能让 hasMore 停在原地，
+  // 否则前端会一遍遍请求同一批却看不到任何提示。
+  const requestedLast = Math.min(totalPages, batch.start + batch.count - 1)
+  const lastLoaded = Math.max(rendered.pages.at(-1)?.page ?? batch.start - 1, requestedLast)
   return { pages: rendered.pages, hasMore: lastLoaded < totalPages }
 }
 

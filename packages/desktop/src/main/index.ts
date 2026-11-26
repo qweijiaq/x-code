@@ -616,7 +616,8 @@ function forwardRequest(
   }
 
   if (!context.runtime) spawnRuntime(context)
-  if (!context.runtime) {
+  const runtime = context.runtime
+  if (!runtime) {
     return Promise.resolve({
       id: request.id,
       ok: false,
@@ -640,7 +641,23 @@ function forwardRequest(
 
     context.pending.set(request.id, { resolve, timer })
     const inbound: RuntimeInbound = { kind: 'request', request }
-    context.runtime?.postMessage(inbound)
+    // postMessage 在 runtime 已退出时会同步抛错。Executor 里抛错只会让 promise
+    // 变成 rejected（调用方大多 `void forwardRequest(...)`，会成为主进程未捕获
+    // 拒绝），而 pending 条目与最长 15 分钟的 timer 会一直挂着。因此显式清理。
+    try {
+      runtime.postMessage(inbound)
+    } catch (error) {
+      if (timer) clearTimeout(timer)
+      context.pending.delete(request.id)
+      resolve({
+        id: request.id,
+        ok: false,
+        error: {
+          code: 'runtime-unavailable',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      })
+    }
   })
 }
 
@@ -1076,6 +1093,9 @@ function editorCandidates(): Array<{ command: string; label: string }> {
   return candidates
 }
 
+/** `cmd.exe` 元字符：在 `shell: true` 下不会被 Node 转义。 */
+const WINDOWS_SHELL_METACHARS = /["&|^%<>]|[\r\n]/
+
 async function openInEditor(
   filePath: string,
   line?: number,
@@ -1083,6 +1103,16 @@ async function openInEditor(
 ): Promise<{ opened: boolean; editor?: string; error?: string }> {
   if (!path.isAbsolute(filePath)) return { opened: false, error: '需要一个绝对路径' }
   if (!fs.existsSync(filePath)) return { opened: false, error: `文件不存在：${filePath}` }
+  // Windows 走 `shell: true`：Node 会把命令与参数原样拼进
+  // `cmd.exe /d /s /c "..."`，不转义参数，含 `"` `&` `|` `^` `%` `<` `>` 的
+  // 文件名可以变成额外命令（detached: true 还会派生独立进程）。这里直接拒绝
+  // 这类路径，而不是尝试转义 cmd 元字符。
+  if (process.platform === 'win32' && WINDOWS_SHELL_METACHARS.test(filePath)) {
+    return {
+      opened: false,
+      error: '文件路径包含无法安全传给外部编辑器的字符（" & | ^ % < >），请在编辑器内自行打开。',
+    }
+  }
   const candidates = editorCandidates()
   if (candidates.length === 0) {
     return { opened: false, error: '未找到 VS Code 或 Cursor。安装后重试，或设置 X_CODE_EDITOR。' }

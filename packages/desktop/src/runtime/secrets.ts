@@ -74,9 +74,12 @@ const bridgeCipher: SecretCipher = {
       const result = await requestMain<{ available: boolean }>('app:safe-storage-status', {})
       availableCache = result.available === true
     } catch {
-      availableCache = false
+      // 失败通常是暂时的（主桥尚未初始化 / IPC 超时）。绝不能把 false 缓存
+      // 下来：之后每次 encodeEntry 都会退化成明文落盘，secretStorageKind()
+      // 也会永久误报“平台不支持加密”。保持未知，下次重探。
+      return false
     }
-    return availableCache
+    return availableCache ?? false
   },
   async encrypt(text) {
     const result = await requestMain<{ available: boolean; data?: string }>('app:safe-storage-encrypt', {
@@ -132,24 +135,57 @@ async function withSecretsLock<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-function readRaw(): SecretsFile {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(secretsPath(), 'utf-8')) as unknown
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const data = parsed as SecretsFile
-      return {
-        version: typeof data.version === 'number' ? data.version : 1,
-        providers:
-          data.providers && typeof data.providers === 'object' && !Array.isArray(data.providers) ? data.providers : {},
-        search: data.search && typeof data.search === 'object' && !Array.isArray(data.search) ? data.search : {},
-        baseUrls:
-          data.baseUrls && typeof data.baseUrls === 'object' && !Array.isArray(data.baseUrls) ? data.baseUrls : {},
-      }
-    }
-  } catch {
-    // 缺失或格式损坏的 secrets 文件。
-  }
+function emptySecrets(): SecretsFile {
   return { version: 1, providers: {}, search: {}, baseUrls: {} }
+}
+
+/** 损坏的文件只搬走一份备份，绝不静默丢弃：调用方（saveProviderKey 等）会
+ *  以这里返回的空快照整体重写文件，用户的记录只能靠 `.bak` 找回。 */
+function quarantineCorruptSecrets(file: string, reason: unknown): void {
+  debugLog('secrets.corrupt', reason instanceof Error ? reason.message : String(reason))
+  try {
+    let backup = `${file}.bak`
+    for (let index = 1; fs.existsSync(backup) && index < 100; index++) backup = `${file}.bak-${index}`
+    fs.renameSync(file, backup)
+  } catch (error) {
+    debugLog('secrets.corrupt-backup-failed', error instanceof Error ? error.message : String(error))
+  }
+}
+
+function readRaw(): SecretsFile {
+  const file = secretsPath()
+  let text: string
+  try {
+    text = fs.readFileSync(file, 'utf-8')
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code
+    if (code === 'ENOENT') return emptySecrets()
+    // EACCES / EBUSY / EIO 等：读不到 ≠ 空文件。抛错让写路径放弃落盘，
+    // 否则下一次保存会以空快照覆盖掉用户全部已存条目。
+    debugLog('secrets.read-failed', code ?? String(error))
+    throw error
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text) as unknown
+  } catch (error) {
+    quarantineCorruptSecrets(file, error)
+    return emptySecrets()
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const data = parsed as SecretsFile
+    return {
+      version: typeof data.version === 'number' ? data.version : 1,
+      providers:
+        data.providers && typeof data.providers === 'object' && !Array.isArray(data.providers) ? data.providers : {},
+      search: data.search && typeof data.search === 'object' && !Array.isArray(data.search) ? data.search : {},
+      baseUrls:
+        data.baseUrls && typeof data.baseUrls === 'object' && !Array.isArray(data.baseUrls) ? data.baseUrls : {},
+    }
+  }
+  // 合法 JSON 但不是对象（例如被写成了 `null` 或数组）：同样按损坏处理。
+  quarantineCorruptSecrets(file, 'secrets file is not a JSON object')
+  return emptySecrets()
 }
 
 function writeRaw(data: SecretsFile): void {
@@ -225,7 +261,15 @@ async function decodeEntries(
 /** 读取文件，解密条目，并在加密器可用时把旧的明文值迁移到
  *  `enc`。填充内存缓存。 */
 export async function loadSecrets(): Promise<void> {
-  const raw = readRaw()
+  // 读取失败不能让启动挂掉；本次会话以空缓存继续（本次不会写盘，文件保持原样，
+  // 用户去设置页保存时会拿到明确错误而不是静默清空）。损坏文件的处理见 readRaw。
+  let raw: SecretsFile
+  try {
+    raw = readRaw()
+  } catch (error) {
+    debugLog('secrets.load-failed', error instanceof Error ? error.message : String(error))
+    raw = emptySecrets()
+  }
   const canEncrypt = await cipher.available().catch(() => false)
   storageKind = canEncrypt ? 'encrypted' : 'plain'
   const baseUrls = new Map<string, string>()

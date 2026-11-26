@@ -71,6 +71,26 @@ const NEVER_IMPORT = new Set([
   'TERMINFO',
   'TERMINFO_DIRS',
   'TERMCAP',
+  // 下面这些同样只影响“子进程执行什么”，不影响环境可见性：
+  // rc 里一条 BASH_ENV/ENV 会被之后每一次 `sh -c`/`bash` 启动 source
+  // （node-pty、git hook、agent 工具调用全都会踩到）。
+  'BASH_ENV',
+  'ENV',
+  // 让子进程执行任意命令。
+  'GIT_SSH_COMMAND',
+  'GIT_SSH',
+  'CVS_RSH',
+  'SSH_ASKPASS',
+  // git/CLI 在非 TTY 下也会调用，会挂起或执行意外程序。
+  'PAGER',
+  'EDITOR',
+  'VISUAL',
+  // 与已挡掉的 NODE_OPTIONS/LD_PRELOAD 同类的运行时注入口。
+  'RUBYOPT',
+  'PERL5OPT',
+  'PYTHONPATH',
+  'JAVA_TOOL_OPTIONS',
+  '_JAVA_OPTIONS',
 ])
 
 /** 合并登录 shell 快照。除 PATH 外已有值优先，因此桌面设置/`.env`
@@ -156,7 +176,14 @@ export async function refreshShellEnvironment(options: { force?: boolean } = {})
       windowsHide: true,
     })
     const captured = parseLoginShellEnv(stdout)
-    if (!captured) throw new Error('login shell did not return an environment')
+    // 空快照同样是失败：`env -0` 是 GNU coreutils 扩展，BSD/macOS 的
+    // /usr/bin/env 不保证支持（只往 stderr 打 usage、stdout 为空），rc 文件
+    // 重定向 stdout、timeout 恰好在 END 前截断也会得到一半内容。此时若报
+    // `refreshed: true, added: 0` 并缓存 30s，用户拿不到登录 shell 的 PATH，
+    // 日志里也看不到任何异常。
+    if (!captured || Object.keys(captured).length === 0) {
+      throw new Error('login shell returned an empty environment snapshot')
+    }
     const { added, updated } = applyLoginShellEnv(process.env, captured)
     const result: ShellEnvironmentResult = { refreshed: true, shell, added, updated }
     cached = { at: Date.now(), result }

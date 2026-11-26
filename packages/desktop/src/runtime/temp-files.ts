@@ -1,3 +1,4 @@
+import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -28,7 +29,9 @@ async function copyIntoWorkspace(source: string, workspace: string): Promise<str
   for (let index = 0; index < 1_000; index++) {
     const candidate = path.join(workspace, index === 0 ? name : `${stem} (${index})${extension}`)
     try {
-      await fs.copyFile(source, candidate, fs.constants.COPYFILE_EXCL)
+      // `node:fs/promises` 没有 `constants` 成员（运行时是 undefined），
+      // 用它会让每一次搬迁都抛 TypeError 并被吞成对用户毫无意义的报错。
+      await fs.copyFile(source, candidate, fsConstants.COPYFILE_EXCL)
       return candidate
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue
@@ -58,11 +61,14 @@ export async function moveTempFilesIntoWorkspace(
       // 会被当成“临时文件”复制进工作区，等于把临时目录限制绕成任意文件读取。
       const stats = await fs.lstat(source)
       if (!stats.isFile()) throw new Error('Not a regular file')
-      // 解析真实路径后再校验一次，避免 stat/copy 之间的 TOCTOU。
+      // 解析真实路径后再校验一次，避免 stat/copy 之间的 TOCTOU。校验通过后
+      // 必须用 `real` 作为复制源：继续用 `source` 会在 realpath 与 copyFile
+      // 之间被换成指向 ~/.ssh/id_rsa 的软链，把「只允许读临时目录」绕成任意
+      // 文件读取。`path.resolve()` 不解析软链，上面那次校验也不足以挡住它。
       const real = await fs.realpath(source)
       if (!isTempSourcePath(real)) throw new Error('Real path is outside the system temporary directory')
       await fs.mkdir(workspace, { recursive: true })
-      const destination = await copyIntoWorkspace(source, workspace)
+      const destination = await copyIntoWorkspace(real, workspace)
       await fs.chmod(destination, stats.mode & 0o777)
       await fs.unlink(source)
       moved.push({ from: source, to: destination })

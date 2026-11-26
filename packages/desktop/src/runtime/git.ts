@@ -133,12 +133,22 @@ export interface GitCheckpoint {
   root: string
   head: string | null
   stash: string | null
+  /** 是否确认捕获到了工作树/索引状态。命令失败时为 false，撤销时
+   *  不允许退回到 `git checkout HEAD -- .`，否则用户轮次开始前的未提交
+   *  改动会被静默回滚。 */
+  trackedCaptured: boolean
   untracked: string[]
   createdAt: string
 }
 
+/** 读取未跟踪文件列表。命令失败（截断超限、仓库被锁、git 不可用）时**必须**
+ *  抛错：把失败当成空集合会让撤销阶段把用户既有的未跟踪文件当成本轮新建的
+ *  文件删除。 */
 async function untrackedFiles(root: string): Promise<string[]> {
   const result = await git(root, ['ls-files', '--others', '--exclude-standard', '-z'])
+  if (result.unavailable || result.code !== 0) {
+    throw new Error(`无法列出未跟踪文件：${result.stderr.trim() || `git 退出码 ${result.code}`}`)
+  }
   return result.stdout.split('\0').filter(Boolean)
 }
 
@@ -148,15 +158,24 @@ export async function createTurnCheckpoint(cwd: string, turnId: string): Promise
   const headResult = await git(root, ['rev-parse', 'HEAD'])
   const head = headResult.code === 0 ? headResult.stdout.trim() : null
   let stash: string | null = null
+  let trackedCaptured = false
   if (head) {
     const stashResult = await git(root, ['stash', 'create'])
-    stash = stashResult.code === 0 && stashResult.stdout.trim() ? stashResult.stdout.trim() : null
+    if (stashResult.code === 0) {
+      // 命令成功但输出为空：工作树本来就没有已跟踪改动，回退到 HEAD 安全。
+      stash = stashResult.stdout.trim() || null
+      trackedCaptured = true
+    }
+    // 退出码非零时 trackedCaptured 保持 false：撤销阶段会跳过对已跟踪文件
+    // 的回滚，而不是猜一个“没有改动”。
   }
   return {
     turnId,
     root,
     head,
     stash,
+    trackedCaptured,
+    // 列表拿不到就抛错，让调用方放弃这个检查点（宁可不能撤销，也不能误删）。
     untracked: await untrackedFiles(root),
     createdAt: new Date().toISOString(),
   }
@@ -169,6 +188,9 @@ export async function undoCheckpoint(checkpoint: GitCheckpoint): Promise<{
 }> {
   const root = checkpoint.root
   const before = new Set(checkpoint.untracked)
+  // 检查点没抓到已跟踪文件快照（`git stash create` 失败）：不能退回
+  // `checkout HEAD -- .`，否则用户轮次开始前就有的未提交改动会被静默回滚。
+  const trackedSkipped = !checkpoint.stash && checkpoint.trackedCaptured === false
 
   // 检查点可能跨轮次保存在内存里、也可能来自被改动过的状态：撤销是破坏性
   // 操作，先确认它记录的仍是同一个仓库，再决定是否动文件。
@@ -202,7 +224,7 @@ export async function undoCheckpoint(checkpoint: GitCheckpoint): Promise<{
       return { restored: 0, deleted: 0, message: `git read-tree failed: ${index.stderr.trim()}` }
     }
     restored = 1
-  } else if (checkpoint.head) {
+  } else if (checkpoint.head && checkpoint.trackedCaptured !== false) {
     const result = await git(root, ['checkout', checkpoint.head, '--', '.'])
     if (result.code !== 0) {
       return { restored: 0, deleted: 0, message: `git checkout failed: ${result.stderr.trim()}` }
@@ -212,7 +234,16 @@ export async function undoCheckpoint(checkpoint: GitCheckpoint): Promise<{
 
   // 只删除本轮期间出现的未跟踪文件。
   let deleted = 0
-  const current = await untrackedFiles(root)
+  const current = await untrackedFiles(root).catch(() => null)
+  if (current === null) {
+    return {
+      restored,
+      deleted: 0,
+      message: trackedSkipped
+        ? '无法列出未跟踪文件，已跳过删除；也没有可安全回滚的已跟踪文件快照（工作树未做改动）'
+        : '无法列出未跟踪文件，已跳过删除以免误删用户文件',
+    }
+  }
   for (const relative of current) {
     if (before.has(relative)) continue
     const target = path.resolve(root, relative)
@@ -234,7 +265,9 @@ export async function undoCheckpoint(checkpoint: GitCheckpoint): Promise<{
     message:
       restored > 0
         ? `Restored tracked files to the checkpoint and removed ${deleted} new untracked file(s).`
-        : `Removed ${deleted} new untracked file(s); there were no tracked changes to restore.`,
+        : trackedSkipped
+          ? `Removed ${deleted} new untracked file(s); 本轮没有捕获到已跟踪文件的快照，已跳过对已跟踪文件的回滚。`
+          : `Removed ${deleted} new untracked file(s); there were no tracked changes to restore.`,
   }
 }
 
