@@ -74,10 +74,28 @@ interface IndexedTopic {
     heading: string[]
     body: string[]
   }
+  /** 每个字段的 token 集合。`fields` 已由 tokenizeMemoryText 去重，因此查询时
+   *  判断“该 token 是否出现在此字段”只需 O(1) 的 `has()`，不必每次线性扫描。 */
+  fieldTokens: Record<FieldName, Set<string>>
   tokenCounts: Map<string, number>
   tokenLength: number
   exactKeys: string[]
 }
+
+type FieldName = 'id' | 'aliases' | 'keywords' | 'description' | 'heading' | 'body'
+
+/** 字段命中权重。提到模块级，避免每次 bm25() 调用重新构造数组。
+ *  注意：`fields` 里的 token 是去重的，所以这里的“命中权重之和”不是真正的词频，
+ *  而是“命中了哪些字段”的加权和；下面的公式只是沿用既有打分形状以保持排序
+ *  稳定，不应当把它读成 BM25 的 tf 饱和项。 */
+const FIELD_WEIGHTS: ReadonlyArray<readonly [FieldName, number]> = [
+  ['id', 6],
+  ['aliases', 6],
+  ['keywords', 5],
+  ['description', 3],
+  ['heading', 2],
+  ['body', 1],
+]
 
 export interface IndexedFactLocation {
   topicId: string
@@ -151,8 +169,11 @@ export class MemoryIndex {
       }
       const all = Object.values(fields).flat()
       const tokenCounts = counts(all)
+      const fieldTokens = Object.fromEntries(
+        (Object.keys(fields) as FieldName[]).map((name) => [name, new Set(fields[name])]),
+      ) as Record<FieldName, Set<string>>
       const exactKeys = uniqueExactKeys(topic)
-      const indexed: IndexedTopic = { topic, fields, tokenCounts, tokenLength: all.length || 1, exactKeys }
+      const indexed: IndexedTopic = { topic, fields, fieldTokens, tokenCounts, tokenLength: all.length || 1, exactKeys }
       this.indexed.set(topic.metadata.id, indexed)
       totalLength += indexed.tokenLength
       for (const token of tokenCounts.keys()) {
@@ -175,14 +196,20 @@ export class MemoryIndex {
       ...paths.flatMap((item) => [normalizeMemoryText(item), normalizeMemoryText(basename(item))]),
       ...identifiers.map(normalizeMemoryText),
     ])
+    // 全等匹配直接查精确键索引（O(1)），不要把 `this.exact` 整表扫一遍：
+    // 子串匹配只依赖 (normalizedQuery, exactKey)，与当前 key 无关，因此只需在
+    // `this.exact` 上跑一次，而不是对每个 key 重复扫一遍（O(K × E × |q|)）。
     for (const key of keys) {
       if (!key) continue
-      for (const [exactKey, owners] of this.exact) {
-        if (key !== exactKey && !containsExactKey(normalizedQuery, exactKey)) continue
-        const specificity =
-          key === exactKey ? 1 : Math.min(0.9, exactKey.length / Math.max(normalizedQuery.length, 1) + 0.35)
-        for (const owner of owners) scores.set(owner, Math.max(scores.get(owner) ?? 0, specificity))
-      }
+      const owners = this.exact.get(key)
+      if (!owners) continue
+      for (const owner of owners) scores.set(owner, Math.max(scores.get(owner) ?? 0, 1))
+    }
+    const queryLength = Math.max(normalizedQuery.length, 1)
+    for (const [exactKey, owners] of this.exact) {
+      if (!containsExactKey(normalizedQuery, exactKey)) continue
+      const specificity = Math.min(0.9, exactKey.length / queryLength + 0.35)
+      for (const owner of owners) scores.set(owner, Math.max(scores.get(owner) ?? 0, specificity))
     }
     return scores
   }
@@ -190,15 +217,14 @@ export class MemoryIndex {
   bm25(query: string): Bm25Hit[] {
     const queryTokens = tokenizeMemoryText(query)
     if (queryTokens.length === 0) return []
-    const fieldWeights = { id: 6, aliases: 6, keywords: 5, description: 3, heading: 2, body: 1 } as const
     const hits: Bm25Hit[] = []
     for (const indexed of this.indexed.values()) {
       let score = 0
       let matched = 0
       for (const token of queryTokens) {
         let weightedFrequency = 0
-        for (const [field, weight] of Object.entries(fieldWeights) as Array<[keyof typeof fieldWeights, number]>) {
-          weightedFrequency += indexed.fields[field].filter((value) => value === token).length * weight
+        for (const [field, weight] of FIELD_WEIGHTS) {
+          if (indexed.fieldTokens[field].has(token)) weightedFrequency += weight
         }
         if (weightedFrequency <= 0) continue
         matched++

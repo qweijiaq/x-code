@@ -23,8 +23,10 @@ function evaluateShellPermission(command: string): PermissionLevel {
   const subCommands = splitShellCommands(command)
   // 任一子命令具有破坏性 → 拒绝整条命令
   if (subCommands.some(isDestructive)) return 'deny'
-  // 所有子命令均为只读 → 自动允许
-  if (subCommands.every(isReadOnly)) return 'always-allow'
+  // 所有子命令均为只读 → 自动允许。
+  // 空集合不能因 `every` 的空真性被放行：空串 / 纯空白 / 缺少 command 字段的命令
+  // 会得到 `[]`，此时没有可判定的语义，保守地走询问。
+  if (subCommands.length > 0 && subCommands.every(isReadOnly)) return 'always-allow'
   // 否则 → 询问
   return 'ask'
 }
@@ -314,7 +316,10 @@ export async function checkPermissionDetailed(
     ...(taintApproval ? { taint: { sources: externalContent?.sources ?? [] } } : {}),
   })
   if (typeof decision === 'object') return { approved: false, feedback: decision.feedback }
-  if (decision === 'always' && !taintApproval) {
+  if (decision === 'always') {
+    // taint 生效时（外部内容污染 / 敏感工具）用户仍可能拿到 always 选项：
+    // 允许本次调用，但绝不把规则写入会话或持久化存储，否则污染会永久放行。
+    if (taintApproval) return { approved: true }
     const result = buildAllowRule(toolCall.toolName, toolCall.input, executionCwd)
     if (result) {
       // 对于 `git commit && git push` 这类复合 shell，buildAllowRule 可能返回

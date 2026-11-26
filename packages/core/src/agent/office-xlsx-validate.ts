@@ -11,6 +11,8 @@ import {
 
 const WORKBOOK_PATH = 'xl/workbook.xml'
 const WORKBOOK_RELATIONSHIPS_PATH = 'xl/_rels/workbook.xml.rels'
+/** 下游解析器会读取、但本文件的 filter 不会解压的部件（共享字符串表与样式表）。 */
+const AUXILIARY_PATHS = new Set(['xl/sharedStrings.xml', 'xl/styles.xml'])
 const XML_STREAM_CHUNK_BYTES = 64 * 1024
 const MAX_WORKBOOK_RELATIONSHIPS = 1_000
 const WORKSHEET_RELATIONSHIP_TYPES = new Set([
@@ -318,6 +320,14 @@ export function validateXlsxArchive(archive: Uint8Array): void {
     const target = worksheetPath(relationship)
     if (!targetPaths.add(target)) throw new Error('Spreadsheet logical sheets must reference distinct worksheets')
   }
+
+  // 下游 read-excel-file 会自己解压 sharedStrings / styles 并整表读进内存，而这两个
+  // 部件从未经过上面的 filter——入口声明的 originalSize 可以说谎，一个几 KB 的
+  // deflate 流即可在解析阶段膨胀到 GB 级。这里按真实长度复核它们。
+  const auxiliaryFiles = unzipSync(archive, {
+    filter: (entry) => AUXILIARY_PATHS.has(entry.name.replace(/^\/+/, '')),
+  })
+  assertActualUncompressedSize(auxiliaryFiles)
 
   let allocatedRows = 0
   let allocatedCells = 0

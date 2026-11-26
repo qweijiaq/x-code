@@ -96,11 +96,21 @@ class WhisperProcessClient {
     const pending = this.pending
     if (!pending || message.id !== pending.id) return
     if (message.type === 'notice') {
-      pending.options.onNotice?.(message.message)
+      // 宿主回调在 child.on('message') 监听器里同步执行：它抛错会变成
+      // uncaught exception 直接崩掉宿主进程（还会遗留 ref() 的子进程）。
+      try {
+        pending.options.onNotice?.(message.message)
+      } catch {
+        // 进度回调异常不能影响转录流程。
+      }
       return
     }
     if (message.type === 'progress') {
-      pending.options.onProgress?.(message.progress)
+      try {
+        pending.options.onProgress?.(message.progress)
+      } catch {
+        // 同上。
+      }
       return
     }
     this.pending = null

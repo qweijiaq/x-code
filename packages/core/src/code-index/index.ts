@@ -124,11 +124,17 @@ export function isCodeIndexFile(filePath: string): boolean {
 async function collectCodeFiles(
   root: string,
   out: Array<{ path: string; mtimeMs: number; size: number }>,
+  depth = 0,
 ): Promise<void> {
   let entries: Dirent[]
   try {
     entries = await fs.readdir(root, { withFileTypes: true })
-  } catch {
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    // 子目录读不到（并发删除、权限）只是跳过这一棵子树。根目录读不到则完全不同：
+    // 候选集变成空集，下面的“已删除”判定会把整份增量索引清空且不留任何提示。
+    // 只有“根目录确实不存在”才是合法的空态，其它错误必须上抛。
+    if (depth === 0 && code !== 'ENOENT' && code !== 'ENOTDIR') throw error
     return
   }
   for (const entry of entries) {
@@ -137,7 +143,7 @@ async function collectCodeFiles(
     if (entry.isSymbolicLink()) continue
     if (entry.isDirectory()) {
       if (CODE_INDEX_SKIP_DIRS.has(entry.name)) continue
-      await collectCodeFiles(target, out)
+      await collectCodeFiles(target, out, depth + 1)
       continue
     }
     if (!entry.isFile() || !isCodeIndexFile(target)) continue
@@ -196,7 +202,26 @@ export async function indexCode(
   const root = path.resolve(target)
   const candidates: Array<{ path: string; mtimeMs: number; size: number }> = []
   options.onProgress?.({ phase: 'scan', processed: 0, total: 0, chunks: 0 })
-  await collectCodeFiles(root, candidates)
+  try {
+    await collectCodeFiles(root, candidates)
+  } catch (error) {
+    // 根目录不可读（EACCES / EIO / 卷未挂载）：保留既有索引，不写盘。
+    // 空候选集会走“已删除”判定，把整份增量索引静默清空。
+    const previous = await loadCodeIndex()
+    const message = `${root}: ${error instanceof Error ? error.message : String(error)}`
+    return {
+      files: previous.files.length,
+      indexed: 0,
+      skipped: 0,
+      removed: 0,
+      chunks: previous.chunks.length,
+      characters: previous.files.reduce((total, file) => total + file.characters, 0),
+      vectors: previous.vectorCount,
+      semantic: previous.dimensions > 0,
+      note: 'Code index could not be scanned; the existing index was left untouched.',
+      errors: [message],
+    }
+  }
   candidates.sort((a, b) => a.path.localeCompare(b.path))
 
   const previous = await loadCodeIndex()

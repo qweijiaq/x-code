@@ -86,11 +86,21 @@ export async function loadVectors(index: LibraryIndex): Promise<Float32Array | n
   }
 }
 
+/** 进程内自增序号：只用 pid 区分不够——同一进程内两次写入（索引与清理交叠、
+ *  未来加入并行分片）会争用同一个临时文件名，writeFile 交错写同一路径后两次
+ *  rename 竞争，可能把「半截 vectors + 完整 index」原子替换进目标文件。 */
+let tempCounter = 0
+
 async function writeAtomic(filePath: string, data: string | Uint8Array): Promise<void> {
-  const temp = `${filePath}.${process.pid}.tmp`
+  const temp = `${filePath}.${process.pid}.${Date.now().toString(36)}.${(tempCounter += 1)}.tmp`
   await fs.mkdir(path.dirname(filePath), { recursive: true })
-  await fs.writeFile(temp, data, { mode: 0o600 })
-  await fs.rename(temp, filePath)
+  try {
+    await fs.writeFile(temp, data, { mode: 0o600 })
+    await fs.rename(temp, filePath)
+  } catch (error) {
+    await fs.rm(temp, { force: true }).catch(() => {})
+    throw error
+  }
 }
 
 export async function saveLibraryIndex(index: LibraryIndex, vectors: Float32Array | null): Promise<void> {

@@ -81,12 +81,25 @@ export async function resolveWindowsNativeArtifact(options: {
   if (arch !== 'x64' && arch !== 'arm64') {
     failure(spec, 'unsupported-arch', `${spec.displayName} does not support architecture ${arch}`)
   }
-  let manifest: WindowsNativeManifest
+  let rawManifest: string
   try {
-    manifest = JSON.parse(await fs.readFile(path.join(nativeRoot, 'manifest.json'), 'utf8')) as WindowsNativeManifest
+    rawManifest = await fs.readFile(path.join(nativeRoot, 'manifest.json'), 'utf8')
   } catch (error) {
     failure(spec, 'missing', `${spec.displayName} is missing for ${arch}; reinstall x-code-cli`, error)
   }
+  let parsedManifest: unknown
+  try {
+    parsedManifest = JSON.parse(rawManifest) as unknown
+  } catch (error) {
+    failure(spec, 'missing', `${spec.displayName} is missing for ${arch}; reinstall x-code-cli`, error)
+  }
+  // JSON.parse 只保证“可解析”，不保证形状：manifest.json 被截断成 `null` /
+  // 写成标量时，下面的字段访问会抛原始 TypeError 并绕开 spec.createError，
+  // 调用方就拿不到结构化的 failure kind。
+  if (parsedManifest === null || typeof parsedManifest !== 'object' || Array.isArray(parsedManifest)) {
+    failure(spec, 'integrity-mismatch', `${spec.displayName} manifest is not a JSON object`)
+  }
+  const manifest = parsedManifest as WindowsNativeManifest
   if (manifest.manifestVersion !== WINDOWS_NATIVE_MANIFEST_VERSION) {
     failure(
       spec,

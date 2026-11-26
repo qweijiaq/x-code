@@ -54,7 +54,10 @@ export async function readSettingsFile(filePath: string): Promise<Record<string,
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     return { ...(parsed as Record<string, unknown>) }
   }
-  return {}
+  // 文件存在、可解析，但顶层不是普通对象（null / 标量 / 数组）：同样不能当成
+  // “没有设置”，否则 mutateSettingsFile 的写回会把原内容整份替换成 `{}`。
+  // 纯读路径（readSettingsFileForRead）会捕获本错误并降级成 `{}`。
+  throw new SettingsReadError(filePath, `Settings file ${filePath} does not contain a JSON object`)
 }
 
 /** {@link readSettingsFile} 的“纯读”变体：读取失败时记录调试日志并降级成

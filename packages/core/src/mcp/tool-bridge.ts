@@ -21,10 +21,15 @@ import type { McpToolEntry } from './types.js'
  *    服务器作者也有提示作用——他们在 /mcp tools 里看到自己的描述时）。 */
 const DESCRIPTION_MAX_CHARS = 200
 
-export function truncateDescription(input: string): string {
-  if (input.length <= DESCRIPTION_MAX_CHARS) return input
+export function truncateDescription(input: string | undefined | null): string {
+  // 描述来自第三方 registry / 服务器握手，可能是 undefined 或非字符串；
+  // 本函数位于构建系统提示的热路径上，不能因此抛 TypeError 拖垮整轮 loop。
+  const text = typeof input === 'string' ? input : ''
+  // 按码点切分而非 UTF-16 长度，避免把代理对（emoji / 扩展汉字）截成半个字符。
+  const chars = [...text]
+  if (chars.length <= DESCRIPTION_MAX_CHARS) return text
   // 为省略号标记留出空间，使结果仍 <= 上限。
-  return input.slice(0, DESCRIPTION_MAX_CHARS - 1) + '…'
+  return chars.slice(0, DESCRIPTION_MAX_CHARS - 1).join('') + '…'
 }
 
 /** 把一个 MCP 工具适配成 AI SDK Tool。无 execute——我们在 tool-execution

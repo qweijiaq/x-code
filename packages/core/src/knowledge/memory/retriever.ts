@@ -139,6 +139,12 @@ export class MemoryRetriever {
         normalizeMemoryText(query.currentUserText),
         normalizeMemoryText(query.repositoryId),
         recentHash,
+        // mentionedPaths / identifiers 会进入 exactHits()，直接影响 exact 路由得分
+        // 与 protected/selectedTopicIds。它们可以由调用方手工拼装（lateRecall、
+        // extractionContext），与 currentUserText 无关——不纳入 key 就会让文本相同
+        // 但 paths/identifiers 不同的两次召回互相复用缓存结果。
+        [...query.mentionedPaths].sort(),
+        [...query.identifiers].sort(),
         query.explicitHistoryIntent,
         query.explicitForgetIntent,
       ]),

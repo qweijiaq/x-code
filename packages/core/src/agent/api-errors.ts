@@ -3,7 +3,6 @@ import {
   OPENAI_CHATGPT_AUTH_RESPONSE_HEADER,
   OPENAI_CHATGPT_USAGE_LIMIT_HEADER,
 } from '../providers/openai-chatgpt-fetch.js'
-import { errorMessage } from '../utils.js'
 
 /** 表示请求超出模型上下文窗口的子串。
  *  `providers/registry.ts` 的 413 分组是本表的服务端副本，两边必须保持同集：
@@ -80,7 +79,10 @@ const IMAGE_DATA_PATTERNS = [
  *  agent 循环据此从历史中剥离二进制部分并重试一次——
  *  没有它，被拒绝的部分会毒化后续的每一次请求。 */
 export function isImageDataError(err: unknown): boolean {
-  const msg = errorMessage(err).toLowerCase()
+  // 与 isContextTooLongError 使用同一个提取器：TypeValidationError 会把
+  // "Invalid image data" 之类的真实提供商消息藏在 .value / responseBody 里，
+  // 只读 err.message 会让被拒绝的图片永久毒化该会话的后续请求。
+  const msg = extractErrorMessage(err).toLowerCase()
   return IMAGE_DATA_PATTERNS.some((pattern) => msg.includes(pattern))
 }
 

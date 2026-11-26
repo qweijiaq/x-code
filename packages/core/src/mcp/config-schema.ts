@@ -68,6 +68,10 @@ export const MAX_MCP_SERVERS = 128
 /** 服务器名必须与 loader 接受的条件完全一致（1-128 字符、无控制字符），
  *  否则 writer 会把一个下次启动就被丢弃的条目写进磁盘。 */
 export function isValidServerName(name: string): boolean {
+  // 原型链上的键名必须拒绝：调用方用普通对象字面量承接（`servers[name] = …`），
+  // `__proto__` 赋值命中的是 Object.prototype 的 setter —— 条目静默消失、无报错，
+  // 并且会替换掉返回对象的原型（原型污染）。
+  if (name === '__proto__' || name === 'constructor' || name === 'prototype') return false
   return name.length > 0 && name.length <= 128 && !/[\u0000-\u001f\u007f]/.test(name)
 }
 

@@ -60,7 +60,21 @@ function positiveInteger(value: unknown): number {
 function isCodeFile(value: unknown): value is CodeFile {
   if (!value || typeof value !== 'object') return false
   const file = value as Partial<CodeFile>
-  return typeof file.path === 'string' && file.path.length > 0
+  // index.json 是外部可写的磁盘文件，数值字段可能缺失或为 null。若放行，
+  // `indexCode` 的复用分支会执行 `characters += existing.characters` 得到 NaN，
+  // 之后所有 `>= / >` 预算比较恒为 false，字符预算被静默击穿（无限读文件、
+  // 索引与内存失控）。因此这里把每个字段都校验到位。
+  return (
+    typeof file.path === 'string' &&
+    file.path.length > 0 &&
+    typeof file.indexedAt === 'string' &&
+    Number.isFinite(file.mtimeMs) &&
+    Number.isFinite(file.size) &&
+    Number.isFinite(file.characters) &&
+    Number.isFinite(file.chunks) &&
+    (file.characters ?? -1) >= 0 &&
+    (file.chunks ?? -1) >= 0
+  )
 }
 
 function isCodeChunk(value: unknown): value is CodeChunk {

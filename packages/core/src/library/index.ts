@@ -218,14 +218,19 @@ export async function indexLibrary(
   let indexed = 0
   const errors: string[] = []
   let note: string | undefined
+  // 主循环可能因为预算耗尽而提前 `break`：被跳过的文件根本不会被访问，因此
+  // 绝不能把它们当成“已删除”——那会连同它们的块与向量一起静默丢弃。
+  let truncated = false
 
   for (const [index, candidate] of candidates.entries()) {
     if (files.length >= MAX_LIBRARY_FILES) {
       note = `File limit reached (${MAX_LIBRARY_FILES}); remaining files were not indexed.`
+      truncated = true
       break
     }
     if (characters >= MAX_LIBRARY_CHARS) {
       note = `Character budget reached (${MAX_LIBRARY_CHARS}); remaining files were not indexed.`
+      truncated = true
       break
     }
     options.onProgress?.({ phase: 'read', processed: index, total: candidates.length, chunks: chunks.length })
@@ -264,6 +269,7 @@ export async function indexLibrary(
       const charCount = raws.reduce((total, chunk) => total + chunk.text.length, 0)
       if (characters + charCount > MAX_LIBRARY_CHARS) {
         note = `Character budget reached (${MAX_LIBRARY_CHARS}); ${candidate.path} was not indexed.`
+        truncated = true
         break
       }
       files.push({
@@ -298,20 +304,22 @@ export async function indexLibrary(
   // 删除已不存在且不属于本次运行的文件条目。
   const knownPaths = new Set(files.map((file) => file.path))
   // 只遗忘索引根目录内消失的文件；来自其他文件夹的
-  // 无关库条目会被保留。
-  const removed = previous.files.filter(
-    (file) => file.path.startsWith(root + path.sep) && !knownPaths.has(file.path),
-  ).length
+  // 无关库条目会被保留。预算截断时根目录内的旧条目同样保留：那些文件只是
+  // 本轮没被处理，磁盘上依然存在，误删会让下一次搜索的召回率骤降。
+  const removedPaths = new Set<string>()
   for (const file of previous.files) {
-    if (file.path.startsWith(root + path.sep) && !knownPaths.has(file.path)) continue
-    if (!knownPaths.has(file.path)) {
-      // 保留本次运行未触及的文件夹中的条目。
-      files.push(file)
-      characters += file.characters
-      const oldChunks = previousChunksByPath.get(file.path) ?? []
-      chunks.push(...oldChunks)
+    if (knownPaths.has(file.path)) continue
+    if (file.path.startsWith(root + path.sep) && !truncated) {
+      removedPaths.add(file.path)
+      continue
     }
+    // 保留本次运行未触及（或未处理）的条目，连同它的块。
+    files.push(file)
+    characters += file.characters
+    const oldChunks = previousChunksByPath.get(file.path) ?? []
+    chunks.push(...oldChunks)
   }
+  const removed = removedPaths.size
 
   // 对还没有可复用向量的块做嵌入。
   const vectorsByHash = new Map(reusable)

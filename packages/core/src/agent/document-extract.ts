@@ -26,6 +26,7 @@ const MAX_SOURCE_BYTES = 100 * 1024 * 1024
 const MAX_TEXT_SOURCE_BYTES = 10 * 1024 * 1024
 const DEFAULT_MAX_CHARS = 50_000
 const HARD_MAX_CHARS = 200_000
+const MAX_MOBI_TEXT_BYTES = 64 * 1024 * 1024
 const MAX_CSV_ROWS = 500
 const MAX_CSV_COLUMNS = 50
 const MAX_EPUB_CHAPTERS = 300
@@ -356,10 +357,10 @@ export function palmDocDecompress(input: Uint8Array, maxOutputBytes?: number): U
       for (let i = 0; i < length; i++) output.push(output[start + i] ?? 0)
       continue
     }
-    // 0xC0-0xFF：一个空格后跟 (byte - 0xC0) 个字面字节。
-    output.push(0x20)
-    const count = byte - 0xc0
-    for (let i = 0; i < count; i++) output.push(input[index++] ?? 0)
+    // 0xC0-0xFF：一个空格后跟 (byte XOR 0x80) 这一个字符。
+    // 这里不消耗额外输入字节——旧实现按“(byte-0xC0) 个字面字节”读取，会多吞
+    // 后续压缩流并使整个记录流错位（真实 compression=2 的 MOBI 基本解成乱码）。
+    output.push(0x20, byte ^ 0x80)
   }
   return Uint8Array.from(output)
 }
@@ -405,9 +406,12 @@ async function readMobi(filePath: string, maxChars: number): Promise<DocumentRea
   if (textRecords === 0 || textRecords >= recordCount) throw new Error('MOBI text record count is invalid')
 
   const chunks: Uint8Array[] = []
-  // 头部声明的正文长度就是解压预算：超出部分随后本来也会被截掉，先挡住可以
-  // 避免被构造出来的记录放大成数倍内存。
-  let remaining = textLength
+  // 头部声明的正文长度是解压预算，但声明值不可信：构造一个 textLength=0xFFFFFFFF
+  // 的文件就能让每条记录都按“无上限”解压，累积到 GB 级内存（注释声称的解压
+  // 炸弹防护随之失效）。因此再用“记录表覆盖的实际字节数 × 安全系数”（PalmDOC
+  // 单字节最多放大 5 倍）和一个绝对上限夹住它。
+  const declaredBound = Math.min(textLength, (buffer.length - offsets[1]!) * 10, MAX_MOBI_TEXT_BYTES)
+  let remaining = declaredBound
   for (let i = 1; i <= textRecords && remaining > 0; i++) {
     const record = buffer.subarray(offsets[i]!, recordEnd(i))
     const chunk = compression === 1 ? record : palmDocDecompress(record, remaining)

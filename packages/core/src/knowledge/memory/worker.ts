@@ -185,7 +185,16 @@ export class MemoryWorker {
         completedAt: new Date().toISOString(),
       })
       await this.options.jobStore.complete(job)
-      for (const notice of committed.notices) this.options.onNotice(notice)
+      // complete() 已删除 applied 标记。此后绝不能再进入下面的 catch —— 那会调用
+      // retry() 把 job 重新排入 pending，下一轮 isApplied() 为 false，整条链路会
+      // 重新抽取并再次 commitOperations（重复写入 / 重复通知）。
+      for (const notice of committed.notices) {
+        try {
+          this.options.onNotice(notice)
+        } catch (noticeError) {
+          debugLog('memory-worker.notice-error', `${job.jobId}: ${errorMessage(noticeError)}`)
+        }
+      }
     } catch (error) {
       const retry = await this.options.jobStore.retry(job, this.options.maxAttempts())
       const message = errorMessage(error)

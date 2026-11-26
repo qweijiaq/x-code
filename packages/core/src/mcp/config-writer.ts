@@ -43,17 +43,22 @@ async function readConfigObject(scope: ConfigScope, cwd: string): Promise<Record
     if (code === 'ENOENT' || code === 'ENOTDIR') return {}
     throw new Error(`Cannot read config file at ${file}: ${errorMessage(error)}`, { cause: error })
   }
+  let parsed: unknown
   try {
-    const parsed = JSON.parse(raw) as unknown
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>
-    }
+    parsed = JSON.parse(raw) as unknown
   } catch {
     // 畸形的 JSON。我们刻意在解析失败时不覆盖——直接退出并让调用方报错。
     // 这里返回 {} 会掩盖损坏的配置，而写入会覆盖掉原有内容。
     throw new Error(`Config file at ${file} is not valid JSON. Fix it manually before running /mcp add or /mcp remove.`)
   }
-  return {}
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>
+  }
+  // 合法 JSON 但顶层不是对象（数组 / 字符串 / 数字 / null）：同样不是“还没有配置”。
+  // 返回 {} 会被 writeConfigObject 整体写回，把原文件静默替换成只含 mcpServers 的对象。
+  throw new Error(
+    `Config file at ${file} must contain a JSON object. Fix it manually before running /mcp add or /mcp remove.`,
+  )
 }
 
 /** 原子 JSON 写入：先写 tmp，再 rename。结尾换行 + 2 空格缩进与别处

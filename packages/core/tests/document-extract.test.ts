@@ -125,8 +125,9 @@ describe('readDocument MOBI', () => {
     // "abc" 后跟一个 distance-3/length-3 对 -> "abcabc"。
     const input = Uint8Array.from([0x61, 0x62, 0x63, 0x80, 0x18])
     expect(Buffer.from(palmDocDecompress(input)).toString('utf8')).toBe('abcabc')
-    // 0xC3 = 一个空格加三个字面字节。
-    expect(Buffer.from(palmDocDecompress(Uint8Array.from([0xc3, 0x78, 0x79, 0x7a]))).toString('utf8')).toBe(' xyz')
+    // 0xE1 这类字节 = 一个空格 + (byte XOR 0x80) 这一个字符，不额外消耗输入字节。
+    // 旧断言固化的是错误实现（当作“空格 + (byte-0xC0) 个字面字节”）。
+    expect(Buffer.from(palmDocDecompress(Uint8Array.from([0xe1, 0xe2, 0x7a]))).toString('utf8')).toBe(' a bz')
   })
 })
 

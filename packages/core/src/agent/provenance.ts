@@ -64,7 +64,18 @@ export function canonicalSecurityJson(value: unknown): string {
     for (const key of Object.keys(record).sort()) {
       // 模型 SDK 对象常把可选的自身属性保留为 undefined。
       // JSONL 持久化会省略它们，因此按同样的形状计算摘要。
-      if (record[key] !== undefined) normalized[key] = normalize(record[key])
+      if (record[key] !== undefined) {
+        // 必须用 defineProperty：`normalized['__proto__'] = ...` 触发的是继承的
+        // setter，既不产生自身属性也不进入 JSON 输出，于是含 `__proto__` 键的对象
+        // 与不含该键的对象会算出同一份摘要。`JSON.parse`（JSONL 恢复）确实会生成
+        // 自身的 `__proto__` 属性，因此该路径可达，会破坏摘要的篡改可检测性。
+        Object.defineProperty(normalized, key, {
+          value: normalize(record[key]),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        })
+      }
     }
     seen.delete(item)
     return normalized
@@ -146,6 +157,13 @@ export function provenanceForAuthority(
     : { ...CLEAN_PROVENANCE }
 }
 
+/** 恢复旧版本会话时条目可能没有 provenance。按 role 推导：用户消息记作 user，
+ *  模型/工具消息记作 internal；两者都不声称对端影响——旧文件根本没有这项信息，
+ *  凭 role 断言污染会误伤每一次历史恢复。 */
+export function provenanceForMessageRole(message: Pick<ModelMessage, 'role'>): MessageProvenance {
+  return message.role === 'user' ? { authority: 'user', derivedFromPeer: false } : { ...CLEAN_PROVENANCE }
+}
+
 export function createTrackedMessage(
   message: ModelMessage,
   provenance: MessageProvenance,
@@ -186,7 +204,12 @@ export function effectiveExecutionAuthority(
   context: ContextSecurityState,
 ): ExecutionAuthority {
   const base = requested ?? { source: 'user', peerTainted: false }
-  const peerTainted = base.peerTainted || context.peerInfluenceActive || context.integrityFailure === true
+  // fail-closed：`source: 'peer'` 本身就是污点，必须归一化进 peerTainted。
+  // `permissions/authority.ts` 与 `compression.ts` 都已按同一规则归一化；只读
+  // `authority.peerTainted` 的门控否则会把对端发起的执行当作干净上下文放行，
+  // 同时 base.peerOrigins 也会因为 peerTainted 为假而被丢掉。
+  const peerTainted =
+    base.peerTainted || base.source === 'peer' || context.peerInfluenceActive || context.integrityFailure === true
   const peerOrigins = peerTainted ? mergePeerOriginSummaries([base.peerOrigins, context.peerOrigins]) : undefined
   return {
     source: base.source,
@@ -213,18 +236,37 @@ export function canonicalTranscriptDigest(entries: readonly TrackedModelMessage[
 export function isValidPeerOriginSummary(value: unknown): value is PeerOriginSummary {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const summary = value as Partial<PeerOriginSummary>
+  const items = summary.items
+  const totalCount = summary.totalCount
+  const digest = summary.digest
+  const truncated = summary.truncated
   if (
-    !Array.isArray(summary.items) ||
-    summary.items.length > MAX_PEER_ORIGIN_ITEMS ||
-    !Number.isSafeInteger(summary.totalCount) ||
-    (summary.totalCount ?? -1) < summary.items.length ||
-    typeof summary.digest !== 'string' ||
-    !/^[a-f0-9]{64}$/.test(summary.digest) ||
-    typeof summary.truncated !== 'boolean'
+    !Array.isArray(items) ||
+    items.length > MAX_PEER_ORIGIN_ITEMS ||
+    typeof totalCount !== 'number' ||
+    !Number.isSafeInteger(totalCount) ||
+    totalCount < items.length ||
+    typeof digest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(digest) ||
+    typeof truncated !== 'boolean' ||
+    // truncated 必须与计数自洽：生产端只在 totalCount 大于可见条数时置位。
+    truncated !== totalCount > items.length
   ) {
     return false
   }
-  return summary.items.every(
+  // 未截断时摘要完全可由 items 重算，因此必须重算比对：否则篡改 items 里的
+  // 来源（`mergePeerOriginSummaries` 用 `${digest}:${totalCount}` 做去重键）
+  // 不会被发现，校验链在这里断掉。
+  if (
+    !truncated &&
+    hashOriginKeys(
+      items.map((origin) => originKey(origin)).sort((a, b) => a.localeCompare(b)),
+      totalCount,
+    ) !== digest
+  ) {
+    return false
+  }
+  return items.every(
     (origin) =>
       origin &&
       typeof origin === 'object' &&
@@ -244,6 +286,9 @@ export function isValidProvenance(value: unknown): value is MessageProvenance {
   if (typeof provenance.derivedFromPeer !== 'boolean') return false
   if (provenance.peerOrigins !== undefined && !isValidPeerOriginSummary(provenance.peerOrigins)) return false
   if (!provenance.derivedFromPeer && provenance.peerOrigins !== undefined) return false
+  // fail-closed：`authority: 'peer'` 却没有污点标记是非法组合——从 JSONL 恢复的
+  // 这类 entry 会让 deriveContextSecurity 漏判，对端作者的消息被洗白。
+  if (provenance.authority === 'peer' && !provenance.derivedFromPeer) return false
   return true
 }
 

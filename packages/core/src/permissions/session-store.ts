@@ -253,6 +253,14 @@ function extractSingleCommandPrefix(command: string): string | null {
   const cmd = command.trim()
   if (!cmd) return null
 
+  // 命令替换（`$(...)`、反引号）与重定向可以把任意副作用藏进同一个段里——
+  // `splitShellCommands` 不拆引号内容，所以 `git commit -m "$(curl … | sh)"`
+  // 会整段以 `git commit` 开头，而 `git status > ~/.ssh/authorized_keys` 的
+  // 副作用完全不在前缀里。推导出的前缀无法代表该命令的真实能力，因此拒绝
+  // 推导，由调用方回退到精确匹配（只批准这一次的完整命令）。
+  if (/[$`][({]|`/.test(cmd)) return null
+  if (/(?:^|[\s\d])>>?(?!&)|(?:^|\s)<<?/.test(cmd)) return null
+
   const tokens = cmd.split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return null
 
@@ -635,8 +643,14 @@ class SessionPermissionStore {
     if (checkable.length === 0) return false
 
     for (const seg of checkable) {
-      const segText = stripSafeEnvVars(seg.trim())
-      const segPrefix = extractSingleCommandPrefix(seg)
+      const segTrimmed = seg.trim()
+      const segText = stripSafeEnvVars(segTrimmed)
+      // 生成端对 PowerShell 启动器形态（`powershell -Command "..."`）走
+      // extractPowershellPrefix，匹配端必须用同一条路径，否则
+      // `{type:'prefix', pattern:'Get-Process'}` 这类规则永远命中不了。
+      const segPrefix = POWERSHELL_LAUNCHER_RE.test(segTrimmed)
+        ? extractPowershellPrefix(segTrimmed)
+        : extractSingleCommandPrefix(segTrimmed)
       let segMatched = false
       for (const rule of this.rules) {
         if (rule.tool !== toolName) continue

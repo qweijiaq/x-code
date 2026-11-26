@@ -142,7 +142,9 @@ export const MODEL_LIMITS: ReadonlyMap<string, ModelLimits> = new Map<string, Mo
   ['opendesign:gpt-6-luna', { contextWindow: 1050000, maxOutputTokens: 128000 }],
   ['opendesign:glm-5.3-flash', { contextWindow: 1000000, maxOutputTokens: 128000 }],
   ['opendesign:glm-5.3-flashx', { contextWindow: 1000000, maxOutputTokens: 128000 }],
-  ['opendesign:kimi-k2.7-code', { contextWindow: 262144, maxOutputTokens: 262144 }],
+  // maxOutputTokens 必须小于 contextWindow，否则 prompt + max_tokens 必然超出窗口，
+  // 提供商会以 HTTP 400 拒绝整个请求（压缩阈值是 0.8×窗口，留不出余量）。
+  ['opendesign:kimi-k2.7-code', { contextWindow: 262144, maxOutputTokens: 32768 }],
   ['opendesign:mimo-v2.6-flash', { contextWindow: 1000000, maxOutputTokens: 128000 }],
   ['opendesign:mimo-v2.6-pro', { contextWindow: 1000000, maxOutputTokens: 128000 }],
   ['opendesign:minimax-m3.1-flash', { contextWindow: 1000000, maxOutputTokens: 524288 }],

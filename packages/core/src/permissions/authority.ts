@@ -104,6 +104,15 @@ export function authoritySnapshotHash(authority: ExecutionAuthority): string {
   return sha256Text(stableCanonicalJson(authority))
 }
 
+/** 分类与复核两侧必须使用同一份 authority 规范化，否则同一份 authority 会算出
+ *  两个 hash，已获批准的调用会被误判为“canonical payload 被篡改”而永久拒绝。
+ *
+ *  `source === 'peer'` 的调用无论帧内是否声明 `peerTainted`，都按 peer 污染处理
+ *  （peer 调用只能拿到一次人工 allow-once，且不能据此写盘授权）。 */
+export function normalizeAuthority(authority: ExecutionAuthority): ExecutionAuthority {
+  return authority.source === 'peer' && !authority.peerTainted ? { ...authority, peerTainted: true } : authority
+}
+
 const SENSITIVE_PATH_SEGMENT_RE =
   /(?:^|[/\\])(?:\.env(?:\.[^/\\]+)?|\.ssh|\.aws|\.config[/\\](?:gh|gcloud)|\.npmrc|\.pypirc|\.netrc|\.git-credentials|credentials?|secrets?|memory)(?:$|[/\\])/i
 
@@ -318,10 +327,7 @@ export function classifyToolCall(input: {
   mcpServerId?: string
   isMcpTool?: boolean
 }): ClassifiedToolCall {
-  const authority: ExecutionAuthority =
-    input.authority.source === 'peer' && !input.authority.peerTainted
-      ? { ...input.authority, peerTainted: true }
-      : input.authority
+  const authority: ExecutionAuthority = normalizeAuthority(input.authority)
   const cwd = input.cwd ?? process.cwd()
   const classified = input.isMcpTool
     ? { capabilities: ['opaque-mcp'] as ToolCapability[], destination: input.mcpServerId }
@@ -456,7 +462,7 @@ export function verifyAuthorityApproval(
   if (approval.decision !== 'allow-once' || !preview.complete || !preview.approvable) {
     return false
   }
-  if (!equalHex(approval.authorityHash, authoritySnapshotHash(currentAuthority))) return false
+  if (!equalHex(approval.authorityHash, authoritySnapshotHash(normalizeAuthority(currentAuthority)))) return false
   if (!equalHex(approval.canonicalCallSha256, preview.canonicalCallSha256)) return false
   if (preview.outboundPayload) {
     return (

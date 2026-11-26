@@ -181,6 +181,28 @@ export function clearPendingTransition(goal: GoalState): void {
   goal.updatedAt = new Date().toISOString()
 }
 
+/**
+ * 从会话记录恢复 goal 时集中补全字段。
+ *
+ *  旧版本写下的 goal 缺少后来加入的字段（`attempts`、`verificationResults`、
+ *  `baselineTokens`、`repeated*Count`…），但类型上它们是必填的。缺字段的后果都是
+ *  静默的：`turnCount` 为 undefined 时 `+= 1` 变 NaN，令 `turnCount >= maxTurns`
+ *  恒为 false（max_turns 护栏失效）；`baselineTokens` 为 undefined 时
+ *  `tokenUsage.totalTokens - baselineTokens` 是 NaN，token 预算上限判断静默失效。
+ *  在恢复入口补全一次，调用点就不必各自兜底。
+ */
+export function normalizeRestoredGoalState(goal: GoalState): GoalState {
+  if (!Array.isArray(goal.attempts)) goal.attempts = []
+  if (!Array.isArray(goal.verificationResults)) goal.verificationResults = []
+  if (!Array.isArray(goal.verifiers)) goal.verifiers = []
+  // 旧记录没有 turnCount 时的最佳近似就是已记录的尝试数。
+  if (!Number.isFinite(goal.turnCount)) goal.turnCount = goal.attempts.length
+  if (!Number.isFinite(goal.baselineTokens)) goal.baselineTokens = 0
+  if (!Number.isFinite(goal.repeatedBlockerCount)) goal.repeatedBlockerCount = 0
+  if (!Number.isFinite(goal.repeatedVerificationFailureCount)) goal.repeatedVerificationFailureCount = 0
+  return goal
+}
+
 /** 保留的验证结果条数。每个结果可带最长 8000 字符的 stdout，无上限累积会让
  *  LoopState 持续膨胀并被写进会话记录；取 40 与桌面端报告的窗口一致，
  *  裁剪不会让任何已展示的内容消失。 */

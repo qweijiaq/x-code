@@ -93,12 +93,22 @@ async function handleRequest(request: Exclude<WhisperWorkerRequest, { type: 'shu
   }
 }
 
+// 当前请求的 promise：shutdown 必须先等它结束再释放 ggml context，
+// 否则原生 transcribeData 仍在运行时 context 被释放，属于 use-after-free。
+let pending: Promise<void> = Promise.resolve()
+
 process.on('message', (request: WhisperWorkerRequest) => {
   if (request.type === 'shutdown') {
-    void releaseContext().finally(() => process.exit(0))
+    void pending
+      .catch(() => {})
+      .then(releaseContext)
+      .catch(() => {})
+      .finally(() => process.exit(0))
     return
   }
-  void handleRequest(request)
+  // 不用 `void`：handleRequest 的 catch 分支里 send() 可能同步抛错，
+  // 无人接管的 rejection 会直接杀掉 worker。
+  pending = handleRequest(request).catch(() => {})
 })
 
 process.on('disconnect', () => process.exit(0))

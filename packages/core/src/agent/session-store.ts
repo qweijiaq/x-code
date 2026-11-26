@@ -35,6 +35,7 @@ import { XCODE_DIR, generateTimestampId } from '../utils.js'
 import { extractText } from '../utils/message-helpers.js'
 import { scanCacheMisses } from './cache-stats.js'
 import type { CacheMissSummary, ProviderTurnUsage } from './cache-stats.js'
+import { normalizeRestoredGoalState } from './goal/state.js'
 import type { GoalInput, GoalState, GoalVerificationResult } from './goal/types.js'
 import { createLoopState } from './loop-state.js'
 import type { LoopState, StepStats } from './loop-state.js'
@@ -46,6 +47,7 @@ import {
   effectiveExecutionAuthority,
   isValidContextSecurity,
   isValidProvenance,
+  provenanceForMessageRole,
 } from './provenance.js'
 import type { CheckpointEntry } from './snapshot.js'
 import { setTrackedTranscript } from './tracked-messages.js'
@@ -1337,7 +1339,7 @@ export async function loadSession(filePath: string): Promise<LoadedSession | nul
   let header: HeaderEntry | null = null
   let lastUsage: UsageEntry | null = null
   const providerTurns: ProviderTurnUsage[] = []
-  let legacyMessages: ModelMessage[] = []
+  let legacyMessages: { message: ModelMessage; provenance?: MessageProvenance }[] = []
   let checkpoints: CheckpointEntry[] = []
   let goal: GoalState | null = null
   const goalInputs: GoalInput[] = []
@@ -1372,7 +1374,7 @@ export async function loadSession(filePath: string): Promise<LoadedSession | nul
           userPrompt: entry.userPrompt,
         })
       } else if (entry.kind === 'goal') {
-        goal = entry.goal
+        goal = entry.goal ? normalizeRestoredGoalState(entry.goal) : null
       } else if (entry.kind === 'goal-input') {
         const idx = goalInputs.findIndex((input) => input.id === entry.input.id)
         if (idx >= 0) goalInputs[idx] = entry.input
@@ -1400,7 +1402,13 @@ export async function loadSession(filePath: string): Promise<LoadedSession | nul
     } else if (entry.t === 'msg' && !hasEpoch) {
       // 也保护旧版本创建的恢复会话。这不重写它们只追加的文件，但会在恢复后把
       // 旧版截图挡在新提供方请求之外。
-      legacyMessages.push(persistenceSafeMessage(entry.message))
+      // 保留磁盘上的 provenance：统一改成 `authority:'user'` 会把旧版本里标记为
+      // peer 污染（derivedFromPeer）的 assistant/tool 内容洗白，恢复后
+      // deriveContextSecurity 不再置 peerInfluenceActive，等于绕过上下文安全边界。
+      legacyMessages.push({
+        message: persistenceSafeMessage(entry.message),
+        provenance: isValidProvenance(entry.provenance) ? entry.provenance : undefined,
+      })
     }
   }
   if (!header) return null
@@ -1411,10 +1419,12 @@ export async function loadSession(filePath: string): Promise<LoadedSession | nul
   let transcriptPrefixNeedsReplacement = false
 
   if (!hasEpoch) {
-    trackedMessages = legacyMessages.map((message, index) =>
+    trackedMessages = legacyMessages.map(({ message, provenance }, index) =>
       createTrackedMessage(
         message,
-        { authority: 'user', derivedFromPeer: false },
+        // provenance 缺失时按 role 推导（不把 assistant/tool 一律记成 user），
+        // 存在时必须原样沿用，否则 peer 污点在恢复后被抹掉。
+        provenance ?? provenanceForMessageRole(message),
         createHash('sha256')
           .update(`${header!.sessionId}\u0000${index}\u0000${canonicalSecurityJson(message)}`)
           .digest('hex'),

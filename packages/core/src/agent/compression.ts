@@ -17,7 +17,7 @@ import type { AgentCallbacks, ExecutionAuthority, TrackedModelMessage } from '..
 import { debugLog } from '../utils.js'
 import { isContextTooLongError } from './api-errors.js'
 import { markExpectedCacheMiss } from './cache-stats.js'
-import { estimateMessageTokenCount, estimateTokenCount } from './context-window.js'
+import { estimateMessageTokenCount, estimateTokenCount, getCompressionThreshold } from './context-window.js'
 import { lightCompactTrackedMessages, truncateOldTrackedToolResults } from './light-compact.js'
 import type { LoopState } from './loop-state.js'
 import { createTrackedMessage, mergeProvenance } from './provenance.js'
@@ -375,14 +375,16 @@ export async function checkAndCompressContext(
 
   callbacks.onCompressionProgress?.('Removing duplicate tool calls...')
   let candidate = structuredClone(state.trackedMessages)
+  // 轻量原语的播报必须等到确定会提交之后再发：这些改动只作用在 `candidate`
+  // 克隆上，摘要没发生时整份克隆会被丢弃，提前播报就是在骗用户“已回收上下文”。
+  const reclaimed: string[] = []
   const light = lightCompactTrackedMessages(candidate)
   if (light.dropped > 0) {
     candidate = light.trackedMessages
-    const stillOver = estimateTokenCount(candidate.map((entry) => entry.message)) > threshold
-    callbacks.onContextCompressed(
-      `Dropped ${light.dropped} looped tool-call message(s) to reclaim context${stillOver ? ' — still over threshold, summarising' : ''}.`,
-    )
-    if (!stillOver) {
+    if (estimateTokenCount(candidate.map((entry) => entry.message)) > threshold) {
+      reclaimed.push(`Dropped ${light.dropped} looped tool-call message(s) to reclaim context`)
+    } else {
+      callbacks.onContextCompressed(`Dropped ${light.dropped} looped tool-call message(s) to reclaim context.`)
       await finishLightweightCompression(state, candidate, hookCtx)
       return
     }
@@ -391,11 +393,11 @@ export async function checkAndCompressContext(
   callbacks.onCompressionProgress?.('Truncating old tool results...')
   const trunc = truncateOldTrackedToolResults(candidate)
   if (trunc.truncatedCount > 0) {
-    const stillOver = estimateTokenCount(candidate.map((entry) => entry.message)) > threshold
-    callbacks.onContextCompressed(
-      `Truncated ${trunc.truncatedCount} old tool result(s), saved ~${Math.round(trunc.charsSaved / 3)} tokens${stillOver ? ' — still over threshold, summarising' : ''}.`,
-    )
-    if (!stillOver) {
+    const note = `Truncated ${trunc.truncatedCount} old tool result(s), saved ~${Math.round(trunc.charsSaved / 3)} tokens`
+    if (estimateTokenCount(candidate.map((entry) => entry.message)) > threshold) {
+      reclaimed.push(note)
+    } else {
+      callbacks.onContextCompressed(`${note}.`)
       await finishLightweightCompression(state, candidate, hookCtx)
       return
     }
@@ -415,6 +417,13 @@ export async function checkAndCompressContext(
   // 也不能清缓存——否则每轮都要重放文件缓存并白付一次 prompt cache miss。
   if (!compressed.summarized) {
     debugLog('compression.proactive-no-progress', `tokens=${tokensBefore} — keeping window holds everything`)
+    // 摘要没发生（保留窗口吞掉了全部消息），但轻量原语确实丢掉了东西：
+    // 把它们提交掉再返回。否则每轮都要重做一次 structuredClone + 轻量压缩
+    // + 一次 generateText 摘要往返（还会计入 usage）却零进展。
+    if (reclaimed.length > 0) {
+      callbacks.onContextCompressed(`${reclaimed.join('. ')} (summarisation made no progress).`)
+      await finishLightweightCompression(state, candidate, hookCtx)
+    }
     return
   }
   const beforeK = Math.round(tokensBefore / 1000)
@@ -453,6 +462,15 @@ export async function handleContextTooLong(
   const light = lightCompactTrackedMessages(candidate)
   if (light.dropped > 0) candidate = light.trackedMessages
   truncateOldTrackedToolResults(candidate)
+  // 保留预算必须相对“当前转录”收缩，不能走默认的固定 20K：本路径的触发条件
+  // 正是 prompt 已超过模型真实上限，而小窗口/自定义模型（8K、16K）下 20K 会把
+  // 整份转录都留在 recent 里 → oldEntries 为空 → summarized=false →
+  // tokensAfter === tokensBefore → 下面的防自旋守护直接 return false，既不压缩
+  // 也不重试，用户只能 /clear。取三者最小：绝对上限、已知窗口推导的阈值、
+  // 以及转录本身的 40%（后者保证一定能切出可摘要的旧内容）。
+  const estimatedTokens = estimateTokenCount(candidate.map((entry) => entry.message))
+  const knownThreshold = hookCtx ? getCompressionThreshold(hookCtx.modelId) : KEEP_RECENT_TOKENS * 2
+  const keepBudget = Math.min(KEEP_RECENT_TOKENS, Math.floor(knownThreshold / 2), Math.floor(estimatedTokens * 0.4))
   callbacks.onCompressionProgress?.('Summarizing conversation...')
   const { compressed, tokensBefore, tokensAfter } = await summarizeLoopState(
     state,
@@ -460,6 +478,7 @@ export async function handleContextTooLong(
     model,
     callbacks,
     hookCtx,
+    keepBudget,
   )
 
   // 防自旋守护。如果摘要几乎没释放上下文，说明溢出存在于

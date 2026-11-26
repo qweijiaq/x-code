@@ -8,7 +8,16 @@ const PERMISSIONS_VERSION = 2
 
 function parseLegacyRuleString(value: string, projectCwd: string): AllowRule | null {
   const toolWide = value.match(/^([^:]+):\*$/)
-  if (toolWide) return { tool: toolWide[1]!, pattern: '*', type: 'tool' }
+  if (toolWide) {
+    // shell 的规则必须带 cwd（parseVersionTwoRule 会拒绝缺少 cwd 的 shell 规则），
+    // 否则这次迁移写回的条目在下次读取时被判为畸形并静默丢弃。
+    return {
+      tool: toolWide[1]!,
+      pattern: '*',
+      type: 'tool',
+      ...(toolWide[1] === 'shell' ? { cwd: projectCwd } : {}),
+    }
+  }
 
   const prefix = value.match(/^([^:]+):(.+):\*$/)
   if (prefix) {

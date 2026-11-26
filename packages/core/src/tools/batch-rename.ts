@@ -159,10 +159,15 @@ export const batchRename = tool({
         })
       }
 
-      const changed = planned.filter((entry) => entry.from !== entry.to)
+      // `entry.from` 是相对路径（递归时含子目录，如 `sub/a.png`），`entry.to`
+      // 永远只是单层文件名。直接比较二者会把“子目录里其实没改名”的文件也算成
+      // 变更——dry-run 数量虚高、并显示成 `sub/a.png → a.png` 像是要把文件移出
+      // 目录；apply 时还会进入自我重命名的 no-op 循环并被计入 renamed。
+      const isUnchanged = (entry: { from: string; to: string }): boolean => entry.to === path.basename(entry.from)
+      const changed = planned.filter((entry) => !isUnchanged(entry))
       const conflicts = planned.filter((entry) => entry.conflict)
       const lines = planned.map((entry) =>
-        entry.from === entry.to
+        isUnchanged(entry)
           ? `  ${entry.from} (unchanged)`
           : `  ${entry.from} → ${entry.to}${entry.conflict ? ` [${entry.conflict}]` : ''}`,
       )
@@ -194,7 +199,18 @@ export const batchRename = tool({
         if (exists && from.toLowerCase() !== to.toLowerCase()) {
           return `Stopped after renaming ${renamed} file(s): ${entry.to} appeared during the run.`
         }
-        await fs.rename(from, to)
+        // 规划阶段只做了存在性检查，没校验最终名字长度：`prefix + base + suffix +
+        // ext` 可能超过文件系统上限（ENAMETOOLONG），也可能遇到 EACCES / 目录被并发
+        // 删除。必须就地收敛，否则已成功重命名的进度会在最外层 catch 里全部丢失，
+        // 调用方以为“什么都没发生”，而目录其实已处于半重命名状态。
+        if (Buffer.byteLength(to) > 255) {
+          return `Stopped after renaming ${renamed} file(s): ${entry.to} is too long for the filesystem. Some files were already renamed.`
+        }
+        try {
+          await fs.rename(from, to)
+        } catch (err) {
+          return `Stopped after renaming ${renamed}/${changed.length} file(s): ${entry.from} → ${entry.to} failed (${err instanceof Error ? err.message : String(err)}). Some files were already renamed.`
+        }
         renamed++
         reportProgress(toolCallId, `Renamed ${renamed}/${changed.length}`)
       }

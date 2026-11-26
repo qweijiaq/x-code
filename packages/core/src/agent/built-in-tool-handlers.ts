@@ -452,6 +452,15 @@ export function createBuiltInToolHandlers(pushToolResult: PushToolResult): Recor
     reportProgress(toolCallId, `Reading ${uri}`)
     try {
       const result = await client.readResource(uri, options.abortSignal)
+      // MCP 资源是外部内容。readMcpResource 是内置工具（名字不含 `__`），既不经过
+      // 上面的 MCP 工具分支，又属于 BYPASS_LOOP_GUARD_HANDLERS 提前 return 的
+      // 一组，因此在分发路径上永远不会被染色——不在这里显式标记，模型就能把
+      // 注入文本读进上下文后无审批地写文件/跑 shell。与 background 系列保持一致。
+      propagateExternalContent(
+        state,
+        { externalContentTainted: true, externalContentSources: [toolName, uri] },
+        'mcp-resource',
+      )
       pushToolResult(state, callbacks, toolCallId, toolName, truncateToolResult(result.text))
     } catch (error) {
       if (isAbortError(error, options.abortSignal)) {

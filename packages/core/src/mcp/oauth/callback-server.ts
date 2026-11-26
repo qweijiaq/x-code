@@ -59,6 +59,10 @@ export async function startCallbackServer(options: StartOptions = {}): Promise<R
     resolveOnce = res
     rejectOnce = rej
   })
+  // rejection handler 必须紧跟 promise 创建处安装：listen 阶段失败时本函数会
+  // 直接抛出，下面 `void waiter.then(...)` / `waiter.catch(...)` 两行永远不会执行，
+  // waiter 就成了没有 handler 的 rejected promise（Node ≥15 默认会把 CLI 打崩）。
+  waiter.catch(() => {})
 
   const server = http.createServer((req, response) => {
     if (!req.url) {
@@ -161,9 +165,6 @@ export async function startCallbackServer(options: StartOptions = {}): Promise<R
     close()
   }
   void waiter.then(onSettled, onSettled)
-  // listen 阶段失败时调用方拿不到 waiter（异常直接从 startCallbackServer 抛出），
-  // 这里兜底标记为已处理，避免 waiter 本体变成 unhandledRejection。
-  waiter.catch(() => {})
 
   return { url, waitForCallback: () => waiter, close }
 }

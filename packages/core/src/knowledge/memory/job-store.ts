@@ -337,6 +337,9 @@ export class MemoryJobStore {
       nextAttemptAt: new Date(Date.now() + delay + jitter).toISOString(),
     }
     const running = path.join(this.runningDir, `${job.jobId}.json`)
+    // running/ 下已经没有这个 job（`complete()` 已删除它）时绝不能凭空创建：
+    // 否则会“复活”一条已完成的任务，导致重复抽取 / 重复提交记忆。
+    if (!(await fileExists(running))) return 'pending'
     await atomicWriteFile(running, JSON.stringify(updated, null, 2) + '\n')
     await fs.rename(running, path.join(this.pendingDir, `${job.jobId}.json`))
     await Promise.all([syncDirectory(this.runningDir), syncDirectory(this.pendingDir)])
@@ -345,6 +348,8 @@ export class MemoryJobStore {
 
   async fail(job: MemoryJob): Promise<void> {
     const running = path.join(this.runningDir, `${job.jobId}.json`)
+    // 同 retry()：running/ 里已无此 job 时不新建，避免把已完成的任务重新落进 failed/。
+    if (!(await fileExists(running))) return
     await atomicWriteFile(running, JSON.stringify(job, null, 2) + '\n')
     await fs.rename(running, path.join(this.failedDir, `${job.jobId}.json`)).catch(async (error) => {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error

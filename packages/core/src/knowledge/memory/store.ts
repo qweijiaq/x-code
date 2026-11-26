@@ -24,6 +24,12 @@ import type {
 } from './types.js'
 
 const FACT_MARKER_RE = /<!--\s*x-memory:\s*(\{[^\n]*\})\s*-->/g
+
+/** 拒绝伪造 marker 用的同源检测。必须与 {@link FACT_MARKER_RE} 宽松度一致
+ *  （`\s*` 允许 `<!--x-memory:{...}-->` 这种无空格写法），否则模型/外部可控的
+ *  事实正文可以塞进一条伪造的 marker，在 refreshTopic→parseFacts 阶段凭空
+ *  造出带伪造 metadata 的事实。这里刻意不带 `g`（`test` 会推进 lastIndex）。 */
+const FACT_MARKER_DETECT_RE = /<!--\s*x-memory:/
 const VALID_TYPES = new Set<MemoryType>(['user', 'portfolio', 'feedback', 'workflow', 'project', 'reference'])
 const VALID_EVIDENCE = new Set<EvidenceKind>(['explicit', 'validated', 'observed'])
 const VALID_STATUS = new Set<MemoryStatus>(['active', 'stale'])
@@ -378,7 +384,7 @@ function factMetadata(evidence: MemoryOperation['evidence']): MemoryFactMetadata
 
 function appendFact(topic: MemoryTopic, factId: string, content: string, evidence: MemoryOperation['evidence']): void {
   const clean = canonicalText(content)
-  if (!clean || clean.includes('<!-- x-memory:')) throw new Error(`Invalid fact content: ${factId}`)
+  if (!clean || FACT_MARKER_DETECT_RE.test(clean)) throw new Error(`Invalid fact content: ${factId}`)
   if (Buffer.byteLength(clean, 'utf-8') > 8 * 1024) throw new Error(`Fact content exceeds 8 KiB: ${factId}`)
   topic.body = topic.body.replace(/\r\n/g, '\n').trimEnd()
   if (!/^#{2,3}\s/m.test(topic.body)) topic.body += '\n\n## Facts'
@@ -521,6 +527,9 @@ function incomingWins(existing: MemoryFact, evidence: MemoryOperation['evidence'
  *  的输入有问题"，应当降级为 failed notice，而不是让整批操作失败。 */
 function isPatchPersistable(patch: TopicMetadataPatch | undefined): boolean {
   if (!patch) return true
+  // metadata 字段同样是模型可控的：不允许把伪造的 x-memory marker 藏进描述/摘要。
+  if (patch.description !== undefined && FACT_MARKER_DETECT_RE.test(patch.description)) return false
+  if (patch.summary !== undefined && FACT_MARKER_DETECT_RE.test(patch.summary)) return false
   if (patch.description !== undefined && !cleanLine(redactMemoryText(patch.description))) return false
   if (patch.summary !== undefined && estimateTextTokenCount(cleanLine(redactMemoryText(patch.summary))) > 120) {
     return false
@@ -802,7 +811,7 @@ export class MemoryStore {
             hasOversizeIndexValue(operation.topicPatch) ||
             !isPatchPersistable(operation.topicPatch) ||
             !canonicalText(operation.content) ||
-            operation.content.includes('<!-- x-memory:') ||
+            FACT_MARKER_DETECT_RE.test(operation.content) ||
             Buffer.byteLength(operation.content, 'utf-8') > 8 * 1024
           ) {
             notices.push({

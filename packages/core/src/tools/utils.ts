@@ -8,6 +8,7 @@
 //
 // 保持克制：优先在这里加个小 helper，而不是在 tools/ 下再建一个
 // 每个 helper 一个文件。
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
 // `@x-code-cli/core` 是 ESM 包（`"type": "module"`），运行时没有全局
@@ -25,10 +26,18 @@ let _rgPath: string | null = null
 export function getRipgrepPath(): string {
   if (_rgPath) return _rgPath
   try {
-    const rg = _require('@vscode/ripgrep') as { rgPath: string }
-    _rgPath = rg.rgPath
+    // 注意：`require` 成功但 `rgPath` 为空/缺失（postinstall 没放置二进制、
+    // 或被 ESM 打包成 external）是真实存在的形态，不能靠类型断言掩盖——
+    // 否则 `execFileAsync(undefined, …)` 会抛 `path must be a string`，
+    // 而不是回退到 PATH 里的 `rg`。
+    const rg = _require('@vscode/ripgrep') as { rgPath?: string }
+    if (typeof rg.rgPath === 'string' && rg.rgPath.length > 0 && existsSync(rg.rgPath)) {
+      _rgPath = rg.rgPath
+      return _rgPath
+    }
   } catch {
-    _rgPath = 'rg'
+    // 包未安装：回退到系统 rg。
   }
+  _rgPath = 'rg'
   return _rgPath
 }

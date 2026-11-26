@@ -389,13 +389,13 @@ export function formatTranscription(result: TranscribeAudioResult, filePath: str
   return [header, langLine, '', ...lines].filter(Boolean).join('\n')
 }
 
-async function removeModelIfInvalid(model: WhisperModelName): Promise<void> {
+async function removeModelIfInvalid(model: WhisperModelName, abortSignal?: AbortSignal): Promise<void> {
   const dest = modelPath(model)
   verifiedModels.delete(dest)
-  const lease = await acquireFileLock(`${dest}.lock`, {
-    waitMs: MODEL_LOCK_WAIT_MS,
-    timeoutError: `Timed out rechecking whisper model ${model}`,
-  })
+  // 这里只是清理一个损坏的缓存文件，属于尽力而为：拿不到锁就跳过。
+  // 用 30 分钟的 waitMs + timeoutError 会让“模型坏了”的错误返回路径阻塞半小时，
+  // 且外层 .catch() 无法中断等待。
+  const lease = await acquireFileLock(`${dest}.lock`, { waitMs: 0, signal: abortSignal }).catch(() => null)
   if (!lease) return
   try {
     if (!(await validateModelFile(dest, WHISPER_MODELS[model]))) await fs.rm(dest, { force: true })
@@ -530,7 +530,7 @@ export async function transcribeAudio(
       return `[Audio transcription failed: file not found — ${filePath}]`
     }
     if (err instanceof WhisperProcessError && err.phase === 'initialize') {
-      await removeModelIfInvalid(model).catch(() => {})
+      await removeModelIfInvalid(model, options?.abortSignal).catch(() => {})
     }
     const msg = errorMessage(err)
     debugLog('audio-transcribe', `error: ${msg}`)
