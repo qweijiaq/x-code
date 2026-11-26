@@ -25,6 +25,7 @@
 const DANGEROUS_ENV_KEYS = new Set<string>([
   // Node
   'NODE_OPTIONS',
+  'NODE_REPL_EXTERNAL_MODULE',
   // Linux 动态链接器
   'LD_PRELOAD',
   'LD_LIBRARY_PATH',
@@ -36,20 +37,59 @@ const DANGEROUS_ENV_KEYS = new Set<string>([
   'DYLD_FALLBACK_LIBRARY_PATH',
   'DYLD_FALLBACK_FRAMEWORK_PATH',
   // Shell 初始化 / 每条命令的钩子。BASH_ENV 在非交互 bash 中运行；
-  // ENV 在 POSIX sh 中运行；PROMPT_COMMAND 在每个交互提示符上运行。
+  // ENV 在 POSIX sh 中运行；PROMPT_COMMAND 在每个交互提示符上运行；
+  // 其余是 ksh / zsh 的等价物（ZDOTDIR 让 zsh 去别的目录读启动文件）。
   'BASH_ENV',
   'ENV',
   'PROMPT_COMMAND',
+  'KSH_ENV',
+  'ZDOTDIR',
+  'ZENV',
   // Python
   'PYTHONSTARTUP',
   'PYTHONPATH',
+  'PYTHONHOME',
   // Perl
   'PERL5OPT',
   'PERL5LIB',
+  'PERL5DB',
   // Ruby
   'RUBYOPT',
   'RUBYLIB',
+  // JVM：这些名字都支持 `-javaagent:` / `-agentlib:`（任意字节码注入）
+  'JAVA_TOOL_OPTIONS',
+  '_JAVA_OPTIONS',
+  'JDK_JAVA_OPTIONS',
+  // .NET：启动钩子相当于 `--require`
+  'DOTNET_STARTUP_HOOKS',
+  'DOTNET_ADDITIONAL_DEPS',
+  // PHP：PHPRC / 扫描目录配合 ini 里的 auto_prepend_file 即为加载任意代码
+  'PHPRC',
+  'PHP_INI_SCAN_DIR',
+  // git —— MCP 服务器大量使用 git 子进程。GIT_SSH_COMMAND / GIT_CONFIG_* 能
+  // 直接落成命令执行（ssh 的 -o ProxyCommand、core.pager / core.fsmonitor），
+  // GIT_DIR 则能把 git 指向一个攻击者可控的仓库配置。
+  'GIT_SSH',
+  'GIT_SSH_COMMAND',
+  'GIT_CONFIG_GLOBAL',
+  'GIT_CONFIG_SYSTEM',
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_CONFIG_COUNT',
+  'GIT_DIR',
+  'GIT_WORK_TREE',
 ])
+
+/** 前缀黑名单：逐个枚举必然漏掉变体（`DYLD_ROOT_PATH`、`GIT_CONFIG_KEY_0`、
+ *  `LD_DEBUG`…），所以整族拒绝。`LD_` 会连带命中 `LD_PRELOAD` 等已有条目，
+ *  不影响结果。 */
+const DANGEROUS_ENV_PREFIXES: readonly string[] = ['DYLD_', 'LD_', 'GIT_CONFIG']
+
+// 刻意**不**拦 `PATH` / `PATHEXT` / `COMSPEC`：这里的检查位于 spawn 边界，
+// 覆盖所有来源（用户 `xc mcp add --env`、mcp.json、插件 manifest），而合法的
+// MCP 服务器经常需要为子进程补充 `PATH`（nvm / venv / 自带二进制目录）。整族
+// 拒绝会直接打断这些配置。PATH 劫持的收窄应当按**来源**做（插件 manifest 的
+// env 由 plugins/user-config.ts 的 RESERVED_USER_CONFIG_ENV_KEYS 拦住 PATH），
+// 这一取舍是有意为之，不是漏项。
 
 export class UnsafeEnvError extends Error {
   constructor(public readonly key: string) {
@@ -71,7 +111,8 @@ export class UnsafeEnvError extends Error {
 export function assertSafeEnv(env: Record<string, string> | undefined): void {
   if (!env) return
   for (const k of Object.keys(env)) {
-    if (DANGEROUS_ENV_KEYS.has(k.toUpperCase())) {
+    const upper = k.toUpperCase()
+    if (DANGEROUS_ENV_KEYS.has(upper) || DANGEROUS_ENV_PREFIXES.some((prefix) => upper.startsWith(prefix))) {
       throw new UnsafeEnvError(k)
     }
   }

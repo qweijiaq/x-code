@@ -797,8 +797,14 @@ export async function agentLoop(
   const state = existingState ?? createLoopState(options.permissionMode ?? 'default')
   state.executionAuthority = effectiveExecutionAuthority(options.executionAuthority, state.contextSecurity)
   // 每次用户 submit 都是新的信任边界；上一轮读入的外部内容不再自动降权本轮写操作。
-  state.externalContentTainted = false
-  state.externalContentSources = []
+  // 子代理轮次例外：`sub-agents/runner.ts` 刻意把父级的污染状态继承到子状态上
+  // （父级读过网页/文档后，子代理不能借“干净状态”绕过写审批）。在这里无条件清零
+  // 会把那份继承抹掉，使 tool-execution.ts 基于 `state.externalContentTainted`
+  // 的写审批门控永远不触发——正好是继承代码想防的场景。
+  if (state.agentRole === 'root') {
+    state.externalContentTainted = false
+    state.externalContentSources = []
+  }
   let invocationPeerTainted = state.executionAuthority.peerTainted
   const turnStartMessageIndex = state.messages.length
   const turnMessages: ModelMessage[] = []
@@ -934,7 +940,7 @@ export async function agentLoop(
   // 守卫至关重要。传入会话级 slug，好让非 ASCII 任务文本仍得到一个
   // 可读的文件名，而不是仅时间戳。
   if (state.permissionMode === 'plan' && !state.currentPlanPath) {
-    state.currentPlanPath = makePlanFilePath(taskText, { slug: state.taskSlug })
+    state.currentPlanPath = makePlanFilePath(taskText, { slug: state.taskSlug, projectCwd: state.projectCwd })
   }
 
   // 把会话头部写到它时间戳命名的 jsonl 文件（对 resume 幂等——那种情况

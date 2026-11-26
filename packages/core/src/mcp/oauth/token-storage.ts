@@ -144,10 +144,18 @@ export class McpTokenStorage {
     // 只读一次：`loadMcpServers` 会并发为多个服务器构造 provider，各自
     // 调 `tokens()` / `saveTokens()`。没有共享 Promise 时它们会各读一次文件，
     // 而更早发起、更晚 resolve 的那次读取会把刚写入的 token 覆盖掉。
-    this.loadPromise ??= readFile().then((loaded) => {
-      // 已有内存改动（并发写入抢先完成）时不要用磁盘旧快照覆盖。
-      if (this.cache === null) this.cache = loaded
-    })
+    this.loadPromise ??= readFile().then(
+      (loaded) => {
+        // 已有内存改动（并发写入抢先完成）时不要用磁盘旧快照覆盖。
+        if (this.cache === null) this.cache = loaded
+      },
+      (err: unknown) => {
+        // 读盘失败不能被记忆化：否则这个实例会被永久钉死在一个 rejected
+        // promise 上，用户修好文件后也无法恢复。
+        this.loadPromise = null
+        throw err
+      },
+    )
     await this.loadPromise
   }
 
@@ -223,14 +231,30 @@ function toFileShape(value: unknown): FileShape {
   return shape
 }
 
+/** 读取磁盘快照。**只有 ENOENT 才是合法的空态**：`writeNow()` 会
+ *  "读盘 → 合并本进程的 dirty entry → rename 覆盖整份文件"，所以把一次瞬时
+ *  读失败（EACCES / EIO / EDQUOT / Windows 上被独占打开 / `X_CODE_HOME` 指向
+ *  尚未挂载完的卷）或半损坏文件当成空快照，会把**其它服务器**的
+ *  access_token / refresh_token / client_secret 静默清空，用户下次启动必须对
+ *  所有 MCP 服务器重新授权。这里如实抛错，让写入放弃并保留 dirty 标记。 */
 async function readFile(): Promise<FileShape> {
+  let raw: string
   try {
-    const raw = await fs.readFile(authFile(), 'utf-8')
-    return toFileShape(JSON.parse(raw) as unknown)
-  } catch {
-    // 缺失 / 格式错误——从干净状态开始
+    raw = await fs.readFile(authFile(), 'utf-8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return emptyFileShape()
+    throw new Error(`cannot read ${authFile()}: ${err instanceof Error ? err.message : String(err)}`, { cause: err })
   }
-  return emptyFileShape()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    throw new Error(
+      `${authFile()} is not valid JSON (${err instanceof Error ? err.message : String(err)}) — repair or delete it`,
+      { cause: err },
+    )
+  }
+  return toFileShape(parsed)
 }
 
 /** 单例实例。接线简单：CLI 启动时构造一次，传给 loadMcpServers

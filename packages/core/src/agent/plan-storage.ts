@@ -44,8 +44,15 @@ function formatTimestamp(d: Date): string {
   )
 }
 
-function plansDir(): string {
-  return path.join(process.cwd(), XCODE_DIR, PLANS_SUBDIR)
+/** 计划目录所在的基准。必须由调用方传入会话的 `projectCwd`：`process.cwd()`
+ *  只是兜底。desktop 运行时存在 `process.chdir(workspace)` 与多会话共进程的情况，
+ *  一旦 `process.cwd() !== state.projectCwd`：①计划文件会写到别的项目/工作区目录下，
+ *  违背本文件顶部“按项目隔离”的设计；②`makePlanFilePath` 产出的路径落在
+ *  `tool-execution.ts` 计算的 `planRoot`（= `projectCwd/.x-code/plans`）之外，
+ *  `enforcePlanModeBoundary` 会拒绝模型对当前计划文件的 writeFile/edit，
+ *  plan 模式直接不可用。 */
+function plansDir(cwd: string = process.cwd()): string {
+  return path.join(cwd, XCODE_DIR, PLANS_SUBDIR)
 }
 
 /** 根据任务描述（通常是用户最近的一条消息）生成新的计划文件路径。
@@ -53,7 +60,7 @@ function plansDir(): string {
  *  格式：`<slug>-<timestamp>.md`（时间戳可能冲突时仅用 slug；任务文本产生空 slug 时仅用时间戳）。
  *  当调用方已有预先算好的 slug（例如 agentLoop 的会话级 `taskSlug`）时，传入 `opts.slug`
  *  以跳过本地的 slugify 步骤——这对非 ASCII 任务文本很重要，因为那种情况 slugify 会返回空。 */
-export function makePlanFilePath(taskText: string, opts?: { slug?: string; now?: Date }): string {
+export function makePlanFilePath(taskText: string, opts?: { slug?: string; now?: Date; projectCwd?: string }): string {
   // `opts.slug` 不是可信输入：enterPlanMode 的 `topic` 直接来自模型可控的工具入参
   // （见 plan-tools.ts）。不过滤的话 `../../../../.ssh/authorized_keys` 会被
   // `path.join` 规范化成计划目录之外的路径，且能绕过 SLUG_MAX_LEN 撞上
@@ -61,7 +68,7 @@ export function makePlanFilePath(taskText: string, opts?: { slug?: string; now?:
   const slug = slugify(opts?.slug ?? taskText)
   const ts = formatTimestamp(opts?.now ?? new Date())
   const name = slug ? `${slug}-${ts}` : ts
-  const dir = plansDir()
+  const dir = plansDir(opts?.projectCwd)
   const target = path.join(dir, `${name}.md`)
   if (!path.resolve(target).startsWith(path.resolve(dir) + path.sep)) {
     throw new Error(`unsafe plan file name: ${name}`)
@@ -79,8 +86,8 @@ export function generateTaskSlug(taskText: string): string {
 
 /** 确保计划目录存在。使用递归 mkdir，这样就不必单独再确保 `.x-code/` 存在——
  *  在新项目里写第一个计划时，父目录会自动创建。 */
-async function ensurePlanDir(): Promise<void> {
-  await fs.mkdir(plansDir(), { recursive: true })
+async function ensurePlanDir(cwd: string = process.cwd()): Promise<void> {
+  await fs.mkdir(plansDir(cwd), { recursive: true })
 }
 
 /** 读取 `planPath` 处的计划正文。文件不存在时返回空字符串——
@@ -95,9 +102,11 @@ export async function readPlan(planPath: string): Promise<string> {
 }
 
 /** 把计划正文持久化到 `planPath`。exitPlanMode 在模型传入 `plan` 覆盖值时用它，
- *  让磁盘记录与用户正在批准的内容一致。返回写入的路径（总是等于输入）。 */
-export async function writePlan(planPath: string, body: string): Promise<string> {
-  await ensurePlanDir()
+ *  让磁盘记录与用户正在批准的内容一致。返回写入的路径（总是等于输入）。
+ *  `cwd` 必须与会话的 `projectCwd` 一致（见 {@link plansDir}）：否则目录会被创建
+ *  在 process.cwd() 下，而随后往 planPath 写入时会因为父目录不存在而 ENOENT。 */
+export async function writePlan(planPath: string, body: string, cwd: string = process.cwd()): Promise<string> {
+  await ensurePlanDir(cwd)
   await fs.writeFile(planPath, body, 'utf-8')
   return planPath
 }

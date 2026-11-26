@@ -82,7 +82,11 @@ export function createModelMessageView(state: LoopState): ModelMessage[] {
     set(_target, property, value) {
       if (property === 'length') {
         const length = Number(value)
-        if (!Number.isSafeInteger(length) || length < 0) return false
+        // 只允许截断。增长会制造稀疏空洞：`TrackedModelMessage[]` 的类型里没有
+        // `undefined`，但空洞在 `for...of` 下会读出 undefined（provenance.ts 的
+        // canonicalTranscriptDigest 直接崩），而 deriveContextSecurity 用的是
+        // `filter`，它会跳过空洞——落在洞上的污点被静默忽略，安全派生结果偏乐观。
+        if (!Number.isSafeInteger(length) || length < 0 || length > state.trackedMessages.length) return false
         state.trackedMessages.length = length
         recalculate(state)
         return true
@@ -90,6 +94,10 @@ export function createModelMessageView(state: LoopState): ModelMessage[] {
       if (isArrayIndex(property)) {
         const index = Number(property)
         const message = value as ModelMessage
+        // 越界写入（`view[5] = msg` 而当前只有 2 条）会在数组里留下稀疏空洞：
+        // 下标存在但没有条目，`for...of` 读出 undefined 直接崩，而 `filter` 会跳过
+        // 空洞让污点派生漏报。拒绝它，数组始终连续。
+        if (index > state.trackedMessages.length) return false
         const existing = state.trackedMessages[index]
         // 只有「原样重写同一条消息对象」才保留原 entry 的 entryId 与 provenance。
         // Array 原型的 unshift/splice 靠逐个下标 `set(i + 1, get(i))` 搬移消息：
@@ -97,10 +105,18 @@ export function createModelMessageView(state: LoopState): ModelMessage[] {
         // 而内容已经换成别处搬来的消息——一条本应 derivedFromPeer 的 peer 污染消息
         // 会落到持有 clean provenance 的下标上，recalculate() 因此漏报 peer 影响，
         // firstTaintedEntryId / canonicalTranscriptDigest 的审计语义也随之失效。
+        //
+        // 搬移场景下被搬来的消息【自己】已经有一个 entry：按对象身份把它找回来整体
+        // 搬移，entryId 与 provenance 才跟着消息走（否则一次纯插入就会换掉所有
+        // entryId，审计连续性失效；authority 恰好处于 clean 窗口时还会把 tainted
+        // 条目就地洗白）。注意不能在这里 splice 摘下原 entry：复制循环正在逐位
+        // 读写下标，改变数组结构会让它后半程读到错误的消息。原位置先保留同一个
+        // entry 对象（长度与结构不变），复制循环走到那里时会把它覆盖掉，扫描结束
+        // 后数组仍是一一对应。
+        const relocated =
+          existing?.message === message ? existing : state.trackedMessages.find((entry) => entry?.message === message)
         state.trackedMessages[index] =
-          existing?.message === message
-            ? existing
-            : createTrackedMessage(message, provenanceForAuthority(currentAuthority(state), message.role))
+          relocated ?? createTrackedMessage(message, provenanceForAuthority(currentAuthority(state), message.role))
         recalculate(state)
         return true
       }

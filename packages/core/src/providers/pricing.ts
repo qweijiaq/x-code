@@ -17,10 +17,23 @@ export interface ModelPricing {
   outputPerMTok: number
 }
 
-/** catalog 描述里明确标价的模型。 */
+/** catalog 描述里明确标价的模型。缺一条的后果不是"少一个数字"：`cost.ts` 的
+ *  `estimateUsageCost()` 会恒返回 `priced: false`，`--max-cost` 预算判定就完全
+ *  不会触发。加模型时请同步这里。 */
 export const MODEL_PRICING: ReadonlyMap<string, ModelPricing> = new Map<string, ModelPricing>([
+  // anthropic 的 defaultModel，也是别名 `sonnet` 的解析目标（catalog.ts:228）
+  ['anthropic:claude-sonnet-5-5', { inputPerMTok: 2, outputPerMTok: 10 }],
+  // catalog 现描述未标价，但这是此前已公开的历史档位价格；保留以免已有用户的
+  // 成本上报/预算判定突然失效。
   ['anthropic:claude-sonnet-5', { inputPerMTok: 3, outputPerMTok: 15 }],
+  ['anthropic:claude-haiku-5-5', { inputPerMTok: 0.1, outputPerMTok: 0.5 }],
   ['anthropic:claude-haiku-4-5', { inputPerMTok: 1, outputPerMTok: 5 }],
+  ['xai:grok-4.3', { inputPerMTok: 1.25, outputPerMTok: 2.5 }],
+  ['zhipu:glm-5.2', { inputPerMTok: 1.4, outputPerMTok: 4.4 }],
+  ['zhipu:glm-5', { inputPerMTok: 1, outputPerMTok: 3.2 }],
+  ['zhipu:glm-4.7', { inputPerMTok: 0.6, outputPerMTok: 2.2 }],
+  ['zhipu:glm-5v-turbo', { inputPerMTok: 1.2, outputPerMTok: 4 }],
+  ['zhipu:glm-4.6v', { inputPerMTok: 0.3, outputPerMTok: 0.9 }],
   ['openai:gpt-5.6-sol', { inputPerMTok: 4, outputPerMTok: 20 }],
   ['openai:gpt-5.6-terra', { inputPerMTok: 2, outputPerMTok: 12 }],
   ['openai:gpt-5.6-luna', { inputPerMTok: 0.2, outputPerMTok: 1.2 }],

@@ -3,6 +3,9 @@
 // 管理本地文档索引：索引一个文件夹或文件、查看统计，或清空它。索引在本地
 // 解析文档（readDocument），从不上传任何东西；语义向量只在可选的 BGE 后端
 // 可用时才会产生。
+import fs from 'node:fs'
+import path from 'node:path'
+
 import { tool } from 'ai'
 
 import { z } from 'zod'
@@ -11,6 +14,30 @@ import { clearDocumentLibrary, indexLibrary, libraryStats } from '../library/ind
 import { MAX_LIBRARY_CHARS, MAX_LIBRARY_FILES } from '../library/store.js'
 import { formatToolError } from '../utils/tool-errors.js'
 import { reportProgress } from './progress.js'
+
+function realpathOrNull(target: string): string | null {
+  try {
+    return fs.realpathSync(target)
+  } catch {
+    return null
+  }
+}
+
+/** 把索引目标限制在项目根内。索引内容会被持久化，并作为检索结果回流到模型
+ *  上下文，所以 `~/.ssh`、`/etc` 或 `../../` 这类越界路径必须拒绝，而不是
+ *  悄悄把它们解析、切片后存下来。软链用 realpath 归一化后再做前缀比较。 */
+function projectRoot(): string {
+  return path.resolve(process.cwd())
+}
+
+function resolveInsideProjectRoot(input: string): string | null {
+  const root = projectRoot()
+  const resolved = path.resolve(root, input)
+  const realRoot = realpathOrNull(root) ?? root
+  const realResolved = realpathOrNull(resolved) ?? resolved
+  if (realResolved === realRoot) return realResolved
+  return realResolved.startsWith(realRoot + path.sep) ? realResolved : null
+}
 
 export const documentLibrary = tool({
   description:
@@ -47,8 +74,15 @@ export const documentLibrary = tool({
 
       const target = path?.trim()
       if (!target) return 'documentLibrary action:"index" needs a folder or file path.'
-      reportProgress(toolCallId, `Indexing ${target}`)
-      const result = await indexLibrary(target, {
+      const insideProject = resolveInsideProjectRoot(target)
+      if (!insideProject) {
+        return (
+          `documentLibrary can only index paths inside the project directory (${projectRoot()}). ` +
+          `Refusing to index ${target}: it resolves outside the project.`
+        )
+      }
+      reportProgress(toolCallId, `Indexing ${insideProject}`)
+      const result = await indexLibrary(insideProject, {
         recursive: recursive !== false,
         semantic: semantic === true,
         onProgress: (progress) => {

@@ -142,6 +142,9 @@ interface LoadOneArgs {
 }
 
 async function loadOnePlugin(args: LoadOneArgs): Promise<void> {
+  // 一旦解析出 manifest，错误就应该记在真实 id 上（`name@marketplace`），
+  // 否则 `/plugin doctor` 无法把它对上任何 registry 条目。
+  let id = args.fallbackId
   try {
     const discovery = await discoverManifest(args.rootDir)
     if (!discovery) {
@@ -176,7 +179,7 @@ async function loadOnePlugin(args: LoadOneArgs): Promise<void> {
 
     // 规范 id 始终来自 manifest，而非缓存目录名。对已安装插件，它与记录
     // 的 id 一致；对项目本地插件，它可能与目录名不同，此时 manifest 优先。
-    const id = `${manifest.name}@${args.marketplace}`
+    id = `${manifest.name}@${args.marketplace}`
     const enableResolution = args.enableState.resolve(id)
 
     const plugin: LoadedPlugin = {
@@ -190,11 +193,15 @@ async function loadOnePlugin(args: LoadOneArgs): Promise<void> {
       scope: args.scope,
       enabled: enableResolution.enabled,
     }
+    // 先解析贡献再一起写入：若 resolveContributions 抛错，插件不能留在
+    // `plugins` 里——那会让 registry 认为插件“加载成功”，而下游集成
+    // （integration.ts 按 contributions.get(id) 读取）静默拿到空。
+    const resolved = await resolveContributions(plugin)
     args.plugins.push(plugin)
-    args.contributions.set(id, await resolveContributions(plugin))
+    args.contributions.set(id, resolved)
   } catch (err) {
     args.errors.push({
-      id: args.fallbackId,
+      id,
       path: args.rootDir,
       message: errorMessage(err),
     })

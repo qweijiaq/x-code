@@ -11,6 +11,7 @@ import { getUserConfigPath } from '../config/index.js'
 import { XCODE_DIR, debugLog, errorMessage } from '../utils.js'
 import { McpClient } from './client.js'
 import { parseServersBlock } from './config-schema.js'
+import { expandEnvString } from './expand-env.js'
 import { buildCallableName as buildCallable } from './name-mangling.js'
 import {
   type ConnectResult,
@@ -343,13 +344,40 @@ export async function loadMcpServers(options: LoadOptions): Promise<LoadResult> 
   return { registry, configErrors, projectSkipped }
 }
 
+/** 信任视图里的「启动时真正会发生什么」。`projectServers` 到这里还没走过
+ *  `expandEnvDeep`（那发生在 connect 之前），直接展示字面量会让
+ *  `"command": "${XCODE_RUNNER:-curl}"` 在用户眼前是 `${...}`、实际却执行环境
+ *  变量的值（或 fallback）——克隆一个恶意仓库就能绕过信任门。这里就地按用户
+ *  环境展开一次；实在解析不了的（变量未设置、也没 fallback）保留字面量并标注，
+ *  因为那种配置在启动时会让该服务器失败。 */
+function expandForTrustPreview(value: unknown): unknown {
+  if (typeof value === 'string') {
+    try {
+      return expandEnvString(value)
+    } catch {
+      return `${value}  [unresolved — expanded at server start]`
+    }
+  }
+  if (Array.isArray(value)) return value.map((item) => expandForTrustPreview(item))
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = expandForTrustPreview(entry)
+    }
+    return out
+  }
+  return value
+}
+
 async function askForTrust(
   options: LoadOptions,
   projectServers: Record<string, McpServerConfig>,
 ): Promise<TrustChoice> {
   const summaries = Object.entries(projectServers).map(([name, cfg]) => ({
     name,
-    preview: buildServerPreview(cfg as { command?: string; args?: string[]; url?: string }),
+    // buildServerPreview 内部对形状做了自己的 unknown 防御，这里的断言只是
+    // 为了匹配它的参数类型。
+    preview: buildServerPreview(expandForTrustPreview(cfg) as { command?: string; args?: string[]; url?: string }),
   }))
   try {
     return await promptForTrust(options.projectPath, summaries, options.askUser)

@@ -6,6 +6,7 @@
 import { marked } from 'marked'
 
 import { execFile } from 'node:child_process'
+import { realpathSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -15,7 +16,7 @@ import { tool } from 'ai'
 
 import { z } from 'zod'
 
-import { workspaceOutputNote } from '../utils/output-location.js'
+import { isSystemTempPath, workspaceOutputNote } from '../utils/output-location.js'
 import { formatToolError } from '../utils/tool-errors.js'
 import { reportProgress } from './progress.js'
 
@@ -40,6 +41,7 @@ function wrapHtml(body: string, title: string): string {
 <html lang="zh">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
 <title>${escapeHtml(title)}</title>
 <style>
   body { margin: 0; padding: 48px 56px; color: #1c1a16; background: #fff;
@@ -72,6 +74,33 @@ async function toHtml(content: string, contentFormat: 'markdown' | 'html', title
   const body = contentFormat === 'html' ? content : String(await marked.parse(content, { async: false }))
   return wrapHtml(body, title)
 }
+function realpathOrNull(target: string): string | null {
+  try {
+    return realpathSync(target)
+  } catch {
+    return null
+  }
+}
+
+/** 输出路径必须落在工作区内（系统临时目录除外——那是文档里允许的临时交付
+ *  位置，工具结果会附带一条引导回工作区的提醒）。只有“文件不存在”这一条
+ *  限制的话，`~/.zshrc`、`~/.ssh/config`、LaunchAgents 之类的任意写都能绕过
+ *  不覆盖保护，所以这里显式与工作区根比较。目标文件本身必须还不存在，因此
+ *  只能归一化父目录来消除软链逃逸。 */
+function assertOutputLocation(resolved: string): void {
+  const workspace = path.resolve(process.cwd())
+  const realWorkspace = realpathOrNull(workspace) ?? workspace
+  const parent = path.dirname(resolved)
+  const normalized = path.join(realpathOrNull(parent) ?? parent, path.basename(resolved))
+  const insideWorkspace = normalized === realWorkspace || normalized.startsWith(realWorkspace + path.sep)
+  if (!insideWorkspace && !isSystemTempPath(normalized)) {
+    throw new Error(
+      `Output must be inside the working directory (${workspace}) or the system temp directory; ` +
+        `refusing to write ${resolved}`,
+    )
+  }
+}
+
 async function assertWritableOutput(output: string): Promise<void> {
   const exists = await fs
     .access(output)
@@ -129,6 +158,7 @@ export const documentExport = tool({
     try {
       abortSignal?.throwIfAborted()
       const resolved = path.resolve(output)
+      assertOutputLocation(resolved)
       await assertWritableOutput(resolved)
       const documentTitle = title?.trim() || path.basename(resolved, path.extname(resolved))
       reportProgress(toolCallId, `Rendering ${format.toUpperCase()}`)

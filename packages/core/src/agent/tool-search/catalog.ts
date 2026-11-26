@@ -45,6 +45,10 @@ export const DEFERRED_BUILTIN_TOOLS = [
 
 const STANDARD_DEFERRED_BUILTIN_TOOLS = ['task', 'webSearch', 'webFetch'] as const
 
+// Plan 模式只放行只读工具（加上受 `enforcePlanModeBoundary` 严格限制到当前计划
+// 文件的 writeFile/edit）。`lspRename` 会真的重命名整个仓库的符号，而
+// `permissions/authority.ts` 把它归类为 `content-read`——继续放行等于给模型留了
+// 一条绕开只读契约、直接改动仓库的路径（对比下面 MCP 工具的保守处理：不透明即拒绝）。
 const PLAN_MODE_TOOL_NAMES = new Set([
   'readFile',
   'glob',
@@ -53,7 +57,6 @@ const PLAN_MODE_TOOL_NAMES = new Set([
   'lspDiagnostics',
   'lspDefinition',
   'lspReferences',
-  'lspRename',
   'webSearch',
   'webFetch',
   'askUser',

@@ -67,7 +67,11 @@ export function createModelRegistry() {
   const providers: Record<string, any> = {}
   const config = loadUserConfig()
 
-  if (opts.anthropic) providers.anthropic = createAnthropic({ fetch: permanentErrorFetch })
+  // 每个 provider 都显式传 apiKey：`getProviderOptions()` 会接受别名环境变量
+  // （GEMINI_API_KEY / DASHSCOPE_API_KEY / KIMI_API_KEY / ZAI_API_KEY …），而
+  // SDK 工厂只认自己那份规范变量名。不显式传的话，provider 会出现在 /model
+  // 列表里但每个请求都抛 "No API key …"，同时绕过 isHeaderSafeApiKey 的校验。
+  if (opts.anthropic) providers.anthropic = createAnthropic({ apiKey: opts.anthropic, fetch: permanentErrorFetch })
   const openAIAuth = getOpenAIAuthSnapshot()
   if (openAIAuth.context.mode !== 'none') {
     providers.openai = createOpenAI({
@@ -78,11 +82,12 @@ export function createModelRegistry() {
       fetch: createOpenAIAuthFetch(openAIAuth),
     })
   }
-  if (opts.google) providers.google = createGoogle({ fetch: permanentErrorFetch })
-  if (opts.xai) providers.xai = createXai({ fetch: xaiPromptCacheFetch })
-  if (opts.deepseek) providers.deepseek = createDeepSeek({ fetch: permanentErrorFetch })
+  if (opts.google) providers.google = createGoogle({ apiKey: opts.google, fetch: permanentErrorFetch })
+  if (opts.xai) providers.xai = createXai({ apiKey: opts.xai, fetch: xaiPromptCacheFetch })
+  if (opts.deepseek) providers.deepseek = createDeepSeek({ apiKey: opts.deepseek, fetch: permanentErrorFetch })
   if (opts.alibaba) {
     providers.alibaba = createAlibaba({
+      apiKey: opts.alibaba,
       baseURL: config.baseUrls?.alibaba ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
       fetch: permanentErrorFetch,
     })
@@ -130,6 +135,7 @@ export function createModelRegistry() {
       })
     } else {
       providers.moonshotai = createMoonshotAI({
+        apiKey: opts.moonshotai,
         fetch: permanentErrorFetch,
         ...(baseURL ? { baseURL } : {}),
       })

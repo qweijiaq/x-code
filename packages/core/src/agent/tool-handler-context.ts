@@ -1,3 +1,5 @@
+import type { ModelMessage } from 'ai'
+
 import type { ToolHookSnapshot } from '../hooks/bus.js'
 import type { PreparedPeerSend } from '../peers/service.js'
 import type { PreparedShellRequest, ShellHookOrigin } from '../tools/shell-session/types.js'
@@ -21,6 +23,11 @@ export interface ToolHandlerContext {
   parentModel: LanguageModel
   runSubAgentLoop?: SubAgentLoopRunner
   control: ToolExecutionControl
+  /** 本轮迭代的延迟消息队列（见 `processToolCalls`）。处理器需要注入一条
+   *  `role: 'user'` 消息时必须推到这里，而不是直接改 `state.messages`——在两条
+   *  tool-result 之间插入 user 消息会造出 `assistant → tool → user → tool` 的形状，
+   *  DeepSeek 等严格顺序提供方会直接 400。 */
+  deferred?: ModelMessage[]
   authorityApprovedOnce?: boolean
   preparedPeerSend?: PreparedPeerSend
   effectiveCwd?: string

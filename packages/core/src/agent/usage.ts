@@ -156,7 +156,12 @@ export function accumulateChildUsage(parent: LoopState, child: LoopState, fallba
   }
 
   addTokenUsage(parent.tokenUsage, combined)
-  addDelta(parent.usageBreakdown.bySource['sub-agent'], combined)
+  // bySource 同样不一定来自 createUsageBreakdown()：恢复旧会话时它被磁盘上的
+  // JSON 覆盖（session-store 的 hydrateLoopState → cloneUsageBreakdown），历史
+  // 记录里缺少后加入的 source 键（'sub-agent' / 'vision'）。直接 addDelta 会在
+  // 这里抛 TypeError，而调用方（sub-agents/runner.ts 的 try 块）随后又会在
+  // catch 里再累加一次——崩溃叠加重复计费。与 byModel 一致地补桶。
+  addDelta((parent.usageBreakdown.bySource['sub-agent'] ??= emptyUsageDelta()), combined)
   if (modelEntries.length === 0) {
     addDelta((parent.usageBreakdown.byModel[fallbackModelId] ??= emptyUsageDelta()), combined)
     return

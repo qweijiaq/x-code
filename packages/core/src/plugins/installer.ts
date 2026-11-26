@@ -624,17 +624,47 @@ async function withPluginMutationLock<T>(operation: () => Promise<T>): Promise<T
   }
 }
 
+const INSTALLED_PLUGINS_SCHEMA_VERSION = '1'
+
+/** 读取 installed_plugins.json。**只有 ENOENT 才是合法的空注册表**：一次瞬时
+ *  读失败（EACCES/EIO/文件被独占打开）或半损坏的文件如果被折叠成空快照，
+ *  随后的 `recordInstallation` / `uninstallPlugin` 会整文件重写，把用户已有的
+ *  全部安装记录静默抹掉（缓存目录随之变成孤儿），所以这里向上抛错。 */
 async function readInstalledPlugins(): Promise<InstalledPlugins> {
   const file = installedPluginsPath()
+  let raw: string
   try {
-    const raw = await fs.readFile(file, 'utf-8')
-    const parsed = JSON.parse(raw) as InstalledPlugins
-    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.plugins)) {
-      return { schemaVersion: '1', plugins: [] }
+    raw = await fs.readFile(file, 'utf-8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { schemaVersion: INSTALLED_PLUGINS_SCHEMA_VERSION, plugins: [] }
     }
-    return { schemaVersion: parsed.schemaVersion ?? '1', plugins: parsed.plugins }
-  } catch {
-    return { schemaVersion: '1', plugins: [] }
+    throw new InstallError(`cannot read installed_plugins.json (${errorMessage(err)}): ${file}`)
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    throw new InstallError(`installed_plugins.json is not valid JSON (${errorMessage(err)}) — repair or delete ${file}`)
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new InstallError(
+      `installed_plugins.json has unexpected shape (expected an object) — repair or delete ${file}`,
+    )
+  }
+  const source = parsed as Partial<InstalledPlugins>
+  if (!Array.isArray(source.plugins)) {
+    throw new InstallError(`installed_plugins.json has no "plugins" array — repair or delete ${file}`)
+  }
+  // 这个文件是用户可编辑的，也可能被旧版本写坏：逐条过滤，避免一个 null
+  // 元素让 `p.id` 抛 TypeError（表现为难以理解的 InstallError）。
+  const plugins = source.plugins.filter(
+    (plugin): plugin is InstalledPluginRecord =>
+      !!plugin && typeof plugin === 'object' && typeof (plugin as InstalledPluginRecord).id === 'string',
+  )
+  return {
+    schemaVersion: typeof source.schemaVersion === 'string' ? source.schemaVersion : INSTALLED_PLUGINS_SCHEMA_VERSION,
+    plugins,
   }
 }
 
@@ -651,14 +681,22 @@ async function recordInstallation(record: InstalledPluginRecord): Promise<void> 
   await writeInstalledPlugins(data)
 }
 
+// 只读列举发生在启动路径上：注册表损坏时不应让整个插件加载崩掉，但没有这
+// 条记录也绝不能回写成空表——写入路径（recordInstallation / uninstallPlugin）
+// 仍然走 readInstalledPlugins 并如实抛错。
 export async function listInstalledPlugins(): Promise<InstalledPluginRecord[]> {
-  const data = await readInstalledPlugins()
-  return data.plugins
+  try {
+    const data = await readInstalledPlugins()
+    return data.plugins
+  } catch (err) {
+    debugLog('plugins.installed-registry-unreadable', errorMessage(err))
+    return []
+  }
 }
 
 export async function findInstalledPlugin(id: string): Promise<InstalledPluginRecord | undefined> {
-  const data = await readInstalledPlugins()
-  return data.plugins.find((p) => p.id === id)
+  const plugins = await listInstalledPlugins()
+  return plugins.find((p) => p.id === id)
 }
 
 // ── 卸载 ──────────────────────────────────────────────────────────

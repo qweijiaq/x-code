@@ -278,8 +278,13 @@ export function createPeerService(options: PeerServiceOptions = {}): PeerService
     }
     const existingKey = `${sender.registration.instanceId}:${frame.messageId}`
     const existing = inbox.getInboundRecord(existingKey)
+    // 只信任 registry 里已校验的注册信息。帧内字段由对端自己填写，若把它与
+    // registration 做「任一为 bypass 即 bypass」的合并，一个注册为 prompted 的
+    // 对端只要在 message 帧里自报 `senderPermissionClass: 'bypass'`，就能让处于
+    // bypass 的接收方在 auto 策略下直接 accept、跳过 dialog/hold 判定。帧字段
+    // 现在只做一致性校验：两者都是 bypass 才算 bypass，其余一律 fail-closed。
     const senderPermissionClass =
-      frame.senderPermissionClass === 'bypass' || sender.registration.permissionClass === 'bypass'
+      sender.registration.permissionClass === 'bypass' && frame.senderPermissionClass === 'bypass'
         ? 'bypass'
         : 'prompted'
     const disposition =

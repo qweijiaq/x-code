@@ -68,8 +68,29 @@ async function readFile(): Promise<UserConfigFile> {
     debugLog('plugins.user-config-parse-error', String(err))
     throw new Error(`plugin user-config at ${userConfigPath()} is not valid JSON: ${errorMessage(err)}`, { cause: err })
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-  return parsed as UserConfigFile
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    // 结构非法 ≠ "没有配置"：降级成 {} 后写回会抹掉所有插件的 userConfig（含
+    // API key），所以和解析失败走同一条 fail-loud 路径。
+    throw new Error(
+      `plugin user-config at ${userConfigPath()} has an unexpected shape (expected a JSON object of plugin id → values)`,
+    )
+  }
+  // 逐条规整：某 pluginId 的值若不是对象（手工编辑 / 旧版本写入），原样返回会
+  // 让 resolvePluginUserConfigEnv 里的 Object.entries("abc") 产出 "0"/"1"
+  // 这样的环境变量名。无原型对象同时挡住 `__proto__` 键的原型污染。
+  const record = Object.create(null) as UserConfigFile
+  for (const [pluginId, entry] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      debugLog('plugins.user-config-entry-invalid', pluginId)
+      continue
+    }
+    const values = Object.create(null) as PluginUserConfig
+    for (const [key, value] of Object.entries(entry as Record<string, unknown>)) {
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') values[key] = value
+    }
+    record[pluginId] = values
+  }
+  return record
 }
 
 /** 原子写入：先写临时文件再 rename，避免崩溃 / ENOSPC 在正式文件里留下被
@@ -127,8 +148,13 @@ export async function clearPluginUserConfig(pluginId: string): Promise<void> {
  *
  *   - `NODE_OPTIONS` / `NODE_PATH` / `BASH_ENV` / `ENV` / `ZDOTDIR` /
  *     `PYTHONSTARTUP` / `PERL5OPT` / `RUBYOPT` —— 子进程启动即执行指定代码；
- *   - `LD_PRELOAD` / `LD_LIBRARY_PATH` / `DYLD_*` —— 动态链接劫持；
- *   - `GIT_SSH*` / `SSH_ASKPASS` / `GIT_ASKPASS` / `GIT_EXEC_PATH` —— 劫持 git；
+ *   - `LD_*` / `DYLD_*` —— 动态链接劫持（用前缀规则，避免逐个枚举时漏掉
+ *     `DYLD_PRINT_LIBRARIES`、`DYLD_ROOT_PATH` 这类变体）；
+ *   - `GIT_CONFIG*` / `GIT_SSH*` / `SSH_ASKPASS` / `GIT_ASKPASS` /
+ *     `GIT_EXEC_PATH` —— 劫持 git（`GIT_CONFIG_PARAMETERS` 可以注入
+ *     `core.pager` / `core.fsmonitor`，等价于命令执行）；
+ *   - `NODE_TLS_REJECT_UNAUTHORIZED` / `NODE_EXTRA_CA_CERTS` —— 关掉该插件所有
+ *     stdio MCP server 的证书校验 / 注入攻击者 CA（MITM）；
  *   - `PATH` / `PATHEXT` / `COMSPEC` / `IFS` / `HOME` / `SHELL` —— 改写命令解析。
  *
  *  被丢弃的 key 会由调用方（plugins/integration.ts）写进 `mcpErrors`，让
@@ -155,13 +181,26 @@ const RESERVED_USER_CONFIG_ENV_KEYS: ReadonlySet<string> = new Set([
   'DYLD_FRAMEWORK_PATH',
   'DYLD_FALLBACK_LIBRARY_PATH',
   'DYLD_PRINT_ENV',
+  'NODE_TLS_REJECT_UNAUTHORIZED',
+  'NODE_EXTRA_CA_CERTS',
   'GIT_SSH',
   'GIT_SSH_COMMAND',
   'GIT_ASKPASS',
   'GIT_EXEC_PATH',
-  'GIT_CONFIG_GLOBAL',
-  'GIT_CONFIG_SYSTEM',
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_CONFIG',
   'SSH_ASKPASS',
+  'JAVA_TOOL_OPTIONS',
+  '_JAVA_OPTIONS',
+  'JDK_JAVA_OPTIONS',
+  'DOTNET_STARTUP_HOOKS',
+  'DOTNET_ADDITIONAL_DEPS',
+  'PHPRC',
+  'PHP_INI_SCAN_DIR',
+  'KSH_ENV',
+  'ZENV',
+  'PERL5DB',
   'PATH',
   'PATHEXT',
   'COMSPEC',
@@ -171,9 +210,15 @@ const RESERVED_USER_CONFIG_ENV_KEYS: ReadonlySet<string> = new Set([
   'ELECTRON_RUN_AS_NODE',
 ])
 
+/** 前缀黑名单：逐个枚举必然漏掉变体（`DYLD_ROOT_PATH`、
+ *  `GIT_CONFIG_PARAMETERS`、`LD_AUDIT` …），所以整族拒绝。 */
+const RESERVED_USER_CONFIG_ENV_PREFIXES: readonly string[] = ['DYLD_', 'LD_', 'GIT_CONFIG']
+
 /** 该环境变量名是否被 userConfig 通道拒绝（Windows 的环境变量名大小写不敏感）。 */
 export function isReservedUserConfigEnvKey(key: string): boolean {
-  return RESERVED_USER_CONFIG_ENV_KEYS.has(key.toUpperCase())
+  const upper = key.toUpperCase()
+  if (RESERVED_USER_CONFIG_ENV_KEYS.has(upper)) return true
+  return RESERVED_USER_CONFIG_ENV_PREFIXES.some((prefix) => upper.startsWith(prefix))
 }
 
 /** {@link getPluginUserConfigEnv} 的完整结果：可用变量 + 因命名危险而被丢弃的

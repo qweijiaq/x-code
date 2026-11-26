@@ -17,11 +17,18 @@ type ToolResultPartLike = {
   output?: { type?: string; value?: unknown }
 }
 
+/** 所有坍缩占位符共用的尾缀。判定「已坍缩」必须只看这个与 reason 无关的尾缀：
+ *  `collapseStaleToolResults` 写 `[Older …]`、`collapseConsumedToolResults` 写
+ *  `[Consumed …]`，若按完整占位符比对，同一条较早的 visual-check 结果会先被写成
+ *  Older、随即被改成 Consumed、下一轮又被改回 Older——两个函数每轮都返回
+ *  changed=true，持续触发 markExpectedCacheMiss('transcript-rewrite')，prompt cache
+ *  每轮全量失效，正好与本模块的目的相反。 */
+const DROPPED_SUFFIX = 'result dropped to save context.]'
+
 function collapsePart(part: ToolResultPartLike, suffix: string, reason: string): boolean {
-  const placeholder = `[${reason} ${suffix} result dropped to save context.]`
   const out = part.output
-  if (out?.type === 'text' && out.value === placeholder) return false
-  part.output = { type: 'text', value: placeholder }
+  if (out?.type === 'text' && typeof out.value === 'string' && out.value.endsWith(DROPPED_SUFFIX)) return false
+  part.output = { type: 'text', value: `[${reason} ${suffix} ${DROPPED_SUFFIX}` }
   return true
 }
 

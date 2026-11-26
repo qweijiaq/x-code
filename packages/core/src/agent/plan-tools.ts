@@ -2,6 +2,8 @@
 //
 // 从 tool-execution.ts 抽出，以免 handleToolCall 体积失控。每个处理器遵循同一契约：
 // 修改 state + 通过 pushToolResult 推送结果，并返回 void。
+import type { ModelMessage } from 'ai'
+
 import type { AgentCallbacks, AgentOptions, TodoItem } from '../types/index.js'
 import { extractText } from '../utils/message-helpers.js'
 import { markExpectedCacheMiss } from './cache-stats.js'
@@ -155,7 +157,7 @@ export async function handleEnterPlanMode(
     // state.taskSlug 走的已经是 generateTaskSlug，这里与之对齐。
     const topicSlug = topic && topic.length > 0 ? generateTaskSlug(topic) : ''
     const explicitSlug = topicSlug || state.taskSlug || undefined
-    state.currentPlanPath = makePlanFilePath(fallbackText, { slug: explicitSlug })
+    state.currentPlanPath = makePlanFilePath(fallbackText, { slug: explicitSlug, projectCwd: state.projectCwd })
   }
   callbacks.onPlanModeChange('plan')
   pushToolResult(
@@ -186,6 +188,12 @@ export async function handleExitPlanMode(
   state: LoopState,
   callbacks: AgentCallbacks,
   pushToolResult: PushToolResult,
+  /** 本轮迭代的延迟消息队列。批准后注入的那条 user 消息必须走它：exitPlanMode
+   *  可能与同批次其他 tool_call 一起分发（`processToolCalls` 按批次处理），就地
+   *  推 `state.messages` 会形成 `assistant → tool result → user → tool result`，
+   *  DeepSeek 等严格顺序提供方会以 400 拒绝。缺失时退回就地推入（直接调用
+   *  处理器、没有迭代队列的场景）。 */
+  deferred?: ModelMessage[],
 ): Promise<void> {
   if (state.permissionMode !== 'plan') {
     pushToolResult(
@@ -200,7 +208,10 @@ export async function handleExitPlanMode(
   }
   const planPath =
     state.currentPlanPath ??
-    makePlanFilePath(lastUserMessageText(state.messages), { slug: state.taskSlug || undefined })
+    makePlanFilePath(lastUserMessageText(state.messages), {
+      slug: state.taskSlug || undefined,
+      projectCwd: state.projectCwd,
+    })
   state.currentPlanPath = planPath
   const planOverride = (input.plan as string | undefined)?.trim()
   let planBody = planOverride ?? ''
@@ -224,7 +235,7 @@ export async function handleExitPlanMode(
   let savedPath: string | null = planPath
   if (planOverride) {
     try {
-      savedPath = await writePlan(planPath, planBody)
+      savedPath = await writePlan(planPath, planBody, state.projectCwd)
       state.currentPlanPath = savedPath
     } catch {
       // 非致命——批准对话框使用内存中的正文。但必须让下游知道磁盘上没有副本：
@@ -263,7 +274,7 @@ export async function handleExitPlanMode(
         .filter(Boolean)
         .join('\n'),
     )
-    state.messages.push({
+    const exitedPlanModeMessage: ModelMessage = {
       role: 'user',
       content: [
         '## Exited Plan Mode',
@@ -277,7 +288,9 @@ export async function handleExitPlanMode(
       ]
         .filter(Boolean)
         .join('\n'),
-    })
+    }
+    if (deferred) deferred.push(exitedPlanModeMessage)
+    else state.messages.push(exitedPlanModeMessage)
     return
   }
   pushToolResult(

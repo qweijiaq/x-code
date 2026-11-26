@@ -89,16 +89,24 @@ export async function discoverLocalModels(force = false): Promise<LocalModelInfo
   if (!force && lastDiscoveryAt > 0 && Date.now() - lastDiscoveryAt < DISCOVERY_CACHE_MS) {
     return lastDiscovery
   }
-  const results = await Promise.allSettled([probeOllama(), probeLmStudio()])
-  const models: LocalModelInfo[] = []
-  for (const result of results) {
-    if (result.status === 'fulfilled') models.push(...result.value)
+  const [ollama, lmstudio] = await Promise.allSettled([probeOllama(), probeLmStudio()])
+  // 只有探测成功的 provider 才有资格覆盖自己的旧条目：本地服务器短暂重启、
+  // 或这次探测只是超时，不应把之前已发现的模型全部清空——那会让正在用的会话
+  // 突然拿不到模型，而且这个空结果还会被缓存 30s。
+  const freshProviders = new Set<LocalProvider>()
+  if (ollama.status === 'fulfilled') freshProviders.add('ollama')
+  if (lmstudio.status === 'fulfilled') freshProviders.add('lmstudio')
+
+  for (const [id, info] of [...discovered]) {
+    if (freshProviders.has(info.provider)) discovered.delete(id)
   }
-  discovered.clear()
-  for (const model of models) discovered.set(model.id, model)
-  lastDiscovery = models
+  for (const result of [ollama, lmstudio]) {
+    if (result.status !== 'fulfilled') continue
+    for (const model of result.value) discovered.set(model.id, model)
+  }
+  lastDiscovery = [...discovered.values()]
   lastDiscoveryAt = Date.now()
-  return models
+  return lastDiscovery
 }
 
 export function localModelInfos(): LocalModelInfo[] {
@@ -114,11 +122,13 @@ export function localProviderOf(id: string): LocalProvider | null {
 function createLocalModel(id: string): LanguageModel | null {
   const provider = localProviderOf(id)
   if (!provider) return null
-  const info = discovered.get(id)
-  if (!info) return null
   const model = id.slice(provider.length + 1)
   if (!model) return null
-  return createLocalOpenAICompatibleModel(provider, info.baseUrl, model)
+  // baseUrl 可以直接由环境推导，不必依赖发现结果：否则发现超时/未触发时
+  // 会回落到核心注册表，抛出一个与真实原因无关的「provider not found」，
+  // 而不是「本地 Ollama 没在运行」。
+  const baseUrl = discovered.get(id)?.baseUrl ?? openAiBase(provider === 'ollama' ? ollamaRoot() : lmStudioRoot())
+  return createLocalOpenAICompatibleModel(provider, baseUrl, model)
 }
 
 /** 包装核心注册表，使 `<local>:<model>` id 解析到本地服务器。

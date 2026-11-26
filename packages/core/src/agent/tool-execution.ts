@@ -164,7 +164,14 @@ async function executeWriteTool(
         )
     }
 
-    const newContent = replaceAll ? content.replaceAll(oldString, newString) : content.replace(oldString, newString)
+    // 第二个参数用函数形式：字符串形式会被 String.prototype.replace 当作替换模板，
+    // 解释 `$$` / `$&` / `` $` `` / `$'` / `$n` / `$<name>`。本工具正是用来编辑源码的，
+    // `newString` 里出现这些序列完全正常（例如模型正在写 `str.replace(/x/g, '$&y')`
+    // 或正则替换片段），字符串形式会写进 `&`、匹配前/后文本等意外内容；同文件的
+    // `applyBatchEdits` 用 slice 拼接、语义正确，两条路径必须对同一份输入给出同样结果。
+    const newContent = replaceAll
+      ? content.replaceAll(oldString, () => newString)
+      : content.replace(oldString, () => newString)
     await applyEdit(content, newContent)
 
     return `File edited: ${filePath}${workspaceOutputNote(filePath)}`
@@ -669,8 +676,8 @@ const BYPASS_LOOP_GUARD_HANDLERS: Record<string, ToolHandler> = {
     handleTodoWrite(input, toolCallId, state, callbacks, pushToolResult),
   enterPlanMode: ({ input, toolCallId, state, options, callbacks }) =>
     handleEnterPlanMode(input, toolCallId, state, options, callbacks, pushToolResult),
-  exitPlanMode: ({ input, toolCallId, state, callbacks }) =>
-    handleExitPlanMode(input, toolCallId, state, callbacks, pushToolResult),
+  exitPlanMode: ({ input, toolCallId, state, callbacks, deferred }) =>
+    handleExitPlanMode(input, toolCallId, state, callbacks, pushToolResult, deferred),
   shellOutput: handleShellOutput,
   killShell: handleKillShell,
 }
@@ -824,13 +831,15 @@ async function checkToolPermission(ctx: HandlerCtx): Promise<boolean> {
     })
   }
 
-  if (ctx.authorityApprovedOnce && state.executionAuthority.peerTainted) {
-    audit('allow-once', 'peer allow-once approval')
-    return true
-  }
-
   const isWriteOrShell = toolName === 'writeFile' || toolName === 'edit' || toolName === 'shell'
 
+  // 策略类检查（managed-memory 写入边界、只读子代理策略、shell 关键字黑名单）
+  // 必须排在 `authorityApprovedOnce` 早退之前。checkCentralAuthority 在
+  // checkToolPermission 之前运行，并在同一次调用里把 ctx.authorityApprovedOnce
+  // 置为 true；它的语义只是“免除一次人工确认弹窗”，绝不能等同于放开执行策略，
+  // 否则凡发生过 peer 影响的授权批准，这次 shell 调用就会同时跳过
+  // `shellReadOnlyOnly`（可跑 rm -rf / git push）、`shellRestrictions` 黑名单和
+  // managed-memory 写入边界。
   if (isWriteOrShell && isManagedMemoryMutation(toolName, input, options.memoryService?.memoryRoot, state.projectCwd)) {
     pushToolResult(
       state,
@@ -881,6 +890,13 @@ async function checkToolPermission(ctx: HandlerCtx): Promise<boolean> {
       audit('deny', `subagent-shell-restriction:${deniedKeyword}`)
       return false
     }
+  }
+
+  // 上面三道策略检查通过之后才轮到授权早退：一次 peer 影响的 allow-once 决定
+  // 只跳过下面的交互式确认（checkPermissionDetailed）。
+  if (ctx.authorityApprovedOnce && state.executionAuthority.peerTainted) {
+    audit('allow-once', 'peer allow-once approval')
+    return true
   }
 
   const { approved, feedback } = await checkPermissionDetailed(
@@ -1102,6 +1118,7 @@ async function handleToolCall(
     parentModel,
     runSubAgentLoop,
     control,
+    deferred,
   }
 
   anchorWriteTarget(ctx)
@@ -1284,10 +1301,12 @@ const PLAN_MODE_EXECUTABLE_TOOLS = new Set([
   'exitPlanMode',
   // 只读 LSP 工具在 plan 模式对探索有帮助；此前它们出现在工具面里、
   // 却在这里被拒绝，导致模型多一次无效往返。
+  // `lspRename` 不在此列：它会重命名整个仓库的符号，而 `enforcePlanModeBoundary`
+  // 只对 writeFile/edit 限制写入目标，权限表又把 lspRename 当成 `content-read`，
+  // 放行它等于留了一条绕开 plan 模式只读契约的写路径。
   'lspDiagnostics',
   'lspDefinition',
   'lspReferences',
-  'lspRename',
 ])
 
 function sameResolvedPath(left: string, right: string): boolean {

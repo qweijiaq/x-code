@@ -121,7 +121,16 @@ function onRequest(request: PdfRenderRequest): void {
       if (shouldClose || !sent) closeChannel()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      await send({ id: request.id, ok: false, error: `PDF render worker internal error: ${message}` }).catch(() => {})
+      const fallbackId = typeof request?.id === 'number' ? request.id : -1
+      try {
+        // `send()` 在 parentPort 分支里是同步 postMessage：端口已关闭时会【同步】
+        // 抛 ERR_CLOSED_MESSAGE_PORT，`.catch()` 兜不住。同步抛出会从本 catch 块
+        // 直接逸出，让 `queue` 变成 rejected promise——后续请求的回调被永久跳过
+        // （父端只能等 30s 超时），unhandled rejection 还会直接杀掉 worker。
+        await send({ id: fallbackId, ok: false, error: `PDF render worker internal error: ${message}` })
+      } catch {
+        // 通道已不可用，丢弃即可，绝不能让 queue 变成 rejected promise。
+      }
       try {
         closeChannel()
       } catch {

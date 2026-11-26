@@ -130,6 +130,16 @@ Guidelines:
 - Be specific: "line 42: array index not bounds-checked" not "consider adding validation"`,
     tools: ['readFile', 'glob', 'grep', 'listDir', 'shell'],
     shellRestrictions: SHELL_DENY_KEYWORDS,
+    // 与 `explore` / `goal-verifier` 一致：这个代理没有 writeFile/edit，描述与提示词
+    // 承诺的都是“看 diff、返回 punch list”，即事实上的只读代理。而子串 denylist
+    // 挡不住 `git clean -fdx`、`git checkout main` / `git checkout -- <path>`、
+    // `git restore`、`git stash`、`sed -i`、`dd if=… of=…`（不含 `>`）、
+    // `npm install`（改 lockfile/node_modules）——每一条都能静默改动用户工作区。
+    // 改成 isReadOnly() 白名单后 `git diff` / `git log` / `git show` 仍然可用，
+    // 这正是本代理复核未提交改动所需的全部 shell 能力；如果将来确实需要它跑
+    // 构建或测试（`pnpm test` 会被只读白名单挡掉），必须在这里显式放宽并写明理由，
+    // 否则读者会误以为它和 explore 同等只读。
+    shellReadOnlyOnly: true,
     maxTurns: 25,
     source: 'built-in',
   },

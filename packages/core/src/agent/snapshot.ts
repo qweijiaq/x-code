@@ -555,12 +555,14 @@ export async function getDiffStatsForCheckpoint(
   } catch {
     return null
   }
-  let manifest: Manifest
-  try {
-    manifest = JSON.parse(raw) as Manifest
-  } catch {
-    return null
-  }
+  // 与 restoreCheckpoint 复用同一套校验：清单被截断/改写成 `{}`、`null` 或
+  // `files` 不是对象时，裸 JSON.parse 成功但随后的 Object.keys(manifest.files)
+  // 会抛 TypeError，破坏本函数「清单不可读时返回 null」的契约（调用方
+  // use-session-controller 的 getDiffStats 没有 try/catch，最终变成 UI 侧的
+  // 未捕获 rejection）。parseManifest 还会校验 ckptId 一致性、键的绝对路径与
+  // hash 形状。
+  const manifest = parseManifest(raw, ckptId)
+  if (!manifest) return null
 
   let origins: OriginManifest
   try {

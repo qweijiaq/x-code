@@ -493,12 +493,85 @@ async function isFreshEnough(filePath: string, maxAgeMs: number): Promise<boolea
   }
 }
 
-async function fetchHttpJson(url: string, signal?: AbortSignal): Promise<string> {
-  const res = await fetch(url, { signal })
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText} fetching ${url}`)
+/** 市场索引（marketplace.json）的大小上限。这是远端可控内容，`res.text()`
+ *  一次性读进内存会变成 OOM 面。 */
+const MAX_MARKETPLACE_BYTES = 5 * 1024 * 1024
+const MAX_MARKETPLACE_REDIRECTS = 5
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase()
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
+}
+
+/** 订阅 URL 只允许 https（回环地址例外，方便本地调试）。返回归一化后的 URL。 */
+function assertSecureMarketplaceUrl(target: string, base?: string): URL {
+  let url: URL
+  try {
+    url = base === undefined ? new URL(target) : new URL(target, base)
+  } catch {
+    throw new Error(`marketplace URL is not a valid URL: ${target}`)
   }
-  return res.text()
+  if (url.protocol === 'https:') return url
+  if (url.protocol === 'http:' && isLoopbackHost(url.hostname)) return url
+  throw new Error(`marketplace subscriptions must use https:// (got ${url.protocol}//${url.host} in ${target})`)
+}
+
+async function readBoundedText(res: Response, url: string): Promise<string> {
+  const declared = Number(res.headers.get('content-length') ?? Number.NaN)
+  if (Number.isFinite(declared) && declared > MAX_MARKETPLACE_BYTES) {
+    await res.body?.cancel().catch(() => {})
+    throw new Error(`marketplace index at ${url} is ${declared} bytes, over the ${MAX_MARKETPLACE_BYTES} limit`)
+  }
+  const reader = res.body?.getReader()
+  if (!reader) return ''
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      total += value.byteLength
+      if (total > MAX_MARKETPLACE_BYTES) {
+        throw new Error(`marketplace index at ${url} exceeds the ${MAX_MARKETPLACE_BYTES} byte limit`)
+      }
+      chunks.push(value)
+    }
+  } finally {
+    // 提前中断（超限 / abort）时释放连接；正常读完时是空操作。
+    await reader.cancel().catch(() => {})
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks))
+}
+
+/** 拉取市场索引。只放行 https，且**手动**处理重定向并对每一跳重新校验——
+ *  `fetch` 默认跟随重定向，一个 https 订阅可以被 302 到 http://，服务端（或
+ *  中间人）就能改写每个插件的 `source`，配合安装器就是远程代码投毒。 */
+async function fetchHttpJson(url: string, signal?: AbortSignal): Promise<string> {
+  let current = assertSecureMarketplaceUrl(url)
+  for (let hop = 0; hop <= MAX_MARKETPLACE_REDIRECTS; hop += 1) {
+    const res = await fetch(current, { signal, redirect: 'manual' })
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location')
+      await res.body?.cancel().catch(() => {})
+      if (!location) {
+        throw new Error(`HTTP ${res.status} redirect without a Location header fetching ${current.href}`)
+      }
+      current = assertSecureMarketplaceUrl(location, current.href)
+      continue
+    }
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {})
+      throw new Error(`HTTP ${res.status} ${res.statusText} fetching ${current.href}`)
+    }
+    const contentType = (res.headers.get('content-type') ?? '').toLowerCase()
+    if (contentType && !/json|text\/plain/.test(contentType)) {
+      await res.body?.cancel().catch(() => {})
+      throw new Error(`expected a JSON marketplace index at ${current.href}, got content-type ${contentType}`)
+    }
+    return readBoundedText(res, current.href)
+  }
+  throw new Error(`too many redirects (${MAX_MARKETPLACE_REDIRECTS}) fetching ${url}`)
 }
 
 /** 把给定来源的仓库克隆进临时目录（depth 1），返回市场索引的内容。先探测
@@ -577,7 +650,10 @@ export function githubSourceRef(source: string): string | undefined {
 /** `git clone` 接受的来源形式。本地绝对路径（POSIX / Windows 盘符 / UNC）
  *  也放行——测试与离线安装依赖 `git clone /path`。 */
 const SAFE_CLONE_URL_PATTERNS: ReadonlyArray<RegExp> = [
-  /^https?:\/\//i,
+  // 只放行 https：明文 http 克隆的市场来源可被改写（中间人 / 被攻陷的镜像），
+  // 配合安装器就是远程代码投毒。回环地址单独放行，方便本地调试。
+  /^https:\/\//i,
+  /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\//i,
   /^ssh:\/\//i,
   /^git:\/\//i,
   /^git\+ssh:\/\//i,
@@ -613,7 +689,9 @@ export function assertSafeCloneUrl(url: string): string {
     throw new Error(`refusing to clone a source that looks like a git option: ${candidate}`)
   }
   if (!SAFE_CLONE_URL_PATTERNS.some((pattern) => pattern.test(candidate))) {
-    throw new Error(`unsupported clone URL scheme: ${candidate} (only https/http/ssh/git/file URLs and local paths)`)
+    throw new Error(
+      `unsupported clone URL scheme: ${candidate} (only https/ssh/git/file URLs, loopback http, and local paths)`,
+    )
   }
   return candidate
 }

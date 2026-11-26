@@ -409,6 +409,64 @@ async function extractZippedOfficeText(archive: Buffer, kind: OfficeKind, abortS
   return parts.join('\n\n')
 }
 
+/** docx 正文 XML 的单入口上限。docx 的压缩比可以极高（几百 KB 的源文件解出数十 MB
+ *  的 `word/document.xml`），而 mammoth 的提取既不支持流式/回调，也不响应
+ *  abortSignal：一旦调用，整份 XML 与提取出的正文会同时留在内存里，调用方
+ *  `ingestFile` 直到提取结束才能用 `Buffer.byteLength` 判定超限——内存早就分配完了。
+ *  取 8 倍 `MAX_INGEST_BYTES`：XML 里的标记通常把正文放大数倍，任何正常情况下能被
+ *  `ingestFile` 接受的 docx 都远低于这个量级，不会被误拒。 */
+const MAX_DOCX_TEXT_XML_BYTES = 8 * MAX_INGEST_BYTES
+
+/** 在交给 mammoth 之前，用 fflate 的 filter（解压【之前】就能拿到 originalSize）
+ *  预检 docx 正文档的大小，避免把注定超限的文档整份解出来。所有条目都返回 false，
+ *  因此这一步不产生任何解压分配。 */
+async function assertDocxBodyWithinLimit(archive: Buffer, filePath: string, abortSignal?: AbortSignal): Promise<void> {
+  const { unzip } = await import('fflate')
+  await new Promise<void>((resolve, reject) => {
+    let settled = false
+    let terminate = (): void => {}
+    const finish = (error?: Error | null): void => {
+      if (settled) return
+      settled = true
+      abortSignal?.removeEventListener('abort', onAbort)
+      if (error) reject(error)
+      else resolve()
+    }
+    const onAbort = (): void => {
+      terminate()
+      finish(abortSignal?.reason instanceof Error ? abortSignal.reason : new Error('Office extraction aborted'))
+    }
+    // 与 detectOfficeKindFromArchive 相同：在 filter 里 throw 不会走 unzip 的
+    // 错误回调，Promise 会永远挂着——必须显式 settle 后再 terminate。
+    const limitExceeded = (error: Error): false => {
+      finish(error)
+      terminate()
+      return false
+    }
+    terminate = unzip(
+      archive,
+      {
+        filter: (entry) => {
+          const name = entry.name.replace(/^\/+/, '').toLowerCase()
+          if (name !== 'word/document.xml') return false
+          if (!Number.isSafeInteger(entry.originalSize) || entry.originalSize < 0) {
+            return limitExceeded(new Error('Office archive contains an invalid entry size'))
+          }
+          if (entry.originalSize > MAX_DOCX_TEXT_XML_BYTES) {
+            return limitExceeded(new FileSizeLimitError(filePath, entry.originalSize, MAX_DOCX_TEXT_XML_BYTES))
+          }
+          return false
+        },
+      },
+      (error) => finish(error),
+    )
+    if (!settled) {
+      abortSignal?.addEventListener('abort', onAbort, { once: true })
+      if (abortSignal?.aborted) onAbort()
+    }
+  })
+}
+
 export type OfficeExtractionResult = { ok: true; text: string } | { ok: false; text: string }
 
 /** 用有界的格式专用解析器从 Office 文档提取文本。 */
@@ -429,8 +487,13 @@ export async function extractOfficeTextResult(
       }
     }
     if (kind === 'docx') {
+      // 先按上限预检正文入口（pptx/ODF 走 extractZippedOfficeText 的提前终止，
+      // docx 此前是唯一没有边界的路径），再响应 abortSignal：mammoth 没有中断入口，
+      // 提取结束后调用方可能早已取消。
+      await assertDocxBodyWithinLimit(archive, filePath, abortSignal)
       const mammoth = await import('mammoth')
       const result = await mammoth.extractRawText({ buffer: archive })
+      abortSignal?.throwIfAborted()
       return { ok: true, text: result.value }
     }
     if (kind === 'xlsx') {

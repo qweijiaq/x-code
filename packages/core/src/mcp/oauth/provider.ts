@@ -53,6 +53,8 @@ export class McpOAuthProvider implements OAuthClientProvider {
   /** 当前运行中的回调服务器。我们保留句柄，使（第一次尝试失败后的）第二次
    *  redirectToAuthorization 调用复用同一端口，而不是再开一个监听器。 */
   private callbackServer: RunningCallbackServer | null = null
+  /** 进行中的回调服务器启动（共享给并发调用者，见 ensureCallbackServer）。 */
+  private callbackServerStart: Promise<RunningCallbackServer> | null = null
   /** PKCE verifier——仅保存在内存中，每次新流程都会替换。 */
   private memoryCodeVerifier: string | null = null
   /** SDK 将在 transport 上通过 `finishAuth` 消费的待处理回调。
@@ -215,9 +217,22 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   // ── 内部实现 ──────────────────────────────────────────────────────────
 
+  /** 记忆化**进行中的启动**，而不只是结果：`startCallbackServer()` 内部要等
+   *  `listen` 回调，而同一个 provider 实例会被并发驱动（provider 由 loader 按
+   *  serverName 长期缓存；`/mcp auth <name>` 与启动期被动重连、或用户连按两次
+   *  `/mcp auth` 都会命中它）。只看 `this.callbackServer` 的话，两个调用都会
+   *  看到 null、各自 `listen(0)` 起一个服务器：后返回的覆盖前者，先起的监听器
+   *  成为孤儿——端口和 socket 一直占用到 callback-server 内部 5 分钟超时才被
+   *  回收，而 `redirectUrl` / `clientMetadata` 可能读到孤儿服务器的 URL，授权
+   *  服务器就会把回调打到没人在等的端口上。 */
   private async ensureCallbackServer(): Promise<void> {
     if (this.callbackServer) return
-    this.callbackServer = await startCallbackServer()
+    try {
+      this.callbackServer ??= await (this.callbackServerStart ??= startCallbackServer())
+    } finally {
+      // 启动失败要清掉，否则后续重试会永久复用同一个 rejected promise。
+      this.callbackServerStart = null
+    }
   }
 }
 

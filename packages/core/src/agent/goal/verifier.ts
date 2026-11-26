@@ -410,7 +410,12 @@ function hasDeniedSubAgentRestriction(text: string): boolean {
 }
 
 function requestsDestructiveVerification(prompt: string): boolean {
-  return /(?:\brm\s+(?:-[a-z]*[rf][a-z]*\s+)+|\bdel\s+\/|\brmdir\s+\/s\b|\bremove-item\b[^\n]*(?:-recurse|-force)|\bgit\s+(?:reset\s+--hard|clean\s+-[a-z]*f)|\bformat(?:\.com)?\b|\bdrop\s+(?:table|database)\b)/i.test(
+  // `format` 这个词必须收紧：裸词匹配会把 "output/JSON format"、"code format
+  // check" 这类极常见的校验指令误判成「要求破坏性操作」，而调用方拿到
+  // `retryable: false` 后会把 goal 直接置为 blocked——一个几乎无法排查的硬失败。
+  // 只认真正的格式化命令：`format C:` / `format /q`（Windows 命令）与
+  // `format.com`（站点/命令名）。
+  return /(?:\brm\s+(?:-[a-z]*[rf][a-z]*\s+)+|\bdel\s+\/|\brmdir\s+\/s\b|\bremove-item\b[^\n]*(?:-recurse|-force)|\bgit\s+(?:reset\s+--hard|clean\s+-[a-z]*f)|\bformat\s+(?:[a-z]:|\/[a-z])|\bformat\.com\b|\bdrop\s+(?:table|database)\b)/i.test(
     prompt,
   )
 }

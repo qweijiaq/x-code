@@ -6,8 +6,13 @@ import { isReadOnly, splitShellCommands } from '../tools/shell-utils.js'
 const MEMORY_MUTATING_COMMAND_RE =
   /(?:^|[\s;|&])(?:add-content|copy-item|mkdir|move-item|mv|new-item|out-file|remove-item|rename-item|rm|sed\s+-i|set-content|tee|touch|truncate)\b/i
 
-function normalizePath(value: string): string {
-  const resolved = path.resolve(value).replace(/\\/g, '/')
+/** `baseCwd` 决定相对路径的解析基准。工具入参里的 `filePath`/`path`/`dirPath`
+ *  常是相对 projectCwd 的，而 `path.resolve(value)` 用的是 process.cwd()——
+ *  两者不同时边界会判到错误的目录树上：`memory/profile.md`（相对 projectCwd
+ *  恰好在受管目录内）被判为「与记忆无关」，单一写入者约束被绕过、受管记忆内容
+ *  作为普通工具输出泄漏到聊天；反过来也会误判拒绝。 */
+function normalizePath(value: string, baseCwd?: string): string {
+  const resolved = path.resolve(baseCwd ?? process.cwd(), value).replace(/\\/g, '/')
   // POSIX 文件系统大小写敏感：只有 Windows 才需要折叠大小写。否则
   // `/home/u/.X-CODE/MEMORY` 会被当成受管记忆目录——对
   // isManagedMemoryAccess 而言后果更严重（合法工具输出会被静默丢弃）。
@@ -21,8 +26,10 @@ function normalizeCommandText(command: string): string {
   return process.platform === 'win32' ? slashed.toLowerCase() : slashed
 }
 
-function isPathInside(filePath: string, root: string): boolean {
-  const file = normalizePath(filePath)
+function isPathInside(filePath: string, root: string, baseCwd?: string): boolean {
+  // `memoryRoot` 始终是绝对路径（resolveMemoryRoot 的产物），只有待判定的
+  // `filePath` 可能需要按 projectCwd 解析。
+  const file = normalizePath(filePath, baseCwd)
   const directory = normalizePath(root)
   return file === directory || file.startsWith(directory + '/')
 }
@@ -128,7 +135,7 @@ export function isManagedMemoryMutation(
   if (!memoryRoot) return false
   if (toolName === 'writeFile' || toolName === 'edit') {
     const filePath = typeof input.filePath === 'string' ? input.filePath : ''
-    return Boolean(filePath) && isPathInside(filePath, memoryRoot)
+    return Boolean(filePath) && isPathInside(filePath, memoryRoot, projectCwd)
   }
   if (toolName !== 'shell') return false
 
@@ -185,7 +192,9 @@ export function isManagedMemoryAccess(
     listDir: ['dirPath'],
   }
   const keys = pathKeys[toolName]
-  if (keys?.some((key) => typeof input[key] === 'string' && isPathInside(input[key] as string, memoryRoot))) {
+  if (
+    keys?.some((key) => typeof input[key] === 'string' && isPathInside(input[key] as string, memoryRoot, projectCwd))
+  ) {
     return true
   }
   if (toolName !== 'shell') return false

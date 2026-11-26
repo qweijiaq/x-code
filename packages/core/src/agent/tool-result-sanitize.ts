@@ -367,24 +367,65 @@ export function repairOrphanTrackedToolCalls(entries: TrackedModelMessage[]): bo
     })
   }
   if (orphanParts.length === 0) return changed
-  const tail = entries[entries.length - 1]
-  if (tail?.message.role === 'tool' && Array.isArray(tail.message.content)) {
-    entries[entries.length - 1] = {
-      ...tail,
-      message: {
-        ...tail.message,
-        content: [...(tail.message.content as unknown[]), ...(orphanParts as unknown[])],
-      } as ModelMessage,
-    }
-  } else {
-    entries.push(
-      createTrackedMessage(
-        { role: 'tool', content: orphanParts as never } as ModelMessage,
-        mergeProvenance(provenanceSources),
-      ),
+  // 与 `repairOrphanToolCalls` 保持一致：合成结果必须紧跟拥有该 tool_call 的
+  // assistant 批次，不能一律追加到数组尾部。上面的反向孤儿调和会把中间的 tool
+  // 消息换成 user 占位符，而 abort 竞态还会留下 `assistant(A tool_call) → user`
+  // （A 没有任何真实结果，搬迁预过滤是 no-op）。此时若把结果推到尾部，得到的是
+  // `assistant(A) → user → tool(A)`，Anthropic 仍以 tool_use 未配对/顺序错误 400
+  // 拒绝请求——正是本函数想预防的错误。
+  const byOwner = new Map<number, typeof orphanParts>()
+  for (const part of orphanParts) {
+    const ownerIndex = findToolCallOwnerIndex(
+      entries.map((entry) => entry.message),
+      part.toolCallId,
     )
+    const bucket = byOwner.get(ownerIndex)
+    if (bucket) bucket.push(part)
+    else byOwner.set(ownerIndex, [part])
+  }
+  // 从后往前插入，这样尚未处理的（更靠前的）下标保持有效。
+  for (const ownerIndex of [...byOwner.keys()].sort((a, b) => b - a)) {
+    insertTrackedToolResultsAfterOwner(entries, ownerIndex, byOwner.get(ownerIndex)!, provenanceSources)
   }
   return true
+}
+
+/** 在 `ownerIndex` 这条 assistant 之后的连续 tool 消息块末尾插入合成结果，
+ *  保持 entryId/provenance 结构。并入已有 tool 条目时用
+ *  `mergeProvenance([已有条目, ...来源])` 调和归属：直接沿用尾部条目自身的
+ *  provenance 会把别的批次（甚至 derivedFromPeer 污点状态与真实来源不符）的
+ *  归因带进这条合成结果。 */
+function insertTrackedToolResultsAfterOwner(
+  entries: TrackedModelMessage[],
+  ownerIndex: number,
+  parts: ReadonlyArray<{
+    type: 'tool-result'
+    toolCallId: string
+    toolName: string
+    output: { type: 'text'; value: string }
+  }>,
+  provenanceSources: readonly TrackedModelMessage[],
+): void {
+  if (parts.length === 0) return
+  let insertAt = ownerIndex < 0 ? entries.length : ownerIndex + 1
+  while (insertAt < entries.length && entries[insertAt]?.message.role === 'tool') insertAt++
+  const preceding = entries[insertAt - 1]
+  if (preceding?.message.role === 'tool' && Array.isArray(preceding.message.content)) {
+    entries[insertAt - 1] = {
+      ...preceding,
+      message: {
+        ...preceding.message,
+        content: [...(preceding.message.content as unknown[]), ...(parts as unknown[])],
+      } as ModelMessage,
+      provenance: mergeProvenance([preceding, ...provenanceSources]),
+    }
+    return
+  }
+  entries.splice(
+    insertAt,
+    0,
+    createTrackedMessage({ role: 'tool', content: parts as never } as ModelMessage, mergeProvenance(provenanceSources)),
+  )
 }
 
 /**
