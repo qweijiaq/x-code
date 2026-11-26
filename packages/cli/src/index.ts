@@ -64,7 +64,7 @@ import { runPluginCli } from './plugins/cli.js'
 import { abortPrintMode } from './print-signals.js'
 import { runShutdownPhases } from './shutdown-coordinator.js'
 import { checkForUpdate, printNoApiKeyMessage, printNoWebSearchKeyHint, printResumeHint } from './startup-prints.js'
-import { installTerminalStreamErrorGuards } from './terminal-stream-errors.js'
+import { installTerminalStreamErrorGuards, reportTerminalStreamFailure } from './terminal-stream-errors.js'
 import { getSessionExitInfo } from './ui/app/session-exit.js'
 import { rebuildPalette } from './ui/chat-input/palette.js'
 import { setShikiTheme, warmShikiEngine } from './ui/render/shiki-highlight.js'
@@ -74,7 +74,13 @@ import { VERSION } from './version.js'
 import type { WatchOptions } from './watch.js'
 
 restoreInvocationCwd()
-installTerminalStreamErrorGuards([process.stdout, process.stderr])
+// 非 EPIPE 的终端流错误不是「吞掉就好」的：stdout/stderr 已经写不动了，CLI 也
+// 就无法再向用户报告任何东西。guard 只负责不让错误在 'error' 监听器里变成
+// uncaughtException，退出码与退出时机交给 shutdown 协调器统一决定。
+installTerminalStreamErrorGuards([process.stdout, process.stderr], (error) => {
+  reportTerminalStreamFailure(error)
+  void gracefulShutdown(1, 'fatal-exit')
+})
 
 // 把 AI SDK 警告路由到 debugLog，而不是让它们直接轰到 stderr。默认的
 // `console.warn` 路径会绕过 ChatInput 的单元缓冲渲染——每条警告都抢走一行、
@@ -189,7 +195,10 @@ async function gracefulShutdown(exitCode: number, reason: TerminationReason = 'c
   })
   await flushTurnTrace().catch(() => undefined)
   await flushToolAudit().catch(() => undefined)
-  if (exitCode === 0 && shutdown.emergency.requested > 0) exitCode = 1
+  // 清理失败此前完全静默（标志位没人读、也没有日志出口）：写进 debug 日志，
+  // 让“退出码 0 但 shell 还活着”这类问题可定位。
+  for (const error of shutdown.errors) debugLog('shutdown.phase-failed', error)
+  if (exitCode === 0 && (shutdown.emergency.requested > 0 || shutdown.emergencyFailed)) exitCode = 1
 
   resetTerminal()
   // 在 resetTerminal 之后打印，让这一行干净地落在 shell 提示符之上——

@@ -22,6 +22,21 @@ export interface DoctorCommandDeps {
   echoCommand: (text: string) => void
 }
 
+const MIN_NODE_MAJOR = 22
+
+/** MCP 的状态文本来自外部（服务器 stderr / 连接错误），既可能带 ANSI 控制字符
+ *  破坏终端与 Markdown 结构，也常在连接 URL 里带凭据（`https://x:sk-…@host`）
+ *  而会被整段导进对话历史。这里清掉控制字符、抹掉 URL 里的 credentials 并截断。 */
+function sanitizeDiagnostic(value: string, limit: number): string {
+  const cleaned = value
+
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s/@]*@/gi, '$1***@')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return cleaned.length > limit ? `${cleaned.slice(0, limit)}…` : cleaned
+}
+
 export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
   const { options, modelId, addInfoMessage, echoCommand } = deps
 
@@ -37,9 +52,10 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       lines.push(`- Model:   ${modelId}`)
       lines.push(`- OS:      ${process.platform} ${process.arch}`)
 
-      const nodeVersion = parseInt(process.version.slice(1), 10)
-      if (nodeVersion < 22) {
-        lines.push('', '⚠ Node ≥ 22.0.0 is required. Current version may cause issues.')
+      const nodeVersion = parseInt(process.versions.node, 10)
+      // `NaN < MIN` 为 false：解析失败时不能静默跳过警告。
+      if (!Number.isFinite(nodeVersion) || nodeVersion < MIN_NODE_MAJOR) {
+        lines.push('', `⚠ Node ≥ ${MIN_NODE_MAJOR}.0.0 is required. Current version may cause issues.`)
       }
       sections.push(lines.join('\n'))
     }
@@ -89,8 +105,8 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
       if (localByProvider.size === 0) {
         lines.push('- ollama / lmstudio: — (start the local server, then run `/model`)')
       }
-      // 自定义供应商
-      if (available.has('custom')) {
+      // 自定义供应商（catalog 里已带 custom 时上面那轮已经打印过，不要重复）
+      if (available.has('custom') && !PROVIDERS.some((provider) => provider.name === 'custom')) {
         lines.push('- custom: ✓')
       }
       const configuredCount = available.size + localByProvider.size
@@ -127,14 +143,14 @@ export function createDoctorCommandHandler(deps: DoctorCommandDeps) {
         for (const s of statuses) {
           const kind = s.status.kind
           if (kind === 'connected') {
-            const st = s.status as { kind: 'connected'; toolCount: number; resourceCount: number }
+            const st = s.status
             lines.push(`- ${s.name}: ✓ connected (${st.toolCount} tools, ${st.resourceCount} resources)`)
           } else if (kind === 'failed') {
-            const st = s.status as { kind: 'failed'; error: string }
-            const errSnippet = st.error.length > 80 ? st.error.slice(0, 80) + '…' : st.error
+            const st = s.status
+            const errSnippet = sanitizeDiagnostic(st.error ?? '', 80)
             lines.push(`- ${s.name}: ✗ failed — ${errSnippet}`)
             if (s.stderrTail) {
-              lines.push(`  stderr: ${s.stderrTail.slice(0, 120)}`)
+              lines.push(`  stderr: ${sanitizeDiagnostic(s.stderrTail, 120)}`)
             }
           } else if (kind === 'needs_auth') {
             lines.push(`- ${s.name}: ⚠ needs authentication — run \`/mcp auth ${s.name}\``)

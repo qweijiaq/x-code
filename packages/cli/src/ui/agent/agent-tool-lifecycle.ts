@@ -3,7 +3,7 @@ import type { AgentCallbacks, DisplayMessage, DisplayToolCall, EditDiffPayload }
 
 import { isCollapsibleReadOnlyTool } from '../utils.js'
 import type { AgentState } from './types.js'
-import { previewSubInput } from './use-agent-display.js'
+import { isPassiveShellWait, previewSubInput } from './use-agent-display.js'
 
 interface MutableRef<T> {
   current: T
@@ -27,13 +27,22 @@ export type ToolLifecycleCallbacks = Pick<
 
 export type GoalToolLifecycleCallbacks = Pick<AgentCallbacks, 'onToolCall' | 'onToolProgress' | 'onToolResult'>
 
-function isPassiveShellWait(tool: Pick<PendingTool, 'toolName' | 'input'> | undefined): boolean {
-  return (
-    tool?.toolName === 'shellOutput' &&
-    (tool.input.chars === undefined || tool.input.chars === '') &&
-    tool.input.cols === undefined &&
-    tool.input.rows === undefined
-  )
+/** 子代理的收尾状态标签。core 在崩溃路径（`completionOutcome = 'failed'`）仍然
+ *  以 `aborted: false` 上报 `kind: 'end'`，只在 `finalText` 前面加标记，所以
+ *  失败的子代理不能只看 `aborted`——否则界面会显示成 “Done”。 */
+function subAgentStatusLabel(event: { aborted: boolean; finalText: string }): string {
+  if (event.aborted) return 'Aborted'
+  if (event.finalText.startsWith('[Sub-agent failed: ')) return 'Failed'
+  return 'Done'
+}
+
+/** shell 输出面板只在屏幕上显示尾部，但事件按字节预算分片、每秒可能来几十个
+ *  chunk；不设上限就是 O(n²) 的字符串拷贝 + 无界内存增长。 */
+export const SHELL_OUTPUT_MAX_CHARS = 100_000
+
+export function appendShellOutput(previous: string, chunk: string): string {
+  const next = previous + chunk
+  return next.length > SHELL_OUTPUT_MAX_CHARS ? next.slice(next.length - SHELL_OUTPUT_MAX_CHARS) : next
 }
 
 function createToolProgressCallback(setState: ToolLifecycleDependencies['setState']): AgentCallbacks['onToolProgress'] {
@@ -183,12 +192,12 @@ export function createToolLifecycleCallbacks({
         const durationInfo =
           event.durationMs > 1000 ? `${(event.durationMs / 1000).toFixed(1)}s` : `${event.durationMs}ms`
         // 中断/失败的子代理不能显示成 “Done”。
-        const statusLabel = event.aborted ? 'Aborted' : 'Done'
+        const statusLabel = subAgentStatusLabel(event)
         onToolProgress(event.toolCallId, `${statusLabel} (${turnInfo}, ${tokenInfo}, ${durationInfo})`)
       }
     },
     onShellOutput: (chunk) => {
-      setState((previous) => ({ ...previous, shellOutput: previous.shellOutput + chunk }))
+      setState((previous) => ({ ...previous, shellOutput: appendShellOutput(previous.shellOutput, chunk) }))
     },
   }
 }

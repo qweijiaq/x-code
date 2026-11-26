@@ -99,13 +99,20 @@ export async function loginChatGPT(options: LoginChatGPTOptions = {}): Promise<L
 
 export async function logoutChatGPT(signal?: AbortSignal): Promise<LogoutChatGPTResult> {
   const result = await withOpenAIChatGPTCredentialLock(async () => {
-    let credentials
+    let credentials: Awaited<ReturnType<typeof readOpenAIChatGPTCredentials>> | undefined
+    let revokeFailed = false
     try {
       credentials = await readOpenAIChatGPTCredentials()
-    } catch {
-      // 缺失或损坏的凭据仍需要在本地移除。
+    } catch (error) {
+      // 凭据缺失/损坏时远端没有可撤销的会话，本地删掉就够；但其它读取失败
+      // （权限、I/O）意味着 revoke 根本没发出去，必须让上层告诉用户远端会话
+      // 仍然有效。
+      const code = (error as { code?: string }).code
+      const noUsableCredentials =
+        code === 'login-required' ||
+        (code === 'credentials-invalid' && (error as { cause?: unknown }).cause === undefined)
+      if (!noUsableCredentials) revokeFailed = true
     }
-    let revokeFailed = false
     if (credentials) {
       try {
         await revokeOpenAIChatGPTCredentials(credentials, {

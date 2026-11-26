@@ -7,12 +7,24 @@
 let printAbort: (() => void) | null = null
 
 export function setPrintAbortHandler(handler: (() => void) | null): void {
+  if (printAbort && handler && printAbort !== handler) {
+    // 覆盖意味着上一次 print 运行的反注册没有执行（例如初始化阶段抛错），
+    // 旧运行从此收不到 abort。默不作声会让 Ctrl+C 失效变得无法排查。
+    process.stderr.write('\n[warn] print abort handler overwritten before cleanup\n')
+  }
   printAbort = handler
 }
 
 /** 如果当前有活跃的 print 运行，触发它的 abort 并返回 true。 */
 export function abortPrintMode(): boolean {
-  if (!printAbort) return false
-  printAbort()
+  const handler = printAbort
+  if (!handler) return false
+  try {
+    handler()
+  } catch (error) {
+    // 信号回调里抛出的异常会变成 uncaughtException，让本次 SIGINT 既不 abort
+    // 也走不到 gracefulShutdown。
+    process.stderr.write(`\n[print abort failed] ${error instanceof Error ? error.message : String(error)}\n`)
+  }
   return true
 }

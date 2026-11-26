@@ -88,4 +88,41 @@ describe('CLI shutdown coordinator', () => {
       vi.useRealTimers()
     }
   })
+
+  it('claims failed cleanup promises even when the budget is already exhausted', async () => {
+    const rejections: unknown[] = []
+    const onRejection = (reason: unknown): void => {
+      rejections.push(reason)
+    }
+    process.on('unhandledRejection', onRejection)
+    try {
+      // 预算已耗尽：settleUntil 会立刻返回 false，此时若 promise 没被挂上
+      // rejection handler，`quiesce`/`terminateShells` 的失败就会变成
+      // unhandled rejection——Node ≥15 默认把它升级成 uncaughtException，
+      // process.exit()/resetTerminal()/trace 冲刷全部跳过。
+      const result = await runShutdownPhases({
+        controller: {
+          quiesce: async () => {
+            throw new Error('quiesce failed')
+          },
+          terminateShells: async () => {
+            throw new Error('terminate failed')
+          },
+          drain: async () => {},
+        },
+        reason: 'cli-shutdown',
+        ordinaryFinalizers: [],
+        timing,
+        startedAt: performance.now() - timing.hardCapMs - 1_000,
+        forceSync: (reason) => ({ reason, requested: 0, results: [] }),
+      })
+
+      expect(result.shellPhaseTimedOut).toBe(true)
+      // unhandledRejection 在 microtask 队列排空之后才触发。
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    } finally {
+      process.off('unhandledRejection', onRejection)
+    }
+    expect(rejections).toEqual([])
+  })
 })

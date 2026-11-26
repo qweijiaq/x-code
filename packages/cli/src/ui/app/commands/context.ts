@@ -16,7 +16,9 @@ export function parseContextWindowSize(argument: string): number | null {
   if (!match) return null
 
   const multiplier = match[2]?.toLowerCase() === 'm' ? 1_000_000 : match[2]?.toLowerCase() === 'k' ? 1_000 : 1
-  const value = Number(match[1]?.replace(/[,_]/g, '')) * multiplier
+  // 先取整再校验：`4.1m` 的浮点结果是 4099999.9999999995，不算安全整数，
+  // 合法输入会被误报成 Usage。
+  const value = Math.round(Number(match[1]?.replace(/[,_]/g, '')) * multiplier)
   return Number.isSafeInteger(value) && value >= MIN_CONTEXT_WINDOW_OVERRIDE ? value : null
 }
 

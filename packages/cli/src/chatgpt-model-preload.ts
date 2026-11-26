@@ -12,9 +12,14 @@ export function startChatGPTModelPreload(
 ): boolean {
   if (authMode !== 'chatgpt' || startupPreloadStarted) return false
   startupPreloadStarted = true
-  void refreshModels(clientVersion, { signal: AbortSignal.timeout(8_000) }).catch((error) =>
-    debugLog('openai-chatgpt.models-preload-failed', String(error)),
-  )
+  const logFailure = (error: unknown) => debugLog('openai-chatgpt.models-preload-failed', String(error))
+  try {
+    void refreshModels(clientVersion, { signal: AbortSignal.timeout(8_000) }).catch(logFailure)
+  } catch (error) {
+    // 即发即忘的预加载：同步抛错（注入实现、AbortSignal 构造）不能冒泡到
+    // main() 去打断启动。
+    logFailure(error)
+  }
   return true
 }
 

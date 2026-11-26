@@ -97,10 +97,12 @@ function hexToRgb(hex: string): [number, number, number] {
  *  切换会应用到之后提交的所有内容。 */
 export function paint(token: ChromeToken): (s: string) => string {
   const def = TOKENS[token]
-  const kind = themeKind()
+  // 主题必须在返回的闭包里解析，而不是在 `paint()` 被调用时：调用方一旦把
+  // 样式器缓存/提升（模块常量、useMemo），早解析就会把主题固化，`/theme` 之后
+  // 提交的内容仍是旧配色。
   // 先重置背景再上色：header 在 TUI 之前写入，可能继承 shell 提示符留下的
   // 背景色；显式发 49（默认背景）可以避免整段文字带上意外的色块。
-  return (s) => `\x1b[49m${c.hex(def[kind])(s)}`
+  return (s) => `\x1b[49m${c.hex(def[themeKind()])(s)}`
 }
 
 export interface CellMods {

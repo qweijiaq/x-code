@@ -20,9 +20,15 @@ export function inputReducer(state: InputState, action: InputAction): InputState
   switch (action.type) {
     case 'INSERT': {
       const { pos, chunk } = action
+      // 空块不该产生新 state 引用（会破坏下游的 bail-out 短路）。
+      if (!chunk) return state
+      // `pos` 是外部传入的：为负时 `slice(0, 负数)` 按「从末尾倒数」工作（插入
+      // 位置错误、`cursor` 还可能为负），超过 `text.length` 时 `cursor` 会越界，
+      // 后续按键定位与渲染切片一起错位。与 BACKSPACE_REF 一样先 clamp。
+      const at = Math.max(0, Math.min(pos, state.text.length))
       return {
-        text: state.text.slice(0, pos) + chunk + state.text.slice(pos),
-        cursor: pos + chunk.length,
+        text: state.text.slice(0, at) + chunk + state.text.slice(at),
+        cursor: at + chunk.length,
       }
     }
     case 'BACKSPACE_REF': {

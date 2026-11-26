@@ -11,7 +11,9 @@ export function searchMarketplacePlugins(
   marketplaces: readonly Marketplace[],
   keyword: string,
 ): MarketplacePluginMatch[] {
-  const normalizedKeyword = keyword.toLowerCase()
+  const normalizedKeyword = (keyword ?? '').trim().toLowerCase()
+  // 空关键词不构成「匹配一切」：调用方会把所有插件误报成匹配结果。
+  if (!normalizedKeyword) return []
   const matches: MarketplacePluginMatch[] = []
 
   for (const marketplace of marketplaces) {

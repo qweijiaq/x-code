@@ -30,6 +30,11 @@ import { searchMarketplacePlugins } from '../../../plugins/search.js'
 import { updateInstalledPlugin } from '../../../plugins/update.js'
 import { parseScopeFlag } from './scope-flag.js'
 
+/** 统一的错误文案：注册表/索引读取失败也要有可读反馈，而不是静默无响应。 */
+function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 export interface PluginCommandDeps {
   options: AgentOptions
   addCommandMessage: (text: string, content: string) => void
@@ -189,9 +194,16 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
     }
 
     const tokens = raw.trim().split(/\s+/)
-    const source_str = tokens[0]!
+    // 先剔除标志再取位置参数：`/plugin install --yes github:o/r` 之前会
+    // 把 `--yes` 当成 source，报出误导性的 “Unrecognised arguments”。
+    const positional = tokens.filter((t) => t !== '--yes' && t !== '-y')
+    const source_str = positional[0] ?? ''
     const yes = tokens.includes('--yes') || tokens.includes('-y')
-    const extras = tokens.slice(1).filter((t) => t !== '--yes' && t !== '-y')
+    const extras = positional.slice(1)
+    if (!source_str) {
+      addCommandMessage(text, 'Usage: `/plugin install [--yes] <source>`')
+      return
+    }
     if (extras.length > 0) {
       addCommandMessage(
         text,
@@ -199,9 +211,8 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
       )
       return
     }
-    raw = source_str
 
-    const parsed = await resolvePluginInstallSource(raw)
+    const parsed = await resolvePluginInstallSource(source_str)
     if (!parsed.ok) {
       if (parsed.code === 'plugin-not-found') {
         addCommandMessage(
@@ -211,6 +222,12 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
         )
       } else if (parsed.code === 'invalid-github-source') {
         addCommandMessage(text, 'Invalid github source. Expected `github:owner/repo` or `github:owner/repo#ref`.')
+      } else if (parsed.code === 'marketplace-lookup-failed') {
+        addCommandMessage(
+          text,
+          `Could not look up \`${parsed.pluginName}@${parsed.marketplace}\`: ${parsed.message}. ` +
+            `Run \`/plugin marketplace refresh ${parsed.marketplace}\` or check known_marketplaces.json.`,
+        )
       } else {
         addCommandMessage(
           text,
@@ -302,9 +319,19 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
       addCommandMessage(text, 'Usage: `/plugin search <keyword>`')
       return
     }
-    const marketplaces = await readAllCachedMarketplaces()
+    let marketplaces: Awaited<ReturnType<typeof readAllCachedMarketplaces>>
+    try {
+      marketplaces = await readAllCachedMarketplaces()
+    } catch (err) {
+      addCommandMessage(text, `Search failed: ${formatError(err)}`)
+      return
+    }
     if (marketplaces.length === 0) {
-      const km = await readKnownMarketplaces()
+      const km = await readKnownMarketplaces().catch(() => null)
+      if (!km) {
+        addCommandMessage(text, 'Could not read known marketplaces (known_marketplaces.json is unreadable or corrupt).')
+        return
+      }
       if (km.marketplaces.length === 0) {
         addCommandMessage(
           text,
@@ -382,7 +409,9 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
           failed++
           continue
         }
-        if (result.status === 'failed') {
+        if (result.status === 'cancelled') {
+          lines.push(`  ${rec.id}: cancelled`)
+        } else if (result.status === 'failed') {
           lines.push(`  ${rec.id}: failed — ${result.error}`)
           failed++
         } else if (result.status === 'unchanged') {
@@ -407,7 +436,19 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
       return
     }
     addCommandMessage(text, `Reinstalling **${id}** from ${formatPluginSource(rec.source)} …`)
-    const result = await updateInstalledPlugin(rec, yes ? {} : { consent: confirmPlugin })
+    // 与 `--all` 分支一致地兜住异常：git 失败 / 取消 / 权限错误都不该让命令
+    // 静默无响应。
+    let result: Awaited<ReturnType<typeof updateInstalledPlugin>>
+    try {
+      result = await updateInstalledPlugin(rec, yes ? {} : { consent: confirmPlugin })
+    } catch (err) {
+      addCommandMessage(text, `Update failed: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+    if (result.status === 'cancelled') {
+      addCommandMessage(text, `Update cancelled.`)
+      return
+    }
     if (result.status === 'failed') {
       addCommandMessage(text, `Update failed: ${result.error}`)
       return
@@ -483,7 +524,11 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
     const rest = parts.slice(1).join(' ').trim()
 
     if (sub === '' || sub === 'list') {
-      const km = await readKnownMarketplaces()
+      const km = await readKnownMarketplaces().catch((err: unknown) => {
+        addCommandMessage(text, `Failed to read marketplaces: ${formatError(err)}`)
+        return null
+      })
+      if (!km) return
       if (km.marketplaces.length === 0) {
         addCommandMessage(text, 'No marketplaces subscribed. Add one with `/plugin marketplace add <name> <source>`.')
         return
@@ -533,7 +578,11 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
     }
 
     if (sub === 'refresh') {
-      const km = await readKnownMarketplaces()
+      const km = await readKnownMarketplaces().catch((err: unknown) => {
+        addCommandMessage(text, `Failed to read marketplaces: ${formatError(err)}`)
+        return null
+      })
+      if (!km) return
       const targets = rest ? km.marketplaces.filter((m) => m.name === rest) : km.marketplaces
       if (targets.length === 0) {
         addCommandMessage(text, rest ? `No marketplace \`${rest}\` subscribed.` : 'No marketplaces subscribed.')
@@ -557,7 +606,13 @@ export function createPluginCommandHandler(deps: PluginCommandDeps) {
         addCommandMessage(text, 'Usage: `/plugin marketplace info <name>`')
         return
       }
-      const all = await readAllCachedMarketplaces()
+      let all: Awaited<ReturnType<typeof readAllCachedMarketplaces>>
+      try {
+        all = await readAllCachedMarketplaces()
+      } catch (err) {
+        addCommandMessage(text, `Failed to read marketplace index: ${formatError(err)}`)
+        return
+      }
       const m = all.find((x) => x.name === rest)
       if (!m) {
         addCommandMessage(

@@ -86,7 +86,9 @@ export function printResumeHint(): void {
   if (!info) return
   const cmd = chalk.cyan(`xc --resume ${info.sessionId}`)
   const dim = chalk.gray
-  process.stdout.write(`${dim('Resume this session:')} ${cmd}\n`)
+  // 走 stderr：stdout 可能被重定向/管道（`xc > out.txt`、`| tee`），提示混进去
+  // 会污染下游解析，且颜色 level 也是按 stderr 的能力判定的。
+  process.stderr.write(`${dim('Resume this session:')} ${cmd}\n`)
 }
 
 // ── 启动更新检查 ────────────────────────────────────────────────────────

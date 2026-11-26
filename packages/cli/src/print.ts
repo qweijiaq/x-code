@@ -32,7 +32,6 @@ export async function runPrintMode(
   // 等 finally 保存会话后再退出。
   const controller = new AbortController()
   const onSigint = () => controller.abort()
-  setPrintAbortHandler(onSigint)
 
   let sawError = false
   let exitCode = 0
@@ -106,6 +105,10 @@ export async function runPrintMode(
     })
   }
 
+  // 注册放在所有可能抛错的初始化之后：否则注册成功而 try/finally 尚未生效时
+  // 抛错，handler 会残留，之后第一次 Ctrl+C 会被判成“已让给 print”而失效。
+  setPrintAbortHandler(onSigint)
+
   try {
     // 通过在打印模式中从已加载会话水合循环状态，来尊重 --continue / --resume。
     // 没有这一步，main() 会加载之前的 jsonl，但 agent 在这里开启全新对话，
@@ -116,18 +119,31 @@ export async function runPrintMode(
     // `?.` 兼容测试/旧调用方返回的空结果。
     resultModelId = loopResult?.modelId ?? options.modelId
 
-    // 只有纯文本模式才需要补换行；结构化输出不能混入额外字节。
-    if (outputFormat === 'text' && process.stdout.isTTY) process.stdout.write('\n')
-    finishOutput()
+    try {
+      // 只有纯文本模式才需要补换行；结构化输出不能混入额外字节。非 TTY
+      // （管道/重定向）同样需要终止符，否则 `while read` 会丢掉最后一行。
+      if (outputFormat === 'text' && !output.streamedText.endsWith('\n')) process.stdout.write('\n')
+      finishOutput()
+    } catch (outputError) {
+      // 收尾输出失败不能让异常跳过退出码设置与会话保存。
+      const message = outputError instanceof Error ? outputError.message : String(outputError)
+      process.stderr.write(`\n[output] ${message}\n`)
+      sawError = true
+    }
 
     shouldSaveSession = true
-    exitCode = sawError ? 1 : 0
+    // 被 Ctrl+C 打断时给脚本一个可区分的退出码（130），而不是伪装成成功。
+    exitCode = controller.signal.aborted ? 130 : sawError ? 1 : 0
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    output.setError(message)
-    finishOutput()
+    try {
+      output.setError(message)
+      finishOutput()
+    } catch (outputError) {
+      process.stderr.write(`\n[output] ${outputError instanceof Error ? outputError.message : String(outputError)}\n`)
+    }
     process.stderr.write(`\n[fatal] ${message}\n`)
-    exitCode = 1
+    exitCode = controller.signal.aborted ? 130 : 1
   } finally {
     setPrintAbortHandler(null)
     const shutdown = await runShutdownPhases({
@@ -140,7 +156,8 @@ export async function runPrintMode(
       reason: 'print-exit',
       ordinaryFinalizers: shouldSaveSession ? [() => saveSession(state, model).catch(() => undefined)] : [],
     })
-    if (shutdown.emergency.requested > 0 && exitCode === 0) exitCode = 1
+    for (const phaseError of shutdown.errors) process.stderr.write(`\n[shutdown] ${phaseError}\n`)
+    if ((shutdown.emergency.requested > 0 || shutdown.emergencyFailed) && exitCode === 0) exitCode = 1
     registerCleanupController(null)
     // trace 是异步追加的；退出前排空，避免 --print 丢掉最后一轮。
     await flushTurnTrace().catch(() => undefined)

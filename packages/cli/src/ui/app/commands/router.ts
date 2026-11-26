@@ -95,7 +95,10 @@ async function dispatchSlashCommand(text: string, router: SlashCommandRouterOpti
       return
 
     case 'model':
-      void handlers.model(text, argument)
+      // await 而不是 `void`：routeSlashCommand 的错误边界只兜住被 await 的
+      // promise，`void` 掉的 rejection 会变成 unhandled rejection，在 Node ≥15
+      // 的默认策略下直接终止进程。与 theme / login / logout 保持一致。
+      await handlers.model(text, argument)
       return
 
     case 'context':
@@ -103,7 +106,7 @@ async function dispatchSlashCommand(text: string, router: SlashCommandRouterOpti
       return
 
     case 'thinking':
-      void handlers.thinking(text, argument)
+      await handlers.thinking(text, argument)
       return
 
     case 'theme':

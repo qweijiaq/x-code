@@ -182,11 +182,16 @@ export function runCompletionCommand(args: string[]): number {
     process.stdout.write(USAGE)
     return 0
   }
-  if (requested && !(COMPLETION_SHELLS as readonly string[]).includes(requested)) {
-    process.stderr.write(`Unknown shell: ${requested}\n${USAGE}`)
+  // 先归一化再判断：`requested &&` 为假时 `??` 不会兜底（空串不是 nullish），
+  // 会把 `''` 传给 renderCompletion → 落到它最后一条 `return fishScript()`
+  // 的隐式兜底，zsh 用户静默拿到 fish 脚本。大小写也该归一化
+  // （`xc completion ZSH` 曾被告知是未知 shell）。
+  const requestedShell = requested?.toLowerCase()
+  if (requestedShell && !(COMPLETION_SHELLS as readonly string[]).includes(requestedShell)) {
+    process.stderr.write(`Unknown shell: ${requestedShell}\n${USAGE}`)
     return 1
   }
-  const shell = (requested as CompletionShell | undefined) ?? detectShell()
+  const shell = requestedShell ? (requestedShell as CompletionShell) : detectShell()
   process.stdout.write(renderCompletion(shell))
   return 0
 }

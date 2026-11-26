@@ -144,7 +144,13 @@ export function usePeerInboxAdapter(options: PeerInboxAdapterOptions): PeerInbox
       .then(async (answer) => {
         // 只认显式选项。Esc / 关闭对话框可能返回空串或任意值，把它当成「拒绝」会
         // 向对端发出不可逆的 denied 终态——未知答案一律视为取消并保留 held 消息。
-        if (answer !== 'Accept' && answer !== 'Refuse') return
+        // 取消时消息仍留在 held 队列且没有终态，本轮不能重泵：否则 finally 里的
+        // `setPumpTick` 会让 `listHeld()[0]` 立刻又弹同一个对话框，用户关不掉它
+        // （与 `queue-full` 分支同理）。
+        if (answer !== 'Accept' && answer !== 'Refuse') {
+          repump = false
+          return
+        }
         const result = await service.decideHeld(held.key, answer === 'Accept' ? 'accept' : 'reject')
         if (result.status === 'accepted') {
           addPeerStatus(`Accepted held message from ${held.message.from.name}.`, held.message.from)

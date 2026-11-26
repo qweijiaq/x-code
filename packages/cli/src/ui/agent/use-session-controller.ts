@@ -7,6 +7,7 @@ import {
   cloneUsageBreakdown,
   createLoopState,
   createUsageBreakdown,
+  debugLog,
   disposePersistentShell,
   errorMessage,
   extractText,
@@ -94,10 +95,15 @@ export function useSessionController({
   const cleanup = useCallback(async () => {
     const sessionSave = loopStateRef.current ? saveSession(loopStateRef.current, modelRef.current) : Promise.resolve()
     const memoryDrain = agentOptions.memoryService
-      ? agentOptions.memoryService.shutdown(agentOptions.memoryService.getConfig().drainTimeoutMs)
+      ? agentOptions.memoryService.shutdown(agentOptions.memoryService.getConfig()?.drainTimeoutMs)
       : Promise.resolve()
     const forkDrain = Promise.allSettled([...pendingForksRef.current])
-    await Promise.all([sessionSave, memoryDrain, forkDrain])
+    // 清理路径不能向上抛错（调用点多半是 `void cleanup()`），也不能因为一步失败
+    // 就丢掉其它步骤的结果。
+    const results = await Promise.allSettled([sessionSave, memoryDrain, forkDrain])
+    for (const result of results) {
+      if (result.status === 'rejected') debugLog('session.cleanup-failed', errorMessage(result.reason))
+    }
   }, [agentOptions.memoryService, loopStateRef, modelRef])
 
   const reloadMemory = useCallback(async () => {
@@ -217,6 +223,10 @@ export function useSessionController({
           ],
         }))
         return { ok: true as const }
+      } catch (error) {
+        // 调用方按 `{ ok, reason }` 契约消费返回值；抛出去既拿不到 reason，也
+        // 逃过错误横幅，只剩一次未处理拒绝。
+        return { ok: false as const, reason: errorMessage(error) }
       } finally {
         lease.release()
       }
@@ -311,6 +321,9 @@ export function useSessionController({
       if (!lease) {
         return { ok: false, reason: 'A turn is in progress. Press Esc to cancel it, then run /rewind.' }
       }
+      // 失败时用来把检查点列表恢复原样：`markBoundaryAndReflush` 内部会清空
+      // `state.checkpoints`，半途失败就会连列表一起丢掉。
+      const originalCheckpoints = state.checkpoints
       try {
         const target = state.checkpoints.find((checkpoint) => checkpoint.ckptId === checkpointId)
         if (!target) return { ok: false, reason: `Checkpoint not found: ${checkpointId}` }
@@ -336,6 +349,11 @@ export function useSessionController({
           for (const checkpoint of survivingCheckpoints) await appendCheckpoint(state, checkpoint)
 
           pendingToolsRef.current.clear()
+          // 被截断那一回合遗留的待审批 resolver / 待回答问题 / 排队输入必须一起
+          // 清掉：UI 已经不再展示它们，留着会让用户的 Yes/No 归属到错的工具调用。
+          permissionResolversRef.current = []
+          pendingQuestionRef.current = null
+          queuedMessagesRef.current = []
           resetBuffer()
           const converted = modelMessagesToDisplay(state.messages)
           setState((previousState) => ({
@@ -345,16 +363,30 @@ export function useSessionController({
             error: null,
             reconnectLabel: null,
             todos: [],
+            queuedMessages: [],
             messages: converted,
           }))
         }
 
         return { ok: true, preview: target.userPrompt, messageCount: target.messageCount - 1 }
+      } catch (error) {
+        state.checkpoints = originalCheckpoints
+        return { ok: false, reason: `Rewind failed: ${errorMessage(error)}` }
       } finally {
         lease.release()
       }
     },
-    [currentAuthority, loopStateRef, pendingToolsRef, resetBuffer, setState, turnCoordinatorRef],
+    [
+      currentAuthority,
+      loopStateRef,
+      pendingQuestionRef,
+      pendingToolsRef,
+      permissionResolversRef,
+      queuedMessagesRef,
+      resetBuffer,
+      setState,
+      turnCoordinatorRef,
+    ],
   )
 
   const getDiffStats = useCallback(

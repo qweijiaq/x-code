@@ -136,9 +136,15 @@ export function reduceShellSessionEvent(current: ShellUiRuntime, event: ShellSes
   const notices: DisplayMessage[] = []
 
   if (event.kind === 'snapshot') {
-    runtime = {
-      ...runtime,
-      backgroundTerminals: event.sessions.map(viewFromSummary),
+    const backgroundTerminals = event.sessions.map(viewFromSummary)
+    runtime = { ...runtime, backgroundTerminals }
+    // 等待记录指向的 shell 已不在快照里（退订/重连期间它退出了，`exited` 事件
+    // 不会再来）：不同步清理的话 spinner 会永远转、计时器无限增长，这条记录也
+    // 永远不会被 flush 成 notice。
+    const streak = runtime.shellWaitStreak
+    if (streak && !backgroundTerminals.some((terminal) => terminal.shellId === streak.shellId)) {
+      notices.push(waitNotice({ ...streak, waiting: false }, event.occurredAt))
+      runtime = { ...runtime, shellWaitStreak: null }
     }
     return { runtime, notices }
   }

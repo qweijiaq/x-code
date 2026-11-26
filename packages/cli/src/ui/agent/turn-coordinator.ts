@@ -128,7 +128,9 @@ export function createTurnCoordinator(): TurnCoordinator {
       const next = createLease(owner, authority)
       active = next
       notify(next.lease)
-      return next.lease
+      // 监听器可能在 notify 里同步 `release()`/抢占：此时本次获取已不成立，
+      // 必须返回 null，否则调用方会以为自己持锁并同时跑两个轮次。
+      return active?.token === next.token ? next.lease : null
     },
 
     releaseAndTryAcquire(lease, nextOwner, nextAuthority) {
@@ -137,7 +139,9 @@ export function createTurnCoordinator(): TurnCoordinator {
       const next = createLease(nextOwner, nextAuthority)
       active = next
       notify(next.lease)
-      return next.lease
+      // 同上：notify 期间被释放/替换时不能返回已失效的租约，否则破坏本方法的
+      // “原子切换”契约。
+      return active?.token === next.token ? next.lease : null
     },
 
     isOwned() {

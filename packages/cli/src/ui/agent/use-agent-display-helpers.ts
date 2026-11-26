@@ -7,14 +7,19 @@ import { useCallback } from 'react'
 
 import type { DisplayMessage } from '@x-code-cli/core'
 
+import { nextMessageId } from './message-id.js'
+
 export function useAgentDisplayHelpers(appendMessage: (msg: DisplayMessage) => void) {
   const addMessage = useCallback(
     (role: 'user' | 'assistant', content: string) => {
+      // 一次取时间戳 + 自增序号：`Date.now()` 在同一毫秒内的多次调用会生成
+      // 相同 id，渲染层会把两条消息当成同一条（后者的内容吃掉前者）。
+      const ts = Date.now()
       appendMessage({
-        id: Date.now().toString(),
+        id: nextMessageId(role, ts),
         role,
         content,
-        timestamp: Date.now(),
+        timestamp: ts,
       })
     },
     [appendMessage],
@@ -30,12 +35,29 @@ export function useAgentDisplayHelpers(appendMessage: (msg: DisplayMessage) => v
    *  随后用 `addCommandResult` 输出紧凑的 `⎿  result` 行。 */
   const echoCommand = useCallback(
     (content: string) => {
+      const ts = Date.now()
       appendMessage({
-        id: `cmd-${Date.now()}`,
+        id: nextMessageId('cmd', ts),
         role: 'user',
         content,
-        timestamp: Date.now(),
+        timestamp: ts,
         kind: 'command-echo',
+      })
+    },
+    [appendMessage],
+  )
+
+  /** 追加一条 `  ⎿  result` 行。`addCommandMessage` 的首条结果与
+   *  `addCommandResult` 的后续结果共用这一个构造点，避免两处各写一份、共享
+   *  `cmd-res-` 命名空间却各自生成 id。 */
+  const appendCommandResult = useCallback(
+    (content: string, timestamp: number) => {
+      appendMessage({
+        id: nextMessageId('cmd-res', timestamp),
+        role: 'assistant',
+        content,
+        timestamp,
+        kind: 'command-result',
       })
     },
     [appendMessage],
@@ -50,21 +72,15 @@ export function useAgentDisplayHelpers(appendMessage: (msg: DisplayMessage) => v
     (commandText: string, resultText: string) => {
       const base = Date.now()
       appendMessage({
-        id: `cmd-${base}`,
+        id: nextMessageId('cmd', base),
         role: 'user',
         content: commandText,
         timestamp: base,
         kind: 'command-echo',
       })
-      appendMessage({
-        id: `cmd-res-${base}`,
-        role: 'assistant',
-        content: resultText,
-        timestamp: base,
-        kind: 'command-result',
-      })
+      appendCommandResult(resultText, base)
     },
-    [appendMessage],
+    [appendCommandResult, appendMessage],
   )
 
   /** 在最近的命令回显下方追加一条额外的 `  ⎿  result` 行，而无需重新回显命令。
@@ -79,16 +95,9 @@ export function useAgentDisplayHelpers(appendMessage: (msg: DisplayMessage) => v
    *  带前导和尾随空行，在下一次提示前用 3+ 个空行填充结果。 */
   const addCommandResult = useCallback(
     (content: string) => {
-      const base = Date.now()
-      appendMessage({
-        id: `cmd-res-${base}`,
-        role: 'assistant',
-        content,
-        timestamp: base,
-        kind: 'command-result',
-      })
+      appendCommandResult(content, Date.now())
     },
-    [appendMessage],
+    [appendCommandResult],
   )
 
   return { addInfoMessage, addUserMessage, echoCommand, addCommandMessage, addCommandResult }

@@ -5,7 +5,10 @@ import path from 'node:path'
  *  二进制文件行为一致。 */
 export function restoreInvocationCwd(
   initCwd: string | undefined = process.env.INIT_CWD,
-  chdir: (directory: string) => void = process.chdir,
+  // 必须包一层：`process.chdir` 依赖 `this` 是 Process 实例，解开绑定直接调用会
+  // 抛 `TypeError [ERR_INVALID_THIS]`，被下面的 catch 吞掉后静默返回 false——
+  // 而唯一的生产调用点用的正是默认参数。
+  chdir: (directory: string) => void = (directory) => process.chdir(directory),
 ): boolean {
   if (!initCwd || !path.isAbsolute(initCwd)) return false
   try {

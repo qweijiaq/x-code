@@ -9,7 +9,9 @@ export function cloneCacheMissSummary(summary: CacheMissSummary): CacheMissSumma
     estimatedReusableTokens: summary.estimatedReusableTokens ?? 0,
     estimatedReusedTokens: summary.estimatedReusedTokens ?? 0,
     comparableTurnCount: summary.comparableTurnCount ?? 0,
-    estimates: summary.estimates.slice(),
+    // 恢复的旧会话可能没有 `estimates`（磁盘反序列化，字段不一定存在），
+    // 直接 slice 会让 `/resume` 抛 TypeError、会话再也打不开。
+    estimates: Array.isArray(summary.estimates) ? summary.estimates.slice() : [],
   }
 }
 

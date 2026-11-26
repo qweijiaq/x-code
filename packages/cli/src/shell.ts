@@ -34,8 +34,13 @@ function quotePowerShell(value: string): string {
   return `'${value.split("'").join("''")}'`
 }
 
-/** cmd.exe 双引号字符串。`"` 用 `""` 转义；`%` 在交互式 cmd 提示符下无法转义
- *  （`%%` 只在批处理文件里折叠），因此这里不声称能处理含 `%` 的值。 */
+/** cmd.exe 里无法安全表达的值：`%`（任何情况下都会展开）、`!`（启用延迟展开时
+ *  展开）、`"`（翻倍只在批处理文件里折叠），以及紧跟在 `"` 前的 `\`（会被当成
+ *  转义引号而让引号失衡，其后的 `&` / `|` 变成命令分隔符）。 */
+const CMD_UNSAFE_VALUE_RE = /[%!"\\]/
+
+/** cmd.exe 双引号字符串。`"` 用 `""` 转义——含无法可靠转义的字符时由
+ *  {@link formatPersistCommand} 提前降级，不会走到这里。 */
 function quoteCmd(value: string): string {
   return `"${value.split('"').join('""')}"`
 }
@@ -64,13 +69,29 @@ export function formatPersistCommand(envVar: string, exampleValue: string, shell
     case 'powershell':
       return `[Environment]::SetEnvironmentVariable('${envVar}',${quotePowerShell(exampleValue)},'User')`
     case 'cmd':
+      // 无法安全加引号时降级为手动设置提示，而不是生成一条会被注入/截断的命令。
+      if (CMD_UNSAFE_VALUE_RE.test(exampleValue)) {
+        return `rem cmd.exe cannot safely quote this value — set ${envVar} manually via System Properties > Environment Variables`
+      }
       return `setx ${envVar} ${quoteCmd(exampleValue)}`
     case 'zsh':
-      return `echo ${quotePosix(`export ${envVar}=${exampleValue}`)} >> ~/.zshrc && source ~/.zshrc`
+      // 值先按 POSIX 规则独立加引号，再对整行做一次 quotePosix：外层引号只保护
+      // `echo` 的参数，rc 文件里最终落地的是被 echo 解引号后的内容——值本身不
+      // 加引号的话，空格会把赋值截断（`export K=a b` 只赋到 `a`）、`$`/反引号
+      // 会在 source 时二次展开，含 `'` 的值更能提前闭合并接上 `;` 注入命令。
+      return `echo ${quotePosix(`export ${envVar}=${quotePosix(exampleValue)}`)} >> ~/.zshrc && source ~/.zshrc`
     case 'fish':
       return `set -Ux ${envVar} ${quoteFish(exampleValue)}`
+    case 'sh':
+      // POSIX sh 不读 ~/.bashrc：写到那里等于持久化静默失效。登录 shell 读
+      // ~/.profile，source 也只能用 `.`。
+      return `echo ${quotePosix(`export ${envVar}=${quotePosix(exampleValue)}`)} >> ~/.profile && . ~/.profile`
     case 'bash':
-    default:
-      return `echo ${quotePosix(`export ${envVar}=${exampleValue}`)} >> ~/.bashrc && source ~/.bashrc`
+      return `echo ${quotePosix(`export ${envVar}=${quotePosix(exampleValue)}`)} >> ~/.bashrc && source ~/.bashrc`
+    default: {
+      // 穷尽检查：以后给 ShellType 加成员时，编译器会在这里提醒补分支。
+      const exhaustive: never = shell
+      throw new Error(`Unsupported shell: ${String(exhaustive)}`)
+    }
   }
 }

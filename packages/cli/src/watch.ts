@@ -9,6 +9,7 @@ import path from 'node:path'
 
 import type { AgentOptions, LanguageModel } from '@x-code-cli/core'
 
+import { abortPrintMode } from './print-signals.js'
 import { runPrintMode } from './print.js'
 
 /** 递归扫描时跳过的目录名。既避免噪声，也避免扫描 `.x-code/sessions` 时
@@ -202,12 +203,6 @@ export function formatWatchPrompt(prompt: string, changes: WatchChanges, cwd: st
   return lines.join('\n')
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
-  })
-}
-
 export interface WatchModeDependencies {
   cwd: string
   paths: readonly string[]
@@ -224,15 +219,62 @@ export async function runWatchMode(deps: WatchModeDependencies): Promise<number>
   process.stdout.write(`[watch] watching ${paths.join(', ')}; ${baseline.files.size} files; Ctrl+C to stop.\n`)
 
   let stopped = false
+  let signalCount = 0
+  /** 当前正在等待的定时器；信号到来时提前唤醒它，不必等满一整个间隔。 */
+  let wake: (() => void) | null = null
+
   const onSignal = (): void => {
+    signalCount += 1
     stopped = true
+    wake?.()
+    // 第一次 Ctrl+C 让当前轮自行中止（print 模式注册的 abort handler 会中断
+    // agentLoop，收尾后循环看到 stopped 就退出）。但一轮运行可能持续数分钟，
+    // 用户不该被锁在里面：第二次 Ctrl+C 直接退出。
+    if (signalCount === 1) {
+      abortPrintMode()
+      return
+    }
+    process.exit(130)
   }
   process.on('SIGINT', onSignal)
   process.on('SIGTERM', onSignal)
 
+  /** 可被信号打断的等待。 */
+  const wait = (ms: number): Promise<void> =>
+    new Promise<void>((resolve) => {
+      // `finish` 只会被定时器或信号触发，那时 `timer` 已赋值。
+      const finish = (): void => {
+        clearTimeout(timer)
+        if (wake === finish) wake = null
+        resolve()
+      }
+      const timer = setTimeout(finish, ms)
+      wake = finish
+    })
+
+  /** 把本轮运行期间出现、但还没进基线的改动折叠进基线。
+   *
+   *  修复的是「watch 自我触发」：agent 对工作区文件的编辑同样出现在快照里，
+   *  若把它当成新的触发条件，「修复这些文件」这类迭代任务会形成
+   *  运行 → 改文件 → 触发 → 运行 的正反馈，无需人工干预就持续烧 token。
+   *  代价是运行期间用户自己的编辑也会被一并折叠——所以这里明确打印折叠了多少
+   *  处改动，而不是静默丢弃。 */
+  const foldRunEditsIntoBaseline = async (triggerSnapshot: WatchSnapshot): Promise<void> => {
+    const afterRun = await collectSnapshot(paths, cwd)
+    const folded = diffSnapshots(triggerSnapshot.files, afterRun.files)
+    baseline = afterRun
+    const foldedCount = folded.added.length + folded.modified.length + folded.deleted.length
+    if (foldedCount > 0) {
+      process.stdout.write(
+        `[watch] ${foldedCount} change(s) appeared during the run and were folded into the baseline; ` +
+          'agent edits do not re-trigger a run.\n',
+      )
+    }
+  }
+
   try {
     while (!stopped) {
-      await delay(intervalMs)
+      await wait(intervalMs)
       if (stopped) break
 
       let next = await collectSnapshot(paths, cwd)
@@ -240,7 +282,7 @@ export async function runWatchMode(deps: WatchModeDependencies): Promise<number>
       if (!hasChanges(changes)) continue
 
       // 等文件稳定后再扫一次，避免编辑器“先删后写”触发两次运行。
-      await delay(debounceMs)
+      await wait(debounceMs)
       next = await collectSnapshot(paths, cwd)
       changes = diffSnapshots(baseline.files, next.files)
       if (!hasChanges(changes)) {
@@ -255,16 +297,17 @@ export async function runWatchMode(deps: WatchModeDependencies): Promise<number>
       // 单轮运行失败不该结束整个 watch 会话：网络异常、工具抛错、序列化失败都会
       // 一路冒泡到 `main().catch` → `gracefulShutdown(1)`，用户必须手动重启（而单次
       // `xc -p` 失败只是退一次码）。这里把单轮异常打到 stderr 后继续监听。
-      let code: number
       try {
-        code = await runPrintMode(model, options, formatWatchPrompt(prompt, changes, cwd, next.truncated))
+        const code = await runPrintMode(model, options, formatWatchPrompt(prompt, changes, cwd, next.truncated))
+        if (stopped) break
+        if (code !== 0) process.stdout.write(`[watch] run exited ${code}; waiting for the next change.\n`)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         process.stderr.write(`[watch] run failed: ${message}; waiting for the next change.\n`)
-        continue
       }
       if (stopped) break
-      if (code !== 0) process.stdout.write(`[watch] run exited ${code}; waiting for the next change.\n`)
+      // 失败路径同样要折叠：抛错前 agent 写过的文件一样会再次触发运行。
+      await foldRunEditsIntoBaseline(next)
     }
     return 0
   } finally {

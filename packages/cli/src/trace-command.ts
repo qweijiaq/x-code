@@ -6,16 +6,25 @@ import path from 'node:path'
 
 import { formatUsd, readTurnTraces, userXcodeDir } from '@x-code-cli/core'
 
-function parseLast(args: string[]): number {
-  const index = args.indexOf('--last')
-  if (index >= 0) {
-    const value = Number(args[index + 1])
-    if (Number.isSafeInteger(value) && value > 0) return Math.min(1000, value)
-  }
-  return 20
+interface LastArg {
+  limit: number
+  /** 提供了 --last 但值非法时的可读提示（此时仍回落到默认条数）。 */
+  invalid?: string
 }
 
-const USAGE = 'Usage: xc trace [--last N] [--json]'
+function parseLast(args: string[]): LastArg {
+  const index = args.indexOf('--last')
+  if (index < 0) return { limit: 20 }
+  const raw = args[index + 1]
+  if (raw === undefined) return { limit: 20, invalid: '--last requires a value' }
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    return { limit: 20, invalid: `--last expects a positive integer, got "${raw}"` }
+  }
+  return { limit: Math.min(1000, value) }
+}
+
+const USAGE = 'Usage: xc trace [--last N] [--json] [--help]'
 
 export async function runTraceCommand(args: string[]): Promise<number> {
   if (args.includes('--help') || args.includes('-h')) {
@@ -23,9 +32,18 @@ export async function runTraceCommand(args: string[]): Promise<number> {
     return 0
   }
   const last = parseLast(args)
+  if (last.invalid) process.stderr.write(`${last.invalid}\n${USAGE}\n`)
   const json = args.includes('--json')
   const dir = path.join(userXcodeDir(), 'logs')
-  const entries = await readTurnTraces(last)
+  let entries: Awaited<ReturnType<typeof readTurnTraces>>
+  try {
+    entries = await readTurnTraces(last.limit)
+  } catch (error) {
+    // 命令入口不把异常冒泡成 Node 堆栈：写 stderr 并给脚本一个非 0 退出码。
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`Failed to read turn traces in ${dir}: ${message}\n`)
+    return 1
+  }
 
   if (json) {
     process.stdout.write(`${JSON.stringify(entries, null, 2)}\n`)
@@ -39,7 +57,8 @@ export async function runTraceCommand(args: string[]): Promise<number> {
 
   const header = ['TIME', 'MODEL', 'TURN', 'DUR', 'IN', 'OUT', 'CACHE', 'TOOLS', 'COST', 'FINISH']
   const rows = entries.map((entry) => [
-    (entry.ts ?? '').replace('T', ' ').replace(/\..*$/, ''),
+    // ts 是 UTC ISO：显式标注时区，且没有小数秒的写法也一并归一化。
+    (entry.ts ?? '').replace('T', ' ').replace(/\.\d+Z?$|Z$/, ' UTC'),
     entry.modelId ?? '?',
     String(entry.turn ?? '?'),
     entry.durationMs !== undefined ? `${(entry.durationMs / 1000).toFixed(1)}s` : '?',
@@ -48,7 +67,8 @@ export async function runTraceCommand(args: string[]): Promise<number> {
     String(entry.cacheReadTokens ?? 0),
     String(entry.toolCalls ?? 0),
     typeof entry.costUsd === 'number' ? formatUsd(entry.costUsd) : '-',
-    entry.finishReason ?? '?',
+    // 与 ts/modelId 不同，finishReason 没有在 core 侧做类型校验，非字符串会让 padEnd 抛错。
+    typeof entry.finishReason === 'string' ? entry.finishReason : '?',
   ])
   const widths = header.map((label, index) => Math.max(label.length, ...rows.map((row) => row[index]!.length)))
   const line = (row: string[]): string =>

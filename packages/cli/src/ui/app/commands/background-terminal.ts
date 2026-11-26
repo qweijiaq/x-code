@@ -1,7 +1,9 @@
 import type { ShellSessionSummary, TerminateAllResult } from '@x-code-cli/core'
 
 function safeText(value: string): string {
-  return value.replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+  // 裸 CR 也必须去掉：`session.command`/`recentOutput` 由用户或子进程控制，
+  // 进度条式的 `100%\rPAYLOAD` 会让后半段覆盖已渲染的行（界面欺骗）。
+  return value.replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\r]/g, '')
 }
 
 function elapsed(startedAt: number | undefined, now = Date.now()): string {

@@ -255,6 +255,9 @@ export function App({
   // `useExitOnCtrlCD` 2 秒窗口。
   const ctrlCArmedAtRef = useRef(0)
   const ctrlCArmWindowMs = 2000
+  /** 进入 plan 模式前的权限模式，`/plan off` 用它恢复（直接写死 'default' 会
+   *  静默丢掉用户之前的 acceptEdits 等更宽松的模式）。 */
+  const previousPermissionModeRef = useRef<'default' | 'acceptEdits'>('default')
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // arm 窗口过期后自动清除 notice。
@@ -297,6 +300,9 @@ export function App({
     } else if (state.isLoading) {
       abort()
     }
+    // 上面那条提示必须能被自动清除：自动清除 effect 会跳过「更新提示」，而
+    // 更新提示可能还挂着这个标志位，导致这条提示永远留在 footer。
+    isUpdateNoticeRef.current = false
     setNotice('Press Ctrl+C again to exit')
   }, [exit, abort, state.isLoading])
 
@@ -438,6 +444,9 @@ export function App({
         return
       }
       const resumed = await resume(loaded)
+      // 会话的模型可能和当前不同：footer 的层级标签必须跟着换，否则会显示成
+      // 「新模型名 · 旧模型的 effort 层级」。
+      if (resumed.ok) setReasoningTierLabel(resolveReasoningTierLabel(loaded.modelId))
       if (!resumed.ok) {
         addInfoMessage(
           `Resume was not completed: ${resumed.reason}.${resumed.result ? `\n\n${formatStopResult(resumed.result)}` : ''}`,
@@ -1278,11 +1287,13 @@ export function App({
     }
 
     // 无参数 → 交互式选择器。网关 provider 的模型随账号/套餐变化，先拉一次
-    // `/models`，失败时继续用静态 catalog。
-    await refreshDynamicProviderModels({ timeoutMs: 5_000 })
-    // 本地 Ollama / LM Studio 和桌面端一样在选择器打开时发现一次；未运行
-    // 时返回空数组，不影响远程模型。
-    const localModels = await discoverLocalModels()
+    // `/models`，失败时继续用静态 catalog。本地 Ollama / LM Studio 和桌面端
+    // 一样在选择器打开时发现一次（未运行时返回空数组，不影响远程模型）。
+    // 两者互不依赖，并行等待以免把延迟叠加起来。
+    const [, localModels] = await Promise.all([
+      refreshDynamicProviderModels({ timeoutMs: 5_000 }),
+      discoverLocalModels(),
+    ])
     const availableProviders = new Set(getAvailableProviders())
     const chatGPTCatalog = getOpenAIChatGPTModelCatalogState()
     const openAIUnavailable =
@@ -1589,10 +1600,13 @@ export function App({
       return
     }
 
-    // /plan 直接在 plan 和 default 之间跳转。我们自己把模式应用到 loopState 上，
+    // /plan 在 plan 与「进入前的模式」之间切换。我们自己把模式应用到 loopState 上，
     // 并让已有的 onPlanModeChange 回调路径通过 setPermissionMode 完成 React state /
     // UI 同步。
-    setPermissionMode(next ? 'plan' : 'default')
+    if (next && state.permissionMode !== 'plan') {
+      previousPermissionModeRef.current = state.permissionMode
+    }
+    setPermissionMode(next ? 'plan' : previousPermissionModeRef.current)
     addCommandMessage(commandText, next ? 'Enabled plan mode' : 'Disabled plan mode')
   }
 

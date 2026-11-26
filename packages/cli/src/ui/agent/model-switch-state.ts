@@ -6,6 +6,10 @@ import type { LoopState } from '@x-code-cli/core'
 export function invalidateModelDependentState(state: LoopState | null): void {
   if (!state) return
   state.systemPromptCache = null
+  // 与 systemPromptCache 成对清理（同 core `agent/loop.ts` 的 model fallback）：
+  // blocks 里快照的是按模型能力裁剪过的 skill/mcpDeferred 块，残留旧快照会让
+  // 上下文构成估算按旧块做减法。
+  state.systemPromptBlocks = undefined
   state.deferredCatalog = undefined
   markExpectedCacheMiss(state, 'model-change')
 }
@@ -15,6 +19,8 @@ export function invalidateModelDependentState(state: LoopState | null): void {
 export function invalidateToolSurfaceState(state: LoopState | null): void {
   if (!state) return
   state.systemPromptCache = null
+  // MCP/skill 表面变化改写的正是 blocks 里的 skill/mcpDeferred 字段。
+  state.systemPromptBlocks = undefined
   state.deferredCatalog = undefined
   markExpectedCacheMiss(state, 'tool-surface-change')
 }

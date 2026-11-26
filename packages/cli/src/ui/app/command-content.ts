@@ -177,10 +177,16 @@ export function buildHelpText(
   skillCommands: readonly { name: string; description: string }[],
   fileCommands: readonly { name: string; description?: string }[],
 ): string {
+  // 内置命令在调度时优先，帮助里就不该再为同名 skill/文件命令多印一行。
+  const builtinNames = new Set<string>(SLASH_COMMANDS.map((command) => command.name))
   const allCommands = [
     ...SLASH_COMMANDS,
-    ...skillCommands.map((skill) => ({ name: `/${skill.name}`, description: skill.description })),
-    ...fileCommands.map((command) => ({ name: `/${command.name}`, description: command.description ?? '' })),
+    ...skillCommands
+      .map((skill) => ({ name: `/${skill.name}`, description: skill.description }))
+      .filter((command) => !builtinNames.has(command.name)),
+    ...fileCommands
+      .map((command) => ({ name: `/${command.name}`, description: command.description ?? '' }))
+      .filter((command) => !builtinNames.has(command.name)),
   ]
   return (
     `X-Code CLI v${VERSION}\n\n` +

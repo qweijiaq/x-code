@@ -121,7 +121,12 @@ export function useInputQueue(setState: SetState) {
     if (queued.length === 0) return
     const { draft, retained } = partitionQueuedInputsForDraft(queued)
     queuedMessagesRef.current = retained
-    if (!draft) return
+    if (!draft) {
+      // 没有可回填的草稿（条目全被裁掉）时也必须镜像一次 state：ref 已经变了，
+      // 不同步就会在 ChatInput 里留下再也无法排空的幽灵条目。
+      setState((prev) => ({ ...prev, queuedMessages: toQueuedUserMessages(retained) }))
+      return
+    }
     setState((prev) => ({ ...prev, queuedMessages: [], restoredDraft: { text: draft, nonce: queueSeqRef.current++ } }))
   }, [setState])
 

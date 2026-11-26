@@ -69,15 +69,9 @@ export function modelMessagesToDisplay(messages: ModelMessage[]): DisplayMessage
         // toolSearch 在实时流中从 scrollback 隐藏（见 use-agent.ts）——这里也
         // 跳过它，这样恢复的会话不会突然露出实时视图隐藏过的工具搜索调用。
         if (part.toolName === TOOL_SEARCH_TOOL_NAME) continue
-        if (
-          part.toolName === 'shellOutput' &&
-          (!part.input ||
-            typeof part.input !== 'object' ||
-            !('chars' in (part.input as Record<string, unknown>)) ||
-            (part.input as Record<string, unknown>).chars === '')
-        ) {
-          continue
-        }
+        // 与实时流共用同一判定（见 agent-tool-lifecycle）：只有被动轮询才隐藏，
+        // 带 chars 输入或 resize（cols/rows）的调用仍需显示。
+        if (isPassiveShellWait(part)) continue
         tcIdx++
         const result = toolResults.get(part.toolCallId)
         const tc: DisplayToolCall = {
@@ -100,14 +94,29 @@ export function modelMessagesToDisplay(messages: ModelMessage[]): DisplayMessage
   return out
 }
 
+/** `shellOutput` 工具的被动轮询调用（既没带输入文本，也不是 resize）在实时视图
+ *  与恢复会话里都应隐藏。两处必须共用本函数，否则行为会分叉。 */
+export function isPassiveShellWait(tool: { toolName?: string; input?: unknown } | undefined): boolean {
+  if (tool?.toolName !== 'shellOutput') return false
+  const input = tool.input
+  if (!input || typeof input !== 'object') return true
+  const record = input as Record<string, unknown>
+  return (record.chars === undefined || record.chars === '') && record.cols === undefined && record.rows === undefined
+}
+
+const SUB_INPUT_PREVIEW_LIMIT = 80
+const SUB_INPUT_PREVIEW_KEYS = ['filePath', 'command', 'pattern', 'query', 'dirPath', 'path'] as const
+
 export function previewSubInput(input: Record<string, unknown>): string {
-  const val =
-    (input.filePath as string) ??
-    (input.command as string) ??
-    (input.pattern as string) ??
-    (input.query as string) ??
-    (input.dirPath as string) ??
-    (input.path as string) ??
-    ''
-  return val.length > 80 ? val.slice(0, 77) + '...' : val
+  let val = ''
+  for (const key of SUB_INPUT_PREVIEW_KEYS) {
+    const candidate = input[key]
+    // 只认字符串：模型给的字段可能是数字/对象，`??` 不会跳过它们，
+    // 下面按长度截断时会抛 TypeError。
+    if (typeof candidate === 'string' && candidate !== '') {
+      val = candidate
+      break
+    }
+  }
+  return val.length > SUB_INPUT_PREVIEW_LIMIT ? `${val.slice(0, SUB_INPUT_PREVIEW_LIMIT - 3)}...` : val
 }

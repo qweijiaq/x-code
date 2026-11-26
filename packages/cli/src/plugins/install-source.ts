@@ -8,6 +8,8 @@ export type PluginInstallSourceResult =
   | { ok: false; code: 'plugin-not-found'; pluginName: string; marketplace: string }
   | { ok: false; code: 'invalid-github-source' }
   | { ok: false; code: 'unrecognized-source'; source: string }
+  /** 市场索引不可读（known_marketplaces.json 损坏 / 权限问题）。 */
+  | { ok: false; code: 'marketplace-lookup-failed'; pluginName: string; marketplace: string; message: string }
 
 type LookupPlugin = (pluginId: string) => Promise<{ entry: { source: PluginSource } } | undefined>
 
@@ -27,7 +29,10 @@ export async function resolvePluginInstallSource(
   findPlugin: LookupPlugin = lookupPlugin,
 ): Promise<PluginInstallSourceResult> {
   const localPath = isLocalPath(raw)
-  const gitUrl = /^https?:\/\//i.test(raw) || raw.startsWith('git@')
+  // 任意 `scheme://` 都当 git URL：`ssh://git@host/x/y.git` 里的 `@` 会被误当成
+  // `name@marketplace` 分隔符，解析出 `pluginName = 'ssh://git'`。
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
+  const gitUrl = hasScheme || raw.startsWith('git@')
   const githubShorthand = raw.startsWith('github:')
   const marketplaceSeparator = raw.lastIndexOf('@')
   const marketplaceReference = marketplaceSeparator > 0 && !localPath && !gitUrl && !githubShorthand
@@ -35,7 +40,19 @@ export async function resolvePluginInstallSource(
   if (marketplaceReference) {
     const pluginName = raw.slice(0, marketplaceSeparator)
     const marketplace = raw.slice(marketplaceSeparator + 1)
-    const found = await findPlugin(`${pluginName}@${marketplace}`)
+    let found: Awaited<ReturnType<LookupPlugin>>
+    try {
+      found = await findPlugin(`${pluginName}@${marketplace}`)
+    } catch (error) {
+      // 市场索引读取失败（non-JSON / 权限）：返回结构化错误，而不是裸 stack trace。
+      return {
+        ok: false,
+        code: 'marketplace-lookup-failed',
+        pluginName,
+        marketplace,
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
     if (!found) return { ok: false, code: 'plugin-not-found', pluginName, marketplace }
     return { ok: true, source: found.entry.source, marketplace, expectedName: pluginName }
   }

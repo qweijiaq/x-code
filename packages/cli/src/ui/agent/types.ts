@@ -88,7 +88,10 @@ export interface AgentState {
   activeToolCalls: ActiveToolCall[]
   shellOutput: string
   permissionQueue: PendingPermission[]
-  authorityRequest?: PendingAuthority | null
+  /** 与 `pendingQuestion` 一致的单一表示：只有 null 表示「没有待审批请求」。
+   *  可选字段会让 `state.authorityRequest !== null`（App 的阻塞判定）把
+   *  undefined 误判成「有请求」而错误地锁住输入。 */
+  authorityRequest: PendingAuthority | null
   pendingQuestion: PendingQuestion | null
   /** 等待下一个工具边界或空闲排水的输入。 */
   queuedMessages: QueuedMessage[]

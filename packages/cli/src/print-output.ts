@@ -73,11 +73,16 @@ export class PrintOutput {
 
   toolResult(toolCallId: string, result: string, isError = false): void {
     if (this.format === 'text') return
-    const record = this.toolsById.get(toolCallId)
-    if (record) {
-      record.result = result
-      record.isError = isError
+    let record = this.toolsById.get(toolCallId)
+    if (!record) {
+      // 乱序或缺失的 tool-call（例如重启后的子代理结果）：兜底建一条，
+      // 否则 json 模式的 summary 会静默丢掉这条结果。
+      record = { toolCallId, toolName: '', input: {} }
+      this.tools.push(record)
+      this.toolsById.set(toolCallId, record)
     }
+    record.result = result
+    record.isError = isError
     if (this.format === 'jsonl') {
       this.write(`${JSON.stringify({ type: 'tool-result', toolCallId, result, isError })}\n`)
     }
@@ -92,6 +97,11 @@ export class PrintOutput {
 
   setError(message: string): void {
     this.error = message
+    // 与 textDelta/toolCall/setUsage 一致地即时写出：进程在 finish() 之前被
+    // 中断（SIGINT、崩溃）时，流式消费方仍能拿到错误。
+    if (this.format === 'jsonl') {
+      this.write(`${JSON.stringify({ type: 'error', message })}\n`)
+    }
   }
 
   /** json 输出单个 result；jsonl 输出 done；text 不输出。 */

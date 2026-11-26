@@ -39,6 +39,7 @@ import type {
   StreamRetryEvent,
 } from '@x-code-cli/core'
 
+import { appendShellOutput } from './agent-tool-lifecycle.js'
 import type { GoalToolLifecycleCallbacks } from './agent-tool-lifecycle.js'
 import { authorityApproval } from './authority-approval.js'
 import { OTHER_OPTION } from './question-options.js'
@@ -188,7 +189,8 @@ export function useGoalController({
         setState((previous) => ({ ...previous, permissionMode: mode }))
       },
       onTodosUpdate: (todos) => setState((previous) => ({ ...previous, todos })),
-      onShellOutput: (chunk) => setState((previous) => ({ ...previous, shellOutput: previous.shellOutput + chunk })),
+      onShellOutput: (chunk) =>
+        setState((previous) => ({ ...previous, shellOutput: appendShellOutput(previous.shellOutput, chunk) })),
       onUsageUpdate: (usage) => setState((previous) => ({ ...previous, usage })),
       onContextCompressed: (summary) => {
         appendMessage({

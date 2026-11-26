@@ -61,6 +61,7 @@ import type {
 import { cloneCacheMissSummary, initialAgentState } from './agent-state.js'
 import { createGoalToolLifecycleCallbacks, createToolLifecycleCallbacks } from './agent-tool-lifecycle.js'
 import { authorityApproval } from './authority-approval.js'
+import { nextMessageId } from './message-id.js'
 import { invalidateModelDependentState, invalidateToolSurfaceState } from './model-switch-state.js'
 import { OTHER_OPTION } from './question-options.js'
 import { ownerMayDrainQueuedInputs } from './queued-agent-inputs.js'
@@ -379,7 +380,14 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
   const initialize = useCallback(async () => {
     if (initializedRef.current) return
     initializedRef.current = true
-    await options.memoryService?.initialize(process.cwd())
+    try {
+      await options.memoryService?.initialize(process.cwd())
+    } catch (error) {
+      // 失败必须回滚标志位：否则后续每次 submit 都在这里早退，memory 与规则在
+      // 整个会话里静默不可用，用户只能重启 CLI。
+      initializedRef.current = false
+      throw error
+    }
     loadPersistedRules(process.cwd())
   }, [options.memoryService])
 
@@ -463,7 +471,15 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
         reconnectLabel: null,
         messages: submitOptions?.silent
           ? prev.messages
-          : [...prev.messages, { id: Date.now().toString(), role: 'user', content: text, timestamp: Date.now() }],
+          : (() => {
+              // 同一毫秒里追加的两条用户消息（peer 与 user 连续提交）用裸
+              // `Date.now()` 会拿到相同 id，渲染层会把后者当成同一条吞掉。
+              const ts = Date.now()
+              return [
+                ...prev.messages,
+                { id: nextMessageId('user', ts), role: 'user' as const, content: text, timestamp: ts },
+              ]
+            })(),
       }))
 
       const controller = new AbortController()
@@ -582,6 +598,15 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
               resolve: (answer) => finish(answer === 'Yes'),
               abortAnswer: 'No',
             }
+            // 同 askQuestion：单槽位覆盖前必须先结算上一个 promise，否则等它的
+            // 核心循环永远回不来。旧对话框可能还排在 setTimeout 里没打开，
+            // 顺手把那个 timer 清掉，避免它在新对话框之上再弹出一次。
+            if (planApprovalTimerRef.current) {
+              clearTimeout(planApprovalTimerRef.current)
+              planApprovalTimerRef.current = null
+            }
+            const previousQuestion = pendingQuestionRef.current
+            if (previousQuestion) previousQuestion.resolve(previousQuestion.abortAnswer)
             pendingQuestionRef.current = pendingQuestion
             // 延迟打开对话框，让计划文本提交先绘制出来——避免同时 commit+grow
             // 而让几何引擎困惑。
@@ -937,7 +962,9 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
   const enqueuePeerInput = useCallback(
     (input: { content: string; peer: PublicPeer; messageId: string; inboxKey: string }): boolean => {
       if (queuedMessagesRef.current.filter((entry) => entry.source === 'peer').length >= 50) return false
-      void submitRawPeerContent(input)
+      // 丢弃 promise 且无 catch：reject 就是 unhandledRejection，Node 默认策略
+      // 下会直接把 CLI 进程打崩。
+      void submitRawPeerContent(input).catch((error) => debugLog('peer.enqueue', String(error)))
       return true
     },
     [submitRawPeerContent, queuedMessagesRef],
@@ -1006,6 +1033,11 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
           dismissible: true,
           layout: opts?.layout,
         }
+        // 问句槽位只有一个：直接覆盖会让上一个 askUser/askQuestion 的 promise
+        // 永远悬挂，等待它的核心循环就此挂死（租约不释放、UI 卡在 busy）。
+        // 例如模型正等 askUser 回答时，用户执行了 `/model` 这类需要选择器的命令。
+        const previous = pendingQuestionRef.current
+        if (previous) previous.resolve(previous.abortAnswer)
         pendingQuestionRef.current = pendingQuestion
         setState((prev) => ({ ...prev, pendingQuestion }))
       })
@@ -1064,8 +1096,11 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
       return { ok: false, removed: 0, reason: errorMessage(error) }
     } finally {
       lease.release()
+      // 确认对话框期间用户提交的文本会因 tryAcquire 失败被排进队列；不排水就会
+      // 留下一条既无 spinner 也无消费者的消息。
+      scheduleIdleDrain()
     }
-  }, [askQuestion, currentAuthority, hasPendingPeerInput])
+  }, [askQuestion, currentAuthority, hasPendingPeerInput, scheduleIdleDrain])
 
   const {
     runGoal,
@@ -1384,6 +1419,9 @@ export function useAgent(initialModel: LanguageModel, options: AgentOptions, ini
     (newModelId: string, newModel: LanguageModel) => {
       modelRef.current = newModel
       modelIdRef.current = newModelId
+      // `options.modelId` 会被直接传给 core（getContextBreakdown / searchContext），
+      // 不回填就成了一份过期的第二模型来源。
+      options.modelId = newModelId
       invalidateModelDependentState(loopStateRef.current)
       options.memoryService?.setActiveModelId(newModelId)
       setState((prev) => ({ ...prev, modelId: newModelId }))

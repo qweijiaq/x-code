@@ -22,6 +22,7 @@ import {
   readKnownMarketplaces,
   removeKnownMarketplace,
   setPluginEnabled,
+  stripTerminalControls,
   uninstallPlugin,
   validatePlugin,
 } from '@x-code-cli/core'
@@ -246,18 +247,22 @@ async function cliInstall(args: string[]): Promise<number> {
 /** 把同意预览渲染到 stderr，并从 stdin 读取一个 y/n。在没有 TTY 时
  *  （CI 环境、管道安装脚本）默认拒绝——那些调用方应显式传 `--yes`。 */
 async function promptConsent(preview: ConsentPreview): Promise<boolean> {
+  // marketplace manifest 是不可信输入：未清理的 ANSI/OSC 序列（`\x1b[2K`、
+  // 光标上移、窗口标题）能把紧随其后的 MCP / hooks 警告从屏幕上抹掉，从而绕过
+  // 这道安全提示。所有来自 manifest 的字段先过一遍终端清理。
+  const text = (value: string | undefined): string => (value ? stripTerminalControls(value) : '')
   const lines: string[] = []
   lines.push('')
-  lines.push(chalk.bold.yellow(`About to install: ${preview.pluginId} v${preview.version}`))
-  if (preview.description) lines.push(`  ${preview.description}`)
+  lines.push(chalk.bold.yellow(`About to install: ${text(preview.pluginId)} v${text(preview.version)}`))
+  if (preview.description) lines.push(`  ${text(preview.description)}`)
   lines.push('')
-  lines.push(`  Source:      ${formatPluginSource(preview.source)}`)
+  lines.push(`  Source:      ${text(formatPluginSource(preview.source))}`)
   lines.push(
-    `  Marketplace: ${preview.marketplace}${preview.fromReservedMarketplace ? ' [reserved/official]' : ''}${preview.verified ? ' [verified]' : ''}`,
+    `  Marketplace: ${text(preview.marketplace)}${preview.fromReservedMarketplace ? ' [reserved/official]' : ''}${preview.verified ? ' [verified]' : ''}`,
   )
-  if (preview.author) lines.push(`  Author:      ${preview.author}`)
-  if (preview.license) lines.push(`  License:     ${preview.license}`)
-  if (preview.homepage) lines.push(`  Homepage:    ${preview.homepage}`)
+  if (preview.author) lines.push(`  Author:      ${text(preview.author)}`)
+  if (preview.license) lines.push(`  License:     ${text(preview.license)}`)
+  if (preview.homepage) lines.push(`  Homepage:    ${text(preview.homepage)}`)
   lines.push('')
   lines.push('  Will contribute:')
   if (preview.hasSkillsDir) lines.push('    - skills (added to /skill list)')
@@ -265,13 +270,15 @@ async function promptConsent(preview: ConsentPreview): Promise<boolean> {
   if (preview.hasCommandsDir) lines.push('    - slash commands (each `.md` file becomes a `/<name>` command)')
   if (preview.inlineMcpServerNames.length > 0) {
     lines.push(
-      `    - ${chalk.red('MCP servers')} (will be spawned as subprocesses): ${preview.inlineMcpServerNames.join(', ')}`,
+      `    - ${chalk.red('MCP servers')} (will be spawned as subprocesses): ${preview.inlineMcpServerNames.map(text).join(', ')}`,
     )
   } else if (preview.hasPathMcpServers) {
     lines.push(`    - ${chalk.red('MCP servers')} (from external file — spawned as subprocesses)`)
   }
   if (preview.hookEvents.length > 0) {
-    lines.push(`    - ${chalk.red('Lifecycle hooks')} (will run shell commands on: ${preview.hookEvents.join(', ')})`)
+    lines.push(
+      `    - ${chalk.red('Lifecycle hooks')} (will run shell commands on: ${preview.hookEvents.map(text).join(', ')})`,
+    )
   } else if (preview.hasPathHooks) {
     lines.push(`    - ${chalk.red('Lifecycle hooks')} (from external file — will run shell commands)`)
   }
@@ -433,6 +440,12 @@ async function parseInstallSource(raw: string) {
         `Unrecognised source: '${result.source}'. Use name@marketplace, github:owner/repo, an https/git URL, or a path.`,
       )
       break
+    case 'marketplace-lookup-failed':
+      console.error(
+        `Could not look up '${result.pluginName}@${result.marketplace}': ${result.message}. ` +
+          `Run 'xc plugin marketplace refresh ${result.marketplace}' or check known_marketplaces.json.`,
+      )
+      break
   }
   return null
 }
@@ -548,16 +561,19 @@ async function cliUpdate(args: string[]): Promise<number> {
     console.log(`Updating ${records.length} plugin${records.length === 1 ? '' : 's'} …`)
     let updated = 0
     let unchanged = 0
+    let cancelled = 0
     let failed = 0
     for (const rec of records) {
       const outcome = await updateOnePlugin(rec, skipConsent)
       if (outcome === 'updated') updated++
       else if (outcome === 'unchanged') unchanged++
+      else if (outcome === 'cancelled') cancelled++
       else failed++
     }
     console.log('')
     console.log(
-      `Summary: ${chalk.green(updated)} updated, ${unchanged} unchanged, ${failed > 0 ? chalk.red(failed) : failed} failed.`,
+      `Summary: ${chalk.green(updated)} updated, ${unchanged} unchanged, ${failed > 0 ? chalk.red(failed) : failed} failed` +
+        `${cancelled > 0 ? `, ${cancelled} cancelled` : ''}.`,
     )
     return failed > 0 ? 1 : 0
   }
@@ -574,7 +590,7 @@ async function cliUpdate(args: string[]): Promise<number> {
   return outcome === 'failed' ? 1 : 0
 }
 
-type UpdateOutcome = 'updated' | 'unchanged' | 'failed'
+type UpdateOutcome = 'updated' | 'unchanged' | 'cancelled' | 'failed'
 
 /** 从其记录的源重装一个插件并报告发生了什么。设计为可从单个 id 和 `--all`
  *  两条路径调用；逐行输出简洁（只输出结果），让批量更新读起来像干净的列表。
@@ -583,7 +599,16 @@ async function updateOnePlugin(
   rec: Awaited<ReturnType<typeof listInstalledPlugins>>[number],
   skipConsent: boolean,
 ): Promise<UpdateOutcome> {
-  const result = await updateInstalledPlugin(rec, skipConsent ? {} : { consent: promptConsent })
+  const result = await updateInstalledPlugin(
+    rec,
+    // 与安装路径保持一致：不带 userConfigPrompt 时新版 manifest 新增的字段
+    // 永远不会被提问，插件启动时只能看到空环境变量。
+    skipConsent ? {} : { consent: promptConsent, userConfigPrompt: promptUserConfig },
+  )
+  if (result.status === 'cancelled') {
+    console.error(`  ${rec.id}: cancelled`)
+    return 'cancelled'
+  }
   if (result.status === 'failed') {
     console.error(chalk.red(`  ${rec.id}: failed — ${result.error}`))
     return 'failed'
