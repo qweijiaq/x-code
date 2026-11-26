@@ -292,14 +292,10 @@ const PS_DOT_SOURCING_RE = /(?:^|[\s;{(])\.\s+\S/
 // 检查，脚本块里因此可以直接执行任意程序。
 const PS_BARE_AMP_RE = /(?<![<>&])&(?![&>])/
 
-// Verb-Noun token 形状（查找 + 严格校验）。FIND 匹配任何带 `-` 的东西，包括
-// `x-code-cli` 这类路径；STRICT 强制 Verb（首字母大写）和 Noun（首字母大写），
-// 路径会因此失败。
+// Verb-Noun token 形状。FIND 匹配任何带 `-` 的东西，包括 `x-code-cli` 这类
+// 路径；是否算 cmdlet 由 classifyCmdletToken 按紧邻字符判断。
 const VERB_NOUN_FIND_RE = /\b[A-Za-z]+(?:-[A-Za-z0-9]+)+\b/g
 const VERB_NOUN_STRICT_RE = /^[A-Z][a-z]+(?:-[A-Z][A-Za-z0-9]*)+$/
-/** 全小写写法（`set-content`）：PowerShell 的 cmdlet 名不区分大小写，
- *  `set-content` 与 `Set-Content` 完全等价，必须同样按 cmdlet 处理。 */
-const VERB_NOUN_LOWERCASE_RE = /^[a-z]+-[a-z0-9]+$/
 
 /**
  * 把一个 Verb-Noun 形状的 token 归类：
@@ -314,8 +310,10 @@ const VERB_NOUN_LOWERCASE_RE = /^[a-z]+-[a-z0-9]+$/
  */
 function classifyCmdletToken(name: string, prevChar: string, nextChar: string): 'readonly' | 'unsafe' | 'path' {
   if (READ_ONLY_CMDLET_SET.has(name.toLowerCase())) return 'readonly'
-  if (VERB_NOUN_STRICT_RE.test(name)) return 'unsafe'
-  if (!VERB_NOUN_LOWERCASE_RE.test(name)) return 'path'
+  // PowerShell 的 cmdlet 名不区分大小写：`Set-content`、`SET-CONTENT`、
+  // `sEt-Content` 与 `Set-Content` 完全等价。形状判定必须大小写无关，否则这些
+  // 写法会落到 `path` 被静默跳过，`ForEach-Object { Set-content out.txt $_ }`
+  // 就会被 always-allow 放行。
   // 紧邻 `/`、`\`、`.`、`:` 的说明是路径片段（`src/my-file`、`my-file.txt`），
   // 不是 cmdlet。
   if (/[/\\.:]/.test(prevChar) || /[/\\.:]/.test(nextChar)) return 'path'
@@ -445,7 +443,10 @@ function hasWriteFlags(cmd: string): boolean {
  *  cmdlet 开头，但主体想跑什么就跑什么。像 `Where-Object { $_.Length -gt 100 }`
  *  这类属性访问块不包含 cmdlet token，保持放行。 */
 function hasUnsafeScriptBlock(c: string): boolean {
-  if (!c.includes('{')) return false
+  // `{ … }` 与 `( … )` 都是「先执行里面任意语句」的边界：PowerShell 的
+  // `Write-Output (Remove-Item secret.txt)` 以白名单 cmdlet 开头，括号里却可以
+  // 跑任何东西，只看 `{` 会整段放行。
+  if (!/[({]/.test(c)) return false
   if (PS_CALL_OP_RE.test(c) || PS_DOT_SOURCING_RE.test(c)) return true
   // 裸 `&` 是调用操作符/后台分隔符：`ForEach-Object { & calc.exe }` 的
   // `calc.exe` 点号前既不是行首也不是分隔符，几条正则都命不中它。

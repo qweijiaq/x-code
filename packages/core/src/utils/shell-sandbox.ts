@@ -14,6 +14,8 @@
 import os from 'node:os'
 import path from 'node:path'
 
+import { userXcodeDir } from '../utils.js'
+
 export interface ShellSandboxConfig {
   enabled: boolean
   workspace: string
@@ -108,12 +110,19 @@ export function sandboxProfileText(config: ShellSandboxConfig = current): string
   const workspace = path.resolve(config.workspace || process.cwd())
   // 全盘 / 家目录可写会让"写入只允许在工作区内"这条核心保证（只剩凭据清单
   // 被拒）形同虚设，且不会有任何报错提示。宁可直接拒绝，也不要给出虚假保证。
-  if (workspace === path.parse(workspace).root || workspace === os.homedir()) {
+  // 家目录判定必须是「包含关系」而不是精确相等：把 `/Users` 当成工作区时，
+  // `(subpath "/Users")` 会让所有用户的家目录可写。
+  const home = path.resolve(os.homedir())
+  const isSameOrInside = (child: string, parent: string): boolean =>
+    child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep)
+  if (workspace === path.parse(workspace).root || isSameOrInside(home, workspace)) {
     throw new Error(`shell sandbox: refusing to treat ${workspace} as the writable workspace`)
   }
   const temp = os.tmpdir()
-  // 与 userXcodeDir() 一致：凭据实际落在 ${X_CODE_HOME ?? ~/.x-code} 下。
-  const xcodeRoot = process.env.X_CODE_HOME?.trim() || path.join(os.homedir(), '.x-code')
+  // 凭据实际落在 `${X_CODE_HOME ?? ~/.x-code}` 下。SBPL 按内核解析后的绝对路径
+  // 匹配，相对的 / 带 `~` 的 / 带多余分隔符的 X_CODE_HOME 会让整块凭据 deny
+  // 规则变成空匹配且不报错 —— 必须先归一化成绝对路径，并与 userXcodeDir() 同源。
+  const xcodeRoot = path.resolve(userXcodeDir())
   const skillRuntime = path.join(xcodeRoot, 'skill-runtime')
   const lines = ['(version 1)', '(allow default)']
   if (!config.allowNetwork) lines.push('(deny network*)')
