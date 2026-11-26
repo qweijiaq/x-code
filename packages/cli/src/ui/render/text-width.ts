@@ -22,8 +22,10 @@ function isWide(cp: number): boolean {
     // 半角与全角形式（全角半区：0xff00-0xff60，符号：0xffe0-0xffe6）
     (cp >= 0xff00 && cp <= 0xff60) ||
     (cp >= 0xffe0 && cp <= 0xffe6) ||
-    // CJK 扩展 B-F
+    // CJK 扩展 B–F 及其后的兼容表意文字补遗
     (cp >= 0x20000 && cp <= 0x2fa1f) ||
+    // CJK 扩展 G / H / I（罕见姓名、地名、古籍中真实出现）
+    (cp >= 0x30000 && cp <= 0x3ffff) ||
     // CJK 部首补充 + 康熙部首 + 表意文字描述符
     (cp >= 0x2e80 && cp <= 0x2fff) ||
     // CJK 符号 + 平假名 + 片假名 + 注音符号 + 带圈 CJK + 兼容
@@ -32,10 +34,30 @@ function isWide(cp: number): boolean {
     (cp >= 0x3100 && cp <= 0x312f) ||
     (cp >= 0x3200 && cp <= 0x32ff) ||
     (cp >= 0x3300 && cp <= 0x33ff) ||
-    // 彝文音节 + 彝文部首
-    (cp >= 0xa000 && cp <= 0xa4cf) ||
+    // 契丹小字 + 西夏文 + 女书（East_Asian_Width=W，且 U+16FE0–U+16FE4 为宽）
+    (cp >= 0x16fe0 && cp <= 0x16fe4) ||
+    (cp >= 0x17000 && cp <= 0x18cff) ||
+    (cp >= 0x1b170 && cp <= 0x1b2ff) ||
+    // 彝文音节（U+A000–U+A48F）；U+A490–U+A4CF 是彝文罗马化/Lisu，按窄处理，
+    // 因此彝文部首（U+A4D0–U+A4FF）必须单独列出。
+    (cp >= 0xa000 && cp <= 0xa48f) ||
+    (cp >= 0xa4d0 && cp <= 0xa4ff) ||
     // CJK 兼容形式
     (cp >= 0xfe30 && cp <= 0xfe4f)
+  )
+}
+
+/** 零宽码点：C0/C1 控制符（含 ANSI 的 `ESC`）、零宽连接符、BOM、变体选择符、
+ *  Tag 字符等 Default_Ignorable_Code_Point。终端不会为它们推进光标。 */
+function isZeroWidth(cp: number): boolean {
+  return (
+    cp <= 0x1f ||
+    (cp >= 0x7f && cp <= 0x9f) ||
+    (cp >= 0x200b && cp <= 0x200f) ||
+    (cp >= 0x2060 && cp <= 0x2064) ||
+    cp === 0xfeff ||
+    (cp >= 0xfe00 && cp <= 0xfe0f) ||
+    (cp >= 0xe0000 && cp <= 0xe0fff)
   )
 }
 
@@ -78,12 +100,20 @@ export function charWidth(ch: string): number {
   if (emojiRe.test(ch)) return 2
   for (const codePoint of ch) {
     if (markRe.test(codePoint)) continue
-    return isWide(codePoint.codePointAt(0)!) ? 2 : 1
+    const cp = codePoint.codePointAt(0)!
+    // 零宽码点不能按 1 列计：否则 ANSI 转义（`\x1b[31m`）会被算进列预算，行宽
+    // 超限并触发终端换行——正是本模块要修复的对齐漂移。
+    if (isZeroWidth(cp)) continue
+    return isWide(cp) ? 2 : 1
   }
   return 0
 }
 
+/** 纯可打印 ASCII 的快速路径：这些字符的宽度恒等于码元数，跳过 Intl.Segmenter。 */
+const ASCII_PRINTABLE_RE = /^[\x20-\x7e]*$/
+
 export function visualWidth(str: string): number {
+  if (ASCII_PRINTABLE_RE.test(str)) return str.length
   let w = 0
   for (const ch of graphemes(str)) w += charWidth(ch)
   return w

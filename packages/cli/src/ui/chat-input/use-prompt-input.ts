@@ -26,6 +26,7 @@ import { useEffect, useRef } from 'react'
 
 import { useStdin } from 'ink'
 
+import { previousGraphemeBoundary } from '../render/text-width.js'
 import { type DecodedPromptInput, PromptInputDecoder } from './prompt-input-decoder.js'
 
 const ENABLE_BRACKETED_PASTE = '\x1b[?2004h'
@@ -187,7 +188,11 @@ export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }:
       if (data === '\x7f' || data === '\b') {
         // 如果防抖缓冲有待处理文本，就修剪缓冲来吸收退格，而不是 flush + 分发。
         if (pendingTextRef.current.length > 0) {
-          pendingTextRef.current = pendingTextRef.current.slice(0, -1)
+          // 按字素簇退格，而不是 `slice(0, -1)`：后者切的是 UTF-16 码元，会给
+          // 辅助平面字符（emoji、CJK 扩展 B）或组合序列留下孤立代理项，随后
+          // flush 把损坏字符原样交给下游（乱码 / JSON.stringify 报错）。
+          const pending = pendingTextRef.current
+          pendingTextRef.current = pending.slice(0, previousGraphemeBoundary(pending, pending.length))
           return
         }
         // 立即分发，让按住退格感觉跟手（之前 queueBackspace 坐在防抖缓冲里，定时器
@@ -253,10 +258,17 @@ export function usePromptInput({ onText, onPaste, onKey, onInterrupt, enabled }:
       //  - 无爆发进行中的小单键分块立即分发。按住一个键会以约 30 Hz 触发 stdin 事件，
       //    对每个都防抖会让输入感觉冻结 / 卡顿。Claude Code 也这么做（他们的
       //    usePasteHandler 对 input.length < PASTE_THRESHOLD 绕过粘贴缓冲）。
-      if (burstInProgress || data.length >= PASTE_SIZE_THRESHOLD || data.includes('\n')) {
-        queueText(data)
+      // 到这里剩下的都不该是可打印文本之外的按键：让 C0/C1 控制字符（Ctrl+D
+      // `\x04`、Ctrl+L `\x0c`、Ctrl+K `\x0b`、Ctrl+W `\x17`…）流进去，它们会被
+      // 插进输入框再写回终端，破坏渲染。只丢弃这些字符本身，同一分块里的可打印
+      // 文本照常保留。
+      const printable = data.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001a\u001c-\u001f\u007f-\u009f]/g, '')
+      if (printable.length === 0) return
+
+      if (burstInProgress || printable.length >= PASTE_SIZE_THRESHOLD || printable.includes('\n')) {
+        queueText(printable)
       } else {
-        handlersRef.current.onText(data)
+        handlersRef.current.onText(printable)
       }
     }
 

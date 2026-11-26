@@ -575,13 +575,15 @@ function cssRules(): Rule[] {
     { re: /\/\*[\s\S]{0,500}?\*\//, token: 'comment' },
     { re: /"(?:[^"\\\n]|\\.){0,500}"/, token: 'string' },
     { re: /'(?:[^'\\\n]|\\.){0,500}'/, token: 'string' },
+    // #hex 颜色规则必须排在 `#id` 选择器之前：否则 `#fff`、`#ff0000` 会先被
+    // 选择器规则按 type 槽匹配掉，绝大多数 hex 颜色着色错误。
+    { re: /#[0-9a-fA-F]{3,8}\b/, token: 'number' },
     // 带 `.foo`、`#bar`、`:hover` 的选择器——黄色。
     { re: /[#.][a-zA-Z_-][\w-]*/, token: 'type' },
     { re: /:[a-zA-Z-]+(?:\([^)]*\))?/, token: 'function' },
     // 属性名（标识符后直接跟 `:`）。
     { re: /\b[a-zA-Z-]+(?=\s*:)/, token: 'function' },
-    // #hex 颜色和数字值（可带单位）。
-    { re: /#[0-9a-fA-F]{3,8}\b/, token: 'number' },
+    // 数字值（可带单位）。
     { re: /-?\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|deg|s|ms|fr)?\b/, token: 'number' },
   ])
 }
@@ -683,11 +685,36 @@ const RULES_BY_LANG: Record<Lang, () => Rule[]> = {
 /** 从活动调色板应用一种颜色规格。hex 字符串走 `chalk.hex`；命名的 ANSI 颜色走
  *  chalk 的命名访问器；null 规格原样返回文本（用于标识符分类落空、单词不匹配任何
  *  已知 keyword/type 模式时的回退）。 */
+/** 允许的 chalk 命名色。用白名单而不是直接访问：`spec` 是 `'constructor'` /
+ *  `'valueOf'` / `'toString'` 时会命中原型链上的方法，`named(text)` 要么返回垃圾
+ *  字符串（静默篡改文本），要么抛 TypeError 让整条渲染路径崩掉。 */
+const NAMED_ANSI_COLORS: ReadonlySet<string> = new Set([
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'gray',
+  'grey',
+  'blackBright',
+  'redBright',
+  'greenBright',
+  'yellowBright',
+  'blueBright',
+  'magentaBright',
+  'cyanBright',
+  'whiteBright',
+])
+
 export function applyColor(text: string, spec: ColorSpec): string {
   if (spec === null) return text
   if (spec.startsWith('#')) return c.hex(spec)(text)
   // 命名的 ANSI 颜色——一次小型访问器查找。chalk 把它标成可链式 getter，
   // 但我们只需要常见的 8/16 色。
+  if (!NAMED_ANSI_COLORS.has(spec)) return text
   const named = (c as unknown as Record<string, (s: string) => string>)[spec]
   if (typeof named === 'function') return named(text)
   return text

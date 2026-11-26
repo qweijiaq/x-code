@@ -80,7 +80,10 @@ function normalizeToolName(name: string): string {
  *  彩色字符串/标志。 */
 export function isShellToolName(toolName: string): boolean {
   const n = normalizeToolName(toolName)
-  return n === 'shell' || n === 'bash'
+  // `Zsh` / `PowerShell` 归一化后是 `zsh` / `powershell`：漏掉它们会让这些工具的
+  // 命令行既不进 shell 语法高亮，`getToolInputPreview` 也拿不到 `command` 字段
+  // （回落到「第一个短字符串」，可能显示成 cwd 之类无关内容）。
+  return n === 'shell' || n === 'bash' || n === 'zsh' || n === 'powershell' || n === 'pwsh'
 }
 
 export function isCollapsibleReadOnlyTool(toolName: string): boolean {
@@ -259,6 +262,9 @@ export function formatReadGroupSummary(tools: readonly DisplayToolCall[]): ReadG
 }
 
 export function getToolResultSummary(toolName: string, output: string | undefined, status: string): string | null {
+  // 统一行尾再往下走：裸 `\r` 在终端里的语义是「光标回到第 0 列」，Windows shell
+  // 的 CRLF 输出会让摘要后半段覆盖前半段；按 `\n` 切分的分支也依赖这步。
+  if (output) output = normalizeLineEndings(output)
   if (status === 'denied') return 'Denied by user'
   // 出错但没有输出（超时 / 被 kill 的 shell 常常如此）不能读作 “Done”——那正是
   // 下面注释想消除的「符号是红色、文字却说成功」的误导场景。
@@ -293,7 +299,17 @@ export function getToolResultSummary(toolName: string, output: string | undefine
     return `${lineCount} lines`
   }
 
-  if (n === 'fileingest') return output
+  if (n === 'fileingest') {
+    // 与 listdir / task 分支一致：这是「摘要」，整段（可能上千行）原样塞进滚动区
+    // 会让 `+N lines` 一类的截断逻辑全部失效。
+    const lines = output
+      .trim()
+      .split('\n')
+      .filter((l) => l.trim())
+    if (lines.length === 0) return 'Attached'
+    if (lines.length <= 2) return lines.join('\n')
+    return lines.slice(0, 2).join('\n') + `\n... +${lines.length - 2} lines`
+  }
 
   if (n === 'listdir' || n === 'ls') {
     const entries = output

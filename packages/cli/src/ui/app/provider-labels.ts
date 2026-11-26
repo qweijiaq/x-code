@@ -18,5 +18,11 @@ const PROVIDER_LABELS: Record<string, string> = {
 }
 
 export function providerDisplayName(name: string): string {
-  return PROVIDER_LABELS[name] ?? name
+  // provider 名来自用户配置 / CLI 参数（外部可控）：必须用自有属性判断，否则
+  // `toString` / `constructor` 会命中原型链，把一个函数当成标签渲染出来。
+  // 输入统一规范化（大小写混写的 `OpenAI` 也要命中映射表），空值给一个可读回退，
+  // 保证返回类型真的是 string。
+  const key = typeof name === 'string' ? name.trim().toLowerCase() : ''
+  if (key === '') return 'Unknown provider'
+  return Object.hasOwn(PROVIDER_LABELS, key) ? PROVIDER_LABELS[key]! : name
 }

@@ -17,8 +17,19 @@
 
 /** 当终端是无法可靠渲染 CP437 / Latin-1 Supplement（U+0000–U+00FF）和
  *  制表符块（U+2500–U+257F）之外 Unicode 的旧版 ConHost 时为 true。 */
-const IS_LEGACY_TERMINAL =
-  process.platform === 'win32' && !process.env.WT_SESSION && process.env.TERM_PROGRAM !== 'vscode'
+// 判定改为「存在任一现代终端信号」：只认 WT_SESSION / TERM_PROGRAM=vscode 会把
+// Git Bash（mintty 设 MSYSCON）、ConEmu/cmder（ConEmuPID）、WezTerm / Hyper / Tabby
+// （TERM_PROGRAM）、Alacritty（TERM=alacritty*）一并误判为 legacy，让这些用户拿到
+// ASCII 降级字形。真值判断也改为 `!== undefined`——`WT_SESSION=""`（被脚本/测试清空）
+// 不该被当成「没有 Windows Terminal」。
+const modernTerminalSignals =
+  process.env.WT_SESSION !== undefined || // Windows Terminal
+  process.env.MSYSCON !== undefined || // mintty / Git Bash
+  process.env.ConEmuPID !== undefined || // ConEmu / cmder
+  process.env.TERM_PROGRAM !== undefined || // vscode / WezTerm / Hyper / Tabby …
+  (process.env.TERM ?? '').startsWith('alacritty') // Alacritty
+
+const IS_LEGACY_TERMINAL = process.platform === 'win32' && !modernTerminalSignals
 
 // ── 字形表 ─────────────────────────────────────────────────────────
 //

@@ -37,15 +37,22 @@ export function compactionHintForResume(
   modelId: string,
 ): string | null {
   const window = getContextWindow(modelId)
+  // 未知模型可能给出 0 / NaN 的窗口：除零会让百分比变成 Infinity，
+  // 提示里会出现 "Infinity% of the 0-token window"。
+  if (!Number.isFinite(window) || window <= 0) return null
   const used = Math.max(tokens ?? 0, estimatedTokens)
   if (used === 0) return null
-  const pct = (used / window) * 100
+  // 估算值可能超过窗口（例如切换模型后用了更小的窗口），百分比上限截到 100。
+  const pct = Math.min(100, (used / window) * 100)
   if (pct < 60) return null
   return `\n\n_Context is at **${pct.toFixed(0)}%** of the ${window.toLocaleString('en-US')}-token window — consider \`/compact\` before continuing, or it'll auto-compress on the next turn._`
 }
 
 export function formatRelativeTime(epochMs: number): string {
-  const diff = Date.now() - epochMs
+  // 时间戳可能缺失（上游默认成 0）或大于当前时间（时钟偏差 / 时区写错）：
+  // 前者会渲染成看起来真实的 1970-01-01，后者会渲染成 `-45s ago`。
+  if (!Number.isFinite(epochMs) || epochMs <= 0) return 'unknown'
+  const diff = Math.max(0, Date.now() - epochMs)
   const sec = Math.floor(diff / 1000)
   if (sec < 60) return `${sec}s ago`
   const min = Math.floor(sec / 60)

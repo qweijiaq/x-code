@@ -7,14 +7,25 @@ function visibleEscape(codePoint: number): string | undefined {
     codePoint === 0x061c ||
     codePoint === 0x200e ||
     codePoint === 0x200f ||
+    // 零宽字符：ZWSP/ZWNJ/ZWJ 与词连接符，可以在审计视图里「隐形」改写可见内容。
+    (codePoint >= 0x200b && codePoint <= 0x200d) ||
+    codePoint === 0x2060 ||
+    (codePoint >= 0x2061 && codePoint <= 0x2064) ||
     (codePoint >= 0x202a && codePoint <= 0x202e) ||
     (codePoint >= 0x2066 && codePoint <= 0x2069) ||
     codePoint === 0x2028 ||
     codePoint === 0x2029 ||
+    codePoint === 0xfeff ||
+    (codePoint >= 0xfff9 && codePoint <= 0xfffb) ||
+    // Tag 字符（U+E0000–U+E007F）是零宽的隐形标记，常被用于同形/拼接欺骗。
+    (codePoint >= 0xe0000 && codePoint <= 0xe007f) ||
     (codePoint >= 0xd800 && codePoint <= 0xdfff)
   ) {
     return `\\u${codePoint.toString(16).toUpperCase().padStart(4, '0')}`
   }
+  // 反斜杠本身也要转义：否则不可信文本里的字面量 `\u000A` 与真正被转义的
+  // 换行符完全无法区分，被审查的内容可以伪造「这里原本是控制符」的假象。
+  if (codePoint === 0x5c) return '\\\\'
   return undefined
 }
 

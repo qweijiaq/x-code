@@ -44,7 +44,10 @@ function configureMarked(): void {
 // 覆盖短平句式的助手回复（最常见的情况）。
 const MD_SYNTAX_RE = /[#*`|[>_~\-]|\n\n|^\d+\. |\n\d+\. /
 function hasMarkdownSyntax(s: string): boolean {
-  return MD_SYNTAX_RE.test(s.length > 500 ? s.slice(0, 500) : s)
+  // 必须扫整串：只看前 500 字符时，标记出现在其后的大段文本（长表格、列表、标题
+  // 都在后面）会被判定为「无 markdown」原样打印，星号/竖线全都泄漏到终端。
+  // `MD_SYNTAX_RE` 是单个字符类的 alternation，整串扫描是线性的。
+  return MD_SYNTAX_RE.test(s)
 }
 
 // 去掉渲染器生成的 CSI 和 OSC 8 序列，让视觉宽度计算只统计可打印单元格。
@@ -184,11 +187,14 @@ function formatToken(
     case 'codespan':
       return paint('primary')((token as Tokens.Codespan).text ?? '')
 
+    // 行内强调也要把 listDepth / orderedListNumber 透传下去，并把 `token` 作为
+    // 子节点的 parent：硬置 0 / null 会让嵌在列表项里的强调内容丢掉缩进层级，
+    // 而沿用外层 parent（可能是 list_item）会让子 text 再发一次列表符号。
     case 'em':
-      return c.italic((token.tokens ?? []).map((t) => formatToken(t, 0, null, parent)).join(''))
+      return c.italic((token.tokens ?? []).map((t) => formatToken(t, listDepth, orderedListNumber, token)).join(''))
 
     case 'strong':
-      return c.bold((token.tokens ?? []).map((t) => formatToken(t, 0, null, parent)).join(''))
+      return c.bold((token.tokens ?? []).map((t) => formatToken(t, listDepth, orderedListNumber, token)).join(''))
 
     case 'heading': {
       const h = token as Tokens.Heading
@@ -359,7 +365,10 @@ function formatToken(
     case 'html':
       return ''
   }
-  return ''
+  // 未知 token 类型（marked 升级新增的）宁可原样输出，也不要让内容凭空消失——
+  // 静默丢内容是最难排查的一类渲染问题。
+  const fallback = token as { raw?: string; text?: string }
+  return fallback.raw ?? fallback.text ?? ''
 }
 
 /**
@@ -372,14 +381,24 @@ export function renderInlineMarkdown(text: string): string {
   if (!text) return ''
   text = stripTerminalControls(text)
 
-  return (
-    text
-      // bold：**text** 或 __text__
-      .replace(/(\*\*|__)(.+?)\1/g, (_m, _d, inner) => c.bold(inner as string))
-      // italic：*text* 或 _text_（但 _ 不匹配词内）
-      .replace(/(?<!\w)(\*|_)(?!\s)(.+?)(?<!\s)\1(?!\w)/g, (_m, _d, inner) => c.italic(inner as string))
-      // 行内代码：`code`
-      .replace(/`([^`]+)`/g, (_m, inner) => paint('primary')(inner as string))
+  // 先把 `` `code` `` 段摘出来用占位符保护：否则 `` `**literal**` `` 会先命中 bold
+  // 规则——反引号被删、内容被加粗，最后再套上 primary 色的 ANSI 序列还会错位。
+  // 占位符用 U+0000 包裹序号，上面的 `stripTerminalControls` 已经清掉了原文里的
+  // 控制字符，不会与用户内容冲突。
+  const codes: string[] = []
+  const protectedText = text
+    .replace(/`([^`]+)`/g, (_m, inner: string) => {
+      codes.push(inner)
+      return `\u0000${codes.length - 1}\u0000`
+    })
+    // bold：**text** 或 __text__
+    .replace(/(\*\*|__)(.+?)\1/g, (_m, _d, inner) => c.bold(inner as string))
+    // italic：*text* 或 _text_（但 _ 不匹配词内）
+    .replace(/(?<!\w)(\*|_)(?!\s)(.+?)(?<!\s)\1(?!\w)/g, (_m, _d, inner) => c.italic(inner as string))
+
+  // 回填行内代码，统一用 primary 色包裹原始内容。
+  return protectedText.replace(/\u0000(\d+)\u0000/g, (_m, index: string) =>
+    paint('primary')(codes[Number(index)] ?? ''),
   )
 }
 
@@ -404,6 +423,8 @@ export function renderMarkdown(text: string): string {
     return tokens.map((t) => formatToken(t, 0, null, null)).join('')
   } catch {
     // 流式传输中出现部分/无效 Markdown——回退到原始文本，让用户仍能看到内容。
-    return text
+    // 但必须补上 EOL：调用方（stdout-writer）靠结尾换行判断块边界，缺了它下一块
+    // 内容会粘连到本块末尾。
+    return text.endsWith(EOL) ? text : text + EOL
   }
 }

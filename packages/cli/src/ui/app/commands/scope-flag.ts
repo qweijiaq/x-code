@@ -1,4 +1,6 @@
-type SettingsScope = 'user' | 'project'
+// 必须导出：`ScopeFlagParseResult` 是导出的接口，而 composite/declaration 构建下
+// 引用私有名字会直接报 TS4033/TS4081。
+export type SettingsScope = 'user' | 'project'
 
 export interface ScopeFlagParseResult {
   value: string

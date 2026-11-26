@@ -36,6 +36,8 @@ const SKIP_DIRS = new Set([
 ])
 
 const MAX_FILES = 20_000
+/** `formatWatchPrompt` 每类最多列出的文件数（其余折叠成 `…and N more`）。 */
+const MAX_LISTED_FILES = 20
 const DEFAULT_DEBOUNCE_MS = 800
 const DEFAULT_INTERVAL_MS = 1_000
 
@@ -56,8 +58,12 @@ export function watchUsage(): string {
 }
 
 function parseNumber(raw: string | undefined, name: string, min: number, max: number): number | string {
-  const value = Number(raw)
-  if (!Number.isFinite(value) || value < min || value > max) {
+  // `Number('')` 是 0（不是 NaN）：漏写值的 `--debounce`（`args[++index] ?? ''`）
+  // 和 `--debounce=` 会被静默解析成 0，绕过「必须提供值」的校验。空值必须显式
+  // 报错，与 `--interval`（min=250 恰好挡住了 0）保持一致。
+  const trimmed = raw?.trim() ?? ''
+  const value = Number(trimmed)
+  if (trimmed === '' || !Number.isFinite(value) || value < min || value > max) {
     return `${name} must be a number between ${min} and ${max}`
   }
   return Math.round(value)
@@ -174,7 +180,13 @@ export interface WatchChanges {
   deleted: string[]
 }
 
-export function diffSnapshots(previous: ReadonlyMap<string, string>, next: ReadonlyMap<string, string>): WatchChanges {
+export function diffSnapshots(
+  previous: ReadonlyMap<string, string>,
+  next: ReadonlyMap<string, string>,
+  /** 本轮扫描不完整（触达 MAX_FILES）时置 true：此时「不在 next 里」不等于
+   *  「被删除」，只是没扫到。 */
+  skipDeletionCheck = false,
+): WatchChanges {
   const added: string[] = []
   const modified: string[] = []
   const deleted: string[] = []
@@ -183,8 +195,10 @@ export function diffSnapshots(previous: ReadonlyMap<string, string>, next: Reado
     if (before === undefined) added.push(file)
     else if (before !== signature) modified.push(file)
   }
-  for (const file of previous.keys()) {
-    if (!next.has(file)) deleted.push(file)
+  if (!skipDeletionCheck) {
+    for (const file of previous.keys()) {
+      if (!next.has(file)) deleted.push(file)
+    }
   }
   return { added: added.sort(), modified: modified.sort(), deleted: deleted.sort() }
 }
@@ -196,9 +210,16 @@ export function hasChanges(changes: WatchChanges): boolean {
 export function formatWatchPrompt(prompt: string, changes: WatchChanges, cwd: string, truncated = false): string {
   const relative = (file: string): string => path.relative(cwd, file) || file
   const lines = [prompt, '', '[Watch] Files changed since the previous run:']
-  if (changes.modified.length > 0) lines.push(`- modified: ${changes.modified.map(relative).join(', ')}`)
-  if (changes.added.length > 0) lines.push(`- added: ${changes.added.map(relative).join(', ')}`)
-  if (changes.deleted.length > 0) lines.push(`- deleted: ${changes.deleted.map(relative).join(', ')}`)
+  // 每类最多列 MAX_LISTED_FILES 条：一次大范围改动（构建产物、格式化）能把
+  // 数千个路径塞进 prompt，单轮成本失控甚至超出模型请求长度上限。
+  const list = (files: string[]): string => {
+    const shown = files.slice(0, MAX_LISTED_FILES).map(relative)
+    const rest = files.length - shown.length
+    return rest > 0 ? `${shown.join(', ')}, …and ${rest} more` : shown.join(', ')
+  }
+  if (changes.modified.length > 0) lines.push(`- modified: ${list(changes.modified)}`)
+  if (changes.added.length > 0) lines.push(`- added: ${list(changes.added)}`)
+  if (changes.deleted.length > 0) lines.push(`- deleted: ${list(changes.deleted)}`)
   if (truncated) lines.push(`- note: scan stopped at ${MAX_FILES} files; large directories may be incomplete`)
   return lines.join('\n')
 }
@@ -261,7 +282,7 @@ export async function runWatchMode(deps: WatchModeDependencies): Promise<number>
    *  处改动，而不是静默丢弃。 */
   const foldRunEditsIntoBaseline = async (triggerSnapshot: WatchSnapshot): Promise<void> => {
     const afterRun = await collectSnapshot(paths, cwd)
-    const folded = diffSnapshots(triggerSnapshot.files, afterRun.files)
+    const folded = diffSnapshots(triggerSnapshot.files, afterRun.files, afterRun.truncated)
     baseline = afterRun
     const foldedCount = folded.added.length + folded.modified.length + folded.deleted.length
     if (foldedCount > 0) {
@@ -278,13 +299,15 @@ export async function runWatchMode(deps: WatchModeDependencies): Promise<number>
       if (stopped) break
 
       let next = await collectSnapshot(paths, cwd)
-      let changes = diffSnapshots(baseline.files, next.files)
+      // 扫描被 MAX_FILES 截断时跳过删除检测：否则「存在但本轮没扫到」的文件会被
+      // 报成 deleted，prompt 里谎称文件被删，而且每轮都会重复误触发。
+      let changes = diffSnapshots(baseline.files, next.files, next.truncated)
       if (!hasChanges(changes)) continue
 
       // 等文件稳定后再扫一次，避免编辑器“先删后写”触发两次运行。
       await wait(debounceMs)
       next = await collectSnapshot(paths, cwd)
-      changes = diffSnapshots(baseline.files, next.files)
+      changes = diffSnapshots(baseline.files, next.files, next.truncated)
       if (!hasChanges(changes)) {
         baseline = next
         continue

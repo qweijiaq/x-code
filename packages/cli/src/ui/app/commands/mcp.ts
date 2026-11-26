@@ -46,7 +46,14 @@ function redactUrl(raw: string): string {
     }
     return url.toString()
   } catch {
+    // 解析失败也不能原样回显：漏写 scheme（`user:token@host:8080/mcp`）或
+    // `//host` 形式的配置带明文凭据，直接返回就等于把凭据写进会话记录。
     return raw
+      .replace(/(^|\/\/)[^/@\s]*:[^/@\s]*@/, '$1***:***@')
+      .replace(
+        /([?&][^=&\s]*(?:key|token|secret|password|authorization|credential|cookie|bearer)[^=&\s]*)=[^&\s]*/gi,
+        '$1=***',
+      )
   }
 }
 
@@ -70,10 +77,19 @@ function redactArgs(args: readonly unknown[]): unknown[] {
     }
     if (/^--?/.test(arg)) {
       out.push(arg)
-      redactNext = SECRET_KEY_RE.test(arg)
+      // `--header Authorization: Bearer …` 的凭据在下一个 token 里，键名本身
+      // 不含敏感词，必须显式联动脱敏。
+      redactNext = SECRET_KEY_RE.test(arg) || arg === '-H' || /^--header$/i.test(arg)
       continue
     }
-    out.push(/^authorization\s*:/i.test(arg) ? '***' : arg)
+    out.push(
+      /^authorization\s*:/i.test(arg)
+        ? '***'
+        : // 位置参数里直接写 URL（如 `["https://user:tok@host/mcp"]`）同样带凭据。
+          /^[\w+.-]+:\/\//.test(arg)
+          ? redactUrl(arg)
+          : arg,
+    )
   }
   return out
 }
@@ -145,7 +161,9 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
 
     const lines = [firstLine(written.path)]
     if (autoTrusted) lines.push('Auto-trusted this project for future launches.')
-    if (scope === 'project') lines.push('Tip: commit `.x-code/config.json` to share with collaborators.')
+    if (scope === 'project') {
+      lines.push(`Tip: commit \`${getMcpConfigPath('project', process.cwd())}\` to share with collaborators.`)
+    }
     lines.push('Run /mcp refresh to load it now, or restart xc.')
     addCommandMessage(text, lines.join('\n'))
   }
@@ -239,8 +257,15 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
 
     if (!scope) {
       // 自动检测。歧义情况（两个作用域都有）强制显式指定 --scope，以免静默
-      // 删掉错误的那一个。
-      const detected = await detectScope(name, process.cwd())
+      // 删掉错误的那一个。探测本身可能因 config.json 损坏 / 权限问题抛错，
+      // 与 enable/disable、refresh 一致地转成可读错误而不是让异常逃出 handleMcp。
+      let detected: Awaited<ReturnType<typeof detectScope>>
+      try {
+        detected = await detectScope(name, process.cwd())
+      } catch (err) {
+        addCommandMessage(text, `Failed to remove "${name}": ${err instanceof Error ? err.message : String(err)}`)
+        return
+      }
       switch (detected.kind) {
         case 'not-found':
           addCommandMessage(text, `Server "${name}" is not in user or project config — nothing to remove.`)
@@ -311,7 +336,10 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
       case 'list': {
         const statuses = registry?.serverStatus() ?? []
         if (statuses.length === 0) {
-          addCommandMessage(text, 'No MCP servers configured. Add `mcpServers` to ~/.x-code/config.json then restart.')
+          addCommandMessage(
+            text,
+            `No MCP servers configured. Add \`mcpServers\` to ${getMcpConfigPath('user', process.cwd())} then restart.`,
+          )
           return
         }
         const lines = ['MCP servers:']
@@ -366,7 +394,10 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
           return
         }
         if (!registry) {
-          addCommandMessage(text, 'No MCP servers configured. Add `mcpServers` to ~/.x-code/config.json first.')
+          addCommandMessage(
+            text,
+            `No MCP servers configured. Add \`mcpServers\` to ${getMcpConfigPath('user', process.cwd())} first.`,
+          )
           return
         }
         const config = registry.getConfig(subArg)
@@ -506,26 +537,30 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
           addCommandMessage(text, `Invalid scope \`${scopeFlag}\`. Use \`user\` or \`project\`.`)
           return
         }
-        let detected: Awaited<ReturnType<typeof detectScope>>
-        try {
-          detected = await detectScope(name, process.cwd())
-        } catch (err) {
-          addCommandMessage(text, `Failed to ${sub}: ${err instanceof Error ? err.message : String(err)}`)
-          return
-        }
         let scope: ConfigScope
         if (scopeFlag === 'user' || scopeFlag === 'project') {
+          // 显式作用域：不探测。否则另一作用域的 config.json 一旦损坏，
+          // 一条作用域明确、根本不依赖探测结果的命令也会直接失败。
           scope = scopeFlag
-        } else if (detected.kind === 'both') {
-          addCommandMessage(
-            text,
-            `MCP server \`${name}\` exists in both user and project config. Add \`--scope=user\` or \`--scope=project\`.`,
-          )
-          return
-        } else if (detected.kind === 'not-found') {
-          addCommandMessage(text, `No MCP server named \`${name}\`.`)
-          return
         } else {
+          let detected: Awaited<ReturnType<typeof detectScope>>
+          try {
+            detected = await detectScope(name, process.cwd())
+          } catch (err) {
+            addCommandMessage(text, `Failed to ${sub}: ${err instanceof Error ? err.message : String(err)}`)
+            return
+          }
+          if (detected.kind === 'both') {
+            addCommandMessage(
+              text,
+              `MCP server \`${name}\` exists in both user and project config. Add \`--scope=user\` or \`--scope=project\`.`,
+            )
+            return
+          }
+          if (detected.kind === 'not-found') {
+            addCommandMessage(text, `No MCP server named \`${name}\`.`)
+            return
+          }
           scope = detected.kind
         }
         // 与 add/remove/refresh/logout/auth 一致：畸形 config.json 或写盘
@@ -600,7 +635,7 @@ export function createMcpCommandHandler(deps: McpCommandDeps) {
       default: {
         addCommandMessage(
           text,
-          `Unknown subcommand: /mcp ${sub}. Available: list, tools, add, add-json, remove, auth, logout, refresh.`,
+          `Unknown subcommand: /mcp ${sub}. Available: list, tools, add, add-json, remove (rm), enable, disable, auth, logout, refresh.`,
         )
         return
       }

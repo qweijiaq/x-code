@@ -58,7 +58,9 @@ describe('authority dialog terminal-safe display', () => {
     expect(lines).toEqual([
       'Tool: read\\u0000File',
       'Server: server\\u009D52;c;server-secret\\u009C',
-      'Destination: https://evil.test\\u001B]8;;https://target.test\\u001B\\\\u2066',
+      // 反斜杠本身也会被转义（防止不可信文本伪造「这里原本是控制符」），
+      // 因此真实反斜杠后的 U+2066 现在是 `\\\\` + `\\u2066`。
+      'Destination: https://evil.test\\u001B]8;;https://target.test\\u001B\\\\\\u2066',
       'Paths: /repo/one',
       '       continued\\u0007, /repo/\\u202Etwo',
     ])

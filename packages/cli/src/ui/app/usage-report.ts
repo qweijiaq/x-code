@@ -36,7 +36,9 @@ export function formatUsageReport(
     const calibrated = calibrateContextBreakdown(contextEstimate, usage.currentContextTokens)
     if (calibrated.length > 0) {
       const window = getContextWindow(modelId)
-      const pct = Math.round((usage.currentContextTokens / window) * 100)
+      // 未知模型的窗口可能是 0：除零会渲染出 `Infinity%` 并让下一行的总量显示成 0，
+      // 与「>0 的当前上下文」自相矛盾。
+      const pct = window > 0 ? Math.round((usage.currentContextTokens / window) * 100) : 0
       const labelWidth = Math.max(...calibrated.map((category) => category.label.length))
       lines.push(
         '',
@@ -46,7 +48,9 @@ export function formatUsageReport(
         lines.push(`- ${category.label.padEnd(labelWidth)}  ${formatTokenCount(category.tokens).padStart(9)}`)
       }
       if ((contextEstimate.details?.length ?? 0) > 0) {
-        const scale = usage.currentContextTokens / contextEstimate.estimatedTotal
+        // estimatedTotal 为 0 时 scale 为 Infinity，逐项估算会打印 "~NaN"/"~Infinity"。
+        const scale =
+          contextEstimate.estimatedTotal > 0 ? usage.currentContextTokens / contextEstimate.estimatedTotal : 0
         lines.push('', '**Initialization detail** (estimated):')
         for (const detail of contextEstimate.details ?? []) {
           lines.push(`- ${detail.label}: ~${formatTokenCount(Math.round(detail.estimatedTokens * scale))}`)

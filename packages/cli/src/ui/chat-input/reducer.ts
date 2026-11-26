@@ -48,13 +48,22 @@ export function inputReducer(state: InputState, action: InputAction): InputState
     }
     case 'DELETE': {
       const { pos } = action
-      if (pos >= state.text.length) return state
+      // 非法位置必须显式拒绝：负数会让 `slice(0, -1)` 按「从末尾倒数」工作，
+      // 删除的是错误字符且文本被拼接复制（`pos=-1` 时 `"abc"` → `"ababc"`）。
+      if (!Number.isInteger(pos) || pos < 0 || pos >= state.text.length) return state
       return { text: state.text.slice(0, pos) + state.text.slice(pos + 1), cursor: state.cursor }
     }
-    case 'SET_CURSOR':
-      return state.cursor === action.cursor ? state : { ...state, cursor: action.cursor }
-    case 'SET_TEXT':
-      return { text: action.text, cursor: action.cursor }
+    case 'SET_CURSOR': {
+      const cursor = Math.max(0, Math.min(action.cursor, state.text.length))
+      return state.cursor === cursor ? state : { ...state, cursor }
+    }
+    case 'SET_TEXT': {
+      // `cursor` 必须落在新文本范围内：粘贴 / 补全后带着旧文本的光标位置会让
+      // `cursorRef`、渲染切片和后续按键定位一起错位。
+      const cursor = Math.max(0, Math.min(action.cursor, action.text.length))
+      if (state.text === action.text && state.cursor === cursor) return state
+      return { text: action.text, cursor }
+    }
     case 'RESET':
       return { text: '', cursor: 0 }
     default:

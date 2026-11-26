@@ -99,7 +99,13 @@ function numberLines(h: EditDiffHunk): { sigil: ' ' | '+' | '-'; code: string; l
   let oldN = h.oldStart
   let newN = h.newStart
   for (const raw of h.lines) {
-    const sigil = raw[0] === '+' ? '+' : raw[0] === '-' ? '-' : ' '
+    // `\ No newline at end of file` 之类的元数据行不是内容行：把它当成上下文行
+    // 会同时推进 oldN/newN，后续所有行号一起错位。
+    if (raw.startsWith('\\')) continue
+    let sigil: ' ' | '+' | '-'
+    if (raw[0] === '+') sigil = '+'
+    else if (raw[0] === '-') sigil = '-'
+    else sigil = ' '
     const code = stripTerminalControls(raw.slice(1))
     if (sigil === '-') {
       out.push({ sigil, code, lineNum: oldN })
@@ -169,7 +175,9 @@ function renderHunks(
   let truncated = 0
 
   for (let hi = 0; hi < payload.hunks.length; hi++) {
-    if (hi > 0) {
+    // 高度预算已经用尽时不再插入 hunk 分隔符：这些行不受 MAX_DIFF_LINES 约束，
+    // 会在 `… +N more lines` 之前堆出一串孤立分隔行，既超高度上限又像渲染错乱。
+    if (hi > 0 && emitted < MAX_DIFF_LINES) {
       // Hunk 分隔符——Claude Code 用一行调暗的 `...`。
       out.push(`${RESULT_INDENT}${c.gray('...')}`)
     }

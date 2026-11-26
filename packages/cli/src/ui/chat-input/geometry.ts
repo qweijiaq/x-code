@@ -15,6 +15,10 @@ export function computePostContentScrollRows(
 
 /** 按 `vpWidth` 列把每条原始行软折成视觉行。 */
 export function buildVisualLines(rawLines: string[], vpWidth: number): VisualLine[] {
+  // 视口宽度为 0（或负数）时 `sliceByWidth` 对每个切片都返回空串，`advance` 退化
+  // 成 1 个 grapheme——一条 10k 字符的行会产出 10k 条空文本视觉行（内存/渲染爆炸，
+  // 文本还完全不可见）。先归一为至少 1 列。
+  const width = vpWidth > 0 ? vpWidth : 1
   const visualLines: VisualLine[] = []
   for (let r = 0; r < rawLines.length; r++) {
     const line = rawLines[r]
@@ -24,7 +28,7 @@ export function buildVisualLines(rawLines: string[], vpWidth: number): VisualLin
     }
     let pos = 0
     while (pos < line.length) {
-      const chunk = sliceByWidth(line.slice(pos), vpWidth)
+      const chunk = sliceByWidth(line.slice(pos), width)
       // `sliceByWidth` 可能返回空串（视口比行首那个宽字符还窄）：此时必须至少前进
       // 一个 grapheme。退回 `line.length - pos` 会把该行剩余内容整段丢掉——只
       // push 一条 `text: ''` 的视觉行，用户输入的文本在 UI 上「凭空消失」，
@@ -43,6 +47,13 @@ export function locateVisualCursor(
   rawLines: string[],
   cursor: number,
 ): { line: number; col: number } {
+  // 先把光标夹到合法范围：越界偏移会让下面的匹配全部落空，函数静默返回
+  // `{ line: 0, col: 0 }`，调用方看到的是「光标突然跳到文本开头」。
+  const totalLength = Math.max(
+    0,
+    rawLines.reduce((sum, line) => sum + line.length, 0) + Math.max(0, rawLines.length - 1),
+  )
+  cursor = Math.max(0, Math.min(cursor, totalLength))
   let rawCursorLine = 0
   let cursorColInRaw = cursor
   let charsSoFar = 0
@@ -66,7 +77,10 @@ export function locateVisualCursor(
       return { line: v, col: cursorColInRaw - visualLine.startCol }
     }
   }
-  return { line: 0, col: 0 }
+  // 兜底到最后一条视觉行的行尾，而不是开头：`line === 0` 会被 `moveCursorVisual`
+  // 用来计算 `desiredWidth`，退回开头会连带丢掉「保持列位置」的语义。
+  const last = visualLines[visualLines.length - 1]
+  return last ? { line: visualLines.length - 1, col: last.text.length } : { line: 0, col: 0 }
 }
 
 /** 按视觉行移动光标，同时保持显示列不变。 */

@@ -89,7 +89,10 @@ export function parseThemeName(input: unknown): ThemeName | null {
     'dark-daltonized': 'dark',
     'light-daltonized': 'light',
   }
-  if (normalized in aliases) return aliases[normalized]!
+  // `in` 会命中原型链：`parseThemeName('constructor')` 会返回 `Object` 构造函数，
+  // 再被 `!` 断言伪装成合法主题名写进 `currentTheme`，之后 `getThemeColors()` 静默
+  // 回落到 dark——用户配的 light 被无提示地覆盖。必须只认自有属性。
+  if (Object.hasOwn(aliases, normalized)) return aliases[normalized]!
   if (THEMES.some((t) => t.name === normalized)) return normalized as ThemeName
   return null
 }

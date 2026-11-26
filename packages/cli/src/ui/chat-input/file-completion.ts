@@ -19,6 +19,10 @@ export type { AtTrigger, FileEntry, ScanOptions, ScoredEntry } from '@x-code-cli
 export interface UseFileCompletionResult {
   entries: readonly FileEntry[]
   loading: boolean
+  /** 扫描失败的原因（权限不足、目录不存在、磁盘 IO 错误…）。非 null 时
+   *  `entries` 为空是因为失败而不是「工作区没有文件」——调用方应提示用户，
+   *  而不是静默展示一个永远空着的补全列表。卸载时的 abort 不算失败。 */
+  error: Error | null
 }
 
 /** React hook：挂载时扫描一次，暴露 entries 和 loading 标志。cwd 在扫描时
@@ -27,6 +31,7 @@ export interface UseFileCompletionResult {
 export function useFileCompletion(): UseFileCompletionResult {
   const [entries, setEntries] = useState<readonly FileEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<Error | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -37,8 +42,12 @@ export function useFileCompletion(): UseFileCompletionResult {
         setEntries(result)
         setLoading(false)
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (cancelled) return
+        // 卸载时的 `ac.abort()` 是主动取消，不能当成「扫描失败」报给用户。
+        if ((err as { name?: string } | null)?.name !== 'AbortError') {
+          setError(err instanceof Error ? err : new Error(String(err)))
+        }
         setLoading(false)
       })
     return () => {
@@ -47,5 +56,5 @@ export function useFileCompletion(): UseFileCompletionResult {
     }
   }, [])
 
-  return { entries, loading }
+  return { entries, loading, error }
 }

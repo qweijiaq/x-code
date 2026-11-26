@@ -8,14 +8,35 @@ const VERIFIER_TIMEOUT_MS = 120_000
 const MAX_GOAL_TURNS = 1000
 const MAX_TOKEN_BUDGET = 1_000_000_000
 
+const DOUBLE_QUOTE_ESCAPES: Record<string, string> = {
+  '"': '"',
+  "'": "'",
+  '\\': '\\',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+}
+
+/** 双引号内容只反转义明确的转义序列，其余反斜杠原样保留——否则
+ *  `"C:\\Users\\x"` 会被吃成 `C:Usersx`。 */
+function unescapeDoubleQuoted(value: string): string {
+  return value.replace(/\\(["'\\nrt])/g, (_, ch: string) => DOUBLE_QUOTE_ESCAPES[ch] ?? `\\${ch}`)
+}
+
 export function tokenizeArgs(input: string): string[] {
   const tokens: string[] = []
   const re = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g
   for (const match of input.matchAll(re)) {
-    const quoted = match[1] ?? match[2]
-    // 只有引号内的内容需要反转义（单次扫描，`\\(.)` 只吃掉一个反斜杠）；
-    // 未加引号的 token 原样保留，避免把 Windows 路径里的反斜杠改写掉。
-    tokens.push(quoted === undefined ? (match[3] ?? '') : quoted.replace(/\\(.)/g, '$1'))
+    if (match[1] !== undefined) {
+      tokens.push(unescapeDoubleQuoted(match[1]))
+    } else if (match[2] !== undefined) {
+      // 单引号内保持原样（POSIX shell 语义）：`'C:\\temp\\a.txt'` 必须还是
+      // `C:\\temp\\a.txt`，不能变成 `C:tema.txt`。
+      tokens.push(match[2])
+    } else {
+      // 未加引号的 token 原样保留，避免把 Windows 路径里的反斜杠改写掉。
+      tokens.push(match[3] ?? '')
+    }
   }
   return tokens
 }
@@ -103,8 +124,15 @@ export function parseGoalCreateArgs(arg: string): {
     objectiveParts.push(token)
   }
 
+  const objective = objectiveParts.join(' ').trim()
+  // 空目标绝不能启动：目标循环会带着空 objective 跑，验证器全部通过即被判为
+  // 「完成」。与文件其余部分「宁可报错也不静默接受」保持一致。
+  if (objective === '') {
+    throw new Error('Goal objective is required, e.g. /goal "fix all failing tests"')
+  }
+
   return {
-    objective: objectiveParts.join(' ').trim(),
+    objective,
     maxTurns,
     tokenBudget,
     requiresUserConfirmation,

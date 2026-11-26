@@ -34,15 +34,21 @@ function forcedColorLevel(): number | undefined {
   if (value === 'false') return 0
   if (value === '') return 1
   const parsed = Number.parseInt(value, 10)
-  return Number.isNaN(parsed) ? undefined : Math.min(parsed, 3)
+  // 钳制到 [0, 3]：下面的 `as 0 | 1 | 2 | 3` 只是类型断言，运行时并不会生效，
+  // 负值（FORCE_COLOR=-1）会原样传给 `new Chalk({ level })`。
+  return Number.isNaN(parsed) ? undefined : Math.max(0, Math.min(parsed, 3))
 }
 
 const forcedLevel = forcedColorLevel()
 const detectedLevel = new Chalk().level
 // 即使全局设置了 COLORTERM=truecolor，Terminal.app 也不支持 24 位色，
-// 必须封顶到 256 色，否则上面的 RGB 误解析会再次出现。
-const level = (forcedLevel ??
-  (process.env.TERM_PROGRAM === 'Apple_Terminal' ? Math.min(detectedLevel, 2) : detectedLevel)) as 0 | 1 | 2 | 3
+// 必须封顶到 256 色，否则上面的 RGB 误解析会再次出现。封顶同样作用于
+// FORCE_COLOR=3，否则显式强制等级会绕过上面的终端能力判断。
+const level = (
+  process.env.TERM_PROGRAM === 'Apple_Terminal'
+    ? Math.min(forcedLevel ?? detectedLevel, 2)
+    : (forcedLevel ?? detectedLevel)
+) as 0 | 1 | 2 | 3
 export const chalk = new Chalk({ level })
 const COLORS_ENABLED = level > 0
 const c = chalk
@@ -102,6 +108,9 @@ export function paint(token: ChromeToken): (s: string) => string {
   // 提交的内容仍是旧配色。
   // 先重置背景再上色：header 在 TUI 之前写入，可能继承 shell 提示符留下的
   // 背景色；显式发 49（默认背景）可以避免整段文字带上意外的色块。
+  // 关闭颜色时（NO_COLOR / FORCE_COLOR=0）必须一个转义都不发，与 `cellFg()`
+  // 一致——chalk 只会省略它自己生成的部分，管不到这里手写的 `\x1b[49m`。
+  if (!COLORS_ENABLED) return (s) => s
   return (s) => `\x1b[49m${c.hex(def[themeKind()])(s)}`
 }
 
@@ -111,10 +120,6 @@ export interface CellMods {
   italic?: boolean
 }
 
-/** ChatInput 单元格 diff 渲染器的原始 SGR 转义。始终以 `\x1b[0m` 开头：
- *  palette.ts 的长注释说明了原因——裸颜色序列会继承上一个单元格遗留的
- *  属性（bold 渗入下一行、dim 元信息在 spinner 单元格后闪蓝）。先重置才能
- *  让每个单元格处于已知状态。 */
 /** RGB → xterm 256 色索引（6×6×6 色立方 + 灰阶）。 */
 function rgbToAnsi256(r: number, g: number, b: number): number {
   if (r === g && g === b) {
@@ -159,6 +164,10 @@ function rgbToAnsi16(r: number, g: number, b: number): number {
   return best < 8 ? 30 + best : 90 + (best - 8)
 }
 
+/** ChatInput 单元格 diff 渲染器的原始 SGR 转义。始终以 `\x1b[0m` 开头：
+ *  palette.ts 的长注释说明了原因——裸颜色序列会继承上一个单元格遗留的
+ *  属性（bold 渗入下一行、dim 元信息在 spinner 单元格后闪蓝）。先重置才能
+ *  让每个单元格处于已知状态。 */
 export function cellFg(token: ChromeToken, mods: CellMods = {}): string {
   const def = TOKENS[token]
   const kind = themeKind()

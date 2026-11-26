@@ -62,24 +62,62 @@ export function ansiTextToCells(text: string): Cell[] {
   let s = 0
   while (s < clusters.length) {
     const cluster = clusters[s]!
-    if (cluster === '\x1b' && text[i + 1] === '[') {
-      let j = i + 2
-      while (j < text.length && !/[A-Za-z]/.test(text[j]!)) j++
-      if (j >= text.length) {
+    if (cluster === '\x1b') {
+      // `end` 是整条转义序列的排他结束偏移；-1 表示「未终止」。
+      let end = -1
+      const kind = text[i + 1]
+      if (kind === '[') {
+        let j = i + 2
+        while (j < text.length && !/[A-Za-z]/.test(text[j]!)) j++
+        if (j < text.length) {
+          end = j + 1
+          const escape = text.slice(i, end)
+          if (/^\x1b\[0?m$/.test(escape)) {
+            active.length = 0
+          } else if (/^\x1b\[[0-9;]*m$/.test(escape)) {
+            active.push(escape)
+          }
+          // 非 SGR 的 CSI 序列直接跳过——它们本不该出现在预览行里，但我们不想让
+          // 它们变成可见文本。
+        }
+      } else if (kind === ']' || kind === 'P' || kind === 'X' || kind === '^' || kind === '_') {
+        // OSC（`ESC ]`，含 OSC 8 超链接）/ DCS / SOS / PM / APC：扫到 ST（`ESC \`）
+        // 或 BEL 为止整条跳过。否则 `]8;;https://…` 这类载荷会变成可见单元格，
+        // 既串列又泄露内容。
+        let j = i + 1
+        while (j < text.length) {
+          const code = text.charCodeAt(j)
+          if (code === 0x07) {
+            j++
+            break
+          }
+          if (code === 0x1b && text[j + 1] === '\\') {
+            j += 2
+            break
+          }
+          j++
+        }
+        end = j
+      } else if (kind !== undefined && text.charCodeAt(i + 1) >= 0x30 && text.charCodeAt(i + 1) <= 0x7e) {
+        // 两字节转义（`ESC 7`、`ESC =`、`ESC c` …）
+        end = i + 2
+      } else {
+        // `ESC` + 中间字节（0x20–0x2F）+ 终止字节，例如 `ESC ( B` 字符集指定。
+        let j = i + 1
+        while (j < text.length) {
+          const code = text.charCodeAt(j)
+          if (code < 0x20 || code > 0x2f) break
+          j++
+        }
+        end = j < text.length ? j + 1 : -1
+      }
+      if (end < 0) {
         // 未终止——当作字面量处理并退出转义模式。
         i++
         s++
         continue
       }
-      const escape = text.slice(i, j + 1)
-      if (/^\x1b\[0?m$/.test(escape)) {
-        active.length = 0
-      } else if (/^\x1b\[[0-9;]*m$/.test(escape)) {
-        active.push(escape)
-      }
-      // 非 SGR 的 CSI 序列直接跳过——它们本不该出现在预览行里，但我们不想让
-      // 它们变成可见文本。按原始偏移跳过整条序列覆盖的所有字素簇。
-      const end = j + 1
+      // 按原始偏移跳过整条序列覆盖的所有字素簇。
       while (s < clusters.length && i < end) {
         i += clusters[s]!.length
         s++
