@@ -68,8 +68,17 @@ export function pickUpdateArtifact(
   const extension = platform === 'darwin' ? /\.(dmg|zip)$/i : platform === 'win32' ? /\.exe$/i : /\.AppImage$/i
   const candidates = release.artifacts.filter((artifact) => extension.test(artifact.file))
   if (candidates.length === 0) return null
-  const archPattern = arch === 'arm64' ? /arm64/i : /(x64|x86_64|amd64)/i
+  // Linux/Windows 发布包里 arm64 常写作 `aarch64`，只匹配 `arm64` 会让
+  // matchingArch 为空。
+  const armPattern = /(arm64|aarch64)/i
+  const x64Pattern = /(x64|x86_64|amd64)/i
+  const archPattern = arch === 'arm64' || arch === 'aarch64' ? armPattern : x64Pattern
   const matchingArch = candidates.filter((artifact) => archPattern.test(artifact.file))
+  // 明确标了别的架构时不能静默回退到 candidates[0]：那会把 x64 包装给 arm64
+  // 用户（Linux 上 AppImage 根本无法运行，还会先报一条令人困惑的「校验失败」）。
+  // 只有候选完全没有架构标记（universal 包）时才允许回退。
+  const anyArchTagged = candidates.some((artifact) => armPattern.test(artifact.file) || x64Pattern.test(artifact.file))
+  if (matchingArch.length === 0 && anyArchTagged) return null
   const pool = matchingArch.length > 0 ? matchingArch : candidates
   if (platform === 'darwin') {
     return pool.find((artifact) => /\.dmg$/i.test(artifact.file)) ?? pool[0] ?? null
@@ -128,9 +137,24 @@ export async function downloadUpdateArtifact(options: DownloadUpdateOptions): Pr
       signal: signals.length > 1 ? AbortSignal.any(signals) : controller.signal,
     })
     resetIdle()
-    if (!response.ok) throw new Error(`下载安装包失败：HTTP ${response.status}`)
+    // fetch 默认 redirect: 'follow'：一旦服务端 302 到 http:// 或第三方主机，
+    // https-only 的约束就被绕过。这里对最终 URL 再校验一次协议。
+    // 空 url 表示实现没有提供最终地址（测试桩/精简 fetch），此时依赖调用方
+    // 已校验的 feed + resolveArtifactUrl 的 https 检查。
+    if (response.url && !response.url.startsWith('https://')) {
+      await response.body?.cancel().catch(() => undefined)
+      throw new Error('安装包地址被重定向到非 https 地址，已中止下载')
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined)
+      throw new Error(`下载安装包失败：HTTP ${response.status}`)
+    }
     const declared = Number(response.headers.get('content-length') ?? 0)
-    if (Number.isFinite(declared) && declared > maxBytes) throw new Error('安装包超过大小上限')
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      // 这条路径一定拿到了 body：不关掉响应流会占着连接直到 GC。
+      await response.body?.cancel().catch(() => undefined)
+      throw new Error('安装包超过大小上限')
+    }
     if (!response.body) throw new Error('下载响应为空')
     const totalBytes = Number.isFinite(declared) && declared > 0 ? declared : undefined
 
@@ -192,8 +216,16 @@ export async function downloadUpdateArtifact(options: DownloadUpdateOptions): Pr
     await fs.promises.rename(tempPath, finalPath)
     return { version: options.release.version, filePath: finalPath, fileName, bytes, sha256 }
   } catch (error) {
-    if (options.signal?.aborted) throw new Error('下载已取消')
-    if (idleTimedOut) throw new Error(`下载超时：${DOWNLOAD_IDLE_TIMEOUT_MS / 1000} 秒内没有收到新数据`)
+    if (idleTimedOut)
+      throw new Error(`下载超时：${DOWNLOAD_IDLE_TIMEOUT_MS / 1000} 秒内没有收到新数据`, { cause: error })
+    // 只有真正的 abort 才能归因为「用户取消」：否则校验失败 / 写盘错误也会被
+    // 报成取消，排障时误导。
+    const aborted = error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')
+    if (options.signal?.aborted && aborted) throw new Error('下载已取消', { cause: error })
+    // fetch 层的网络错误（DNS/TLS/连接断开）是 TypeError，原文对用户不可读。
+    if (error instanceof TypeError) {
+      throw new Error(`下载安装包失败：网络错误（${url}）：${error.message}`, { cause: error })
+    }
     throw error
   } finally {
     if (idleTimer) clearTimeout(idleTimer)

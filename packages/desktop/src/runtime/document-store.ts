@@ -120,11 +120,19 @@ function loadStore(): DocumentStoreFile {
 
 function saveStore(store: DocumentStoreFile): void {
   const dir = userXcodeDir()
-  fs.mkdirSync(dir, { recursive: true })
   const target = path.join(dir, STORE_FILE)
   const temp = `${target}.${process.pid}.tmp`
-  fs.writeFileSync(temp, JSON.stringify(store), { mode: 0o600 })
-  fs.renameSync(temp, target)
+  // 持久化最近文档只是附带的副作用：目录只读/磁盘满/Windows 上 rename 撞占用
+  // 都不应该让「打开文档」整体失败。
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(temp, JSON.stringify(store), { mode: 0o600 })
+    fs.renameSync(temp, target)
+  } catch (error) {
+    console.warn('[document-store] 保存文档存储失败：', error)
+  } finally {
+    fs.rmSync(temp, { force: true })
+  }
 }
 
 export function rememberDocument(filePath: string): void {
@@ -134,6 +142,12 @@ export function rememberDocument(filePath: string): void {
   const document = store.documents[resolved] ?? { ocr: {}, updatedAt: new Date().toISOString() }
   document.updatedAt = new Date().toISOString()
   store.documents[resolved] = document
+  // 文档条目只对最近打开列表里的路径有意义（其余路径已无法通过访问策略）。
+  // 不裁剪的话文件体积会随「历史打开过的文档总数」无界增长，每次读写
+  // 都要解析/序列化整份存储。
+  for (const key of Object.keys(store.documents)) {
+    if (!store.recent.includes(key)) delete store.documents[key]
+  }
   saveStore(store)
 }
 
@@ -148,16 +162,22 @@ export function storedOcr(filePath: string): Record<number, string> {
   return pages
 }
 
-export function saveOcrPage(filePath: string, page: number, text: string): void {
+export function saveOcrPage(filePath: string, page: number, text: string): boolean {
+  if (!Number.isInteger(page) || page < 1) return false
+  if (typeof text !== 'string') return false
   const resolved = path.resolve(filePath)
   const store = loadStore()
   const document = store.documents[resolved] ?? { ocr: {}, updatedAt: new Date().toISOString() }
-  if (Object.keys(document.ocr).length >= MAX_PAGES_PER_DOC) return
-  document.ocr[String(page)] = text
+  const key = String(page)
+  // 上限只拦「新增页」：重新识别已存在的页必须能覆盖旧文本，否则识别结果
+  // 会被静默丢弃，而调用方还以为保存成功。
+  if (!(key in document.ocr) && Object.keys(document.ocr).length >= MAX_PAGES_PER_DOC) return false
+  document.ocr[key] = text.slice(0, MAX_OCR_TEXT_CHARS)
   document.updatedAt = new Date().toISOString()
   store.documents[resolved] = document
   store.recent = [resolved, ...store.recent.filter((entry) => entry !== resolved)].slice(0, MAX_RECENT)
   saveStore(store)
+  return true
 }
 
 /** 清除某个文档的 OCR 文本。返回被移除的页数。 */
@@ -174,6 +194,7 @@ export function forgetOcr(filePath: string): number {
 }
 
 const MAX_BASELINE_CHARS = 400_000
+const MAX_OCR_TEXT_CHARS = 400_000
 
 export function storedBaseline(filePath: string): StoredBaseline | null {
   const document = loadStore().documents[path.resolve(filePath)]

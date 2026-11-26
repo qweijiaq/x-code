@@ -53,6 +53,10 @@ import { applyStoredSecrets } from './secrets.js'
 import { refreshShellEnvironment } from './shell-env.js'
 import { applySkillRuntimeHints } from './skill-runtime.js'
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export const DEMO_MODEL_ID = 'demo:mock'
 
 export interface RuntimeBootstrap {
@@ -163,27 +167,51 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   loadWorkspaceEnv(workspace)
   // 更早会话中「不再询问」的批准存在项目里。
   reloadPersistedRules(workspace)
-  await applyStoredSecrets()
-  const discovery = await refreshDynamicProviderModels({ timeoutMs: 30_000 })
+  // 密钥/设置读取失败不应该让整个启动 reject：调用方只会看到一个没有上下文
+  // 的原始异常。逐项兜底并记录。
+  await applyStoredSecrets().catch((error: unknown) => {
+    console.error('[bootstrap] apply stored secrets failed:', errorMessage(error))
+  })
+  // 拾取应用启动后用户安装的工具。存储的
+  // secret 和 .env 值优先于 shell 快照。必须放在 provider 发现之前：只在登录
+  // shell 里存在的 key/PATH（首次启动、未存 secret）否则会被漏掉。
+  const shellEnv = await refreshShellEnvironment().catch((error: unknown) => {
+    console.error('[bootstrap] refresh shell environment failed:', errorMessage(error))
+    return null
+  })
+  if (shellEnv?.error && shellEnv.error !== 'disabled') {
+    console.error(`[bootstrap] shell environment: ${shellEnv.error}`)
+  }
+  const discovery = await refreshDynamicProviderModels({ timeoutMs: 30_000 }).catch((error: unknown) => {
+    console.error('[bootstrap] provider model discovery failed:', errorMessage(error))
+    return { refreshed: [] as string[], errors: [] as Array<{ provider: string; message: string }> }
+  })
   console.error(
     `[provider-models] refreshed=${discovery.refreshed.join(',') || 'none'} errors=${
       discovery.errors.map((error) => `${error.provider}: ${error.message}`).join(' | ') || 'none'
     }`,
   )
-  // 拾取应用启动后用户安装的工具。存储的
-  // secret 和 .env 值优先于 shell 快照。
-  await refreshShellEnvironment()
   const desktopSettings = loadDesktopSettings()
   applySearchProviderPreference(desktopSettings.searchProvider)
   setShellSandbox({
-    enabled: process.platform === 'darwin' && desktopSettings.shellSandbox !== false,
+    // 显式配置优先，平台只决定默认值：用户主动打开时不该被平台判断静默忽略。
+    enabled:
+      desktopSettings.shellSandbox === true ||
+      (desktopSettings.shellSandbox === undefined && process.platform === 'darwin'),
     workspace,
     allowNetwork: desktopSettings.shellSandboxNetwork === true,
     includeExtensions: desktopSettings.shellSandboxExtensions === true,
   })
 
   initializeOpenAIAuthContext()
-  const config = loadUserConfig()
+  const config = (() => {
+    try {
+      return loadUserConfig()
+    } catch (error) {
+      console.error('[bootstrap] load user config failed:', errorMessage(error))
+      return {} as ReturnType<typeof loadUserConfig>
+    }
+  })()
   setContextWindowOverride(config.contextWindow)
   setPricingOverrides(config.pricing)
   setModelContextWindowOverrides(desktopSettings.contextWindowOverrides)
@@ -264,7 +292,12 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   memoryService.setActiveModelId(modelId)
 
   await ensureDefaultMarketplaces().catch(() => undefined)
-  const pluginLoad = await loadAllPlugins({ cwd: workspace }).catch(() => null)
+  // 失败原因必须进入 pluginErrors，否则界面上既看不到插件、也看不到为什么。
+  const pluginLoadErrors: string[] = []
+  const pluginLoad = await loadAllPlugins({ cwd: workspace }).catch((error: unknown) => {
+    pluginLoadErrors.push(`plugins: ${errorMessage(error)}`)
+    return null
+  })
   const pluginRegistry = pluginLoad?.registry ?? emptyPluginRegistry()
   const integration = pluginLoad ? await buildPluginIntegration(pluginLoad).catch(() => null) : null
   const skillExtraDirs = integration?.skillsDirs ?? []
@@ -278,6 +311,7 @@ export async function bootstrapRuntime(workspaceOverride?: string): Promise<Runt
   const hookRegistry = new HookRegistry([...(integration?.hookRegistry.list() ?? []), ...localHooks.registered])
   const hookBus = new HookBus(hookRegistry)
   const pluginErrors = [
+    ...pluginLoadErrors,
     ...pluginRegistry.loadErrors().map((error) => `${error.id ?? error.path ?? 'plugin'}: ${error.message}`),
     ...(integration?.mcpErrors ?? []).map((error) => `MCP ${error.pluginId}: ${error.message}`),
     ...(integration?.hookErrors ?? []).map((error) => `Hook ${error.pluginId}: ${error.message}`),

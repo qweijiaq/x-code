@@ -52,7 +52,11 @@ export function physicalPath(input: string): string {
         throw new DocumentPathError('document-path-unresolvable', `无法解析文档路径：${code ?? 'unknown'}`)
       }
       const parent = path.dirname(current)
-      if (parent === current) return target
+      // 走到根仍未解析成功，说明路径不可信（卷未挂载、盘符不可达等）。
+      // 返回字面路径会让 `isWithin` 的前缀校验失效，必须 fail closed。
+      if (parent === current) {
+        throw new DocumentPathError('document-path-unresolvable', '无法解析文档路径：root-unreachable')
+      }
       suffix.unshift(path.basename(current))
       current = parent
     }
@@ -70,7 +74,11 @@ export function createDocumentAccess(options: DocumentAccessOptions): DocumentAc
 
   return {
     grant(input: string): void {
-      granted.add(physicalPath(input))
+      const resolved = physicalPath(input)
+      // Set.add 对已存在的元素不刷新插入顺序：重复授权同一份文档时它仍是
+      // 「最旧」的一条，会在淘汰中先被丢弃，让正在编辑的文档突然失去授权。
+      granted.delete(resolved)
+      granted.add(resolved)
       while (granted.size > maxGrants) {
         const oldest = granted.values().next().value
         if (!oldest) break
@@ -80,8 +88,19 @@ export function createDocumentAccess(options: DocumentAccessOptions): DocumentAc
 
     assert(input: string): string {
       const resolved = physicalPath(input)
-      if (isWithin(options.workspaceRoot(), resolved) || granted.has(resolved)) return resolved
-      if (options.recentPaths().some((item) => physicalPath(item) === resolved)) return resolved
+      const root = options.workspaceRoot()
+      // 空工作区根会退化成 process.cwd()，从启动器拉起时通常就是 `/`，
+      // 那样任何绝对路径都会通过 isWithin，整个策略被绕过。
+      if (typeof root !== 'string' || !root.trim()) throw new Error('document-workspace-root-unavailable')
+      if (isWithin(root, resolved) || granted.has(resolved)) return resolved
+      for (const item of options.recentPaths()) {
+        try {
+          if (physicalPath(item) === resolved) return resolved
+        } catch {
+          // 单条失效记录（EACCES/ELOOP/ENOTDIR）不参与授权判定，也不该
+          // 让一条坏记录否决其余合法记录。
+        }
+      }
       throw new Error('document-path-not-allowed')
     },
   }

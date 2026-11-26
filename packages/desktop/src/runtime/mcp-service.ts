@@ -103,7 +103,9 @@ function redactStringArray(values: unknown[], depth: number): unknown[] {
 /** 递归脱敏：`oauth.clientSecret` 这类嵌套明钥不会被顶层判断跳过。 */
 function redactValue(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') return redactString(value)
-  if (Array.isArray(value)) return depth >= 6 ? value : redactStringArray(value, depth)
+  // 数组超过深度上限时同样要返回占位符：直接把原数组交出去会让 args / 嵌套配置
+  // 里的明文凭据绕过脱敏进入 renderer，破坏本文件的「凭据不回传」边界。
+  if (Array.isArray(value)) return depth >= 6 ? REDACTED : redactStringArray(value, depth)
   if (value && typeof value === 'object') {
     // 深度上限只为防环：插件贡献的配置是进程内对象，理论上可能自引用，
     // 递归进来会栈溢出。
@@ -293,7 +295,17 @@ export class McpService {
     await this.bounded(this.connecting)
     await this.registry.shutdown()
     this.connecting = null
-    await this.load()
+    // 重载后 OAuth client 可能已变、服务器可能改名：旧授权链接不能继续顶在
+    // 前面（用户点开是失效 URL，也会掩盖新的 status.authUrl）。
+    this.authUrls.clear()
+    try {
+      await this.load()
+    } catch (error) {
+      // 旧 registry 已经 shutdown，绝不能再被 getRegistry() 当成可用实例暴露
+      // 出去，否则工具执行链路会拿到死 registry、列表里留一批幽灵服务器。
+      this.registry = emptyRegistry()
+      throw error
+    }
   }
 
   async trustWorkspaceProject(): Promise<void> {
@@ -302,13 +314,22 @@ export class McpService {
   }
 
   async authenticate(name: string): Promise<void> {
-    await this.registry.authenticateServer(name, {
+    // 取快照：授权流程可能持续数十秒，期间切工作区/保存配置触发的 reload 会
+    // shutdown 掉这个 registry。至少保证我们操作的是同一个实例，而不是链上
+    // 刚换掉的新 registry。
+    const registry = this.registry
+    await registry.authenticateServer(name, {
       onBrowserOpen: (url) => {
         this.authUrls.set(name, url)
         this.onAuthUrl?.(name, url)
       },
     })
-    this.onChange()
+    // onChange 只是通知刷新：它抛错不能让「授权已成功」的 IPC 反而 reject。
+    try {
+      this.onChange()
+    } catch {
+      // 通知失败不影响授权结果。
+    }
   }
 
   async shutdown(timeoutMs = 1_500): Promise<void> {

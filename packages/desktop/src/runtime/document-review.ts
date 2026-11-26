@@ -48,7 +48,10 @@ async function readReviewable(filePath: string): Promise<{ text: string; hash: s
   const stats = await fs.stat(filePath).catch(() => null)
   if (!stats || !stats.isFile()) return null
   if (stats.size > MAX_REVIEW_BYTES) return null
-  const text = await fs.readFile(filePath, 'utf8')
+  // stat 与 readFile 之间文件可能被删除/替换，这里同样降级为「不可审核」，
+  // 而不是把裸的 ENOENT/EPERM 冒泡到 UI 错误条。
+  const text = await fs.readFile(filePath, 'utf8').catch(() => null)
+  if (text === null) return null
   if (text.length > MAX_REVIEW_CHARS) return null
   return { text, hash: textHash(text) }
 }
@@ -101,7 +104,11 @@ export async function documentDiff(filePath: string): Promise<DocumentDiffView |
 /** 重建新内容，只保留接受的 hunk（拒绝的 hunk
  *  回退到基线行）。hunk 从后往前应用，这样
  *  靠前的行号保持有效，同时替换后面的。 */
-export function applySelectedHunks(currentText: string, hunks: EditDiffHunk[], accepted: Set<number>): string {
+export function applySelectedHunks(
+  currentText: string,
+  hunks: EditDiffHunk[],
+  accepted: Set<number>,
+): { text: string; skipped: number } {
   const lines = currentText.split('\n')
   // `accepted` 的下标语义来自调用方传入的 hunks 顺序，不能依赖它恰好也按
   // 坐标有序（换一个 diff 实现或排序就够）。这里显式按 newStart 从后往前应用，
@@ -110,19 +117,32 @@ export function applySelectedHunks(currentText: string, hunks: EditDiffHunk[], a
   const ordered = hunks
     .map((hunk, index) => ({ hunk, index }))
     .sort((a, b) => a.hunk.newStart - b.hunk.newStart || a.index - b.index)
+  let skipped = 0
   for (let position = ordered.length - 1; position >= 0; position--) {
     const entry = ordered[position]!
     if (accepted.has(entry.index)) continue
     const hunk = entry.hunk
-    if (!Number.isInteger(hunk.newStart) || !Number.isInteger(hunk.newLines)) continue
-    if (hunk.newStart < 1 || hunk.newLines < 0) continue
-    if (hunk.newStart - 1 + hunk.newLines > lines.length) continue
+    // 越界 / 非法的被拒 hunk 无法回退，必须计入 skipped：否则写入的内容里
+    // 仍留着用户拒绝的改动，而调用方会报告「已成功回滚」。
+    if (
+      !Number.isInteger(hunk.newStart) ||
+      !Number.isInteger(hunk.newLines) ||
+      hunk.newStart < 1 ||
+      hunk.newLines < 0
+    ) {
+      skipped += 1
+      continue
+    }
+    if (hunk.newStart - 1 + hunk.newLines > lines.length) {
+      skipped += 1
+      continue
+    }
     const oldSide = hunk.lines
       .filter((line) => line.startsWith(' ') || line.startsWith('-'))
       .map((line) => line.slice(1))
     lines.splice(hunk.newStart - 1, hunk.newLines, ...oldSide)
   }
-  return lines.join('\n')
+  return { text: lines.join('\n'), skipped }
 }
 
 async function writeAtomically(filePath: string, text: string): Promise<void> {
@@ -236,7 +256,13 @@ async function applyDocumentHunksLocked(
   const acceptedSet = new Set(
     accepted.filter((index) => Number.isInteger(index) && index >= 0 && index < diff.hunks.length),
   )
-  const nextText = applySelectedHunks(current.text, diff.hunks, acceptedSet)
+  const { text: nextText, skipped } = applySelectedHunks(current.text, diff.hunks, acceptedSet)
+  if (skipped > 0) {
+    // 部分被拒 hunk 无法回退：宁可整批不写，也不能报告一个部分成功的假象。
+    throw new Error(
+      'Some reviewed changes could not be reverted (the diff no longer matches the file); nothing was applied. Reload the document and try again.',
+    )
+  }
   if (nextText !== current.text) {
     // 计算与写入之间隔着多次 await：agent 或用户可能已经保存了文件。落盘前
     // 重读一次哈希做最终校验，避免静默覆盖。
@@ -253,8 +279,14 @@ async function applyDocumentHunksLocked(
 
 /** 把当前内容作为新基线（放弃审核）。 */
 export async function saveCurrentBaseline(filePath: string): Promise<{ hash: string }> {
-  const current = await readReviewable(filePath)
-  if (!current) throw new Error(await describeUnreviewable(filePath))
-  saveBaseline(filePath, current.hash, current.text)
-  return { hash: current.hash }
+  if (!isReviewable(filePath)) throw new Error('This file type does not support edit review')
+  // 与 applyDocumentHunks 共用同一把锁：否则本函数可能读到旧内容、在
+  // apply 已经推进基线之后又把旧文本写回基线，让刚应用的改动重新变成
+  // 一轮「未审阅的 diff」。
+  return withDocumentLock(filePath, async () => {
+    const current = await readReviewable(filePath)
+    if (!current) throw new Error(await describeUnreviewable(filePath))
+    saveBaseline(filePath, current.hash, current.text)
+    return { hash: current.hash }
+  })
 }

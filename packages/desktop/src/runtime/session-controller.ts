@@ -13,6 +13,9 @@ export interface SessionControllerHost {
   workspace(): string
   isBusy(): boolean
   activeSessionId(): string | null
+  /** 活动转录的真实路径。文件名只是落盘约定，jsonl 头部的 sessionId 可能与
+   *  文件名不一致，只比 id 会漏掉「删的就是活动会话」这种情况。 */
+  activeSessionPath?(): string | null
   /** 活动会话被删除后释放 approvals/shell 订阅并清空 loopState。 */
   onActiveSessionDeleted(): void
 }
@@ -50,34 +53,52 @@ export function createSessionController(host: SessionControllerHost): SessionCon
       if (host.isBusy()) throw new Error('turn-busy')
       const target = resolveSessionFile(host, filePath)
       const fileId = path.basename(target, '.jsonl')
-      const resetActive = host.activeSessionId() === fileId
-      await deleteSessionFile(target)
+      const resetActive = host.activeSessionPath?.() === target || host.activeSessionId() === fileId
+      // 删除语义是「确保不存在」：文件已不存在时继续清理设置，而不是让
+      // ENOENT 跳过 sessionTitles/pinned/archived 回收并报一个原始错误。
+      await deleteSessionFile(target).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
+      })
+      const isSameSession = (entry: string): boolean => entry === target || path.resolve(entry) === target
       // 锁内读改写：容器字段在锁外读会在多窗口并发时丢掉另一个窗口的条目。
       updateDesktopSettings((current) => {
-        if (!current.sessionTitles?.[fileId]) return null
+        const hadTitle = Boolean(current.sessionTitles?.[fileId])
+        const pinned = (current.pinnedSessions ?? []).filter((entry) => !isSameSession(entry))
+        const archived = (current.archivedSessions ?? []).filter((entry) => !isSameSession(entry))
+        // 已删除会话的路径留在 pinned/archived 里会随删除次数无界增长，
+        // 且永远无法再回收。
+        const changed =
+          hadTitle ||
+          pinned.length !== (current.pinnedSessions?.length ?? 0) ||
+          archived.length !== (current.archivedSessions?.length ?? 0)
+        if (!changed) return null
         const titles = { ...current.sessionTitles }
         delete titles[fileId]
-        return { sessionTitles: titles }
+        return { sessionTitles: titles, pinnedSessions: pinned, archivedSessions: archived }
       })
       if (resetActive) host.onActiveSessionDeleted()
       return { deleted: true, resetActive }
     },
 
     setPinned(filePath, pinned) {
+      // 归一化写入：读侧用 `path.join(sessionsDir, name)` 比对，任何字面不同的
+      // 等价路径（相对路径、重复分隔符、`..`）都会让置顶「保存成功但不生效」。
+      const key = path.resolve(filePath)
       updateDesktopSettings((current) => {
         const next = new Set(current.pinnedSessions ?? [])
-        if (pinned) next.add(filePath)
-        else next.delete(filePath)
+        if (pinned) next.add(key)
+        else next.delete(key)
         return { pinnedSessions: [...next] }
       })
       return { pinned }
     },
 
     setArchived(filePath, archived) {
+      const key = path.resolve(filePath)
       updateDesktopSettings((current) => {
         const next = new Set(current.archivedSessions ?? [])
-        if (archived) next.add(filePath)
-        else next.delete(filePath)
+        if (archived) next.add(key)
+        else next.delete(key)
         return { archivedSessions: [...next] }
       })
       return { archived }

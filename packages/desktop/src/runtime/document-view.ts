@@ -254,6 +254,8 @@ async function renderPdfPages(
   if (count <= 0 || boundedStart > totalPages) return { pages: [] }
   const pages: DocumentPageView[] = []
   const notices: string[] = []
+  // 预算截断（continuation）不是渲染失败，但也不能一声不响地少页。
+  const hints: string[] = []
   let cutShort = false
   for (let first = boundedStart; first <= end; first += PDF_RENDER_CHUNK) {
     const last = Math.min(end, first + PDF_RENDER_CHUNK - 1)
@@ -275,8 +277,14 @@ async function renderPdfPages(
       break
     }
     // 预算截断（continuation）时这一块剩余页本来就不会渲染，原因已经由
-    // core 记在 continuation 里，不能当成“渲染失败”。
-    if (result.continuation) cutShort = true
+    // core 记在 continuation 里，不能当成“渲染失败”，但要把剩余页告诉前端。
+    if (result.continuation) {
+      cutShort = true
+      const remainingPages = result.continuation.remainingPages
+      const remaining =
+        Array.isArray(remainingPages) && remainingPages.length > 0 ? `，剩余页 ${remainingPages.join(', ')}` : ''
+      hints.push(`page budget reached after page ${first}${remaining}`)
+    }
     for (const part of result.parts) {
       if (part.type !== 'image') {
         // `mode: 'visual'` 下非图片 part 有两类：每页正文块 / 图片前的层级标签
@@ -304,12 +312,15 @@ async function renderPdfPages(
     }
   }
   const note = notices.join(' ').slice(0, 600)
-  if (notices.length === 0) return { pages: sorted }
+  const hint = hints.join(' ').slice(0, 300)
+  if (notices.length === 0) {
+    return hint ? { pages: sorted, warning: `PDF rendering stopped early: ${hint}` } : { pages: sorted }
+  }
   // 无论全失败还是部分失败都要报出来：只在「一张图都没渲染出来」时报错时，
   // 一到某页失败就 `continue`/`break` 的部分结果会静默缺页（`lastLoaded` 取最后
   // 一张成功图片的页码，`hasMore` 仍为 true，前端反复重试同一批）。
-  if (sorted.length === 0) return { pages: sorted, error: note }
-  return { pages: sorted, warning: `Some page images could not be rendered: ${note}` }
+  if (sorted.length === 0) return { pages: sorted, error: hint ? `${note} (${hint})` : note }
+  return { pages: sorted, warning: `Some page images could not be rendered: ${note}${hint ? ` (${hint})` : ''}` }
 }
 
 /** 总页数只认解析器给出的 metadata.pages：页面文本会被 core 在
@@ -496,12 +507,22 @@ export async function ocrDocumentPage(filePath: string, page: number): Promise<s
   })
   if (result.type === 'error') throw new Error(result.message)
   if (result.type !== 'content') throw new Error(`OCR stopped: ${result.reason}`)
-  const text = result.parts
+  const raw = result.parts
     .filter((part): part is Extract<typeof part, { type: 'text' }> => part.type === 'text')
     .map((part) => part.text)
     .join('\n')
-    .replace(/^--- PDF page \d+ of \d+: .*\(local OCR\) ---\n/, '')
+  // 只认领带 `(local OCR)` 标记的块：该页有文本层时 core 产出的是
+  // `--- PDF page N of M: file ---\n<原文>`，用 `^` 锚定的 replace 匹配不上，
+  // 页眉和原文会被整段当成 OCR 结果永久存进 desktop-documents.json。
+  const text = raw
+    .split(/^--- PDF page \d+ of \d+: .*\(local OCR\) ---$/m)
+    .slice(1)
+    .join('\n')
     .trim()
+  // 渲染/截断占位块不是识别结果：存下来会让该页再也无法重试。
+  if (PDF_PAGE_FAILURE.test(raw) || /text truncated at the per-call/.test(raw)) {
+    throw new Error(`Page ${page} could not be prepared for OCR: ${raw.slice(0, 200)}`)
+  }
   // OCR 失败但 `result.type` 仍是 `content` 时 text 是空串。把空串持久化会让
   // 「该页无文字」与真实空白页无法区分，而且下次打开会命中这条空缓存。
   if (!text) throw new Error(`No text could be recognized on page ${page}.`)

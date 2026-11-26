@@ -67,6 +67,29 @@ export function createStorageController(host: StorageControllerHost): StorageCon
       let deletedFiles = 0
       let freedBytes = 0
 
+      /** 逐个目录清理：删除失败（EBUSY/只读挂载）时不能把未释放的空间计入
+       *  「已释放」，否则 UI 的「已释放 X MB」与下一行 usage() 自相矛盾。 */
+      const purgeDirectory = async (dir: string): Promise<void> => {
+        const before = await directoryStats(dir)
+        try {
+          await fs.promises.rm(dir, { recursive: true })
+          freedBytes += before.bytes
+          deletedFiles += before.files
+        } catch {
+          // 目录不可删除：不计入释放量，用户能从 usage() 里看到它仍在。
+        }
+      }
+
+      /** 单个步骤失败（权限/占用）不能让整次清理 reject：前面已经删掉的
+       *  sessions/attachments 的统计会随之丢失，UI 也无法告知「部分已清理」。 */
+      const step = async (label: string, run: () => Promise<void>): Promise<void> => {
+        try {
+          await run()
+        } catch (error) {
+          console.warn(`[storage] 清理步骤失败：${label}`, error)
+        }
+      }
+
       const removeIfOlder = async (dir: string, predicate: (name: string) => boolean, days: number): Promise<void> => {
         let entries: fs.Dirent[]
         try {
@@ -112,6 +135,8 @@ export function createStorageController(host: StorageControllerHost): StorageCon
           try {
             const stat = await fs.promises.stat(target)
             if (stat.mtimeMs > cutoff) continue
+            // 同理：扫描过程中的置顶操作也要能生效，删除前重读一次置顶集合。
+            if ((loadDesktopSettings().pinnedSessions ?? []).includes(target)) continue
             await fs.promises.unlink(target)
             deletedFiles += 1
             freedBytes += stat.size
@@ -131,36 +156,34 @@ export function createStorageController(host: StorageControllerHost): StorageCon
       }
 
       if (options.library) {
-        const before = await directoryStats(path.join(root, 'library'))
-        await clearDocumentLibrary()
-        freedBytes += before.bytes
-        deletedFiles += before.files
+        await step('library', async () => {
+          const before = await directoryStats(path.join(root, 'library'))
+          await clearDocumentLibrary()
+          freedBytes += before.bytes
+          deletedFiles += before.files
+        })
       }
 
       if (options.whisperModels) {
-        const dir = path.join(root, 'whisper-models')
-        const before = await directoryStats(dir)
-        await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined)
-        freedBytes += before.bytes
-        deletedFiles += before.files
+        await step('whisper-models', () => purgeDirectory(path.join(root, 'whisper-models')))
       }
 
       if (options.diagnostics) {
-        const dir = path.join(root, 'diagnostics')
-        const before = await directoryStats(dir)
-        await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined)
-        freedBytes += before.bytes
-        deletedFiles += before.files
+        await step('diagnostics', () => purgeDirectory(path.join(root, 'diagnostics')))
       }
 
       if (options.documents) {
-        const before = await documentStoreStats()
-        await clearDocumentStore()
-        freedBytes += before.bytes
-        deletedFiles += before.files
+        await step('documents', async () => {
+          const before = await documentStoreStats()
+          await clearDocumentStore()
+          freedBytes += before.bytes
+          deletedFiles += before.files
+        })
       }
 
-      return { deletedFiles, freedBytes, usage: await usage() }
+      // usage() 只是报告，不该让整次清理结果（已删除量）因为统计失败而丢失。
+      const current = await usage().catch(() => ({ categories: [], totalBytes: 0 }))
+      return { deletedFiles, freedBytes, usage: current }
     },
   }
 }

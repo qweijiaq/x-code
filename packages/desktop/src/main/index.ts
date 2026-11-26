@@ -25,6 +25,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import type {
   RuntimeEvent,
@@ -35,7 +36,7 @@ import type {
   SharedBackgroundSnapshot,
   SmokeReport,
 } from '../shared/protocol.js'
-import { DownloadControllerRegistry } from './download-registry.js'
+import { DOWNLOAD_SUPERSEDED, DownloadControllerRegistry } from './download-registry.js'
 import { downloadUpdateArtifact, parseReleaseInfo, pickUpdateArtifact } from './update.js'
 
 /** 即使没有 DEBUG_STDOUT，renderer 和事件处理器错误也会追加到这里，
@@ -920,7 +921,11 @@ function createWindow(show = true, search = '', workspacePath?: string): Runtime
   })
 
   window.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith('file://')) {
+    // 只允许导航到应用自身的 renderer 页面：preload 里有完整的 bridge，
+    // 任何被注入内容诱导导航到的本地 html 都会继承主进程 IPC 能力
+    // （任意文件读写、worktree/编辑器启动、安装包运行）。
+    const appPagePrefix = pathToFileURL(path.join(__dirname, '../renderer/')).href
+    if (!url.startsWith(appPagePrefix)) {
       event.preventDefault()
       if (url.startsWith('https://')) safeRun(shell.openExternal(url), 'will-navigate')
     }
@@ -934,6 +939,16 @@ function createWindow(show = true, search = '', workspacePath?: string): Runtime
     // 而不是直接 kill 丢失进行中的 turn。最多等 1.2 秒。
     event.preventDefault()
     context.closing = true
+    // 审批是失败关闭的：必须在 runtime 退出之前、同步地取消等待决定的工具调用。
+    // 放到 'closed' 里做已经太晚——那时子进程正在退出，消息几乎不可能送达。
+    try {
+      child.postMessage({
+        kind: 'request',
+        request: { id: `cancel-${Date.now()}`, method: 'approvals:cancel-all', params: {} },
+      } satisfies RuntimeInbound)
+    } catch {
+      // 运行时可能已经消失。
+    }
     try {
       child.postMessage({ kind: 'shutdown' } satisfies RuntimeInbound)
     } catch {
@@ -951,10 +966,10 @@ function createWindow(show = true, search = '', workspacePath?: string): Runtime
   })
 
   window.on('closed', () => {
-    // 审批是失败关闭的：关闭的窗口绝不能留下一个
-    // 等待永远不会到来的决定的工具调用。
-    void forwardRequest({ id: `cancel-${Date.now()}`, method: 'approvals:cancel-all', params: {} }, context)
+    // 审批取消已在 close 处理器里、shutdown 之前同步完成；这里只做资源回收。
     context.runtime?.kill()
+    // 窗口没了，下载请求可能永远不 settle：释放 controller 与其网络连接。
+    updateDownloads.dispose(window.id)
     runtimeContexts.delete(window.id)
     if (mainWindow === window) {
       mainWindow = [...runtimeContexts.values()].at(-1)?.window ?? null
@@ -1153,7 +1168,9 @@ function installIpc(): void {
     const senderWindow = windowForSender(event.sender)
     const context = contextForWindow(senderWindow)
     if (request?.method === 'renderer:error') {
-      const params = request.params as { message?: string; stack?: string }
+      // params 来自 IPC，运行时可能是 undefined/null：裸取值会抛 TypeError，
+      // 让「上报渲染进程错误」本身变成一次未捕获异常。
+      const params = (request.params ?? {}) as { message?: string; stack?: string }
       logDesktopError('renderer', `${params.message ?? 'Unknown error'}\n${params.stack ?? ''}`)
       return { id: request.id, ok: true, result: null }
     }
@@ -1548,12 +1565,23 @@ function installIpc(): void {
           },
         }
       } catch (error) {
+        // 「用户取消」与「被同一窗口的新下载顶掉」都会 abort，但语义不同：
+        // 后者不能提示成用户主动取消的下载。
+        const reason = controller.signal.reason
+        const superseded = reason instanceof Error && reason.message === DOWNLOAD_SUPERSEDED
+        const cancelled = controller.signal.aborted && !superseded
         return {
           id: request.id,
           ok: false,
           error: {
-            code: controller.signal.aborted ? 'update-cancelled' : 'update-download',
-            message: controller.signal.aborted ? '下载已取消' : error instanceof Error ? error.message : String(error),
+            code: cancelled ? 'update-cancelled' : 'update-download',
+            message: cancelled
+              ? '下载已取消'
+              : superseded
+                ? '同一窗口已开始新的下载，本次下载已中止'
+                : error instanceof Error
+                  ? error.message
+                  : String(error),
           },
         }
       } finally {
@@ -1917,6 +1945,7 @@ if (!gotLock) {
 
   app.on('before-quit', () => {
     appQuitting = true
+    updateDownloads.clear()
     globalShortcut.unregisterAll()
     tray?.destroy()
     tray = null

@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import {
   addKnownMarketplace,
   fetchMarketplace,
@@ -51,11 +53,23 @@ export async function listMarketplacePlugins(query = '', refresh = false): Promi
       }
     }
   }
-  if (marketplaces.length === 0) {
-    marketplaces = await readAllCachedMarketplaces()
+  // 有失败条目时按名字回退到缓存并与成功结果合并：否则 B 市场的一次网络失败
+  // 会让它的插件整块从列表里消失，用户看到的是「市场少了一个」。
+  if (errors.length > 0 || marketplaces.length === 0) {
+    const cached = await readAllCachedMarketplaces()
+    const fresh = new Set(marketplaces.map((marketplace) => marketplace.name))
+    marketplaces = [...marketplaces, ...cached.filter((marketplace) => !fresh.has(marketplace.name))]
   }
 
-  const installed = new Set((await listInstalledPlugins()).map((record) => record.id))
+  // 已安装列表读不出来（目录损坏/权限）不该让整个市场列表 reject：本函数已经
+  // 有 errors 字段用于优雅降级。
+  let installedIds: string[] = []
+  try {
+    installedIds = (await listInstalledPlugins()).map((record) => record.id)
+  } catch (error) {
+    errors.push(`installed-plugins: ${errorMessage(error)}`)
+  }
+  const installed = new Set(installedIds)
   const normalized = query.trim().toLowerCase()
   const entries = marketplaces
     .flatMap((marketplace) =>
@@ -124,7 +138,13 @@ export async function addMarketplace(name: string, source: string): Promise<Mark
   const cleanName = name.trim()
   const cleanSource = source.trim()
   if (!cleanName || !cleanSource) throw new Error('市场名称和来源不能为空')
-  await addKnownMarketplace({ name: cleanName, source: cleanSource })
+  if (!/^(https:\/\/|file:\/\/|git@)/i.test(cleanSource) && !path.isAbsolute(cleanSource)) {
+    throw new Error('市场来源必须是 https 地址、git 地址或本地绝对路径')
+  }
+  // 先拉取校验、再落盘：坏条目（写错地址、repo 不存在、克隆超时）一旦先写进
+  // known marketplaces，之后每次 refresh 都会重复报错且无法自愈。
+  // fetchMarketplace 成功即暖好了缓存，随后的列表读取就能看到它。
   await fetchMarketplace({ name: cleanName, source: cleanSource })
+  await addKnownMarketplace({ name: cleanName, source: cleanSource })
   return listMarketplacePlugins('', false)
 }

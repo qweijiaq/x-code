@@ -289,6 +289,7 @@ export class AgentHost {
     workspace: () => this.requireBootstrap().workspace,
     isBusy: () => this.activeTurn !== null,
     activeSessionId: () => this.loopState?.sessionId ?? null,
+    activeSessionPath: () => this.loopState?.sessionFilePath ?? null,
     onActiveSessionDeleted: () => {
       this.cancelAllApprovals()
       this.shellUnsubscribe?.()
