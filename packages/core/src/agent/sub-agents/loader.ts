@@ -11,14 +11,31 @@ import { parseFrontmatter } from '../../frontmatter.js'
 import { XCODE_DIR, errorMessage, userXcodeDir } from '../../utils.js'
 import type { SubAgentDefinition } from './types.js'
 
+/**
+ * Claude 插件生态里的 agent 习惯把工具清单写成逗号分隔的字符串
+ * （`tools: Glob, Grep, LS, Read`），而不是 YAML 数组。只接受数组会把这类
+ * 插件里的 agent 全部静默跳过，所以两种形态都要吃。
+ */
+const stringList = z
+  .union([z.array(z.string()), z.string()])
+  .optional()
+  .transform((value) => {
+    if (value === undefined) return undefined
+    if (Array.isArray(value)) return value.map((item) => item.trim()).filter(Boolean)
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+  })
+
 const frontmatterSchema = z.object({
   name: z.string().min(1),
   description: z.string().min(1),
-  tools: z.array(z.string()).optional(),
-  disallowedTools: z.array(z.string()).optional(),
+  tools: stringList,
+  disallowedTools: stringList,
   model: z.string().optional(),
   maxTurns: z.number().int().positive().optional(),
-  shellRestrictions: z.array(z.string()).optional(),
+  shellRestrictions: stringList,
 })
 
 async function loadAgentsFromDir(
