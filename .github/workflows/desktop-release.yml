@@ -6,7 +6,9 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: read
+  # The packaged build is attached to the GitHub release created for the tag,
+  # so this workflow needs to write release assets.
+  contents: write
 
 # @vscode/ripgrep's postinstall hits the GitHub API; authenticate to avoid the
 # anonymous rate limit shared across Actions runners.
@@ -67,6 +69,35 @@ jobs:
       # NOT EXECUTED for signing; pass --require-signed for a release gate.
       - name: Verify release artifacts
         run: node scripts/verify-desktop-release.mjs
+
+      # Attach the build to the release the tag created. The Release workflow
+      # publishes that release (with its changelog) in parallel, so wait for it
+      # to appear instead of creating a competing one here.
+      - name: Publish assets to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for attempt in $(seq 1 40); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "release $TAG is available"
+              break
+            fi
+            if [ "$attempt" = "40" ]; then
+              echo "::error::release $TAG was never published by the Release workflow"
+              exit 1
+            fi
+            sleep 15
+          done
+          gh release upload "$TAG" \
+            packages/desktop/release/*.dmg \
+            packages/desktop/release/*.zip \
+            packages/desktop/release/*.blockmap \
+            packages/desktop/release/latest-mac.yml \
+            packages/desktop/release/SHA256SUMS \
+            packages/desktop/release/RELEASE.json \
+            --clobber --repo "$GITHUB_REPOSITORY"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
