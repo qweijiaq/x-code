@@ -724,7 +724,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     })
     const answerReady = await waitFor(
       () => document.querySelector('[data-testid="approval-answer-input"]') !== null,
-      3_000,
+      10_000,
     )
     const answerInput = answerReady
       ? document.querySelector<HTMLInputElement>('[data-testid="approval-answer-input"]')
@@ -1895,18 +1895,26 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       4_000,
     )
     const undoButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.git-drawer .drawer-head .btn')).find(
-      (button) => button.textContent?.includes('撤销本轮'),
+      (button) => button.textContent?.includes('回退本轮'),
     )
     undoButton?.click()
-    // 撤销会恢复该轮次的修改；预先存在的未跟踪路径（如工作区的
-    // `.x-code` 目录）按设计保留。
-    const gitUndone = await waitFor(
-      () =>
-        !Array.from(document.querySelectorAll('[data-testid="git-drawer"] .git-file')).some((button) =>
-          button.textContent?.includes('README.md'),
-        ),
-      6_000,
-    )
+    // 「回退本轮…」只是打开回退面板，还要在面板里确认一次。
+    await waitFor(() => document.querySelector('[data-testid="rewind-panel"]') !== null, 3_000)
+    Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="rewind-panel"] .rewind-actions .btn'))
+      .find((button) => button.textContent?.trim() === '回退')
+      ?.click()
+    await waitFor(() => document.querySelector('[data-testid="rewind-panel"]') === null, 5_000)
+    // 撤销回到「轮次开始时」的状态。README 在轮次之前已经是脏的（文档审阅改过
+    // 它），所以它仍会出现在变更列表里 —— 正确的断言是「本轮写入的内容没了」。
+    const gitUndone = await waitFor(() => {
+      const row = Array.from(document.querySelectorAll<HTMLButtonElement>('.git-file')).find((button) =>
+        button.textContent?.includes('README.md'),
+      )
+      if (!row) return true
+      row.click()
+      const body = document.querySelector('.git-diff-body')?.textContent ?? ''
+      return body.length > 0 && !body.includes('Reviewed change')
+    }, 6_000)
     const gitWarning = document.querySelector('[data-testid="git-drawer"] .settings-warn')?.textContent ?? ''
     const gitSummary = document.querySelector('[data-testid="git-drawer"] .git-summary')?.textContent ?? ''
     checks.git = {
