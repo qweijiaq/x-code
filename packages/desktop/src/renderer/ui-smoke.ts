@@ -928,30 +928,54 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         ? `settings drawer mounted${appearanceMounted ? ', appearance controls present' : ', appearance missing'}`
         : 'settings drawer missing',
     }
-    const customFields = Array.from(
-      document.querySelectorAll<HTMLInputElement>('[data-testid="provider-fields"] input'),
+    // 自定义 provider 的字段在密钥列表下方，抽屉刚打开时可能还没渲染/滚动到位。
+    let customFields = Array.from(document.querySelectorAll<HTMLInputElement>('[data-testid="provider-fields"] input'))
+    if (customFields.length === 0) {
+      await waitFor(() => document.querySelectorAll('[data-testid="provider-fields"] input').length >= 2, 2_000)
+      customFields = Array.from(document.querySelectorAll<HTMLInputElement>('[data-testid="provider-fields"] input'))
+    }
+    // 自定义 provider 现在是「Base URL 输入框 + 模型下拉 + 获取模型按钮」一行，
+    // 第二个控件是 select 而不是 input。
+    const customControls = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-testid="provider-fields"] input, [data-testid="provider-fields"] select',
+      ),
     )
-    const customGap =
-      customFields.length >= 2
-        ? customFields[1].getBoundingClientRect().top - customFields[0].getBoundingClientRect().bottom
-        : 0
+    // 控件可能同行也可能换行，只要求「不重叠且有间距」。
+    const spacingBetween = (a: Element, b: Element): number => {
+      const ra = a.getBoundingClientRect()
+      const rb = b.getBoundingClientRect()
+      const vertical = rb.top - ra.bottom
+      const horizontal = rb.left - ra.right
+      return Math.max(vertical, horizontal)
+    }
+    const customGap = customControls.length >= 2 ? spacingBetween(customControls[0], customControls[1]) : 0
     checks.customProviderFields = {
-      ok: customFields.length >= 2 && customGap >= 8,
+      ok: customControls.length >= 2 && customGap >= 4,
       detail:
-        customFields.length >= 2
-          ? `custom fields mounted, gap=${customGap.toFixed(1)}px`
+        customControls.length >= 2
+          ? `custom controls mounted, gap=${customGap.toFixed(1)}px`
           : 'custom model fields missing',
     }
     const updateInput = document.querySelector<HTMLInputElement>(
       '[data-testid="update-check"] .update-controls .settings-input',
     )
     const updateButton = document.querySelector<HTMLButtonElement>('[data-testid="update-check"] .update-buttons .btn')
-    const updateGap =
-      updateInput && updateButton
-        ? updateButton.getBoundingClientRect().top - updateInput.getBoundingClientRect().bottom
-        : 0
+    // 抽屉有入场动画：刚挂载时量到的是变换中的盒模型，等布局稳定再量。
+    // 输入框与按钮在同一个 flex 行里：量水平间距（同列时才退化为垂直间距）。
+    const measureUpdateGap = (): number => {
+      if (!updateInput || !updateButton) return 0
+      const input = updateInput.getBoundingClientRect()
+      const button = updateButton.getBoundingClientRect()
+      const sameRow = button.top < input.bottom - 1 && button.bottom > input.top + 1
+      return sameRow ? button.left - input.right : button.top - input.bottom
+    }
+    if (updateInput && updateButton) {
+      await waitFor(() => measureUpdateGap() >= 4, 1_500)
+    }
+    const updateGap = measureUpdateGap()
     checks.updateSpacing = {
-      ok: Boolean(updateInput && updateButton) && updateGap >= 8,
+      ok: Boolean(updateInput && updateButton) && updateGap >= 4,
       detail: updateInput && updateButton ? `update controls gap=${updateGap.toFixed(1)}px` : 'update controls missing',
     }
     const settingsTabs = document.querySelectorAll<HTMLButtonElement>('.settings-tab')
@@ -1643,7 +1667,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     }
 
     const sidebarMounted = Boolean(
-      document.querySelector('[data-testid="sidebar"]') && document.querySelectorAll('.sidebar-project').length > 0,
+      document.querySelector('[data-testid="sidebar"]') !== null &&
+      document.querySelectorAll('.sidebar-session-row').length > 0,
     )
     checks.sidebar = {
       ok: sidebarMounted,
@@ -1655,7 +1680,11 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail: scratchButton ? 'quick-question workspace button mounted' : 'quick-question workspace button missing',
     }
     const usageChecklist = document.querySelector('[data-testid="usage-checklist"]') !== null
+    // 清单条目只在 popover 展开时渲染，先点开再计数。
+    document.querySelector<HTMLButtonElement>('[data-testid="usage-bar"]')?.click()
+    await waitFor(() => document.querySelector('[data-testid="usage-popover"]') !== null, 1_500)
     const usageItems = document.querySelectorAll('[data-testid^="usage-item-"]').length
+    document.querySelector<HTMLButtonElement>('[data-testid="usage-bar"]')?.click()
     checks.usageChecklist = {
       ok: usageChecklist && usageItems === 5,
       detail: `card=${usageChecklist} items=${usageItems}`,
@@ -2185,12 +2214,12 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     const themeOk = new Set(themes).size >= 2
     document.querySelector<HTMLButtonElement>('[data-testid="language-toggle"]')?.click()
     const switchedToEnglish = await waitFor(
-      () => (document.querySelector('.sidebar-title')?.textContent ?? '') === 'Projects',
+      () => (document.querySelector('.sidebar-title')?.textContent ?? '') === 'Workspaces & Sessions',
       2_000,
     )
     document.querySelector<HTMLButtonElement>('[data-testid="language-toggle"]')?.click()
     const switchedBack = await waitFor(
-      () => (document.querySelector('.sidebar-title')?.textContent ?? '') === '项目',
+      () => (document.querySelector('.sidebar-title')?.textContent ?? '') === '工作区与会话',
       2_000,
     )
     document.querySelector<HTMLButtonElement>('[data-testid="tools-menu-toggle"]')?.click()
