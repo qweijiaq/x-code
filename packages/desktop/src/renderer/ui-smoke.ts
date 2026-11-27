@@ -2046,9 +2046,19 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     }
     document.querySelector<HTMLButtonElement>('[data-testid="outline-toggle"]')?.click()
     const outlineMounted = await waitFor(() => document.querySelector('[data-testid="outline-panel"]') !== null, 3_000)
+    // 目录内容随 transcript 异步到位：先等「有条目」或「空状态」出现再计数。
+    await waitFor(
+      () =>
+        document.querySelectorAll('[data-testid="outline-item"]').length > 0 ||
+        document.querySelector('.outline-empty') !== null,
+      3_000,
+    )
     const outlineQuestions = document.querySelectorAll(
       '[data-testid="outline-item"][data-outline-role="question"]',
     ).length
+    // 目录只按 user 消息分组：开场只有助手消息时不该伪造「提问」条目，此时应
+    // 显示空状态。必须在关闭面板之前判定。
+    const outlineEmptyState = outlineQuestions === 0 ? document.querySelector('.outline-empty') !== null : true
     const answersInitiallyCollapsed = document.querySelectorAll('[data-testid="outline-answer"]').length === 0
     const outlineAnswerToggles = document.querySelectorAll('[data-testid="outline-answer-toggle"]').length
     document.querySelector<HTMLButtonElement>('[data-testid="outline-answer-toggle"]')?.click()
@@ -2065,15 +2075,12 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     document.querySelector<HTMLButtonElement>('[data-testid="inspector-close"]')?.click()
     const outlineClosed = await waitFor(() => document.querySelector('[data-testid="inspector"]') === null, 2_000)
     document.querySelector<HTMLButtonElement>('.scroll-bottom')?.click()
+    const outlineBodyOk =
+      outlineQuestions > 0
+        ? answersInitiallyCollapsed && outlineAnswerToggles > 0 && answersShown && answersHiddenAgain
+        : outlineEmptyState
     checks.outline = {
-      ok:
-        outlineMounted &&
-        outlineQuestions > 0 &&
-        answersInitiallyCollapsed &&
-        outlineAnswerToggles > 0 &&
-        answersShown &&
-        answersHiddenAgain &&
-        outlineClosed,
+      ok: outlineMounted && outlineBodyOk && outlineClosed,
       detail: `mounted=${outlineMounted} questions=${outlineQuestions} collapsed=${answersInitiallyCollapsed} toggles=${outlineAnswerToggles} shown=${answersShown}/${answersHiddenAgain} closed=${outlineClosed}`,
     }
     if (restoreWriteAlways) await restoreWriteAlways()
@@ -2669,6 +2676,15 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       () => document.querySelector<HTMLTextAreaElement>('[data-testid="file-drawer"] .file-textarea') !== null,
       2_000,
     )
+    // 切换文件会先清空正文再读取（避免旧正文+新路径），因此「预览」按钮要等
+    // files:read 落地后才会渲染，不能点完立刻找。
+    await waitFor(
+      () =>
+        Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="file-drawer"] .btn')).some(
+          (button) => button.textContent?.trim() === '预览',
+        ),
+      3_000,
+    )
     Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="file-drawer"] .btn'))
       .find((button) => button.textContent?.trim() === '预览')
       ?.click()
@@ -2690,6 +2706,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
     const highlightEditor = document.querySelector<HTMLTextAreaElement>('[data-testid="file-drawer"] .file-textarea')
     const editorGutter = document.querySelectorAll('[data-testid="file-drawer"] .file-gutter span').length >= 1
     let editorCursor = false
+    // 光标状态条同样只在 files:read 落地后渲染。
+    await waitFor(() => document.querySelector('[data-testid="editor-status"]') !== null, 3_000)
     if (highlightEditor) {
       highlightEditor.selectionStart = highlightEditor.value.length
       highlightEditor.selectionEnd = highlightEditor.value.length
@@ -2883,6 +2901,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
 
     document.querySelector<HTMLButtonElement>('[data-testid="manual-toggle"]')?.click()
     const manualMounted = await waitFor(() => document.querySelector('[data-testid="manual-panel"]') !== null, 4000)
+    // 手册正文是动态 import 的，面板挂载时目录还没解析出来；先等目录出现再计数。
+    await waitFor(() => document.querySelectorAll('[data-testid="manual-toc-item"]').length > 0, 4_000)
     const manualChapters = document.querySelectorAll('[data-testid="manual-toc-item"]').length
     Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="manual-toc-item"]'))
       .find((item) => item.textContent?.trim() === '界面总览')
