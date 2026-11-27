@@ -1,3 +1,19 @@
+## v1.0.13 (2026-11-27)
+
+### Bug Fixes
+
+- harden the shell sandbox and permission checks: a PowerShell cmdlet in any casing, or a command hidden inside `( … )`, can no longer be auto-approved as read-only; `X_CODE_HOME` is normalised before the credential deny rules are generated, and a workspace that contains the home directory is refused
+- stop command injection through the plugin marketplace: clone sources are restricted to https/ssh, `ext::` and `file://` are rejected, and clone URLs are redacted before they reach logs
+- refuse to overwrite settings or secrets when the file cannot be read: only a missing file is treated as empty, corrupt files are backed up, and secret migration no longer resurrects entries deleted elsewhere
+- fix LSP rename: tsserver groups locations per file, so every edit used to collapse to line 1 column 1 and rename corrupted files; positions are flattened and asserted
+- undo ("回退本轮") now really reverts the turn, including repositories that were clean when the checkpoint was taken, and refuses to touch tracked files when the state could not be captured
+- run the desktop secret probe under the secrets lock so it can no longer divert a concurrent save into a temporary file, and never pin the encryption capability to "unavailable" after one failed probe
+- keep the agent loop honest: loop-guard results are collected again by the lightweight compactor, a goal can no longer join another goal's run, and sub-agent taint is no longer cleared by the child loop
+- bound decompression: MOBI record offsets follow the spec, `textLength` is capped by the record table, and DOCX ingestion checks the archive budget before inflating
+- redact `--api-key <value>` and nested credential structures before they reach the renderer, and drop plugin agents' comma-separated `tools:` frontmatter no longer causes them to be skipped
+- repair the desktop UI flows that failed the smoke suite: session salvage, new-session autosave, the question dialog behind a queued approval, and the rewind confirmation
+- assorted CLI fixes: Ctrl+C now aborts a running turn in watch mode (and self-triggered reruns are folded into the baseline), message ids no longer collide within a millisecond, and `--max-turns/--max-tokens/--max-cost` reject invalid values
+
 ## Unreleased
 
 ### Features
