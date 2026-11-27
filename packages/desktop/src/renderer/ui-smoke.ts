@@ -717,6 +717,16 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
         questionResult = event.result
       }
     })
+    // 审批队列按顺序渲染：前面步骤遗留的权限卡片会把提问卡片挡在队列后面，
+    // 界面上完全看不到自由输入框。先把队列清空（选“拒绝”，不产生副作用）。
+    for (let guard = 0; guard < 5; guard += 1) {
+      const deny = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('.approval-card .approval-actions .btn'),
+      ).find((button) => button.textContent?.trim() === '拒绝')
+      if (!deny) break
+      deny.click()
+      await waitFor(() => document.querySelector('.approval-card') === null, 1_500)
+    }
     const questionTurn = window.xcode.request({
       id: crypto.randomUUID(),
       method: 'agent:submit',
@@ -1742,7 +1752,7 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       ok: searchFiltered && renamed && deleted,
       detail: `search=${searchFiltered} row=${Boolean(firstRow)} menu=${Boolean(renameButton)} input=${Boolean(renameInput)} rename=${renamed} delete=${deleted}`,
     }
-    document.querySelector<HTMLButtonElement>('.sidebar-sessions-section .sidebar-add')?.click()
+    document.querySelector<HTMLButtonElement>('.tab-add')?.click()
     const placeholderReady = await waitFor(() => document.querySelector('.sidebar-session-placeholder') !== null, 2_000)
     checks.newSessionPlaceholder = {
       ok: placeholderReady,
@@ -2236,8 +2246,8 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail: `menu=${themeMenu} themes=${themes.join('>')} en=${switchedToEnglish} zh=${switchedBack}`,
     }
 
-    document.querySelector<HTMLButtonElement>('.sidebar-sessions-section .sidebar-add')?.click()
-    await waitFor(() => document.querySelector('.sidebar-session-placeholder') !== null, 2_000)
+    document.querySelector<HTMLButtonElement>('.tab-add')?.click()
+    await waitFor(() => document.querySelector('.sidebar-session-placeholder') !== null, 3_000)
 
     const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
     const pasted = await window.xcode.request({
@@ -3775,7 +3785,9 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       method: 'files:write',
       params: { path: '.x-code/sessions/smoke-corrupt.jsonl', content: `${corruptLines}\n` },
     })
-    document.querySelector<HTMLButtonElement>('.sidebar-sessions-section .sidebar-add')?.click()
+    // 新建标签页会顺带刷新会话列表（session:new 内部调用 refreshSessions），
+    // 之前点的 .sidebar-sessions-section 容器早已不存在。
+    document.querySelector<HTMLButtonElement>('.tab-add')?.click()
     const corruptRowReady = await waitFor(
       () =>
         Array.from(document.querySelectorAll('.sidebar-session-row')).some((row) =>
@@ -3800,8 +3812,13 @@ export async function runUiSmoke(context: UiSmokeContext): Promise<void> {
       detail: `write=${corruptWrite.ok} row=${corruptRowReady} dialog=${salvageDialog} restored=${salvageRestored}`,
     }
 
-    document.querySelector<HTMLButtonElement>('.sidebar-sessions-section .sidebar-add')?.click()
+    const previousSessionId = document.querySelector('.tab-item.active')?.getAttribute('data-session-id') ?? ''
+    document.querySelector<HTMLButtonElement>('.tab-add')?.click()
     await waitFor(() => document.querySelector('.sidebar-session-placeholder') !== null, 2_000)
+    await waitFor(
+      () => (document.querySelector('.tab-item.active')?.getAttribute('data-session-id') ?? '') !== previousSessionId,
+      3_000,
+    )
     const newSessionId = document.querySelector('.tab-item.active')?.getAttribute('data-session-id') ?? ''
     const saveComposer = composerEditor()
     let newSessionTitle = false

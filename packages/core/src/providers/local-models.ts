@@ -89,24 +89,18 @@ export async function discoverLocalModels(force = false): Promise<LocalModelInfo
   if (!force && lastDiscoveryAt > 0 && Date.now() - lastDiscoveryAt < DISCOVERY_CACHE_MS) {
     return lastDiscovery
   }
-  const [ollama, lmstudio] = await Promise.allSettled([probeOllama(), probeLmStudio()])
-  // 只有探测成功的 provider 才有资格覆盖自己的旧条目：本地服务器短暂重启、
-  // 或这次探测只是超时，不应把之前已发现的模型全部清空——那会让正在用的会话
-  // 突然拿不到模型，而且这个空结果还会被缓存 30s。
-  const freshProviders = new Set<LocalProvider>()
-  if (ollama.status === 'fulfilled') freshProviders.add('ollama')
-  if (lmstudio.status === 'fulfilled') freshProviders.add('lmstudio')
-
-  for (const [id, info] of [...discovered]) {
-    if (freshProviders.has(info.provider)) discovered.delete(id)
+  // 探测失败（服务器没开 / 超时）就等于那些模型不存在：保留旧条目会让用户在
+  // 列表里选到跑不通的模型。短暂失败由 30s 的发现缓存承担，不做"保留上次结果"。
+  const results = await Promise.allSettled([probeOllama(), probeLmStudio()])
+  const models: LocalModelInfo[] = []
+  for (const result of results) {
+    if (result.status === 'fulfilled') models.push(...result.value)
   }
-  for (const result of [ollama, lmstudio]) {
-    if (result.status !== 'fulfilled') continue
-    for (const model of result.value) discovered.set(model.id, model)
-  }
-  lastDiscovery = [...discovered.values()]
+  discovered.clear()
+  for (const model of models) discovered.set(model.id, model)
+  lastDiscovery = models
   lastDiscoveryAt = Date.now()
-  return lastDiscovery
+  return models
 }
 
 export function localModelInfos(): LocalModelInfo[] {
