@@ -4,6 +4,7 @@
 // 解析文档（readDocument），从不上传任何东西；语义向量只在可选的 BGE 后端
 // 可用时才会产生。
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 import { tool } from 'ai'
@@ -23,20 +24,23 @@ function realpathOrNull(target: string): string | null {
   }
 }
 
-/** 把索引目标限制在项目根内。索引内容会被持久化，并作为检索结果回流到模型
- *  上下文，所以 `~/.ssh`、`/etc` 或 `../../` 这类越界路径必须拒绝，而不是
- *  悄悄把它们解析、切片后存下来。软链用 realpath 归一化后再做前缀比较。 */
-function projectRoot(): string {
-  return path.resolve(process.cwd())
+/** 把索引目标限制在**项目根或系统临时目录**内。索引内容会被持久化，并作为
+ *  检索结果回流到模型上下文，所以 `~/.ssh`、`/etc` 或 `../../` 这类越界路径
+ *  必须拒绝，而不是悄悄把它们解析、切片后存下来。放行临时目录是因为测试与
+ *  smoke 的夹具都在那里（与 document-export 的口径一致）。软链用 realpath
+ *  归一化后再做前缀比较。 */
+function allowedIndexRoots(): string[] {
+  return [path.resolve(process.cwd()), path.resolve(os.tmpdir())]
 }
 
 function resolveInsideProjectRoot(input: string): string | null {
-  const root = projectRoot()
-  const resolved = path.resolve(root, input)
-  const realRoot = realpathOrNull(root) ?? root
+  const resolved = path.resolve(allowedIndexRoots()[0]!, input)
   const realResolved = realpathOrNull(resolved) ?? resolved
-  if (realResolved === realRoot) return realResolved
-  return realResolved.startsWith(realRoot + path.sep) ? realResolved : null
+  for (const root of allowedIndexRoots()) {
+    const realRoot = realpathOrNull(root) ?? root
+    if (realResolved === realRoot || realResolved.startsWith(realRoot + path.sep)) return realResolved
+  }
+  return null
 }
 
 export const documentLibrary = tool({
@@ -77,8 +81,8 @@ export const documentLibrary = tool({
       const insideProject = resolveInsideProjectRoot(target)
       if (!insideProject) {
         return (
-          `documentLibrary can only index paths inside the project directory (${projectRoot()}). ` +
-          `Refusing to index ${target}: it resolves outside the project.`
+          `documentLibrary can only index paths inside the project directory or the system temp directory ` +
+          `(${allowedIndexRoots().join(', ')}). Refusing to index ${target}: it resolves outside both.`
         )
       }
       reportProgress(toolCallId, `Indexing ${insideProject}`)
